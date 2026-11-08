@@ -7,4 +7,5 @@ pub mod resource;
 pub mod source;
 pub mod sync;
 pub mod sync_health;
+pub mod time_off;
 pub mod user;

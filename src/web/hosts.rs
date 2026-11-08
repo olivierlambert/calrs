@@ -218,6 +218,26 @@ pub(super) struct RescheduleHosts {
     /// Unassigned collective booking: it belongs to the whole roster, so every
     /// member must be free and the page shows the team instead of one person.
     pub(super) collective: bool,
+    /// The other hosts of a dynamic group booking (`/u/alice+bob/slug`),
+    /// enabled ones only, besides the owner in `user_ids`. They must be free
+    /// too, but only their busy times are read: the booking stays the owner's
+    /// for organizer, write-back and emails.
+    pub(super) participants: Vec<String>,
+}
+
+/// The enabled co-hosts stored for a dynamic group booking.
+pub(super) async fn booking_participants(pool: &SqlitePool, booking_uid: &str) -> Vec<String> {
+    sqlx::query_scalar(
+        "SELECT bp.user_id FROM booking_participants bp
+         JOIN bookings b ON b.id = bp.booking_id
+         JOIN users u ON u.id = bp.user_id
+         WHERE b.uid = ? AND u.enabled = 1
+         ORDER BY u.id",
+    )
+    .bind(booking_uid)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default()
 }
 
 pub(super) async fn reschedule_hosts(
@@ -253,10 +273,16 @@ pub(super) async fn reschedule_hosts(
     } else {
         booking_write_targets(pool, booking_uid, owner_user_id).await
     };
+    let participants = if team_id.is_none() {
+        booking_participants(pool, booking_uid).await
+    } else {
+        Vec::new()
+    };
     RescheduleHosts {
         user_ids,
         collective,
         team_id,
+        participants,
     }
 }
 
@@ -265,7 +291,7 @@ pub(super) async fn reschedule_hosts(
 /// this fan-out at most one CalDAV fetch per source is in flight.
 pub(super) async fn sync_reschedule_hosts(state: &Arc<AppState>, hosts: &RescheduleHosts) {
     let mut sync_tasks = tokio::task::JoinSet::new();
-    for user_id in &hosts.user_ids {
+    for user_id in hosts.user_ids.iter().chain(&hosts.participants) {
         let pool = state.pool.clone();
         let key = state.secret_key;
         let user_id = user_id.clone();
@@ -293,19 +319,42 @@ pub(super) async fn reschedule_busy_source(
 ) -> BusySource {
     if hosts.team_id.is_none() {
         let owner = hosts.user_ids.first().map(String::as_str).unwrap_or("");
-        return BusySource::Individual(
-            fetch_busy_times_for_user_ex(
+        let owner_busy = fetch_busy_times_for_user_ex(
+            pool,
+            owner,
+            window_start,
+            window_end,
+            host_tz,
+            Some(et_id),
+            Some(exclude_booking_id),
+            Some(exclude_booking_uid),
+        )
+        .await;
+        if hosts.participants.is_empty() {
+            return BusySource::Individual(owner_busy);
+        }
+        // A dynamic group booking: everyone must be free, each co-host
+        // within their own working hours and with all of their calendars,
+        // as on the dynamic group slot page.
+        let mut member_busy = HashMap::new();
+        member_busy.insert(owner.to_string(), owner_busy);
+        for user_id in &hosts.participants {
+            let mut busy = fetch_busy_times_for_user_ex(
                 pool,
-                owner,
+                user_id,
                 window_start,
                 window_end,
                 host_tz,
-                Some(et_id),
+                None,
                 Some(exclude_booking_id),
                 Some(exclude_booking_uid),
             )
-            .await,
-        );
+            .await;
+            ensure_user_avail_seeded(pool, user_id).await;
+            busy.extend(user_avail_as_busy(pool, user_id, window_start, window_end, host_tz).await);
+            member_busy.insert(user_id.clone(), busy);
+        }
+        return BusySource::Team(member_busy);
     }
     let mut member_busy = HashMap::new();
     for user_id in &hosts.user_ids {
@@ -360,8 +409,8 @@ pub(super) async fn prepare_approval_hosts(
 /// Whether everyone a pending booking needs is still free for it, checked
 /// under the booking lock right before an approval flips it to confirmed.
 ///
-/// Busy means a calendar event or a confirmed booking, excluding the booking
-/// itself and its own calendar copy. Other pending requests are not counted:
+/// Busy means a calendar event, a confirmed booking or time off (#46),
+/// excluding the booking itself and its own calendar copy. Other pending requests are not counted:
 /// they hold slots against new guests, but between two waiting requests the
 /// host decides, and counting them would let two overlapping requests block
 /// each other's approval forever. Once one is approved it is confirmed, and
@@ -384,20 +433,33 @@ pub(super) async fn approval_hosts_free(
     let Some((start, end)) = crate::booking_time::busy_range(start_at, end_at, host_tz) else {
         return true;
     };
-    for user_id in &hosts.user_ids {
+    // The co-hosts of a dynamic group booking read all their calendars, as
+    // on the dynamic group slot page (the calendar selection is the owner's).
+    let everyone = hosts
+        .user_ids
+        .iter()
+        .map(|u| (u, Some(et_id)))
+        .chain(hosts.participants.iter().map(|u| (u, None)));
+    for (user_id, et_filter) in everyone {
         let busy = fetch_busy_times_for_user_opts(
             pool,
             user_id,
             start,
             end,
             host_tz,
-            Some(et_id),
+            et_filter,
             Some(booking_id),
             Some(booking_uid),
             false,
         )
         .await;
         if has_conflict(&busy, start, end) {
+            tracing::info!(
+                uid = %booking_uid,
+                %user_id,
+                co_host = et_filter.is_none(),
+                "approval refused: a host is busy at the requested time"
+            );
             return false;
         }
     }

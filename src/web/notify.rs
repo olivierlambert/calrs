@@ -330,7 +330,7 @@ pub async fn run_reminder_loop(pool: SqlitePool, secret_key: [u8; 32]) {
     loop {
         tokio::time::sleep(std::time::Duration::from_secs(60)).await;
 
-        // Hourly: prune sessions whose `expires_at` has passed.
+        // Hourly: prune sessions whose `expires_at` has passed, and old time off.
         if last_session_cleanup.elapsed() >= std::time::Duration::from_secs(3600) {
             match crate::auth::cleanup_expired_sessions(&pool).await {
                 Ok(removed) if removed > 0 => {
@@ -338,6 +338,14 @@ pub async fn run_reminder_loop(pool: SqlitePool, secret_key: [u8; 32]) {
                 }
                 Ok(_) => {}
                 Err(e) => tracing::warn!(error = %e, "session cleanup failed"),
+            }
+            // Time off that ended long ago blocks nothing any more (#46).
+            match crate::time_off::prune(&pool, Utc::now()).await {
+                Ok(removed) if removed > 0 => {
+                    tracing::info!(removed, "ended time off pruned");
+                }
+                Ok(_) => {}
+                Err(e) => tracing::warn!(error = %e, "time off cleanup failed"),
             }
             last_session_cleanup = std::time::Instant::now();
         }

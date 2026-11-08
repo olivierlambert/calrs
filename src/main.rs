@@ -28,6 +28,7 @@ mod settings;
 mod sms;
 #[cfg(test)]
 mod test_support;
+mod time_off;
 mod tzid;
 mod utils;
 mod web;

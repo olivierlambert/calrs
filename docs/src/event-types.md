@@ -366,6 +366,25 @@ Go to **Dashboard > Event Types > Overrides** and add:
 
 Multiple custom hour windows can be added for the same date (e.g., morning + afternoon with a lunch break). Overrides are visible in the **Troubleshoot** view with a banner showing when they're active.
 
+To block the same dates on every event type at once, use time off instead.
+
+## Time off
+
+**Dashboard > Time off** holds the periods when you take no bookings at all: holidays, a conference, an afternoon at the dentist. Every event type you host follows them, without touching each one's overrides:
+
+- your personal event types lose the slots in the period;
+- on a **round-robin** team event type you are skipped and your teammates still take the bookings. Round robin ranks members by their bookings in the last 30 days, so when you are back you take more bookings than your teammates until you have caught up;
+- on a **collective** team event type the slot is gone, since everyone has to be there;
+- a guest's reschedule onto the period and the approval of a request that falls in it are refused, as for a conflicting calendar event.
+
+A period is a start date and an end date, both included, with optional times to block part of a day (from 14:00, or until 12:00). Times are in your profile time zone; a period keeps the zone it was entered in, and the list says so if you change your profile zone later. An optional note is shown only to you, on the Time off page and in **Troubleshoot**, where the period appears as "Time off". Guests only ever see that the times are not available, and teammates see nothing. An admin viewing your dashboard as you sees your periods read-only, without the notes.
+
+Bookings already made inside a new period are **kept**: adding time off cancels nothing. Cancel or reschedule them from **Bookings** if you need to. A request still waiting for your approval inside a period can no longer be approved (the host is busy at that time): decline it, or delete the time off first. Ended periods drop off the list and are deleted 30 days after they end. On the overview, time off closes the hours it covers on the day ruler and the week.
+
+If your calendar already has an "Out of office" event on a calendar marked busy, it blocks every event type too; time off is for when it does not, or when you would rather not put it in your calendar.
+
+From the CLI: `calrs user time-off add <EMAIL> --from 2026-12-21 --to 2026-12-24 --label "Ski"` (see the [CLI reference](./cli-reference.md#calrs-user)).
+
 ## Public URLs
 
 ![Public profile page](images/profile.png)

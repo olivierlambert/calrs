@@ -552,8 +552,17 @@ fn week_view_lays_out_the_week_on_one_hour_axis() {
     ];
     let busy = vec![(dt(2026, 11, 4, 0, 0), dt(2026, 11, 5, 0, 0))];
     let now = wednesday_noon();
-    let ctx = ov::week_context("en", &hours, &bookings, &busy, paris, now, WeekStart::Mon)
-        .expect("a week with open hours is drawn");
+    let ctx = ov::week_context(
+        "en",
+        &hours,
+        &bookings,
+        &busy,
+        &[],
+        paris,
+        now,
+        WeekStart::Mon,
+    )
+    .expect("a week with open hours is drawn");
     let day = |i: usize| {
         ctx.get_attr("days")
             .unwrap()
@@ -618,8 +627,17 @@ fn week_view_lays_out_the_week_on_one_hour_axis() {
     assert_eq!(attr(&ctx, "total"), "2 h 15 min booked");
 
     // A Sunday week start puts Sunday first.
-    let sunday_first =
-        ov::week_context("en", &hours, &bookings, &busy, paris, now, WeekStart::Sun).unwrap();
+    let sunday_first = ov::week_context(
+        "en",
+        &hours,
+        &bookings,
+        &busy,
+        &[],
+        paris,
+        now,
+        WeekStart::Sun,
+    )
+    .unwrap();
     let first = sunday_first
         .get_attr("days")
         .unwrap()
@@ -628,7 +646,7 @@ fn week_view_lays_out_the_week_on_one_hour_axis() {
     assert_eq!(attr(&first, "weekday"), "Sun");
 
     // Nothing open, booked or in the calendar: no week view at all.
-    assert!(ov::week_context("en", &[], &[], &[], paris, now, WeekStart::Mon).is_none());
+    assert!(ov::week_context("en", &[], &[], &[], &[], paris, now, WeekStart::Mon).is_none());
 }
 
 #[test]
