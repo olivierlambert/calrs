@@ -190,7 +190,7 @@ Patch release for the 1.23 line. No migrations, no configuration change.
 
 ### Fixed
 
-- **A booking is refused when its availability cannot be read** - Under heavy load, several booking submissions arriving at once could exhaust the database connections, and a busy time that could not be read in time counted as free, so a booking could land on a time the host was busy. Now, when the calendar, existing bookings, working hours, date overrides, the booking window or a required resource cannot be read, the booking is refused with the usual "please try again" page and nothing is created. This covers new bookings on every page (personal, team round robin and collective, group links, legacy links), guest reschedules, and approvals from the dashboard or the email link. Slot pages keep showing times as before.
+- **A booking is refused when its availability cannot be read** (#390) - Under heavy load an availability read could fail, and the booking was then accepted as if the host were free. It is now refused with a try-again page and nothing is created. This covers the calendar, existing bookings, working hours, team members, date overrides, the booking window and required resources, for new bookings on every page (personal, team round robin and collective, group links, legacy links), guest reschedules, and approvals from the dashboard or the email link. `calrs booking create` also stops with an error when a required resource cannot be checked. Slot pages keep showing times as before.
 
 ## [1.23.1] - 2026-11-08
 
