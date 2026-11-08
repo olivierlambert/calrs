@@ -122,6 +122,8 @@ The client is intentionally minimal — enough to be useful, not a full RFC 4791
 
 **Multi-VEVENT sync:** CalDAV resources may contain multiple VEVENTs (parent with RRULE + modified instances with RECURRENCE-ID). The sync splits them and stores each as a separate row with a composite unique key `(uid, COALESCE(recurrence_id, ''))`.
 
+**Recurrence expansion (#376):** `rrule::occurrences_in()` is the one expansion every busy reader uses (slot engine lenient and strict, resources, troubleshoot, CLI, overview): it expands in the event's zone over the window widened by two days, converts, then clips in the host's zone. `expand_rrule` starts at the window rather than DTSTART (daily/weekly skip ahead arithmetically and count what they skip for `COUNT`; monthly skips unless it has a `COUNT`), capped at `MAX_PERIODS` periods per window.
+
 ---
 
 ## Authentication & authorization

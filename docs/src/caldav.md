@@ -94,6 +94,8 @@ Some CalDAV servers (notably BlueMind) bundle recurring events and their modifie
 - **Modified instances** have a RECURRENCE-ID and are stored alongside the parent with a composite unique key `(uid, recurrence_id)`
 - This ensures modified occurrences correctly block (or free) availability
 
+Recurring events are expanded over the window asked for, however long ago the series started: a daily stand-up created years ago still blocks today. Supported rules are `DAILY`, `WEEKLY` and `MONTHLY`, with `INTERVAL`, `UNTIL`, `COUNT`, `BYDAY` and `EXDATE`; cancelled occurrences count toward `COUNT`, as RFC 5545 says.
+
 ## CalDAV write-back
 
 When a booking is confirmed, calrs can automatically push it to your CalDAV calendar as a VEVENT. When a booking is cancelled, the event is deleted.

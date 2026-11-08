@@ -529,31 +529,21 @@ pub(crate) fn expand_recurring_into_busy(
     window_end: NaiveDateTime,
     host_tz: Tz,
 ) -> Vec<(NaiveDateTime, NaiveDateTime)> {
-    let mut result = Vec::new();
-    for (s, e, rrule_str, raw_ical, event_tz) in recurring {
-        if let (Some(ev_start), Some(ev_end)) = (parse_ical_datetime(s), parse_ical_datetime(e)) {
-            let exdates = raw_ical
-                .as_deref()
-                .map(|raw| crate::rrule::extract_exdates(raw, event_tz.as_deref()))
-                .unwrap_or_default();
-            // Expand RRULE in the event's own timezone (correct for DST)
-            let occurrences = crate::rrule::expand_rrule(
-                ev_start,
-                ev_end,
+    recurring
+        .iter()
+        .flat_map(|(s, e, rrule_str, raw_ical, event_tz)| {
+            crate::rrule::occurrences_in(
+                s,
+                e,
                 rrule_str,
-                &exdates,
+                raw_ical.as_deref(),
+                event_tz.as_deref(),
                 window_start,
                 window_end,
-            );
-            // Convert each occurrence to host timezone
-            for (os, oe) in occurrences {
-                let cs = convert_event_to_tz(os, event_tz.as_deref(), host_tz);
-                let ce = convert_event_to_tz(oe, event_tz.as_deref(), host_tz);
-                result.push((cs, ce));
-            }
-        }
-    }
-    result
+                host_tz,
+            )
+        })
+        .collect()
 }
 
 /// Fetch busy times for a specific user (events from their calendars, their
@@ -2864,29 +2854,22 @@ pub(super) async fn troubleshoot(
         .and_hms_opt(23, 59, 59)
         .unwrap_or(target_date.and_time(NaiveTime::MIN));
     for (s, e, rrule_str, raw_ical, summary, cal_name, event_tz) in &recurring_events {
-        if let (Some(ev_start), Some(ev_end)) = (parse_ical_datetime(s), parse_ical_datetime(e)) {
-            let exdates = raw_ical
-                .as_deref()
-                .map(|raw| crate::rrule::extract_exdates(raw, event_tz.as_deref()))
-                .unwrap_or_default();
-            let occurrences = crate::rrule::expand_rrule(
-                ev_start,
-                ev_end,
-                rrule_str,
-                &exdates,
-                ts_window_start,
-                ts_window_end,
-            );
-            for (os, oe) in occurrences {
-                let cs = convert_event_to_tz(os, event_tz.as_deref(), host_tz);
-                let ce = convert_event_to_tz(oe, event_tz.as_deref(), host_tz);
-                busy_events.push((
-                    cs.format("%Y-%m-%dT%H:%M:%S").to_string(),
-                    ce.format("%Y-%m-%dT%H:%M:%S").to_string(),
-                    summary.clone(),
-                    cal_name.clone(),
-                ));
-            }
+        for (cs, ce) in crate::rrule::occurrences_in(
+            s,
+            e,
+            rrule_str,
+            raw_ical.as_deref(),
+            event_tz.as_deref(),
+            ts_window_start,
+            ts_window_end,
+            host_tz,
+        ) {
+            busy_events.push((
+                cs.format("%Y-%m-%dT%H:%M:%S").to_string(),
+                ce.format("%Y-%m-%dT%H:%M:%S").to_string(),
+                summary.clone(),
+                cal_name.clone(),
+            ));
         }
     }
 

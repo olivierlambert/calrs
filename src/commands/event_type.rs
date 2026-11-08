@@ -571,29 +571,20 @@ pub async fn run(pool: &SqlitePool, cmd: EventTypeCommands) -> Result<()> {
             .unwrap_or_default();
 
             for (s, e, rrule_str, raw_ical, event_tz) in &recurring {
-                if let (Some(ev_start), Some(ev_end)) =
-                    (parse_ical_datetime(s), parse_ical_datetime(e))
-                {
-                    let exdates = raw_ical
-                        .as_deref()
-                        .map(|raw| crate::rrule::extract_exdates(raw, event_tz.as_deref()))
-                        .unwrap_or_default();
-                    let occurrences = crate::rrule::expand_rrule(
-                        ev_start,
-                        ev_end,
-                        rrule_str,
-                        &exdates,
-                        now,
-                        window_end_dt,
-                    );
-                    for (os, oe) in occurrences {
-                        let cs = convert_event_to_tz(os, event_tz.as_deref(), host_tz);
-                        let ce = convert_event_to_tz(oe, event_tz.as_deref(), host_tz);
-                        busy_events.push((
-                            cs.format("%Y-%m-%dT%H:%M:%S").to_string(),
-                            ce.format("%Y-%m-%dT%H:%M:%S").to_string(),
-                        ));
-                    }
+                for (cs, ce) in crate::rrule::occurrences_in(
+                    s,
+                    e,
+                    rrule_str,
+                    raw_ical.as_deref(),
+                    event_tz.as_deref(),
+                    now,
+                    window_end_dt,
+                    host_tz,
+                ) {
+                    busy_events.push((
+                        cs.format("%Y-%m-%dT%H:%M:%S").to_string(),
+                        ce.format("%Y-%m-%dT%H:%M:%S").to_string(),
+                    ));
                 }
             }
 
