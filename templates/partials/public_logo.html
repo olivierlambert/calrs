@@ -1,12 +1,23 @@
+{#- Only the logos that exist are rendered, so a page without a logo makes no
+    request for one, and one with a single logo shows it in both themes. With
+    both, `html.dark` (set in <head> before first paint) picks one, and the
+    hidden one is lazy, so it is not fetched until the theme shows it. A
+    dark-only logo shows in the dark theme only: made for a dark background,
+    it may not read on a light page. -#}
+{% set logo = company_logo() %}
+{% if logo.light or logo.dark %}
 <script>
-// Both logos are in the page, and the browser loads the hidden one too. A
-// failed image is marked and never shown; the block goes away only when none
-// is left, so a hiccup on the image the visitor is not looking at cannot
-// blank the one they are.
+// When the image the visitor is looking at fails, the block goes away rather
+// than leave a broken image or an empty link.
 function calrsLogoFailed(img) {
+  var shown = getComputedStyle(img).display !== 'none';
   img.setAttribute('data-failed', '');
   var box = img.closest('.logo');
-  if (box && !box.querySelector('img:not([data-failed])')) box.style.display = 'none';
+  if (box && shown) box.style.display = 'none';
 }
 </script>
-<div class="logo">{% if company_link %}<a href="{{ company_link }}" target="_blank" rel="noopener noreferrer">{% endif %}{% set logo_alt = t("admin-logo") if company_link else "" %}<img class="logo-light" src="/logo" alt="{{ logo_alt }}" onerror="calrsLogoFailed(this)"><img class="logo-dark" src="/logo/dark" alt="{{ logo_alt }}" onerror="calrsLogoFailed(this)">{% if company_link %}</a>{% endif %}</div>
+{#- A linked logo is the link's whole content, so it is named after the site it
+    opens; an unlinked one is decoration. -#}
+{% set logo_alt = (company_link | split("/"))[2] if company_link else "" %}
+<div class="logo{% if not logo.light %} logo-dark-only{% endif %}">{% if company_link %}<a href="{{ company_link }}" target="_blank" rel="noopener noreferrer">{% endif %}{% if logo.light %}<img{% if logo.dark %} class="logo-light"{% endif %} src="{{ logo.light }}" alt="{{ logo_alt }}" loading="lazy" onerror="calrsLogoFailed(this)">{% endif %}{% if logo.dark %}<img class="logo-dark" src="{{ logo.dark }}" alt="{{ logo_alt }}" loading="lazy" onerror="calrsLogoFailed(this)">{% endif %}{% if company_link %}</a>{% endif %}</div>
+{% endif %}

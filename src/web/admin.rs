@@ -2988,13 +2988,21 @@ async fn save_logo(
         if bytes.len() > LOGO_MAX_BYTES || detect_image_ext(&bytes).is_none() {
             return admin_upload_refused(reason);
         }
-        // Written beside the target and renamed over it, so a page loading
-        // the logo meanwhile gets the old file or the new one, never half.
-        let staged = state.data_dir.join(format!("{file}.upload"));
-        let saved = match tokio::fs::write(&staged, &bytes).await {
-            Ok(()) => tokio::fs::rename(&staged, state.data_dir.join(file)).await,
-            Err(e) => Err(e),
-        };
+        // Written beside the target under a name of its own, flushed to disk,
+        // then renamed over it: a page loading the logo meanwhile gets the old
+        // file or the new one, never half, and two uploads at once cannot
+        // write into the same temporary file.
+        let staged = state
+            .data_dir
+            .join(format!("{file}.{}.upload", uuid::Uuid::new_v4()));
+        let saved = async {
+            let mut out = tokio::fs::File::create(&staged).await?;
+            tokio::io::AsyncWriteExt::write_all(&mut out, &bytes).await?;
+            out.sync_all().await?;
+            drop(out);
+            tokio::fs::rename(&staged, state.data_dir.join(file)).await
+        }
+        .await;
         if let Err(e) = saved {
             let _ = tokio::fs::remove_file(&staged).await;
             tracing::error!(error = %e, file, "failed to save the logo");

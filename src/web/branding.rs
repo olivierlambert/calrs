@@ -605,17 +605,20 @@ pub(super) const LOGO_FILE: &str = "logo.png";
 /// File the optional dark-theme logo is stored under.
 pub(super) const LOGO_DARK_FILE: &str = "logo-dark.png";
 
-/// Logos are revalidated on every page view rather than cached for a time:
-/// the answer is cheap (a 304 from the file's metadata) and a new upload shows
-/// at once.
-const LOGO_CACHE_CONTROL: &str = "no-cache";
+/// Logos may be reused for five minutes, then are revalidated (a 304 from the
+/// file's metadata when unchanged). Pages link them with a `?v=` version, so
+/// a new upload changes the URL and shows at once; the short lifetime only
+/// bounds what a page loaded before the change keeps showing.
+const LOGO_CACHE_CONTROL: &str = "public, max-age=300, must-revalidate";
 
-/// `/logo`: the light logo, else the dark one when that is all there is.
+/// `/logo`: the light logo. It never stands in for a missing light logo with
+/// the dark one, which is made for a dark background and may not read on a
+/// light page.
 pub(super) async fn serve_logo(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> impl IntoResponse {
-    serve_logo_files(&state, &headers, &[LOGO_FILE, LOGO_DARK_FILE]).await
+    serve_logo_files(&state, &headers, &[LOGO_FILE]).await
 }
 
 /// `/logo/dark`: the dark logo, else the light one, so a single upload shows
@@ -627,10 +630,10 @@ pub(super) async fn serve_logo_dark(
     serve_logo_files(&state, &headers, &[LOGO_DARK_FILE, LOGO_FILE]).await
 }
 
-/// The validator of a stored logo: which file, its size and its modification
-/// time. The file is part of it because a route that falls back serves the
-/// other file, and uploading the missing logo must change what it answers.
-fn logo_etag(file: &str, meta: &std::fs::Metadata) -> String {
+/// The version of a stored logo: which file, its size and its modification
+/// time. The file is part of it because `/logo/dark` may serve the light
+/// file, and uploading the dark logo must change what it answers.
+fn logo_version(file: &str, meta: &std::fs::Metadata) -> String {
     let modified = meta
         .modified()
         .ok()
@@ -638,13 +641,36 @@ fn logo_etag(file: &str, meta: &std::fs::Metadata) -> String {
         .map(|d| d.as_nanos())
         .unwrap_or_default();
     let stem = file.trim_end_matches(".png");
-    format!("\"{stem}-{:x}-{modified:x}\"", meta.len())
+    format!("{stem}-{:x}-{modified:x}", meta.len())
+}
+
+/// The URLs of the uploaded logos, light then dark, each `None` when that
+/// logo is not uploaded, with a `?v=` version so a new upload changes the URL.
+/// Templates read it through the `company_logo()` global, so a page renders an
+/// image only for a logo that exists: no request for a missing one, and no
+/// second URL for the same bytes when there is a single logo.
+pub(super) fn company_logo_urls(data_dir: &std::path::Path) -> (Option<String>, Option<String>) {
+    let url = |route: &str, file: &str| {
+        let meta = std::fs::metadata(data_dir.join(file)).ok()?;
+        Some(format!("{route}?v={}", logo_version(file, &meta)))
+    };
+    (url("/logo", LOGO_FILE), url("/logo/dark", LOGO_DARK_FILE))
+}
+
+/// Registers `company_logo()`, which returns `{light, dark}` as given by
+/// [`company_logo_urls`] (a missing one is none).
+pub(super) fn register_company_logo(env: &mut minijinja::Environment<'static>, data_dir: PathBuf) {
+    env.add_function("company_logo", move || {
+        // Built from a fixed route and a hex version only, so nothing in them
+        // needs escaping; marked safe so the `/` stays a `/` in the page.
+        let (light, dark) = company_logo_urls(&data_dir);
+        let safe = |url: Option<String>| url.map(minijinja::Value::from_safe_string);
+        minijinja::context! { light => safe(light), dark => safe(dark) }
+    });
 }
 
 /// Serves the first of `files` that exists in the data directory, 404 when
-/// none does. Browsers revalidate on every page (`no-cache` with an ETag), so
-/// an upload or a removal shows at once instead of after an hour, which
-/// matters most for a route whose answer depends on another file existing.
+/// none does, with an ETag for revalidation.
 async fn serve_logo_files(
     state: &AppState,
     headers: &HeaderMap,
@@ -655,7 +681,7 @@ async fn serve_logo_files(
         let Ok(meta) = tokio::fs::metadata(&path).await else {
             continue;
         };
-        let etag = logo_etag(file, &meta);
+        let etag = format!("\"{}\"", logo_version(file, &meta));
         let fresh = headers
             .get(axum::http::header::IF_NONE_MATCH)
             .and_then(|value| value.to_str().ok())

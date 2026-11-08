@@ -932,12 +932,12 @@ async fn logo_body(app: &Router, uri: &str) -> Option<Vec<u8>> {
 }
 
 #[tokio::test]
-async fn each_logo_route_falls_back_to_the_other_logo() {
+async fn the_dark_route_falls_back_to_the_light_logo_not_the_reverse() {
     let (app, data_dir) = router_with_data_dir().await;
     let light = png_of(32);
     let dark = png_of(64);
 
-    // Neither uploaded: both 404, so the page's `onerror` hides the block.
+    // Neither uploaded: both 404 (pages then render no logo at all).
     assert_eq!(logo_body(&app, "/logo").await, None);
     assert_eq!(logo_body(&app, "/logo/dark").await, None);
 
@@ -951,9 +951,10 @@ async fn each_logo_route_falls_back_to_the_other_logo() {
     assert_eq!(logo_body(&app, "/logo").await, Some(light.clone()));
     assert_eq!(logo_body(&app, "/logo/dark").await, Some(dark.clone()));
 
-    // Only the dark logo: the light route serves it rather than nothing.
+    // Only the dark logo: the light route does not stand in with it, since a
+    // mark made for a dark background may not read on a light page.
     std::fs::remove_file(data_dir.join(LOGO_FILE)).unwrap();
-    assert_eq!(logo_body(&app, "/logo").await, Some(dark.clone()));
+    assert_eq!(logo_body(&app, "/logo").await, None);
     assert_eq!(logo_body(&app, "/logo/dark").await, Some(dark));
 }
 
@@ -1052,41 +1053,100 @@ async fn the_admin_page_has_a_control_per_logo() {
     )
     .await;
     assert!(page.contains("action=\"/dashboard/admin/logo/dark/delete\""));
-    assert!(page.contains("src=\"/logo/dark\""), "dark preview shown");
     assert!(
-        !page.contains("src=\"/logo\""),
+        page.contains("src=\"/logo/dark?v=logo-dark-"),
+        "dark preview shown"
+    );
+    assert!(
+        !page.contains("src=\"/logo?v="),
         "no light preview without a light logo"
     );
 }
 
+/// The logo block of `/u/testuser` on `app`, or `None` when it renders none.
+async fn logo_block(app: &Router) -> Option<String> {
+    let page = body_string(app.clone().oneshot(get("/u/testuser")).await.unwrap()).await;
+    let start = page.find("<div class=\"logo")?;
+    let end = start + page[start..].find("</div>")?;
+    Some(page[start..end].to_string())
+}
+
+/// A page renders an image only for a logo that exists, so it never asks for
+/// a missing one, and never fetches the same bytes under a second URL.
 #[tokio::test]
-async fn public_pages_carry_both_logos_for_the_theme_to_pick() {
-    let (app, _, _, _) = setup_test_app().await;
+async fn public_pages_render_only_the_logos_that_exist() {
+    let (app, data_dir, _) = branded_app_with(None).await;
+    let page = body_string(app.clone().oneshot(get("/u/testuser")).await.unwrap()).await;
+    assert!(!page.contains("src=\"/logo"), "no logo, no request");
+    assert!(!page.contains("calrsLogoFailed"), "nor its script");
+    assert!(logo_block(&app).await.is_none());
+
+    // Light only: one image, no theme class, so it shows in both themes.
+    std::fs::write(data_dir.join(LOGO_FILE), png_of(32)).unwrap();
+    let block = logo_block(&app).await.unwrap();
+    assert!(block.starts_with("<div class=\"logo\">"), "{block}");
+    assert!(block.contains("<img src=\"/logo?v=logo-"), "{block}");
+    assert!(!block.contains("/logo/dark"), "{block}");
+
+    // Both: the theme picks one, and the hidden one is lazy.
+    std::fs::write(data_dir.join(LOGO_DARK_FILE), png_of(64)).unwrap();
+    let block = logo_block(&app).await.unwrap();
+    assert!(
+        block.contains("<img class=\"logo-light\" src=\"/logo?v="),
+        "{block}"
+    );
+    assert!(
+        block.contains("<img class=\"logo-dark\" src=\"/logo/dark?v=logo-dark-"),
+        "{block}"
+    );
+    assert_eq!(block.matches("loading=\"lazy\"").count(), 2, "{block}");
+
+    // Dark only: shown in the dark theme, nothing in the light one.
+    std::fs::remove_file(data_dir.join(LOGO_FILE)).unwrap();
+    let block = logo_block(&app).await.unwrap();
+    assert!(
+        block.starts_with("<div class=\"logo logo-dark-only\">"),
+        "{block}"
+    );
+    assert!(!block.contains("src=\"/logo?"), "{block}");
     let page = body_string(app.oneshot(get("/u/testuser")).await.unwrap()).await;
-    assert!(page.contains("class=\"logo-light\" src=\"/logo\""));
-    assert!(page.contains("class=\"logo-dark\" src=\"/logo/dark\""));
+    assert!(page.contains("html:not(.dark) .logo-dark-only { display: none; }"));
     assert!(page.contains("html.dark .logo .logo-dark { display: inline; }"));
 }
 
-/// Both images load whatever the theme, so one failing must not hide the
-/// block while the other shows: each image marks only itself, and the block
-/// goes only when none is left.
+/// A new upload changes the URL pages link, so it shows at once even while
+/// the old image is still fresh in a cache.
 #[tokio::test]
-async fn one_failed_logo_image_does_not_hide_the_other() {
-    let (app, _, _, _) = setup_test_app().await;
+async fn a_new_upload_changes_the_logo_url() {
+    let (app, data_dir, _) = branded_app_with(None).await;
+    std::fs::write(data_dir.join(LOGO_FILE), png_of(32)).unwrap();
+    let before = logo_block(&app).await.unwrap();
+    std::fs::write(data_dir.join(LOGO_FILE), png_of(48)).unwrap();
+    let after = logo_block(&app).await.unwrap();
+    assert_ne!(before, after);
+}
+
+/// When the image the visitor is looking at fails, the block goes away.
+#[tokio::test]
+async fn a_failed_logo_hides_the_block() {
+    let (app, data_dir, _) = branded_app_with(None).await;
+    std::fs::write(data_dir.join(LOGO_FILE), png_of(32)).unwrap();
+    std::fs::write(data_dir.join(LOGO_DARK_FILE), png_of(64)).unwrap();
     let page = body_string(app.oneshot(get("/u/testuser")).await.unwrap()).await;
-    assert!(
-        !page.contains("this.closest('.logo').style.display"),
-        "no image may hide the whole block on its own"
-    );
     assert_eq!(page.matches("onerror=\"calrsLogoFailed(this)\"").count(), 2);
-    assert!(page.contains("box.querySelector('img:not([data-failed])')"));
+    assert!(page.contains("var shown = getComputedStyle(img).display !== 'none';"));
+    assert!(page.contains("if (box && shown) box.style.display = 'none';"));
     assert!(page.contains(".logo img[data-failed], html.dark .logo img[data-failed]"));
 }
 
 /// An admin session on an instance with the Nord theme and a company link,
 /// seeded with the test user's public pages.
 async fn branded_app() -> (Router, TestDataDir, String) {
+    branded_app_with(Some("https://example.com/about")).await
+}
+
+/// [`branded_app`] with the given company link, or none.
+async fn branded_app_with(company_link: Option<&str>) -> (Router, TestDataDir, String) {
     let pool = setup_test_db().await;
     let (user_id, _, _) = seed_test_data(&pool).await;
     sqlx::query("UPDATE users SET role = 'admin' WHERE id = ?")
@@ -1094,12 +1154,11 @@ async fn branded_app() -> (Router, TestDataDir, String) {
         .execute(&pool)
         .await
         .unwrap();
-    sqlx::query(
-        "UPDATE auth_config SET theme = 'nord', company_link = 'https://example.com' WHERE id = 'singleton'",
-    )
-    .execute(&pool)
-    .await
-    .unwrap();
+    sqlx::query("UPDATE auth_config SET theme = 'nord', company_link = ? WHERE id = 'singleton'")
+        .bind(company_link)
+        .execute(&pool)
+        .await
+        .unwrap();
     let session = uuid::Uuid::new_v4().to_string();
     sqlx::query(
         "INSERT INTO sessions (id, user_id, expires_at) VALUES (?, ?, '2999-01-01 00:00:00')",
@@ -1114,19 +1173,25 @@ async fn branded_app() -> (Router, TestDataDir, String) {
     (router, data_dir, session)
 }
 
-/// A linked logo is the link's only content, so it needs a name; without a
-/// link it is decoration and keeps an empty one.
+/// A linked logo is the link's only content, so it is named after the site
+/// the link opens; without a link it is decoration and keeps an empty name.
 #[tokio::test]
-async fn a_linked_logo_has_a_text_alternative() {
-    let (branded, _, _) = branded_app().await;
-    let page = body_string(branded.oneshot(get("/u/testuser")).await.unwrap()).await;
-    assert!(page.contains("example.com\" target=\"_blank\""), "{page}");
-    assert!(page.contains("class=\"logo-light\" src=\"/logo\" alt=\"Company logo\""));
-    assert!(page.contains("class=\"logo-dark\" src=\"/logo/dark\" alt=\"Company logo\""));
+async fn a_linked_logo_is_named_after_its_site() {
+    let (branded, data_dir, _) = branded_app().await;
+    std::fs::write(data_dir.join(LOGO_FILE), png_of(32)).unwrap();
+    std::fs::write(data_dir.join(LOGO_DARK_FILE), png_of(64)).unwrap();
+    let block = logo_block(&branded).await.unwrap();
+    assert!(
+        block.contains("example.com&#x2f;about\" target=\"_blank\""),
+        "{block}"
+    );
+    assert_eq!(block.matches("alt=\"example.com\"").count(), 2, "{block}");
 
-    let (plain, _, _, _) = setup_test_app().await;
-    let page = body_string(plain.oneshot(get("/u/testuser")).await.unwrap()).await;
-    assert!(page.contains("class=\"logo-light\" src=\"/logo\" alt=\"\""));
+    let (plain, data_dir, _) = branded_app_with(None).await;
+    std::fs::write(data_dir.join(LOGO_FILE), png_of(32)).unwrap();
+    let block = logo_block(&plain).await.unwrap();
+    assert!(!block.contains("<a "), "{block}");
+    assert!(block.contains("alt=\"\""), "{block}");
 }
 
 #[test]
@@ -1175,15 +1240,18 @@ async fn the_admin_previews_follow_the_instance_theme() {
     assert!(page.contains("background: #2e3440; text-align: center;"));
 }
 
-/// Logos are revalidated on each page view, so a new upload, or the dark
-/// logo a fallback route was standing in for, shows at once.
+/// Logos are cached briefly and revalidated, and the validator changes when
+/// the dark logo arrives in place of the light one `/logo/dark` stood in with.
 #[tokio::test]
 async fn logos_are_revalidated_and_change_with_the_files() {
     let (app, data_dir) = router_with_data_dir().await;
     std::fs::write(data_dir.join(LOGO_FILE), png_of(32)).unwrap();
     let response = app.clone().oneshot(get("/logo/dark")).await.unwrap();
     assert_eq!(response.status(), 200);
-    assert_eq!(response.headers()["cache-control"], "no-cache");
+    assert_eq!(
+        response.headers()["cache-control"],
+        "public, max-age=300, must-revalidate"
+    );
     let fallback_tag = response.headers()["etag"].to_str().unwrap().to_string();
 
     // The same validator back: nothing to send.
@@ -1288,10 +1356,12 @@ async fn only_an_admin_with_the_csrf_token_can_upload_a_dark_logo() {
         .unwrap();
     assert_eq!(location(&response), "/dashboard/admin");
     assert_eq!(std::fs::read(data_dir.join(LOGO_DARK_FILE)).unwrap(), png);
-    assert!(
-        !data_dir.join(format!("{LOGO_DARK_FILE}.upload")).exists(),
-        "nothing staged left behind"
-    );
+    let leftovers: Vec<_> = std::fs::read_dir(&*data_dir)
+        .unwrap()
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| entry.file_name().to_string_lossy().ends_with(".upload"))
+        .collect();
+    assert!(leftovers.is_empty(), "nothing staged left behind");
 }
 
 #[tokio::test]

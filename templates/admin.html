@@ -1455,7 +1455,7 @@
      instance theme, whatever theme this dashboard is in. #}
   {% if has_logo %}
   <div style="margin-bottom: 1rem; padding: 1rem; border: 1px solid var(--border); border-radius: var(--radius); background: {{ logo_bg_light }}; text-align: center;">
-    <img src="/logo" alt="{{ t('admin-logo-light') }}" style="max-height: 80px; max-width: 280px; object-fit: contain;">
+    <img src="{{ company_logo().light }}" alt="{{ t('admin-logo-light') }}" style="max-height: 80px; max-width: 280px; object-fit: contain;">
   </div>
   {% endif %}
   <div style="display: flex; gap: 0.75rem; align-items: flex-start; flex-wrap: wrap;">
@@ -1479,7 +1479,7 @@
   <p style="font-size: 0.8rem; color: var(--text-muted); margin: 0 0 0.5rem;">{{ t("admin-logo-dark-help") }}</p>
   {% if has_dark_logo %}
   <div style="margin-bottom: 1rem; padding: 1rem; border: 1px solid var(--border); border-radius: var(--radius); background: {{ logo_bg_dark }}; text-align: center;">
-    <img src="/logo/dark" alt="{{ t('admin-logo-dark') }}" style="max-height: 80px; max-width: 280px; object-fit: contain;">
+    <img src="{{ company_logo().dark }}" alt="{{ t('admin-logo-dark') }}" style="max-height: 80px; max-width: 280px; object-fit: contain;">
   </div>
   {% endif %}
   <div style="display: flex; gap: 0.75rem; align-items: flex-start; flex-wrap: wrap;">

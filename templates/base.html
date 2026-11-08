@@ -371,12 +371,13 @@
 
     .logo { text-align: center; margin-bottom: 1.5rem; }
     .logo img { max-height: 80px; max-width: 280px; object-fit: contain; }
-    /* Light and dark company logos are both in the page; the `html.dark`
-       class set in <head> before first paint picks one, so the theme toggle
-       swaps them without a flash. */
+    /* With both company logos uploaded, the `html.dark` class set in <head>
+       before first paint picks one, so the theme toggle swaps them without a
+       flash. A dark-only logo shows in the dark theme only. */
     .logo .logo-dark { display: none; }
     html.dark .logo .logo-light { display: none; }
     html.dark .logo .logo-dark { display: inline; }
+    html:not(.dark) .logo-dark-only { display: none; }
     .logo img[data-failed], html.dark .logo img[data-failed] { display: none; }
 
     .powered {
