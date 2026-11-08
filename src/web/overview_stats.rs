@@ -639,7 +639,7 @@ pub(super) async fn fetch_calendar_busy(
     );
     let single: Vec<(String, String, Option<String>)> = sqlx::query_as(&format!(
         "SELECT e.start_at, e.end_at, e.timezone {scope}
-           AND (e.rrule IS NULL OR e.rrule = '')
+           AND (e.rrule IS NULL OR e.rrule = '') AND e.rdate = 0
            AND e.start_at <= ? AND e.end_at >= ?"
     ))
     .bind(user_id)
@@ -662,8 +662,8 @@ pub(super) async fn fetch_calendar_busy(
         .collect();
     let recurring: Vec<(String, String, String, Option<String>, Option<String>)> =
         sqlx::query_as(&format!(
-            "SELECT e.start_at, e.end_at, e.rrule, e.raw_ical, e.timezone {scope}
-               AND e.rrule IS NOT NULL AND e.rrule != '' AND e.start_at <= ?"
+            "SELECT e.start_at, e.end_at, COALESCE(e.rrule, ''), e.raw_ical, e.timezone {scope}
+               AND ((e.rrule IS NOT NULL AND e.rrule != '') OR e.rdate = 1) AND e.start_at <= ?"
         ))
         .bind(user_id)
         .bind(user_id)

@@ -236,6 +236,22 @@ pub struct BookingAnswer {
     pub in_calendar: bool,
     /// When the booking form was submitted, UTC (`2026-11-10T09:00:00Z`).
     pub answered_at: String,
+    /// A consent ticked through the REST API: the host who attested it, not
+    /// the guest. `None` for every answer the guest gave on the form.
+    pub attested_by: Option<Attestation>,
+}
+
+/// Who recorded a consent on the guest's behalf through the REST API, and
+/// with which credential: stored on the answer row, the consent evidence.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Attestation {
+    pub user_id: String,
+    /// The user's name when they attested it.
+    pub name: String,
+    /// `api_token` (a personal access token) or `oauth` (an OAuth application).
+    pub via: String,
+    /// The personal access token's id, or the OAuth client's id.
+    pub credential_id: String,
 }
 
 /// Who reads an answer: a consent reads "Agreed" to the host and "You

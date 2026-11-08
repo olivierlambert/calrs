@@ -423,6 +423,47 @@ async fn public_profile_trailing_slash_head_preserves_encoded_path_and_query() {
     assert!(body_string(response).await.is_empty());
 }
 
+/// #388: a slot page never waits for another task's sync of the host's
+/// source (the background sync, the dashboard's Sync button): it serves the
+/// cache that sync is refreshing, and does not sync the source a second time.
+#[tokio::test]
+async fn slots_page_does_not_wait_for_a_source_being_synced() {
+    let (app, pool, _, _) = setup_test_app().await;
+    let account: String = sqlx::query_scalar(
+        "SELECT a.id FROM accounts a JOIN users u ON u.id = a.user_id WHERE u.username = 'testuser'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let source = uuid::Uuid::new_v4().to_string();
+    // Stale, with credentials that cannot be decrypted: a sync attempt would
+    // fail and be recorded.
+    sqlx::query("INSERT INTO caldav_sources (id, account_id, name, url, username, password_enc) VALUES (?, ?, 'busy', 'https://dav.example.com/', 'u', 'deadbeef')")
+        .bind(&source)
+        .bind(&account)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let lock = crate::commands::sync::source_lock(&source).await;
+    let _being_synced = lock.lock().await;
+
+    let response = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        app.oneshot(get("/u/testuser/test-meeting")),
+    )
+    .await
+    .expect("the slot page waited for the source's sync")
+    .unwrap();
+    assert_eq!(response.status(), 200);
+    let error: Option<String> =
+        sqlx::query_scalar("SELECT last_sync_error_at FROM caldav_sources WHERE id = ?")
+            .bind(&source)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(error, None, "the page did not sync the source itself");
+}
+
 #[tokio::test]
 async fn public_slots_page_returns_200() {
     let (app, _, _, _) = setup_test_app().await;
