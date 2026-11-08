@@ -60,7 +60,20 @@ pub struct EwsSyncDelta {
 }
 
 /// Parse a `FindFolderResponse` body into a vector of calendar folders.
+///
+/// The answer must be a successful `FindFolderResponseMessage` with a
+/// `RootFolder`: anything else is an error, never an empty list, since the
+/// sync drops calendars a listing no longer shows.
 pub fn parse_find_folder_response(xml: &str) -> Result<Vec<EwsCalendarFolder>> {
+    let message = find_first_open_tag(xml, "FindFolderResponseMessage").ok_or_else(|| {
+        anyhow::anyhow!("EWS FindFolder reply holds no FindFolderResponseMessage")
+    })?;
+    if attr(&message, "ResponseClass").as_deref() != Some("Success") {
+        anyhow::bail!("EWS FindFolder did not succeed");
+    }
+    if find_first_open_tag(xml, "RootFolder").is_none() {
+        anyhow::bail!("EWS FindFolder reply holds no RootFolder");
+    }
     let mut out = Vec::new();
     for block in collect_blocks(xml, "CalendarFolder") {
         let id_tag = find_first_open_tag(&block, "FolderId");
@@ -342,9 +355,26 @@ mod tests {
         assert_eq!(page(""), None);
     }
 
+    /// A reply that is not a successful FindFolder (an empty body, a
+    /// sign-in page, an error class, a message without its RootFolder) is an
+    /// error, never "no calendars".
+    #[test]
+    fn find_folder_refuses_anything_but_a_successful_listing() {
+        for xml in [
+            "",
+            "<html><body>Sign in</body></html>",
+            r#"<m:FindFolderResponseMessage ResponseClass="Error"><m:RootFolder/></m:FindFolderResponseMessage>"#,
+            r#"<m:FindFolderResponseMessage ResponseClass="Success"></m:FindFolderResponseMessage>"#,
+        ] {
+            assert!(parse_find_folder_response(xml).is_err(), "{xml:?}");
+        }
+        let empty = r#"<m:FindFolderResponseMessage ResponseClass="Success"><m:RootFolder TotalItemsInView="0"><t:Folders/></m:RootFolder></m:FindFolderResponseMessage>"#;
+        assert!(parse_find_folder_response(empty).unwrap().is_empty());
+    }
+
     #[test]
     fn parses_find_folder_response() {
-        let xml = r#"<m:FindFolderResponseMessage>
+        let xml = r#"<m:FindFolderResponseMessage ResponseClass="Success">
   <m:RootFolder TotalItemsInView="1">
     <t:Folders>
       <t:CalendarFolder>

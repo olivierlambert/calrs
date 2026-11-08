@@ -151,8 +151,23 @@ pub async fn post_soap(
     if let Some(fault) = extract_soap_fault(&text) {
         bail!("{SOAP_FAULT_PREFIX}{fault}");
     }
+    check_soap_reply(status, &text, endpoint)?;
 
     Ok(text)
+}
+
+/// What is left to refuse once no SOAP fault was found: a 500 without one
+/// (an error page), or a success that is not a SOAP envelope at all (a
+/// sign-in page from a reverse proxy). Read as an empty answer, either would
+/// look like a mailbox with nothing in it.
+fn check_soap_reply(status: StatusCode, text: &str, endpoint: &str) -> Result<()> {
+    if !status.is_success() {
+        bail!("EWS request returned {status} for {endpoint}");
+    }
+    if !text.contains(":Envelope") && !text.contains("<Envelope") {
+        bail!("EWS request to {endpoint} returned a reply that is not a SOAP envelope");
+    }
+    Ok(())
 }
 
 /// Pull a human-readable error out of a SOAP fault response.
@@ -368,6 +383,18 @@ pub fn attr(tag_xml: &str, attr_name: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A 500 without a SOAP fault, or a 200 that is not a SOAP envelope (a
+    /// reverse proxy's sign-in page), is an error: read as an empty answer it
+    /// would look like a mailbox with nothing in it.
+    #[test]
+    fn a_reply_that_is_not_soap_is_an_error() {
+        let ok = "<s:Envelope><s:Body/></s:Envelope>";
+        assert!(check_soap_reply(StatusCode::OK, ok, "e").is_ok());
+        assert!(check_soap_reply(StatusCode::INTERNAL_SERVER_ERROR, ok, "e").is_err());
+        assert!(check_soap_reply(StatusCode::OK, "<html>Sign in</html>", "e").is_err());
+        assert!(check_soap_reply(StatusCode::OK, "", "e").is_err());
+    }
 
     #[test]
     fn extract_simple_tag_content() {
