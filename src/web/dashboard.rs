@@ -572,6 +572,11 @@ pub(super) async fn dashboard_bookings(
         Some("reschedule-pending") => {
             crate::i18n::translate(auth_user.lang, "bookings-error-reschedule-pending", None)
         }
+        Some("reschedule-resend-too-soon") => crate::i18n::translate(
+            auth_user.lang,
+            "bookings-error-reschedule-resend-too-soon",
+            None,
+        ),
         Some(_) => crate::i18n::translate(auth_user.lang, "bookings-error-generic", None),
         None => String::new(),
     };

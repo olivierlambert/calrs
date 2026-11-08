@@ -1467,19 +1467,27 @@ async fn api_oauth_grants_follow_the_admin_switch() {
     let uri = format!("/oauth/authorize?client_id={client}&redirect_uri={}&response_type=code&code_challenge={}&code_challenge_method=S256&resource={}", urlencoding::encode("http://127.0.0.1:4321/callback"), crate::oauth::hash("abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGH"), urlencoding::encode(API));
     let response = app.clone().oneshot(get(&uri)).await.unwrap();
     let request = super::oauth::request_cookie(&response);
-    app.clone()
-        .oneshot(
-            Request::builder()
-                .uri("/oauth/consent")
-                .header(
-                    "cookie",
-                    format!("__Host-calrs_session={member_session}; __Host-calrs_oauth={request}"),
-                )
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let page = body_string(
+        app.clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/oauth/consent")
+                    .header(
+                        "cookie",
+                        format!(
+                            "__Host-calrs_session={member_session}; __Host-calrs_oauth={request}"
+                        ),
+                    )
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap(),
+    )
+    .await;
+    // Said before the click: no Allow button, an explanation instead.
+    assert!(page.contains("only administrators can use on this instance"));
+    assert!(!page.contains("value=\"allow\""));
     let response = app
         .clone()
         .oneshot(super::oauth::consent_request(
@@ -1812,4 +1820,340 @@ async fn api_slots_skip_a_repeated_hour_as_the_booking_check_does() {
         .await;
         assert_eq!(status, StatusCode::CONFLICT, "{instant}: {body}");
     }
+}
+
+#[tokio::test]
+async fn the_daily_cap_holds_under_concurrency_and_refusals_give_their_place_back() {
+    let _lock = crate::test_support::ENV_LOCK.lock().await;
+    let _env = super::oauth::environment();
+    let (app, pool, _, et_id) = setup_test_app().await;
+    let owner = user_id(&pool, "testuser").await;
+    let token = pat(&pool, &owner, ALL).await;
+    let log_count = || async {
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM api_booking_log")
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+    };
+    // A refused booking (the time is not offered) gives its place back.
+    let (status, _) = send(
+        &app,
+        api_post(
+            "/api/v1/bookings",
+            &token,
+            &create_body(&et_id, &monday_at("08:00"), "early@test.com"),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(log_count().await, 0);
+
+    let now = Utc::now().timestamp();
+    for _ in 0..48 {
+        sqlx::query(
+            "INSERT INTO api_booking_log (user_id, booking_id, created_at) VALUES (?, 'x', ?)",
+        )
+        .bind(&owner)
+        .bind(now)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    // Two places left, ten requests at once on ten different times.
+    let mut requests = tokio::task::JoinSet::new();
+    for (i, time) in [
+        "09:00", "09:30", "10:00", "10:30", "11:00", "11:30", "12:00", "12:30", "13:00", "13:30",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let app = app.clone();
+        let request = api_post(
+            "/api/v1/bookings",
+            &token,
+            &create_body(&et_id, &monday_at(time), &format!("c{i}@test.com")),
+        );
+        requests.spawn(async move { app.oneshot(request).await.unwrap().status() });
+    }
+    let (mut created, mut capped) = (0, 0);
+    while let Some(status) = requests.join_next().await {
+        match status.unwrap() {
+            StatusCode::CREATED => created += 1,
+            StatusCode::TOO_MANY_REQUESTS => capped += 1,
+            // Two requests racing in the booking core: the loser's place
+            // was given back.
+            StatusCode::CONFLICT => {}
+            other => panic!("unexpected {other}"),
+        }
+    }
+    // The test pool has two connections, so some of the ten can also lose
+    // in the booking core (409); whatever happens, the cap holds.
+    assert!(created <= 2, "{created} created");
+    assert!(capped + created <= 10);
+    assert_eq!(log_count().await, 48 + created);
+    let bookings: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM bookings")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(bookings, created);
+}
+
+#[tokio::test]
+async fn concurrent_reservations_never_pass_the_daily_cap() {
+    let pool = setup_test_db().await;
+    let (owner, _, _) = seed_test_data(&pool).await;
+    let now = Utc::now().timestamp();
+    for _ in 0..48 {
+        sqlx::query(
+            "INSERT INTO api_booking_log (user_id, booking_id, created_at) VALUES (?, 'x', ?)",
+        )
+        .bind(&owner)
+        .bind(now)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    let mut tasks = tokio::task::JoinSet::new();
+    for _ in 0..20 {
+        let (pool, owner) = (pool.clone(), owner.clone());
+        tasks.spawn(async move {
+            super::super::api::reserve_api_booking(&pool, &owner)
+                .await
+                .is_ok()
+        });
+    }
+    let mut granted = 0;
+    while let Some(ok) = tasks.join_next().await {
+        granted += ok.unwrap() as i32;
+    }
+    assert_eq!(granted, 2);
+    let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM api_booking_log")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(total, 50);
+}
+
+#[tokio::test]
+async fn dropping_an_idempotent_request_stops_its_lease_renewals() {
+    let pool = setup_test_db().await;
+    let (owner, _, _) = seed_test_data(&pool).await;
+    sqlx::query("INSERT INTO api_idempotency (user_id, key, request_hash, created_at, lease_at) VALUES (?, 'k', 'h', 0, 0)")
+        .bind(&owner)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let lease_at = || async {
+        sqlx::query_scalar::<_, i64>("SELECT lease_at FROM api_idempotency")
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+    };
+    let every = std::time::Duration::from_millis(10);
+    let guard = super::super::api::spawn_lease(pool.clone(), owner.clone(), "k".into(), every);
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    assert!(lease_at().await > 0, "renewed while running");
+    // A request future dropped mid-flight drops its guard with it.
+    let request = async move {
+        let _guard = guard;
+        std::future::pending::<()>().await;
+    };
+    let handle = tokio::spawn(request);
+    tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+    handle.abort();
+    let _ = handle.await;
+    sqlx::query("UPDATE api_idempotency SET lease_at = 0")
+        .execute(&pool)
+        .await
+        .unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    assert_eq!(lease_at().await, 0, "no renewal after the drop");
+}
+
+#[tokio::test]
+async fn another_user_cannot_burn_a_token_flash() {
+    let _lock = crate::test_support::ENV_LOCK.lock().await;
+    let _env = super::oauth::environment();
+    let (app, _pool, session, _) = setup_test_app().await;
+    let (_, other_session) =
+        insert_test_user_with_session(&_pool, "Other", "other@test.com", "other").await;
+    let csrf = "csrf-flash";
+    let response = app
+        .clone()
+        .oneshot(post_form(
+            "/dashboard/settings/api-tokens",
+            &session,
+            csrf,
+            &format!("_csrf={csrf}&name=n&scope_event_types=on&expires_days=7"),
+        ))
+        .await
+        .unwrap();
+    let location = response.headers()["location"].to_str().unwrap().to_string();
+    let theirs = body_string(
+        app.clone()
+            .oneshot(get_authed(&location, &other_session))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(!theirs.contains("api-tokens-created") && !theirs.contains("Copy this token now"));
+    let mine = body_string(
+        app.clone()
+            .oneshot(get_authed(&location, &session))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(mine.contains("Copy this token now"));
+}
+
+#[tokio::test]
+async fn a_write_only_token_cannot_tell_a_hosted_booking_from_a_missing_one() {
+    let _lock = crate::test_support::ENV_LOCK.lock().await;
+    let _env = super::oauth::environment();
+    let (app, pool, _, _) = setup_test_app().await;
+    let owner = user_id(&pool, "testuser").await;
+    let member = insert_role_user(&pool, "member@test.com", "admin").await;
+    let (_, team_et) = insert_team_with_et(
+        &pool,
+        "crew",
+        "crew-call",
+        &[(&owner, "admin"), (&member, "member")],
+    )
+    .await;
+    let id = insert_v1_booking(
+        &pool,
+        &team_et,
+        "guest@t.test",
+        Utc::now() + Duration::days(5),
+        30,
+        "confirmed",
+        &[("assigned_user_id", Some(member.clone()))],
+    )
+    .await;
+    let write_only = pat(&pool, &member, "bookings:write").await;
+    for uri in [
+        format!("/api/v1/bookings/{id}/cancel"),
+        "/api/v1/bookings/missing/cancel".to_string(),
+    ] {
+        let (status, body) = send(&app, api_post(&uri, &write_only, &json!({}))).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{uri}");
+        assert_eq!(error_code(&body), "not_found");
+    }
+    // The owner's own ended booking stays a 409 for a write-only token.
+    sqlx::query("UPDATE bookings SET status = 'cancelled' WHERE id = ?")
+        .bind(&id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let personal = insert_v1_booking(
+        &pool,
+        &sqlx::query_scalar::<_, String>("SELECT id FROM event_types WHERE slug = 'test-meeting'")
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        "p@t.test",
+        Utc::now() + Duration::days(6),
+        30,
+        "cancelled",
+        &[],
+    )
+    .await;
+    let owner_write = pat(&pool, &owner, "bookings:write").await;
+    let (status, _) = send(
+        &app,
+        api_post(
+            &format!("/api/v1/bookings/{personal}/cancel"),
+            &owner_write,
+            &json!({}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+}
+
+#[tokio::test]
+async fn a_pending_reschedule_request_can_be_resent_once_an_hour() {
+    let _lock = crate::test_support::ENV_LOCK.lock().await;
+    let _env = super::oauth::environment();
+    let (app, pool, session, et_id) = setup_test_app().await;
+    let (port, mails) = spawn_capturing_mta().await;
+    use_capturing_mta(&pool, port).await;
+    let token = pat(&pool, &user_id(&pool, "testuser").await, ALL).await;
+    let start = Utc::now() + Duration::days(8);
+    let web = insert_v1_booking(&pool, &et_id, "web@rs.test", start, 30, "confirmed", &[]).await;
+    let api = insert_v1_booking(
+        &pool,
+        &et_id,
+        "api@rs.test",
+        start + Duration::hours(2),
+        30,
+        "confirmed",
+        &[],
+    )
+    .await;
+    let csrf = "csrf-rs";
+    let resend_uri = format!("/dashboard/bookings/{web}/reschedule/resend");
+    let post = |uri: String| post_form(&uri, &session, csrf, &format!("_csrf={csrf}"));
+    // Nothing pending: the resend does nothing.
+    app.clone().oneshot(post(resend_uri.clone())).await.unwrap();
+    assert!(settled_mails_to(&mails, "web@rs.test").await.is_empty());
+    app.clone()
+        .oneshot(post(format!("/dashboard/bookings/{web}/reschedule")))
+        .await
+        .unwrap();
+    let link: String = sqlx::query_scalar("SELECT reschedule_token FROM bookings WHERE id = ?")
+        .bind(&web)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let page = body_string(
+        app.clone()
+            .oneshot(get_authed("/dashboard/bookings", &session))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(page.contains(&resend_uri), "the button is offered");
+    // Within the hour: refused with its message.
+    let response = app.clone().oneshot(post(resend_uri.clone())).await.unwrap();
+    assert_eq!(
+        response.headers()["location"],
+        "/dashboard/bookings?error=reschedule-resend-too-soon"
+    );
+    assert_eq!(settled_mails_to(&mails, "web@rs.test").await.len(), 1);
+    // An hour later: the same link, emailed again.
+    sqlx::query("UPDATE bookings SET reschedule_requested_at = reschedule_requested_at - 3601")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let response = app.clone().oneshot(post(resend_uri.clone())).await.unwrap();
+    assert_eq!(response.headers()["location"], "/dashboard/bookings");
+    let sent = settled_mails_to(&mails, "web@rs.test").await;
+    assert_eq!(sent.len(), 2);
+    assert!(sent[1].contains(&link));
+    let after: String = sqlx::query_scalar("SELECT reschedule_token FROM bookings WHERE id = ?")
+        .bind(&web)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(after, link);
+
+    // The API: resend, too soon, nothing pending.
+    let uri = format!("/api/v1/bookings/{api}/request-reschedule");
+    let (status, body) = send(&app, api_post(&uri, &token, &json!({"resend": true}))).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(error_code(&body), "no_reschedule_pending");
+    let (status, _) = send(&app, api_post(&uri, &token, &json!({}))).await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, body) = send(&app, api_post(&uri, &token, &json!({"resend": true}))).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(error_code(&body), "resend_too_soon");
+    sqlx::query("UPDATE bookings SET reschedule_requested_at = reschedule_requested_at - 3601")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (status, _) = send(&app, api_post(&uri, &token, &json!({"resend": true}))).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(settled_mails_to(&mails, "api@rs.test").await.len(), 2);
 }

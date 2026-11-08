@@ -138,8 +138,12 @@ async fn tokens_page(
     // taken, so a reload (or the back button) shows it no more.
     let created = query.get("created").and_then(|id| {
         let mut flash = state.api_token_flash.lock().ok()?;
-        let (user, secret, at) = flash.remove(id)?;
-        (user == auth_user.user.id && at.elapsed() < FLASH_LIFETIME).then_some(secret)
+        // Another user opening the link takes nothing, so cannot burn it.
+        if flash.get(id)?.0 != auth_user.user.id {
+            return None;
+        }
+        let (_, secret, at) = flash.remove(id)?;
+        (at.elapsed() < FLASH_LIFETIME).then_some(secret)
     });
     let extras = PageExtras {
         created,

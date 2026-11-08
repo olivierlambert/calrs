@@ -59,7 +59,8 @@ Registration, consent, PKCE, token lifetimes (one-hour access tokens, rotating
 refresh tokens, 30-day grants) and revocation work as described for MCP. A
 grant is bound to its resource: an MCP token does not open the API, an API
 token does not open `/mcp`, and the scopes of one resource cannot be requested
-for the other. API grants appear under **Profile & Settings → Connected apps**
+for the other. When the API is closed to a user, the consent page says so and
+offers no Allow button. API grants appear under **Profile & Settings → Connected apps**
 with their permissions, and are revoked there.
 
 ### The rules both follow
@@ -104,7 +105,9 @@ more than any other user: like MCP, there is no global admin bypass.
   you are excluded from that event type), and bookings you claimed as a
   watcher. That is the rule of host notes, which these readers may see.
 - **Cancel** and **request a reschedule**: as on the dashboard, the owner of
-  the event type. Another host gets 403.
+  the event type. Another host gets 403 when the token can read bookings; a
+  token with `bookings:write` alone gets the same 404 as for a booking that
+  does not exist.
 
 Anything else answers 404, whether it exists or not.
 
@@ -150,7 +153,9 @@ slot computation makes of it (no event titles, no calendar names).
 - On top of that, slot reads and every `POST`: 60 per 5 minutes per user,
   shared by all of the user's tokens.
 - Bookings created through the API: 50 per user per 24 hours (429
-  `daily_limit_reached`), each with at most 10 additional attendees whatever
+  `daily_limit_reached`; a place is taken before the booking is made, so
+  concurrent requests cannot pass the cap, and given back when the booking is
+  refused), each with at most 10 additional attendees whatever
   the event type allows on its booking page (422 `too_many_attendees`). Every
   booking emails the guest, the attendees and the hosts from the instance, so
   the API cannot be used to send mail without bound.
@@ -360,8 +365,11 @@ What the dashboard's reschedule button does: the guest gets a new link and the
 one. 409 `no_bookable_dates` when the event type has no bookable day left.
 This is the only reschedule v1 offers, as on the dashboard: moving a booking
 to a time you choose is not in v1. While the guest has not answered an
-earlier request, another one is refused (409 `reschedule_already_requested`,
-and the dashboard button says so too), so the guest is emailed once.
+earlier request, another one is refused (409 `reschedule_already_requested`),
+so no second link is made. To remind the guest, send `{"resend": true}`: the
+same request is emailed again, with the same link, at most once an hour (409
+`resend_too_soon`; 409 `no_reschedule_pending` when none is waiting). The
+dashboard has the same **Resend request** button.
 
 ## Example
 

@@ -49,6 +49,11 @@ CREATE TABLE api_booking_log (
 );
 CREATE INDEX idx_api_booking_log_user ON api_booking_log(user_id, created_at);
 
--- Off by default: only admins may create personal access tokens. OAuth
--- clients, which every grant approves interactively, are not affected.
+-- Off by default: only admins may use the REST API, with a personal access
+-- token or an OAuth grant for the API resource (oauth::api_allowed). MCP
+-- grants are not affected.
 ALTER TABLE auth_config ADD COLUMN api_tokens_allow_all_users INTEGER NOT NULL DEFAULT 0;
+
+-- When the host last emailed the guest a reschedule request, so a pending
+-- request is resent (same link) at most once an hour.
+ALTER TABLE bookings ADD COLUMN reschedule_requested_at INTEGER;

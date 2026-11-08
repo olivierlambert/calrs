@@ -463,6 +463,7 @@ api-tokens-created = Kopieren Sie dieses Token jetzt: Es wird nur einmal angezei
 api-tokens-error-name = Geben Sie dem Token einen Namen mit höchstens 100 Zeichen.
 api-tokens-error-scope = Wählen Sie mindestens eine Berechtigung.
 api-tokens-error-limit = Sie haben bereits 20 Tokens. Widerrufen Sie zuerst eines.
+bookings-error-reschedule-resend-too-soon = Die Anfrage wurde dem Gast vor weniger als einer Stunde gesendet. Versuchen Sie es später erneut.
 
 # Write destination per event type (#47)
 etf-write-destination-help = Nur für diese Terminart. Standardmäßig landen sie im Schreibkalender jeder Ihrer Quellen. Bei einer Team-Terminart gilt das nur für die Buchungen, die Sie übernehmen.

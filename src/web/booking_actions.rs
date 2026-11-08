@@ -2605,18 +2605,39 @@ pub(super) async fn host_reschedule_booking(
     if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
         return resp;
     }
-    match host_request_reschedule(&state, &auth_user.user, &booking_id).await {
-        HostReschedule::NoBookableDates => {
-            Redirect::to("/dashboard/bookings?error=no-bookable-dates").into_response()
-        }
-        HostReschedule::AlreadyRequested => {
-            Redirect::to("/dashboard/bookings?error=reschedule-pending").into_response()
-        }
-        HostReschedule::NotFound | HostReschedule::Requested => {
-            Redirect::to("/dashboard/bookings").into_response()
-        }
-    }
+    reschedule_redirect(host_request_reschedule(&state, &auth_user.user, &booking_id, false).await)
 }
+
+/// The dashboard page a reschedule request (or resend) returns to.
+fn reschedule_redirect(outcome: HostReschedule) -> Response {
+    let to = match outcome {
+        HostReschedule::NoBookableDates => "/dashboard/bookings?error=no-bookable-dates",
+        HostReschedule::AlreadyRequested => "/dashboard/bookings?error=reschedule-pending",
+        HostReschedule::ResendTooSoon => "/dashboard/bookings?error=reschedule-resend-too-soon",
+        HostReschedule::Requested | HostReschedule::NotFound | HostReschedule::NotRequested => {
+            "/dashboard/bookings"
+        }
+    };
+    Redirect::to(to).into_response()
+}
+
+/// Host: email the guest the pending reschedule request again, with the same
+/// link (`host_request_reschedule` with `resend`).
+pub(super) async fn host_resend_reschedule(
+    State(state): State<Arc<AppState>>,
+    auth_user: crate::auth::AuthUser,
+    headers: HeaderMap,
+    Path(booking_id): Path<String>,
+    Form(form): Form<CsrfForm>,
+) -> Response {
+    if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
+        return resp;
+    }
+    reschedule_redirect(host_request_reschedule(&state, &auth_user.user, &booking_id, true).await)
+}
+
+/// A pending reschedule request is emailed again at most this often.
+pub(super) const RESCHEDULE_RESEND_INTERVAL: i64 = 3600;
 
 /// What `host_request_reschedule` did.
 #[derive(Debug, PartialEq, Eq)]
@@ -2627,8 +2648,13 @@ pub(super) enum HostReschedule {
     NoBookableDates,
     /// The guest was already asked and has not picked a new time yet.
     AlreadyRequested,
-    /// The guest was given a new reschedule link (and emailed it).
+    /// The guest was given a new reschedule link (and emailed it), or the
+    /// pending one again (`resend`).
     Requested,
+    /// `resend`, but no request is waiting for the guest.
+    NotRequested,
+    /// `resend` within `RESCHEDULE_RESEND_INTERVAL` of the last email.
+    ResendTooSoon,
 }
 
 /// The host asks the guest to pick a new time, as the dashboard's reschedule
@@ -2638,6 +2664,7 @@ pub(super) async fn host_request_reschedule(
     state: &AppState,
     user: &crate::models::User,
     booking_id: &str,
+    resend: bool,
 ) -> HostReschedule {
     let booking: Option<(
         String,
@@ -2681,23 +2708,58 @@ pub(super) async fn host_request_reschedule(
     }
 
     // Generate new reschedule token and set the host-initiated flag. A
-    // request the guest has not answered yet is not sent again: each one
-    // emails the guest (the guest's reschedule clears the flag).
-    let new_reschedule_token = uuid::Uuid::new_v4().to_string();
-    let changed = sqlx::query(
-        "UPDATE bookings SET reschedule_token = ?, reschedule_by_host = 1 WHERE id = ? AND reschedule_by_host = 0",
-    )
-    .bind(&new_reschedule_token)
-    .bind(&bid)
-    .execute(&state.pool)
-    .await
-    .map(|r| r.rows_affected())
-    .unwrap_or(0);
-    if changed == 0 {
-        return HostReschedule::AlreadyRequested;
-    }
+    // request the guest has not answered yet is not made again: each one
+    // emails the guest (the guest's reschedule clears the flag). It can be
+    // resent instead, with the same link, at most once an hour.
+    let now = Utc::now().timestamp();
+    let new_reschedule_token = if resend {
+        let token: Option<String> = sqlx::query_scalar(
+            "UPDATE bookings SET reschedule_requested_at = ? WHERE id = ? AND reschedule_by_host = 1
+               AND (reschedule_requested_at IS NULL OR reschedule_requested_at <= ?)
+             RETURNING reschedule_token",
+        )
+        .bind(now)
+        .bind(&bid)
+        .bind(now - RESCHEDULE_RESEND_INTERVAL)
+        .fetch_optional(&state.pool)
+        .await
+        .unwrap_or(None);
+        match token {
+            Some(token) => token,
+            None => {
+                let pending: bool =
+                    sqlx::query_scalar("SELECT reschedule_by_host = 1 FROM bookings WHERE id = ?")
+                        .bind(&bid)
+                        .fetch_optional(&state.pool)
+                        .await
+                        .unwrap_or(None)
+                        .unwrap_or(false);
+                return if pending {
+                    HostReschedule::ResendTooSoon
+                } else {
+                    HostReschedule::NotRequested
+                };
+            }
+        }
+    } else {
+        let token = uuid::Uuid::new_v4().to_string();
+        let changed = sqlx::query(
+            "UPDATE bookings SET reschedule_token = ?, reschedule_by_host = 1, reschedule_requested_at = ? WHERE id = ? AND reschedule_by_host = 0",
+        )
+        .bind(&token)
+        .bind(now)
+        .bind(&bid)
+        .execute(&state.pool)
+        .await
+        .map(|r| r.rows_affected())
+        .unwrap_or(0);
+        if changed == 0 {
+            return HostReschedule::AlreadyRequested;
+        }
+        token
+    };
 
-    tracing::info!(booking_id = %bid, guest = %guest_email, "host requested reschedule — guest will pick new time");
+    tracing::info!(booking_id = %bid, guest = %guest_email, resend, "host requested reschedule — guest will pick new time");
 
     // Send email to guest asking them to pick a new time
     if let Ok(Some(smtp_config)) =

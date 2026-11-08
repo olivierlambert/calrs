@@ -646,6 +646,10 @@ async fn consent_page(
         .execute(&state.pool)
         .await?;
     let scopes = params.scope.as_deref().unwrap_or("");
+    // Said up front: a user the REST API is closed to cannot approve a grant
+    // for it (`consent` refuses it too).
+    let api_closed = params.resource == api_resource()
+        && !api_allowed(&mut *state.pool.acquire().await?, &user).await?;
     let csrf = crate::web::generate_csrf_token();
     let lang = crate::i18n::resolve(user.language.as_deref(), &headers);
     let body = state.templates.get_template("auth/consent.html")
@@ -661,7 +665,7 @@ async fn consent_page(
             slots => scopes.split_whitespace().any(|s| s == API_SCOPES[1]),
             bookings_read => scopes.split_whitespace().any(|s| s == API_SCOPES[2]),
             bookings_write => scopes.split_whitespace().any(|s| s == API_SCOPES[3]),
-            csrf_token => csrf, request_id => id,
+            csrf_token => csrf, request_id => id, api_closed => api_closed,
         })).map_err(|e| { tracing::error!(%e, "OAuth consent template"); Error(StatusCode::INTERNAL_SERVER_ERROR, "server_error") })?;
     // The approval is one click: never let another page frame it, not even
     // one of ours (the global policy allows same-origin framing).

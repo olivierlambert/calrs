@@ -26,10 +26,11 @@
     {% if bookings_read %}<li>{{ t("oauth-bookings-read") }}</li>{% endif %}
     {% if bookings_write %}<li>{{ t("oauth-bookings-write") }}</li>{% endif %}
   </ul>
+  {% if api_closed %}<p class="oauth-consent-intro" role="alert">{{ t("oauth-api-closed") }}</p>{% endif %}
   <form class="oauth-consent-actions" method="post" action="/oauth/consent">
     <input type="hidden" name="_csrf" value="{{ csrf_token }}">
     <input type="hidden" name="request_id" value="{{ request_id }}">
-    <button class="btn" type="submit" name="decision" value="allow">{{ t("oauth-allow") }}</button>
+    {% if not api_closed %}<button class="btn" type="submit" name="decision" value="allow">{{ t("oauth-allow") }}</button>{% endif %}
     <button class="btn btn-secondary" type="submit" name="decision" value="deny">{{ t("oauth-deny") }}</button>
   </form>
 </div>

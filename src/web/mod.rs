@@ -1102,6 +1102,10 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
             "/dashboard/bookings/{id}/reschedule",
             get(host_reschedule_slots).post(host_reschedule_booking),
         )
+        .route(
+            "/dashboard/bookings/{id}/reschedule/resend",
+            post(host_resend_reschedule),
+        )
         .route("/u/{username}", get(user_profile))
         .route("/u/{username}/", get(redirect_user_profile_trailing_slash))
         .route("/u/{username}/{slug}", get(show_slots_for_user))

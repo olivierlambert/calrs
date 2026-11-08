@@ -983,25 +983,17 @@ async fn create_booking(
             Ok(response)
         }
         Idempotency::Proceed => {
-            // Keep the key's lease alive for as long as the booking runs.
-            let lease = tokio::spawn({
-                let pool = state.pool.clone();
-                let user = caller.user.id.clone();
-                let key = key.to_string();
-                async move {
-                    loop {
-                        tokio::time::sleep(std::time::Duration::from_secs(30)).await;
-                        let _ = sqlx::query("UPDATE api_idempotency SET lease_at = ? WHERE user_id = ? AND key = ? AND response IS NULL")
-                            .bind(Utc::now().timestamp())
-                            .bind(&user)
-                            .bind(&key)
-                            .execute(&pool)
-                            .await;
-                    }
-                }
-            });
+            // Keep the key's lease alive for as long as the booking runs,
+            // and no longer: the guard stops the renewals when this future
+            // ends or is dropped (a client gone, a panic).
+            let lease = spawn_lease(
+                state.pool.clone(),
+                caller.user.id.clone(),
+                key.to_string(),
+                LEASE_RENEWAL,
+            );
             let result = create_booking_inner(&state, &caller, request).await;
-            lease.abort();
+            drop(lease);
             // The full answer is kept; this token gets what its scopes allow.
             let (status, value) =
                 idempotency_finish(&state.pool, &caller.user.id, key, result).await;
@@ -1057,22 +1049,6 @@ async fn create_booking_inner(
     }
     if let Err(key) = validate_booking_input(&request.name, &request.email, &request.notes) {
         return Err(ApiError::bad("invalid_request", en(key)));
-    }
-    // Every booking emails the guest, the attendees and the hosts: a token
-    // cannot make the instance's SMTP send without bound.
-    let made: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM api_booking_log WHERE user_id = ? AND created_at > ?",
-    )
-    .bind(&user.id)
-    .bind(Utc::now().timestamp() - 86400)
-    .fetch_one(&state.pool)
-    .await?;
-    if made >= API_DAILY_BOOKINGS {
-        return Err(ApiError::new(
-            StatusCode::TOO_MANY_REQUESTS,
-            "daily_limit_reached",
-            format!("At most {API_DAILY_BOOKINGS} bookings per user per 24 hours through the API."),
-        ));
     }
     let lang = match request.language.as_deref() {
         Some(code) => crate::i18n::supported_code(code)
@@ -1143,6 +1119,7 @@ async fn create_booking_inner(
             .bind(&request.event_type_id)
             .fetch_optional(&state.pool)
             .await?;
+    let reservation: String;
     let booked = match team.flatten() {
         Some(_) => {
             let et: Option<TeamEventType> = sqlx::query_as(&format!(
@@ -1155,6 +1132,7 @@ async fn create_booking_inner(
             let phone_mode = stored_sms_phone_mode(&state.pool, &et.id).await;
             precheck_guest(state, &phone_mode, &guest, et.max_additional_guests).await?;
             let slug = et.slug.clone();
+            reservation = reserve_api_booking(&state.pool, &user.id).await?;
             book_team(
                 state,
                 et,
@@ -1179,6 +1157,7 @@ async fn create_booking_inner(
                 .bind(&request.event_type_id)
                 .fetch_one(&state.pool)
                 .await?;
+            reservation = reserve_api_booking(&state.pool, &user.id).await?;
             book_personal(
                 state,
                 et,
@@ -1191,23 +1170,66 @@ async fn create_booking_inner(
             .await
         }
     };
-    let booked = booked.map_err(refusal_error)?;
+    let booked = match booked {
+        Ok(booked) => booked,
+        Err(refusal) => {
+            // A refused booking sent nothing: its place under the cap is freed.
+            sqlx::query("DELETE FROM api_booking_log WHERE booking_id = ?")
+                .bind(&reservation)
+                .execute(&state.pool)
+                .await?;
+            return Err(refusal_error(refusal));
+        }
+    };
+    sqlx::query("UPDATE api_booking_log SET booking_id = ? WHERE booking_id = ?")
+        .bind(&booked.id)
+        .bind(&reservation)
+        .execute(&state.pool)
+        .await?;
     tracing::info!(booking_id = %booked.id, user = %user.email, credential = %caller.credential, "booking created through the API");
     let row: BookingRow = sqlx::query_as(&format!("{BOOKING_COLUMNS} WHERE b.id = ?"))
         .bind(&booked.id)
         .fetch_one(&state.pool)
         .await?;
-    // Recorded for the daily cap on API bookings (`API_DAILY_BOOKINGS`).
-    sqlx::query("INSERT INTO api_booking_log (user_id, booking_id, created_at) VALUES (?, ?, ?)")
-        .bind(&user.id)
-        .bind(&booked.id)
-        .bind(Utc::now().timestamp())
-        .execute(&state.pool)
-        .await?;
     Ok((
         StatusCode::CREATED,
         json!({"booking": booking_json(row, false)}),
     ))
+}
+
+/// Take one of `user_id`'s `API_DAILY_BOOKINGS` places for the next 24 hours,
+/// before the booking is made: every booking emails the guest, the attendees
+/// and the hosts, so a token cannot make the instance's SMTP send without
+/// bound. Count and insert are one statement, so concurrent requests at the
+/// cap cannot all pass, and the row is written before the booking runs, so
+/// a client that disconnects still counts. Returns the reservation id,
+/// replaced by the booking's id once it is made.
+pub(super) async fn reserve_api_booking(
+    pool: &SqlitePool,
+    user_id: &str,
+) -> Result<String, ApiError> {
+    let reservation = format!("reserved:{}", uuid::Uuid::new_v4());
+    let now = Utc::now().timestamp();
+    let inserted = sqlx::query(
+        "INSERT INTO api_booking_log (user_id, booking_id, created_at)
+         SELECT ?, ?, ? WHERE (SELECT COUNT(*) FROM api_booking_log WHERE user_id = ? AND created_at > ?) < ?",
+    )
+    .bind(user_id)
+    .bind(&reservation)
+    .bind(now)
+    .bind(user_id)
+    .bind(now - 86400)
+    .bind(API_DAILY_BOOKINGS)
+    .execute(pool)
+    .await?;
+    if inserted.rows_affected() == 0 {
+        return Err(ApiError::new(
+            StatusCode::TOO_MANY_REQUESTS,
+            "daily_limit_reached",
+            format!("At most {API_DAILY_BOOKINGS} bookings per user per 24 hours through the API."),
+        ));
+    }
+    Ok(reservation)
 }
 
 /// The phone number and the additional attendees, checked as the booking
@@ -1242,13 +1264,43 @@ struct CancelBody {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct EmptyBody {}
+struct RescheduleBody {
+    /// Email the guest the pending request again instead of making one.
+    #[serde(default)]
+    resend: bool,
+}
 
-/// Why a write on booking `id` found nothing to do: a booking the caller
-/// hosts but may not change (403), one that is no longer active (409), or
-/// one they cannot see (404).
-async fn write_refusal(pool: &SqlitePool, user_id: &str, id: &str, action: &str) -> ApiError {
-    match hosted_booking(pool, user_id, id).await {
+/// Why a write on booking `id` found nothing to do. A booking of the
+/// caller's own event types that is no longer active is a 409. With
+/// `bookings:read`, a booking the caller hosts without owning it is a 403
+/// (or a 409 once ended), as they can read it anyway. Everything else, and
+/// everything for a write-only token, is the same 404, so a write-only token
+/// learns nothing about bookings it cannot change.
+async fn write_refusal(pool: &SqlitePool, caller: &Caller, id: &str, action: &str) -> ApiError {
+    let owned: Result<Option<String>, sqlx::Error> = sqlx::query_scalar(
+        "SELECT b.status FROM bookings b JOIN event_types et ON et.id = b.event_type_id
+         JOIN accounts a ON a.id = et.account_id WHERE b.id = ? AND a.user_id = ?",
+    )
+    .bind(id)
+    .bind(&caller.user.id)
+    .fetch_optional(pool)
+    .await;
+    let not_active = || {
+        ApiError::new(
+            StatusCode::CONFLICT,
+            "booking_not_active",
+            "This booking is no longer confirmed or pending.",
+        )
+    };
+    match owned {
+        Ok(Some(_)) => return not_active(),
+        Ok(None) => {}
+        Err(e) => return e.into(),
+    }
+    if !caller.has("bookings:read") {
+        return ApiError::not_found();
+    }
+    match hosted_booking(pool, &caller.user.id, id).await {
         Ok(Some(booking))
             if matches!(booking["status"].as_str(), Some("confirmed" | "pending")) =>
         {
@@ -1258,11 +1310,7 @@ async fn write_refusal(pool: &SqlitePool, user_id: &str, id: &str, action: &str)
                 format!("Only the owner of the event type can {action} this booking."),
             )
         }
-        Ok(Some(_)) => ApiError::new(
-            StatusCode::CONFLICT,
-            "booking_not_active",
-            "This booking is no longer confirmed or pending.",
-        ),
+        Ok(Some(_)) => not_active(),
         Ok(None) => ApiError::not_found(),
         Err(e) => e.into(),
     }
@@ -1299,9 +1347,7 @@ async fn cancel_booking_api(
             "booking_not_active",
             "This booking changed state meanwhile.",
         )),
-        HostCancel::NotFound => {
-            Err(write_refusal(&state.pool, &caller.user.id, &id, "cancel").await)
-        }
+        HostCancel::NotFound => Err(write_refusal(&state.pool, &caller, &id, "cancel").await),
     }
 }
 
@@ -1315,8 +1361,8 @@ async fn request_reschedule_api(
     let id = path_id(path)?;
     heavy_limit(&state, &caller).await?;
     let body = body_bytes(body)?;
-    let _: EmptyBody = json_body(&headers, &body, true)?;
-    match host_request_reschedule(&state, &caller.user, &id).await {
+    let request: RescheduleBody = json_body(&headers, &body, true)?;
+    match host_request_reschedule(&state, &caller.user, &id, request.resend).await {
         HostReschedule::Requested => {
             tracing::info!(booking_id = %id, credential = %caller.credential, "reschedule requested through the API");
             let booking = hosted_booking(&state.pool, &caller.user.id, &id).await?;
@@ -1330,18 +1376,63 @@ async fn request_reschedule_api(
             "reschedule_already_requested",
             en("bookings-error-reschedule-pending"),
         )),
+        HostReschedule::ResendTooSoon => Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "resend_too_soon",
+            en("bookings-error-reschedule-resend-too-soon"),
+        )),
+        HostReschedule::NotRequested => Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "no_reschedule_pending",
+            "No reschedule request is waiting for the guest.",
+        )),
         HostReschedule::NoBookableDates => Err(ApiError::new(
             StatusCode::CONFLICT,
             "no_bookable_dates",
             en("bookings-error-no-bookable-dates"),
         )),
         HostReschedule::NotFound => {
-            Err(write_refusal(&state.pool, &caller.user.id, &id, "reschedule").await)
+            Err(write_refusal(&state.pool, &caller, &id, "reschedule").await)
         }
     }
 }
 
 // --- Idempotency-Key ---
+
+/// How often a running request renews its key's lease.
+const LEASE_RENEWAL: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Aborts the lease renewal when dropped, whichever way the request ends.
+pub(super) struct LeaseGuard(tokio::task::JoinHandle<()>);
+
+impl Drop for LeaseGuard {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+/// Renew the lease of `user`'s idempotency `key` every `every` while the
+/// first request with it runs.
+pub(super) fn spawn_lease(
+    pool: SqlitePool,
+    user: String,
+    key: String,
+    every: std::time::Duration,
+) -> LeaseGuard {
+    LeaseGuard(tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(every).await;
+            let _ = sqlx::query(
+                "UPDATE api_idempotency SET lease_at = ? WHERE user_id = ? AND key = ? AND response IS NULL",
+            )
+            .bind(Utc::now().timestamp())
+            .bind(&user)
+            .bind(&key)
+            .execute(&pool)
+            .await;
+        }
+    }))
+}
 
 enum Idempotency {
     /// First time this key is seen: do the work, then `idempotency_finish`.
