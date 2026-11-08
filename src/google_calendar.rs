@@ -256,8 +256,88 @@ struct FoundItem {
     attendees: Vec<serde_json::Value>,
 }
 
-/// The Calendar API `events` collection of one calendar. Errors carry the
-/// HTTP status only, never the response body (it can quote event content).
+/// A Calendar API call that failed. It carries the HTTP status and whether
+/// Google said the API is not usable at all, never the response body (it
+/// can quote event content).
+#[derive(Debug)]
+pub(crate) struct ApiFailure {
+    what: &'static str,
+    /// `None` when there was no usable answer: a timeout, a network error,
+    /// a body that does not parse.
+    pub status: Option<u16>,
+    /// The project has the Calendar API disabled, or the token lacks the
+    /// scope: a persistent refusal, unlike a 429, a 5xx or a timeout.
+    pub no_access: bool,
+}
+
+impl std::fmt::Display for ApiFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.status {
+            Some(status) => write!(f, "{}: HTTP {}", self.what, status),
+            None => write!(f, "{}: no usable answer", self.what),
+        }
+    }
+}
+
+impl std::error::Error for ApiFailure {}
+
+/// Google's error reasons that mean the Calendar API cannot be used with
+/// this project or token, whatever is retried: `accessNotConfigured` and
+/// `SERVICE_DISABLED` (API not enabled), `insufficientPermissions` and
+/// `ACCESS_TOKEN_SCOPE_INSUFFICIENT` (token without the scope).
+const NO_ACCESS_REASONS: [&str; 4] = [
+    "accessNotConfigured",
+    "SERVICE_DISABLED",
+    "insufficientPermissions",
+    "ACCESS_TOKEN_SCOPE_INSUFFICIENT",
+];
+
+/// Whether a 403 body names one of [`NO_ACCESS_REASONS`], in either of the
+/// shapes Google uses (`error.errors[].reason`, `error.details[].reason`).
+pub(crate) fn says_no_access(body: &str) -> bool {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(body) else {
+        return false;
+    };
+    ["errors", "details"].iter().any(|list| {
+        value["error"][list].as_array().is_some_and(|items| {
+            items.iter().any(|item| {
+                item["reason"]
+                    .as_str()
+                    .is_some_and(|reason| NO_ACCESS_REASONS.contains(&reason))
+            })
+        })
+    })
+}
+
+impl ApiFailure {
+    fn transport(what: &'static str) -> Self {
+        Self {
+            what,
+            status: None,
+            no_access: false,
+        }
+    }
+
+    /// The failure for a non-2xx answer. Reads the body for Google's reason
+    /// and drops it.
+    pub(crate) async fn refused(what: &'static str, response: reqwest::Response) -> Self {
+        let status = response.status().as_u16();
+        let body = response.text().await.unwrap_or_default();
+        Self {
+            what,
+            status: Some(status),
+            no_access: status == 403 && says_no_access(&body),
+        }
+    }
+}
+
+/// Total time the Calendar API part of one booking write or delete may take,
+/// on top of the CalDAV request itself. Past it, a write gives up before its
+/// CalDAV PUT and is retried by the write-back retries; it runs inside the
+/// booking request, which must not wait on Google for minutes.
+pub(crate) const API_DEADLINE: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// The Calendar API `events` collection of one calendar.
 pub(crate) struct EventsApi<'a> {
     base: &'a str,
     token: &'a str,
@@ -266,6 +346,8 @@ pub(crate) struct EventsApi<'a> {
     /// a moment to appear in the iCalUID index.
     pub retry_delay: std::time::Duration,
     pub lookup_attempts: u32,
+    /// See [`API_DEADLINE`].
+    pub deadline: std::time::Duration,
 }
 
 impl<'a> EventsApi<'a> {
@@ -276,14 +358,16 @@ impl<'a> EventsApi<'a> {
             calendar_id,
             retry_delay: std::time::Duration::from_millis(300),
             lookup_attempts: 5,
+            deadline: API_DEADLINE,
         }
     }
 
-    fn http() -> Result<reqwest::Client> {
-        Ok(reqwest::Client::builder()
+    fn http() -> std::result::Result<reqwest::Client, ApiFailure> {
+        reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(20))
             .redirect(reqwest::redirect::Policy::none())
-            .build()?)
+            .build()
+            .map_err(|_| ApiFailure::transport("Google Calendar client"))
     }
 
     fn events_url(&self) -> String {
@@ -298,17 +382,25 @@ impl<'a> EventsApi<'a> {
         format!("{}/{}", self.events_url(), urlencoding::encode(event_id))
     }
 
-    pub(crate) async fn find(&self, ical_uid: &str) -> Result<Option<FoundEvent>> {
+    pub(crate) async fn find(
+        &self,
+        ical_uid: &str,
+    ) -> std::result::Result<Option<FoundEvent>, ApiFailure> {
+        const WHAT: &str = "Google Calendar events lookup";
         let response = Self::http()?
             .get(self.events_url())
             .bearer_auth(self.token)
             .query(&[("iCalUID", ical_uid), ("showDeleted", "false")])
             .send()
-            .await?;
+            .await
+            .map_err(|_| ApiFailure::transport(WHAT))?;
         if !response.status().is_success() {
-            bail!("Google Calendar events lookup: HTTP {}", response.status());
+            return Err(ApiFailure::refused(WHAT, response).await);
         }
-        let page: FoundPage = response.json().await?;
+        let page: FoundPage = response
+            .json()
+            .await
+            .map_err(|_| ApiFailure::transport(WHAT))?;
         Ok(page.items.into_iter().find_map(|item| {
             let id = item.id.filter(|id| !id.is_empty())?;
             Some(FoundEvent {
@@ -319,7 +411,10 @@ impl<'a> EventsApi<'a> {
     }
 
     /// `find`, retried while the event is not visible yet.
-    async fn find_written(&self, ical_uid: &str) -> Result<Option<FoundEvent>> {
+    async fn find_written(
+        &self,
+        ical_uid: &str,
+    ) -> std::result::Result<Option<FoundEvent>, ApiFailure> {
         let attempts = self.lookup_attempts.max(1);
         for attempt in 0..attempts {
             if let Some(found) = self.find(ical_uid).await? {
@@ -333,7 +428,12 @@ impl<'a> EventsApi<'a> {
     }
 
     /// Replace the attendee list without notifying anyone.
-    pub(crate) async fn set_attendees(&self, event_id: &str, attendees: &[Attendee]) -> Result<()> {
+    pub(crate) async fn set_attendees(
+        &self,
+        event_id: &str,
+        attendees: &[Attendee],
+    ) -> std::result::Result<(), ApiFailure> {
+        const WHAT: &str = "Google Calendar attendee update";
         let body = serde_json::json!({ "attendees": attendees_json(attendees) });
         let response = Self::http()?
             .patch(self.event_url(event_id))
@@ -341,27 +441,27 @@ impl<'a> EventsApi<'a> {
             .query(&[("sendUpdates", "none")])
             .json(&body)
             .send()
-            .await?;
+            .await
+            .map_err(|_| ApiFailure::transport(WHAT))?;
         if !response.status().is_success() {
-            bail!(
-                "Google Calendar attendee update: HTTP {}",
-                response.status()
-            );
+            return Err(ApiFailure::refused(WHAT, response).await);
         }
         Ok(())
     }
 
     /// Delete the event without notifying anyone. Already gone is success.
-    pub(crate) async fn delete(&self, event_id: &str) -> Result<()> {
+    pub(crate) async fn delete(&self, event_id: &str) -> std::result::Result<(), ApiFailure> {
+        const WHAT: &str = "Google Calendar event delete";
         let response = Self::http()?
             .delete(self.event_url(event_id))
             .bearer_auth(self.token)
             .query(&[("sendUpdates", "none")])
             .send()
-            .await?;
+            .await
+            .map_err(|_| ApiFailure::transport(WHAT))?;
         let status = response.status();
         if !status.is_success() && status.as_u16() != 404 && status.as_u16() != 410 {
-            bail!("Google Calendar event delete: HTTP {}", status);
+            return Err(ApiFailure::refused(WHAT, response).await);
         }
         Ok(())
     }
@@ -388,11 +488,15 @@ pub(crate) fn attendees_json(attendees: &[Attendee]) -> serde_json::Value {
 /// 2. the event is PUT over CalDAV without ATTENDEE or ORGANIZER;
 /// 3. the attendees are added back through the Calendar API.
 ///
-/// Without the Calendar API (not enabled in the Google Cloud project, a
-/// transient failure), the event is still written, host-only, and the guests
-/// rely on calrs's own invitation. A failure of step 3 is logged and not
-/// returned: the event is on the calendar, and reporting the write as failed
-/// would keep a cancellation from deleting it.
+/// When step 1 cannot run, nothing is written: a 429, a 5xx, a timeout or
+/// [`API_DEADLINE`] returns an error, which the write-back retries, since a
+/// PUT over an event that has attendees would make Google announce their
+/// removal. Only a Calendar API that cannot be used at all (not enabled in
+/// the Google Cloud project, a token without the scope) writes the event
+/// without attendees, and only when CalDAV shows it is new or has none.
+/// A failure of step 3 is logged and not returned: the event is on the
+/// calendar, and reporting the write as failed would keep a cancellation
+/// from deleting it.
 pub(crate) async fn put_event_without_invitations(
     client: &crate::caldav::CaldavClient,
     api: &EventsApi<'_>,
@@ -401,37 +505,58 @@ pub(crate) async fn put_event_without_invitations(
     ics: &str,
 ) -> Result<()> {
     let (host_only, attendees) = split_scheduling(ics);
-    let existing = match api.find(uid).await {
-        Ok(found) => found,
-        Err(e) => {
-            tracing::warn!(uid = %uid, error = %e, "google calendar: Calendar API unavailable, writing the event without attendees");
+    let deadline = tokio::time::Instant::now() + api.deadline;
+    let cleared = tokio::time::timeout_at(deadline, async {
+        let existing = api.find(uid).await?;
+        if let Some(found) = existing.filter(|f| f.has_attendees) {
+            api.set_attendees(&found.id, &[]).await?;
+        }
+        Ok::<(), ApiFailure>(())
+    })
+    .await;
+    match cleared {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) if e.no_access => {
+            // Without the API nothing can clear attendees, so only an event
+            // that has none (or does not exist yet) may be rewritten.
+            let current = client.get_event_raw(calendar_href, uid).await?;
+            if current.is_some_and(|ics| !split_scheduling(&ics).1.is_empty()) {
+                bail!("{e}; the event has attendees, so it is left as it is");
+            }
+            tracing::warn!(uid = %uid, error = %e, "google calendar: Calendar API not usable, writing the event without attendees");
             return client.put_event_raw(calendar_href, uid, &host_only).await;
         }
-    };
-    if let Some(found) = existing.as_ref().filter(|f| f.has_attendees) {
-        if let Err(e) = api.set_attendees(&found.id, &[]).await {
-            // Leave the event as it is rather than let a PUT drop its
-            // attendees in a way Google announces. The write-back retries.
-            tracing::warn!(uid = %uid, error = %e, "google calendar: could not clear attendees before rewriting the event");
-            return Err(e.context("Google Calendar attendee update before rewrite"));
+        Ok(Err(e)) => {
+            tracing::warn!(uid = %uid, error = %e, "google calendar: Calendar API failed before the write, leaving the event for the write-back retry");
+            return Err(anyhow::Error::new(e).context("Google Calendar API before the write"));
+        }
+        Err(_) => {
+            tracing::warn!(uid = %uid, "google calendar: Calendar API too slow before the write, leaving the event for the write-back retry");
+            bail!(
+                "Google Calendar API: no answer within {} s",
+                api.deadline.as_secs()
+            );
         }
     }
     client.put_event_raw(calendar_href, uid, &host_only).await?;
     if attendees.is_empty() {
         return Ok(());
     }
-    // Looked up again rather than reusing `existing`: the PUT may have
-    // replaced the event under a new id.
-    let event_id = api.find_written(uid).await.ok().flatten().map(|f| f.id);
-    let result = match event_id {
-        Some(id) => api.set_attendees(&id, &attendees).await,
-        None => Err(anyhow::anyhow!(
-            "event not visible through the Calendar API"
-        )),
+    let added = tokio::time::timeout_at(deadline, async {
+        // Looked up again: the PUT may have replaced the event under a new id.
+        match api.find_written(uid).await? {
+            Some(found) => api.set_attendees(&found.id, &attendees).await.map(|_| true),
+            None => Ok(false),
+        }
+    })
+    .await;
+    let problem = match added {
+        Ok(Ok(true)) => return Ok(()),
+        Ok(Ok(false)) => "event not visible through the Calendar API".to_string(),
+        Ok(Err(e)) => e.to_string(),
+        Err(_) => format!("no answer within {} s", api.deadline.as_secs()),
     };
-    if let Err(e) = result {
-        tracing::warn!(uid = %uid, error = %e, "google calendar: event written, but the guests could not be added as attendees");
-    }
+    tracing::warn!(uid = %uid, error = %problem, "google calendar: event written, but the guests could not be added as attendees");
     Ok(())
 }
 
@@ -470,11 +595,17 @@ pub(crate) async fn delete_event_without_cancellations(
     calendar_href: &str,
     uid: &str,
 ) -> Result<()> {
-    match api.find(uid).await {
-        Ok(Some(found)) if found.has_attendees => api.delete(&found.id).await,
-        Ok(_) => client.delete_event_raw(calendar_href, uid).await,
-        Err(e) => {
+    match tokio::time::timeout(api.deadline, api.find(uid)).await {
+        Ok(Ok(Some(found))) if found.has_attendees => {
+            api.delete(&found.id).await.map_err(anyhow::Error::new)
+        }
+        Ok(Ok(_)) => client.delete_event_raw(calendar_href, uid).await,
+        Ok(Err(e)) => {
             tracing::warn!(uid = %uid, error = %e, "google calendar: Calendar API unavailable, deleting over CalDAV; Google may notify the attendees");
+            client.delete_event_raw(calendar_href, uid).await
+        }
+        Err(_) => {
+            tracing::warn!(uid = %uid, "google calendar: Calendar API too slow, deleting over CalDAV; Google may notify the attendees");
             client.delete_event_raw(calendar_href, uid).await
         }
     }
@@ -897,6 +1028,117 @@ mod tests {
         assert!(fake.is_empty());
     }
 
+    #[test]
+    fn only_a_disabled_api_or_a_missing_scope_reads_as_no_access() {
+        assert!(says_no_access(super::fake::ACCESS_NOT_CONFIGURED));
+        assert!(says_no_access(
+            r#"{"error": {"code": 403, "errors": [{"reason": "insufficientPermissions"}]}}"#
+        ));
+        assert!(says_no_access(
+            r#"{"error": {"details": [{"reason": "ACCESS_TOKEN_SCOPE_INSUFFICIENT"}]}}"#
+        ));
+        for body in [
+            r#"{"error": {"code": 403, "errors": [{"reason": "rateLimitExceeded"}]}}"#,
+            r#"{"error": {"message": "accessNotConfigured"}}"#,
+            "",
+            "<html>Forbidden</html>",
+        ] {
+            assert!(!says_no_access(body), "{body}");
+        }
+    }
+
+    /// A 429, a 5xx: nothing is written, since a PUT over an event with
+    /// attendees would make Google announce their removal. The error goes
+    /// back to the write-back, which retries.
+    #[tokio::test]
+    async fn a_transient_api_failure_writes_nothing() {
+        for status in [429, 500, 503] {
+            let fake = std::sync::Arc::new(FakeGoogle::api_failing(status));
+            fake.insert(
+                CAL,
+                "moved@calrs",
+                "ev1",
+                vec![json!({"email": "jane@example.com"})],
+            );
+            let (client, server) = serve_fake(fake.clone()).await;
+            for uid in ["moved@calrs", "new@calrs"] {
+                let error = client
+                    .put_event(HREF, uid, &booking_ics(uid))
+                    .await
+                    .unwrap_err();
+                assert!(
+                    format!("{error:#}").contains(&format!("HTTP {status}")),
+                    "{error:#}"
+                );
+            }
+            server.abort();
+            let log = log(&fake);
+            assert!(!log.iter().any(|e| e.starts_with("PUT ")), "{log:#?}");
+            assert_eq!(fake.attendees(CAL, "moved@calrs").unwrap().len(), 1);
+            assert!(fake.attendees(CAL, "new@calrs").is_none());
+        }
+    }
+
+    /// Without the Calendar API, an event that already has attendees (the
+    /// API was disabled after it was written) is left alone: nothing could
+    /// clear them silently. One without attendees is rewritten.
+    #[tokio::test]
+    async fn without_the_api_an_event_with_attendees_is_not_rewritten() {
+        let fake = std::sync::Arc::new(FakeGoogle::without_api());
+        fake.insert(
+            CAL,
+            "guests@calrs",
+            "ev1",
+            vec![json!({"email": "jane@example.com"})],
+        );
+        fake.insert(CAL, "alone@calrs", "ev2", Vec::new());
+        let (client, server) = serve_fake(fake.clone()).await;
+        assert!(client
+            .put_event(HREF, "guests@calrs", &booking_ics("guests@calrs"))
+            .await
+            .is_err());
+        client
+            .put_event(HREF, "alone@calrs", &booking_ics("alone@calrs"))
+            .await
+            .unwrap();
+        server.abort();
+        let log = log(&fake);
+        assert_nothing_announced(&log);
+        assert!(!log
+            .iter()
+            .any(|e| e.starts_with("PUT ") && e.contains("guests@calrs")));
+        assert!(log
+            .iter()
+            .any(|e| e.starts_with("PUT ") && e.contains("alone@calrs")));
+        assert_eq!(fake.attendees(CAL, "guests@calrs").unwrap().len(), 1);
+    }
+
+    /// The Calendar API part of a write has one deadline: past it, the
+    /// write gives up before its PUT instead of holding the booking request.
+    #[tokio::test]
+    async fn a_slow_calendar_api_gives_up_before_the_write() {
+        let fake = std::sync::Arc::new(FakeGoogle::slow(std::time::Duration::from_secs(5)));
+        let (base, server) = super::fake::serve(fake.clone()).await;
+        let client = crate::caldav::CaldavClient::with_bearer(&base, "test-token");
+        let api_base = format!("{base}/api");
+        let mut api = EventsApi::new(&api_base, "test-token", CAL);
+        api.deadline = std::time::Duration::from_millis(200);
+        let started = std::time::Instant::now();
+        let error = put_event_without_invitations(
+            &client,
+            &api,
+            HREF,
+            "slow@calrs",
+            &booking_ics("slow@calrs"),
+        )
+        .await
+        .unwrap_err();
+        assert!(started.elapsed() < std::time::Duration::from_secs(3));
+        assert!(error.to_string().contains("no answer within"), "{error}");
+        server.abort();
+        assert!(!log(&fake).iter().any(|e| e.starts_with("PUT ")));
+    }
+
     /// Any other CalDAV server keeps the ATTENDEE lines (with
     /// SCHEDULE-AGENT=CLIENT) and sees no Calendar API call.
     #[tokio::test]
@@ -935,15 +1177,37 @@ pub(crate) mod fake {
         log: Mutex<Vec<String>>,
         /// (calendar id, iCalUID) -> (event id, attendees as the API holds them).
         events: Mutex<HashMap<Key, (String, Vec<Value>)>>,
-        api_down: bool,
         next_id: AtomicU32,
+        /// Every Calendar API call answers this status and body.
+        api_failure: Option<(u16, &'static str)>,
+        /// Every Calendar API call waits this long first.
+        api_delay: Option<std::time::Duration>,
     }
 
+    /// Google's answer when the Calendar API is not enabled in the project.
+    pub(crate) const ACCESS_NOT_CONFIGURED: &str = r#"{"error": {"code": 403, "message": "Google Calendar API has not been used in project 123 before or it is disabled.", "errors": [{"domain": "usageLimits", "reason": "accessNotConfigured"}], "status": "PERMISSION_DENIED", "details": [{"@type": "type.googleapis.com/google.rpc.ErrorInfo", "reason": "SERVICE_DISABLED"}]}}"#;
+
     impl FakeGoogle {
-        /// A Google whose Calendar API refuses every call (not enabled).
+        /// A Google whose Calendar API is not enabled.
         pub(crate) fn without_api() -> Self {
             Self {
-                api_down: true,
+                api_failure: Some((403, ACCESS_NOT_CONFIGURED)),
+                ..Default::default()
+            }
+        }
+
+        /// A Google whose Calendar API takes `delay` to answer anything.
+        pub(crate) fn slow(delay: std::time::Duration) -> Self {
+            Self {
+                api_delay: Some(delay),
+                ..Default::default()
+            }
+        }
+
+        /// A Google whose Calendar API answers `status` to every call.
+        pub(crate) fn api_failing(status: u16) -> Self {
+            Self {
+                api_failure: Some((status, r#"{"error": {"message": "Backend Error"}}"#)),
                 ..Default::default()
             }
         }
@@ -1008,6 +1272,22 @@ pub(crate) mod fake {
                     events.insert(key, (id, Vec::new()));
                     StatusCode::CREATED.into_response()
                 }
+                "GET" => match events.get(&key) {
+                    // What Google's CalDAV shows: the attendees as ATTENDEE lines.
+                    Some((_, attendees)) => {
+                        let mut ics =
+                            format!("BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:{}\r\n", key.1);
+                        for a in attendees {
+                            ics.push_str(&format!(
+                                "ATTENDEE:mailto:{}\r\n",
+                                a["email"].as_str().unwrap_or("")
+                            ));
+                        }
+                        ics.push_str("END:VEVENT\r\nEND:VCALENDAR\r\n");
+                        ics.into_response()
+                    }
+                    None => StatusCode::NOT_FOUND.into_response(),
+                },
                 "HEAD" if events.contains_key(&key) => StatusCode::OK.into_response(),
                 "HEAD" => StatusCode::NOT_FOUND.into_response(),
                 "DELETE" => {
@@ -1017,8 +1297,11 @@ pub(crate) mod fake {
                 _ => StatusCode::METHOD_NOT_ALLOWED.into_response(),
             };
         }
-        if fake.api_down {
-            return StatusCode::FORBIDDEN.into_response();
+        if let Some(delay) = fake.api_delay {
+            tokio::time::sleep(delay).await;
+        }
+        if let Some((status, body)) = fake.api_failure {
+            return (StatusCode::from_u16(status).unwrap(), body).into_response();
         }
         let Some(rest) = path.strip_prefix("/api/calendars/") else {
             return StatusCode::NOT_FOUND.into_response();

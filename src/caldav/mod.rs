@@ -441,6 +441,30 @@ impl CaldavClient {
         Ok(())
     }
 
+    /// GET one event resource: its iCalendar text, `None` when the server
+    /// says it does not exist (404/410). Any other answer is an error.
+    pub(crate) async fn get_event_raw(
+        &self,
+        calendar_href: &str,
+        uid: &str,
+    ) -> Result<Option<String>> {
+        let href = format!("{}/{}.ics", calendar_href.trim_end_matches('/'), uid);
+        let url = self.resolve_url(&href);
+        let resp = self
+            .apply_auth(self.client.get(&url))
+            .timeout(Duration::from_secs(10))
+            .send()
+            .await?;
+        let status = resp.status();
+        if matches!(status.as_u16(), 404 | 410) {
+            return Ok(None);
+        }
+        if !status.is_success() {
+            bail!("GET {} returned {}", url, status);
+        }
+        Ok(Some(resp.text().await?))
+    }
+
     /// Check whether an event resource still exists on the server.
     ///
     /// Returns `Ok(true)` if the server confirms the resource is present (2xx),
