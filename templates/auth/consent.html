@@ -4,7 +4,8 @@
 <style>
   .oauth-consent { margin-top: 3rem; }
   .oauth-consent-intro { margin-bottom: 1.5rem; }
-  .oauth-consent-callback { margin: 0.75rem 0 1.5rem; overflow-wrap: anywhere; }
+  .oauth-consent-host { margin-top: 0.75rem; font-size: 1.05rem; overflow-wrap: anywhere; }
+  .oauth-consent-callback { margin: 0.25rem 0 1.5rem; overflow-wrap: anywhere; }
   .oauth-consent-permissions { padding-left: 1.5rem; margin-bottom: 2rem; }
   .oauth-consent-permissions li + li { margin-top: 0.5rem; }
   .oauth-consent-actions { display: flex; flex-direction: column; gap: 0.75rem; }
@@ -15,6 +16,7 @@
   <h1>{{ t("oauth-title") }}</h1>
   <p class="oauth-consent-intro">{{ t("oauth-intro", email=email) }}</p>
   <h2>{{ client_name }}</h2>
+  {% if redirect_host %}<p class="oauth-consent-host"><strong>{{ redirect_host }}</strong></p>{% endif %}
   <p class="oauth-consent-callback"><code>{{ redirect_uri }}</code></p>
   <ul class="oauth-consent-permissions">
     {% if events %}<li>{{ t("oauth-events") }}</li>{% endif %}

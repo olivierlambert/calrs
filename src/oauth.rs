@@ -176,6 +176,16 @@ struct Registration {
 }
 
 fn valid_redirect(uri: &str) -> bool {
+    // ASCII only, no whitespace or control characters anywhere: the URL parser
+    // would silently strip surrounding whitespace, tabs and newlines, and
+    // turn a look-alike Unicode host into punycode the consent page never shows.
+    if !uri.is_ascii()
+        || uri
+            .bytes()
+            .any(|b| b.is_ascii_whitespace() || b.is_ascii_control())
+    {
+        return false;
+    }
     let Ok(url) = Url::parse(uri) else {
         return false;
     };
@@ -267,15 +277,68 @@ fn loopback_redirect_matching_only_relaxes_the_port() {
     }
 }
 
+#[test]
+fn redirect_matching_is_literal_for_case_and_percent_encoding() {
+    for (registered, requested) in [
+        (
+            "http://127.0.0.1:4321/callback",
+            "http://127.0.0.1:4321/Callback",
+        ),
+        (
+            "http://127.0.0.1:4321/callback",
+            "http://127.0.0.1:4321/%63allback",
+        ),
+        (
+            "http://localhost:4321/callback",
+            "http://LOCALHOST:4321/callback",
+        ),
+        (
+            "https://app.example/callback",
+            "https://APP.example/callback",
+        ),
+        (
+            "https://app.example/callback",
+            "https://app.example/%63allback",
+        ),
+        (
+            "https://app.example/callback?a=b",
+            "https://app.example/callback?a=%62",
+        ),
+    ] {
+        assert!(!redirect_matches(registered, requested), "{requested}");
+    }
+}
+
+#[test]
+fn redirect_validation_refuses_look_alikes_and_stripped_characters() {
+    for uri in [
+        "https://ex\u{0430}mple.com/cb",
+        "https://example.com/c\u{00e9}",
+        " https://example.com/cb",
+        "https://example.com/cb ",
+        "https://example.com/c\tb",
+        "https://example.com/cb\n",
+        "https://example.com/c\rb",
+    ] {
+        assert!(!valid_redirect(uri), "{uri:?}");
+    }
+    assert!(valid_redirect("https://xn--exmple-cua.com/cb"));
+}
+
 async fn register(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Json(form): Json<Registration>,
 ) -> Result<Response, Error> {
     rate_limit(&state, &headers, "register").await?;
+    // Registered URIs must already be in the parser's normal form, so the one
+    // stored is the one compared and the one the code is sent to.
     if form.redirect_uris.is_empty()
         || form.redirect_uris.len() > 10
-        || !form.redirect_uris.iter().all(|u| valid_redirect(u))
+        || !form
+            .redirect_uris
+            .iter()
+            .all(|u| valid_redirect(u) && Url::parse(u).is_ok_and(|url| url.as_str() == u))
     {
         return Err(invalid("invalid_redirect_uri"));
     }
@@ -421,6 +484,7 @@ async fn consent_page(
     let body = state.templates.get_template("auth/consent.html")
         .and_then(|t| t.render(minijinja::context! {
             lang => lang, email => user.email, client_name => name, redirect_uri => params.redirect_uri,
+            redirect_host => Url::parse(&params.redirect_uri).ok().and_then(|u| u.host_str().map(str::to_string)),
             events => scopes.split_whitespace().any(|s| s == SCOPES[0]),
             blocks => scopes.split_whitespace().any(|s| s == SCOPES[1]),
             invites => scopes.split_whitespace().any(|s| s == SCOPES[2]),

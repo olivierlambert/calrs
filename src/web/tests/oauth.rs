@@ -1057,3 +1057,61 @@ async fn oauth_endpoints_are_rate_limited_per_ip() {
         .unwrap();
     assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
 }
+
+#[tokio::test]
+async fn oauth_registration_requires_ascii_normalized_redirects_and_consent_shows_the_host() {
+    let _lock = crate::test_support::ENV_LOCK.lock().await;
+    let _env = environment();
+    let (app, _, session, _) = setup_test_app().await;
+    for uri in [
+        "https://ex\u{0430}mple.com/cb",
+        "https://Example.com/cb",
+        "https://example.com",
+        "https://example.com/a/../cb",
+        "https://example.com:443/cb",
+        "https://example.com/cb\n",
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/oauth/register")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        json!({"client_name": "x", "redirect_uris": [uri]}).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{uri:?}");
+    }
+    let client = register_client(&app).await;
+    let response = app
+        .clone()
+        .oneshot(get(&authorization_uri(&client)))
+        .await
+        .unwrap();
+    let request = request_cookie(&response);
+    let html = body_string(
+        app.clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/oauth/consent")
+                    .header(
+                        "cookie",
+                        format!("__Host-calrs_session={session}; __Host-calrs_oauth={request}"),
+                    )
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(
+        html.contains(r#"<p class="oauth-consent-host"><strong>127.0.0.1</strong></p>"#),
+        "{html}"
+    );
+}
