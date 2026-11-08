@@ -505,16 +505,35 @@ impl CalendarProvider for GraphProvider {
     /// The booking's own calendar first, then every other calendar this
     /// account lists (its own and the ones shared with it, which `me/events`
     /// would not cover), by the same calrs identity: a host who moved the
-    /// event to another calendar kept it. Any error (a calendar that cannot
-    /// be read, throttling, a page that fails, several matches) is `Err`, so
-    /// the caller treats it as inconclusive and never cancels on it.
+    /// event to another calendar kept it. `Ok(false)` only on a complete
+    /// answer: a listing that is empty or lacks the booking's calendar, or
+    /// any other error (throttling, a page that fails, several matches), is
+    /// an `Err`, which the caller treats as inconclusive and never cancels
+    /// on. A read-only calendar cannot have received the event, and one that
+    /// refuses to be read (403/404, as a free/busy-only share does forever)
+    /// cannot hold it either, so both are skipped rather than leaving every
+    /// check inconclusive.
     async fn event_exists_anywhere(&self, calendar_id: &str, uid: &str) -> Result<bool> {
         if self.find_uid(calendar_id, uid).await?.is_some() {
             return Ok(true);
         }
-        for calendar in self.list_calendars().await? {
-            if calendar.id != calendar_id && self.find_uid(&calendar.id, uid).await?.is_some() {
-                return Ok(true);
+        let calendars = self.list_calendars().await?;
+        if !calendars.iter().any(|c| c.id == calendar_id) {
+            return Err(GraphError::InvalidResponse.into());
+        }
+        for calendar in &calendars {
+            if calendar.id == calendar_id || calendar.read_only {
+                continue;
+            }
+            match self.find_uid(&calendar.id, uid).await {
+                Ok(Some(_)) => return Ok(true),
+                Ok(None) => {}
+                Err(error)
+                    if matches!(
+                        error.downcast_ref::<GraphError>(),
+                        Some(GraphError::Http(403 | 404))
+                    ) => {}
+                Err(error) => return Err(error),
             }
         }
         Ok(false)

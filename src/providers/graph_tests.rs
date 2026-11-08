@@ -279,9 +279,8 @@ fn all_day_with_different_start_and_end_zones_keeps_its_dates() {
 }
 
 /// The orphan sweep's existence check looks in the booking's calendar, then
-/// in every other calendar the account lists, shared ones included; a
-/// calendar it cannot read, or several matches, is an error (inconclusive),
-/// never "gone".
+/// in every other calendar the account lists, shared ones included; only a
+/// complete answer is "gone".
 #[tokio::test]
 async fn existence_anywhere_checks_each_listed_calendar_and_fails_closed() {
     let listing = json!({"value": [
@@ -320,37 +319,98 @@ async fn existence_anywhere_checks_each_listed_calendar_and_fails_closed() {
     assert!(uris.iter().all(|u| !u.starts_with("/v1.0/me/events")));
 
     // Nowhere: gone.
-    let gone = mock_gone(&listing).await;
-    assert!(!gone
-        .provider
-        .event_exists_anywhere("write", "booking@calrs")
-        .await
-        .unwrap());
-
-    // A calendar that cannot be read, or two matches: inconclusive.
-    for reply in [
-        (403, json!({"error": {"code": "ErrorAccessDenied"}}), None),
-        ok(json!({"value": [
-            found("booking@calrs", "one")["value"][0].clone(),
-            found("booking@calrs", "two")["value"][0].clone(),
-        ]})),
-    ] {
-        let doubtful = mock(vec![ok(json!({"value": []})), ok(listing.clone()), reply]).await;
-        assert!(doubtful
-            .provider
-            .event_exists_anywhere("write", "booking@calrs")
-            .await
-            .is_err());
-    }
-}
-
-async fn mock_gone(listing: &Value) -> Mock {
-    mock(vec![
+    assert!(!existence(vec![
         ok(json!({"value": []})),
         ok(listing.clone()),
         ok(json!({"value": []})),
     ])
     .await
+    .unwrap());
+
+    // A share that refuses to be read (403 or 404, forever) and a read-only
+    // calendar cannot hold the event: skipped, the answer is still "gone".
+    let with_others = json!({"value": [
+        {"id": "write", "isDefaultCalendar": true},
+        {"id": "free-busy-only", "canEdit": true},
+        {"id": "holidays", "canEdit": false},
+    ]});
+    for refusal in [403, 404] {
+        let answer = existence(vec![
+            ok(json!({"value": []})),
+            ok(with_others.clone()),
+            (
+                refusal,
+                json!({"error": {"code": "ErrorAccessDenied"}}),
+                None,
+            ),
+        ])
+        .await;
+        assert!(!answer.unwrap(), "{refusal}");
+    }
+
+    // Inconclusive: an empty listing, one without the booking's calendar, a
+    // failing listing page, a failing nextLink page, two matches, a 5xx.
+    let doubtful: Vec<Vec<(u16, Value, Option<String>)>> = vec![
+        vec![ok(json!({"value": []})), ok(json!({"value": []}))],
+        vec![
+            ok(json!({"value": []})),
+            ok(json!({"value": [{"id": "shared", "canEdit": true}]})),
+        ],
+        vec![
+            ok(json!({"value": []})),
+            (
+                500,
+                json!({"error": {"code": "ErrorInternalServerError"}}),
+                None,
+            ),
+        ],
+        vec![
+            ok(json!({"value": []})),
+            ok(listing.clone()),
+            ok(json!({"value": [], "@odata.nextLink": "NEXT"})),
+            (
+                500,
+                json!({"error": {"code": "ErrorInternalServerError"}}),
+                None,
+            ),
+        ],
+        vec![
+            ok(json!({"value": []})),
+            ok(listing.clone()),
+            ok(json!({"value": [
+                found("booking@calrs", "one")["value"][0].clone(),
+                found("booking@calrs", "two")["value"][0].clone(),
+            ]})),
+        ],
+    ];
+    for (n, replies) in doubtful.into_iter().enumerate() {
+        assert!(existence(replies).await.is_err(), "case {n}");
+    }
+}
+
+/// `event_exists_anywhere("write", ..)` against a mock answering `replies`.
+/// A reply whose nextLink is "NEXT" points at the mock's own next page.
+async fn existence(replies: Vec<(u16, Value, Option<String>)>) -> Result<bool> {
+    let needs_next = replies
+        .iter()
+        .any(|(_, body, _)| body["@odata.nextLink"] == "NEXT");
+    let mock = mock(replies).await;
+    if needs_next {
+        let next = mock
+            .provider
+            .endpoint(&["me", "calendars", "shared", "events"])
+            .unwrap()
+            .to_string()
+            + "?page=2";
+        for reply in mock.state.replies.lock().unwrap().iter_mut() {
+            if reply.1["@odata.nextLink"] == "NEXT" {
+                reply.1["@odata.nextLink"] = json!(next);
+            }
+        }
+    }
+    mock.provider
+        .event_exists_anywhere("write", "booking@calrs")
+        .await
 }
 
 #[test]
