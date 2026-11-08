@@ -208,7 +208,7 @@ Discovery and endpoints:
 
 | Endpoint | Purpose |
 |---|---|
-| `/.well-known/oauth-protected-resource/mcp` | Resource metadata (also available at the root well-known path) |
+| `/.well-known/oauth-protected-resource/mcp` | Resource metadata (RFC 9728; the 401 challenge names it, and the root well-known path is not served since it would describe a different resource) |
 | `/.well-known/oauth-authorization-server` | OAuth server metadata |
 | `POST /oauth/register` | Automatic public client registration |
 | `GET /oauth/authorize` | Begin browser authorization |

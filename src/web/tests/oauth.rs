@@ -152,6 +152,15 @@ async fn oauth_discovery_and_registration_validation() {
     .await;
     assert_eq!(meta["issuer"], "https://cal.example");
     assert_eq!(meta["code_challenge_methods_supported"], json!(["S256"]));
+    assert_eq!(meta["authorization_response_iss_parameter_supported"], true);
+    // RFC 9728: only the path-suffixed URL describes `<base>/mcp`.
+    let root = app
+        .clone()
+        .oneshot(get("/.well-known/oauth-protected-resource"))
+        .await
+        .unwrap();
+    assert_ne!(root.status(), StatusCode::OK);
+    assert!(!body_string(root).await.contains("authorization_servers"));
     let meta = json_body(
         app.clone()
             .oneshot(get("/.well-known/oauth-protected-resource/mcp"))

@@ -41,10 +41,10 @@ const GRANT_MFA_POLICY: &str = "(u.auth_provider != 'local'
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/.well-known/oauth-authorization-server", get(metadata))
-        .route(
-            "/.well-known/oauth-protected-resource",
-            get(resource_metadata),
-        )
+        // RFC 9728 section 3.1: the metadata of resource `<base>/mcp` lives at
+        // the path-suffixed URL, which the 401 challenge also names. The root
+        // URL would describe the resource `<base>` itself, which calrs does
+        // not serve, so it is not answered.
         .route(
             "/.well-known/oauth-protected-resource/mcp",
             get(resource_metadata),
@@ -81,6 +81,8 @@ async fn metadata() -> Json<serde_json::Value> {
         "token_endpoint_auth_methods_supported": ["none"],
         "revocation_endpoint_auth_methods_supported": ["none"],
         "code_challenge_methods_supported": ["S256"],
+        // RFC 9207: the consent redirect carries `iss`.
+        "authorization_response_iss_parameter_supported": true,
         "scopes_supported": SCOPES,
         "client_id_metadata_document_supported": false
     }))
