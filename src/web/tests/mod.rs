@@ -58,10 +58,7 @@ async fn setup_test_db() -> SqlitePool {
     setup_test_db_with(2).await
 }
 
-/// [`setup_test_db`] with a pool of `connections`. A booking core holds one
-/// connection for its transaction and reads on another, so a test running
-/// more concurrent bookings than the pool can serve would wait out sqlx's
-/// 30 second acquire timeout for each, over and over.
+/// [`setup_test_db`] with a pool of `connections`.
 async fn setup_test_db_with(connections: u32) -> SqlitePool {
     use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
     use std::str::FromStr;
