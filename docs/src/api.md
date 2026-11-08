@@ -35,13 +35,15 @@ when it is created; calrs stores only its SHA-256 hash. It looks like
 the first characters, permissions, creation, expiry, last use) with a
 **Revoke** button. A user holds at most 20.
 
-By default only administrators can create personal access tokens: a token is a
-long-lived password for the API, so letting every user mint them is the
-operator's call. **Admin panel → Access → API tokens → Let all users create
-API tokens** opens it to everyone. Turning it off again stops the tokens of
-users who are not administrators at once (they work again if it is turned
-back on); an administrator who is demoted loses the use of theirs the same
-way. OAuth applications (below) are not affected by the switch.
+By default only administrators can use the REST API, with a personal token
+or an OAuth application: both read guest names, addresses and notes, so
+letting every user pull them programmatically is the operator's call.
+**Admin panel → Access → API tokens → Let all users use the REST API** opens it
+to everyone. Turning it off again stops the personal tokens and the API grants
+of users who are not administrators at once (they work again if it is turned
+back on), and they cannot approve a new API application meanwhile (the
+consent answers `access_denied`); an administrator who is demoted loses the
+use of theirs the same way. MCP clients are not affected by the switch.
 
 ### OAuth applications
 
@@ -135,11 +137,11 @@ slot computation makes of it (no event titles, no calendar names).
 | 403 | `insufficient_scope`, `forbidden`, `origin_not_allowed` |
 | 404 | `not_found` |
 | 405 | `method_not_allowed` |
-| 409 | `slot_unavailable`, `limit_reached`, `booking_not_active`, `no_bookable_dates`, `idempotency_in_progress` |
+| 409 | `slot_unavailable`, `limit_reached`, `booking_not_active`, `no_bookable_dates`, `reschedule_already_requested`, `idempotency_in_progress` |
 | 413 | `payload_too_large` |
 | 415 | `unsupported_media_type` |
-| 422 | `too_soon`, `outside_booking_window`, `booking_refused`, `idempotency_key_reused` |
-| 429 | `rate_limited` (with `Retry-After`) |
+| 422 | `too_soon`, `outside_booking_window`, `booking_refused`, `too_many_attendees`, `idempotency_key_reused` |
+| 429 | `rate_limited` (with `Retry-After`), `daily_limit_reached` |
 | 500 | `internal_error` |
 
 ### Rate limits
@@ -147,6 +149,15 @@ slot computation makes of it (no event titles, no calendar names).
 - 300 requests per minute per token (per OAuth grant, or per personal token).
 - On top of that, slot reads and every `POST`: 60 per 5 minutes per user,
   shared by all of the user's tokens.
+- Bookings created through the API: 50 per user per 24 hours (429
+  `daily_limit_reached`), each with at most 10 additional attendees whatever
+  the event type allows on its booking page (422 `too_many_attendees`). Every
+  booking emails the guest, the attendees and the hosts from the instance, so
+  the API cannot be used to send mail without bound.
+
+A request without a token gets `401` with `WWW-Authenticate: Bearer
+resource_metadata="...", scope="..."` and no error code (RFC 6750 section
+3.1); an invalid or expired token adds `error="invalid_token"`.
 
 ## Endpoints
 
@@ -216,13 +227,18 @@ GET /api/v1/event-types/6c1e4f0a-.../slots?from=2026-11-10&to=2026-11-10&timezon
 ```
 
 `date` and `time` are the slot in the requested timezone; pass `start` back
-to book it.
+to book it. Like the booking page, the list leaves out wall times that do not
+name a single instant (the hour repeated when clocks go back), which the
+booking check would refuse.
 
 ### `GET /api/v1/bookings`
 
 Query: `cursor`, `status` (`pending`, `confirmed`, `cancelled`, `declined`),
 `from` and `to` (RFC 3339; bookings starting at or after `from`, before `to`).
-Ordered by start time.
+Ordered by start time, in UTC. Bookings made before calrs 1.20 store their
+time as a wall clock in the event type's timezone; they are filtered exactly
+but sort among the others by that wall clock, so on an instance that has
+them the order near those rows can be off by the timezone's offset.
 
 ```json
 {
@@ -276,7 +292,9 @@ Books an event type you manage for a guest.
   the event type's phone setting (required, optional, or ignored) and is
   stored in E.164. `attendees` is limited by the event type's additional
   guests setting. `language` is the language of the guest's emails and SMS;
-  by default the language you set in calrs, else English.
+  by default the language you set in calrs, else English. When the instance
+  addresses German speakers formally (Admin panel, German form of address),
+  `de` becomes `de-formal`, as on the booking page.
 - No invite is needed for internal or private event types: you manage them.
   None is used up either.
 
@@ -285,18 +303,26 @@ re-check of the time against the slot engine and of the shared resources
 under the booking lock, the same pending-or-confirmed decision (an event type
 that requires approval creates a pending request, and the host is asked to
 approve it), the same emails to the guest, the attendees and the hosts, the
-same calendar write-back, meeting link, watcher notifications and SMS.
+same calendar write-back, meeting link, watcher notifications, SMS and
+[webhooks](./webhooks.md) (`booking.created` or `booking.requested`). Cancel
+queues `booking.cancelled` (by the host) or `booking.declined`, as the
+dashboard does; a reschedule request queues nothing until the guest picks
+a new time.
 
-`201 Created`:
+`201 Created`. The answers of the three writes carry the whole booking only
+when the token also has `bookings:read`; a token with `bookings:write` alone
+gets `{"booking": {"id", "status"}}`.
 
 ```json
 {"booking": {"id": "1f6a...", "status": "confirmed", "...": "..."}}
 ```
 
 The booking object is the one `GET /bookings/{id}` returns, without
-`host_notes`. A team admin who books a round-robin event type assigned to
-another member is not one of that booking's hosts: they get it back here,
-but `GET /bookings/{id}` answers 404 for them afterwards.
+`host_notes`; keep its `id` to follow the booking. Reads follow the host
+rule: a team admin who books a round-robin event type assigned to another
+member, and is neither its owner nor that member, is not one of the booking's
+hosts, so `GET /bookings/{id}` and the list answer 404 and leave it out for
+them afterwards (the webhooks of the event type still report it).
 
 **`Idempotency-Key`**: send a key (1 to 255 visible ASCII characters) to make
 retries safe. The first answer with that key is kept 24 hours, per user, and
@@ -304,6 +330,12 @@ replayed for a retry with the same body (with `Idempotency-Replayed: true`);
 the same key with another body answers 422 `idempotency_key_reused`, and a
 retry while the first request still runs 409 `idempotency_in_progress`.
 Server errors are not kept, so the request can be retried with the key.
+While the first request runs its key is leased and the lease renewed, so a
+slow booking is never run twice; a lease left two minutes without renewal
+(the server stopped) is released. A replay checks again that you may still
+book the event type (else 404) and is shaped by the token's scopes like any
+answer. The kept answers contain the guest's details; they are deleted after
+24 hours, and with the user.
 
 Refusals: 409 `slot_unavailable` (the time is not, or no longer, offered),
 409 `limit_reached` (a booking frequency limit), 422 `too_soon` (inside the
@@ -326,7 +358,10 @@ Body: none, or `{}`.
 What the dashboard's reschedule button does: the guest gets a new link and the
 "pick a new time" email, and the booking keeps its time until they choose
 one. 409 `no_bookable_dates` when the event type has no bookable day left.
-Moving a booking to a time you choose is not in v1.
+This is the only reschedule v1 offers, as on the dashboard: moving a booking
+to a time you choose is not in v1. While the guest has not answered an
+earlier request, another one is refused (409 `reschedule_already_requested`,
+and the dashboard button says so too), so the guest is emailed once.
 
 ## Example
 

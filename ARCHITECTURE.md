@@ -36,6 +36,9 @@ Every user-facing string goes through Fluent (`i18n/`).
    session cleanup, pending sweep (web/pending.rs), reminders,
    write-back retries (web/writeback.rs), sync of the stalest source
    (commands/sync.rs)
+
+ webhook task (run_webhook_loop in web/webhooks.rs)
+   delivers queued booking webhooks when woken and every 30 s
 ```
 
 ## Where things live
@@ -66,7 +69,7 @@ Every user-facing string goes through Fluent (`i18n/`).
 | `src/caldav/mod.rs` | CalDAV client: discovery, fetch, sync-collection, PUT/DELETE |
 | `src/caldav/multistatus.rs` | Reading WebDAV multistatus answers by namespace: calendar listing, events, sync deltas, principal and home discovery (tests in `src/caldav/multistatus/tests.rs`) |
 | `src/xml.rs` | Bounded, namespace-aware XML tree over `quick-xml`, used by the CalDAV client |
-| `src/ews/` | Exchange Web Services client (SOAP, autodiscover, parsing) |
+| `src/ews/` | Exchange Web Services client (SOAP, autodiscover, parsing); `global.rs` holds the admin's global impersonation config, provisioning of managed sources, and the client for a managed source |
 | `src/providers/` | `CalendarProvider` trait (`mod.rs`), CalDAV adapter, dispatch in `src/providers/factory.rs` |
 | `src/sms/` | `SmsProvider` trait, gateway adapters, phone normalisation, message bodies |
 | `src/email/` | Every email calrs sends (see below) |
@@ -90,7 +93,10 @@ Every user-facing string goes through Fluent (`i18n/`).
 | `pending.rs` | Pending requests: expiry deadline, sweep (expire and nudge), pending settings on event types |
 | `notify.rs` | `spawn_emails` / `drain_emails`, new-booking notifications, reminders, watchers, SMS on new booking, the background loop |
 | `meeting.rs` | Auto-generated meeting links (Jitsi, webhook, Google Meet) |
+| `webhooks.rs` | Outgoing booking webhooks (#168): `enqueue` (called by every path that changes a booking, after it commits), payload, URL checks (SSRF), signed delivery with retries (`run_webhook_loop`, spawned by `src/main.rs`) |
+| `webhook_pages.rs` | The webhooks page (`/dashboard/webhooks`): add, edit, test, switch off, remove; who may manage which endpoint; the admin switch handler |
 | `captcha.rs` | Cap captcha config and server-side verification |
+| `ews_admin.rs` | Global Exchange impersonation: admin card, its save, confirm-address and remove-all handlers, the lock on user sources, guards on managed sources |
 | `dashboard.rs` | Dashboard overview, event types and bookings lists, host cancel/confirm, settings, avatar |
 | `booking_notes.rs` | Host notes on a booking (#173): who may read and edit them (`note_booking`, the one gate), the notes page and its POST |
 | `overview_stats.rs` | Dashboard overview data: masthead sentence, the day ruler (bookable hours from event type rules and overrides, calrs bookings, anonymous calendar busy time), the week list, the 12-week chart, the 30-day figures (tests in `tests/overview_stats.rs`). The dashboard identity (tokens, timetable rows, status marks) lives in `templates/dashboard_base.html`; `tests/guards.rs` fails if its tells come back |
@@ -118,8 +124,8 @@ with `use super::*` and sees those fixtures and every item of `web`:
 `security`, `auth_pages`, `branding`, `format`, `availability`, `resources`,
 `hosts`, `event_types`, `invites`, `booking`, `public_pages`,
 `booking_actions`, `booking_notes`, `dashboard`, `sources`, `admin`, `emails`,
-`page_language`, `guards`, `api`, `oauth`, `mcp`, plus `booking_time`, `pending_hold`,
-`writeback_failures`, `write_destinations`, `organizer`, `duplicate_event_type` and `time_off`.
+`ews_global`, `page_language`, `guards`, `api`, `oauth`, `mcp`, plus `booking_time`, `pending_hold`,
+`writeback_failures`, `write_destinations`, `organizer`, `duplicate_event_type`, `time_off` and `webhooks`.
 
 ### `src/email/`
 
@@ -230,6 +236,15 @@ Call sites use `crate::email::name` whatever file `name` lives in.
   action handlers, admin card in `src/web/admin.rs`).
 - **Captcha** (`src/web/captcha.rs`, CSP in `src/web/mod.rs`, widget in
   `templates/book.html`).
+- **Global Exchange impersonation** (`src/ews/global.rs`, web side in
+  `src/web/ews_admin.rs`, admin guide in `docs/src/ews-impersonation.md`). A
+  managed source (`caldav_sources.managed = 1`) has no credentials of its own:
+  every client for an EWS source goes through `ews::global::provider_for_source`,
+  which picks the service account and impersonated mailbox for managed rows
+  and rechecks the user (enabled, `users.email_trusted`, current address)
+  every time. Only `provision_managed_ews_source_for_user` creates or moves a
+  managed row; `ACTIVE_SOURCE_SQL` keeps idle managed rows out of sync and
+  write-back queries; their events are stored busy-only.
 - **Migrations** (`migrations/`, `build.rs`, `src/db.rs`). `build.rs` embeds
   every `.sql` file, sorted by name, and `migrate()` applies those not yet in
   `_migrations`. That table records the file stem, so a shipped migration is
@@ -237,6 +252,10 @@ Call sites use `crate::email::name` whatever file `name` lives in.
 - **Background loop** (`run_reminder_loop` in `src/web/notify.rs`, spawned by
   `src/main.rs`): session cleanup, pending sweep, reminders, write-back
   retries, sync of the stalest source.
+- **Booking webhooks** (`src/web/webhooks.rs`, page in
+  `src/web/webhook_pages.rs`). A new path that changes a booking's status or
+  time calls `webhooks::enqueue` after its change commits; delivery happens
+  in `run_webhook_loop`, never in the request.
 
 ## Where to add things
 

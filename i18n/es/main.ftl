@@ -1678,6 +1678,7 @@ email-pending-expired-action = Elegir otra hora
 bae-body-host-busy = El anfitrión (o un miembro necesario del equipo) ya no está libre a esta hora. Pide al invitado que elija otro hueco.
 bookings-error-generic = Algo salió mal.
 bookings-error-no-bookable-dates = Este tipo de evento ya no tiene fechas reservables, así que el invitado no podría elegir otra hora. Amplía primero su periodo de reserva.
+bookings-error-reschedule-pending = Ya se pidió al invitado que eligiera otro horario y todavía no ha respondido.
 troubleshoot-detail-pending-request = { $title } (solicitud pendiente)
 etf-pending-blocks-slot = Las solicitudes pendientes bloquean el hueco
 etf-pending-blocks-slot-help = Mientras una solicitud espera tu respuesta, nadie más puede reservar esa hora, ni en este tipo de evento ni en los demás.
@@ -1928,6 +1929,77 @@ directory-empty = No se encontraron reuniones. Prueba otra búsqueda.
 directory-favorites-empty = No se encontraron favoritos. Añade reuniones a favoritos desde el directorio para verlas aquí.
 directory-with-hosts = Con { $names }
 
+# Global Exchange (EWS) impersonation: admin card and managed sources
+sources-admin-managed = Gestionada por el admin
+sources-admin-managed-title = Aprovisionada por el administrador
+sources-locked-notice = Tu administrador gestiona Exchange de forma centralizada. Añadir otras fuentes de calendario está desactivado.
+sources-locked-by-admin = El administrador ha desactivado la adición de fuentes de calendario personales. Tu calendario de Exchange se gestiona de forma centralizada.
+sources-managed-no-edit = Esta fuente de calendario la aprovisiona el administrador y no se puede editar.
+sources-managed-no-remove = Esta fuente de calendario la aprovisiona el administrador y no se puede eliminar.
+sources-managed-global-disabled = Esta fuente la gestiona el administrador, pero Exchange global está desactivado.
+admin-ews-title = Exchange (EWS): suplantación global
+admin-ews-help = Configura un único punto de conexión de Exchange Web Services y una cuenta de servicio con el rol RBAC <code>ApplicationImpersonation</code>. El calendario de cada usuario se lee entonces mediante suplantación, sin que introduzca credenciales. PowerShell en Exchange: <code>New-ManagementRoleAssignment -Name CalrsImpersonation -Role ApplicationImpersonation -User svc-calrs@tudominio</code>.
+admin-ews-endpoint = Punto de conexión
+admin-ews-managed-count = Fuentes gestionadas:
+admin-ews-enable = Activar Exchange global mediante suplantación
+admin-ews-url = URL del punto de conexión EWS
+admin-ews-username = Usuario de la cuenta de servicio
+admin-ews-password = Contraseña de la cuenta de servicio
+admin-ews-password-keep = (déjala vacía para conservar la actual)
+admin-ews-password-unchanged = (sin cambios)
+admin-ews-password-placeholder = contraseña de la cuenta de servicio
+admin-ews-domain = Dominio de los buzones
+admin-ews-optional = (opcional)
+admin-ews-domain-help = Rellena ambos cuando las direcciones que conoce calrs (UPN de AD, correo de OIDC) estén en otro dominio que los buzones de Exchange. Solo se reescribe una dirección exactamente en el dominio de los usuarios, conservando su parte local: <code>alice@example.local</code> → <code>alice@example.com</code>. Las direcciones de cualquier otro dominio se usan tal cual. Deja ambos vacíos para suplantar la dirección de calrs de cada usuario tal cual.
+admin-ews-auto = Aprovisionar para todos los usuarios (existentes + futuros)
+admin-ews-auto-help = Si está marcada, cada usuario activo con una dirección de confianza recibe una fuente de Exchange gestionada: cuentas creadas con calrs user create, cuentas SSO cuyo correo verificó el proveedor de identidad y direcciones confirmadas abajo. Al guardar se ejecuta el proceso de inmediato.
+admin-ews-lock = Impedir que los usuarios normales añadan sus propias fuentes de calendario
+admin-ews-lock-help = Los administradores quedan exentos. Las fuentes que los usuarios ya hayan añadido permanecen hasta que las elimines.
+admin-ews-disable-note = Mientras la función está desactivada, las fuentes gestionadas se conservan pero no se sincronizan, y no se escribe ninguna reserva en ellas. Al reactivarla, se reanudan.
+admin-ews-remove = Eliminar las fuentes gestionadas y borrar la contraseña de la cuenta de servicio
+admin-ews-remove-confirm = ¿Eliminar todas las fuentes de Exchange gestionadas, con los calendarios y las horas ocupadas que calrs guardó de ellas, y la contraseña guardada de la cuenta de servicio? Exchange global se desactiva. Las reservas ya escritas en los buzones permanecen allí.
+admin-ews-notice-removed = Fuentes gestionadas eliminadas: { $count }. La contraseña de la cuenta de servicio se ha borrado y Exchange global está desactivado. Las reservas ya escritas en los buzones permanecen allí.
+admin-ews-notice-https-required = El punto de conexión EWS debe usar https://: la contraseña de la cuenta de servicio se envía con cada solicitud. No se guardó nada.
+admin-ews-notice-password-cleared = Ajustes guardados. El punto de conexión o la cuenta de servicio cambió, así que se borró la contraseña guardada: hay que introducirla de nuevo para que Exchange global funcione.
+admin-ews-notice-source-removed = Fuente gestionada eliminada, con sus calendarios y horas ocupadas en caché.
+admin-ews-row-remove = Eliminar
+admin-ews-row-remove-confirm = ¿Eliminar la fuente de Exchange gestionada de { $email }, con sus calendarios y horas ocupadas en caché? El aprovisionamiento automático la vuelve a crear en el siguiente guardado, confirmación o inicio de sesión SSO; suspender la cuenta lo evita.
+admin-ews-trust-no-mailbox = ninguno (la dirección no corresponde a ningún buzón)
+admin-ews-notice-selections-reset = El buzón que leen algunas fuentes gestionadas cambió, así que sus calendarios se vuelven a descubrir. Tipos de evento cuya selección de calendarios se restableció: { $count } (listados en el registro del servidor).
+admin-ews-notice-reconfirm = La sustitución de dominio asigna ahora algunas direcciones confirmadas a otro buzón. Direcciones que confirmar de nuevo: { $count } (ver la lista de abajo).
+admin-ews-row-taken-over = Tomado de { $user } el { $when }
+admin-ews-notice-trust-changed = No se confirmó nada: la dirección de esta cuenta, o el buzón que abre, cambió desde que se mostró la página. Revisa la lista de nuevo.
+sources-managed-user-untrusted = Esta fuente la gestiona el administrador, pero la dirección de la cuenta aún no está confirmada, así que no se sincroniza.
+sources-managed-user-suspended = Esta fuente la gestiona el administrador, pero la cuenta está desactivada, así que no se sincroniza.
+admin-ews-save = Guardar ajustes de EWS
+admin-ews-save-provision = Guardar y aprovisionar ahora a todos los usuarios
+admin-ews-status-title = Estado de sincronización por usuario
+admin-ews-status-summary = { $ok } de { $total } buzones gestionados se están sincronizando. Un usuario sin buzón de Exchange (p. ej. una cuenta de administrador local) siempre mostrará un error. Es lo esperado.
+admin-ews-col-user = Usuario
+admin-ews-col-mailbox = Buzón
+admin-ews-col-last-sync = Última sincronización
+admin-ews-col-status = Estado
+admin-ews-row-disabled = desactivada
+admin-ews-row-synced = Sincronizada
+admin-ews-row-never = Nunca sincronizada
+admin-ews-row-no-mailbox = Sin buzón de Exchange
+admin-ews-notice-saved = Ajustes de Exchange guardados.
+admin-ews-notice-provisioned = Ajustes de Exchange guardados. Fuentes gestionadas creadas: { $count }.
+admin-ews-notice-invalid-url = La URL del punto de conexión EWS no es válida (solo http(s), sin direcciones privadas salvo que estén permitidas). No se ha guardado nada.
+admin-ews-notice-incomplete = Para activar Exchange global, rellena la URL del punto de conexión, la cuenta de servicio y su contraseña. No se ha guardado nada.
+admin-ews-notice-provision-failed = Ajustes guardados, pero el aprovisionamiento de las fuentes gestionadas ha fallado. Consulta el registro del servidor.
+admin-ews-registration-warning = El registro abierto está activado. Las cuentas creadas así nunca reciben una fuente de Exchange gestionada, ni siquiera con «aprovisionar ahora a todos los usuarios»: nada demuestra que la dirección sea suya. Para dar un buzón a una de ellas, confirma su dirección abajo, o ejecuta calrs user trust-email, cuando sepas que pertenece a esa persona.
+admin-ews-from-domain = Dominio de los usuarios
+admin-ews-notice-override-domains = La sustitución de dominio necesita ambos dominios, cada uno un dominio simple como example.com: aquel con el que inician sesión tus usuarios y el de sus buzones. No se ha guardado nada.
+admin-ews-notice-trusted = Dirección confirmada. Mientras Exchange global esté activo, la fuente gestionada del usuario se crea ahora: consulta la tabla de estado.
+admin-ews-row-suspended = Cuenta desactivada: no se sincroniza
+admin-ews-row-untrusted = Dirección sin confirmar: no se sincroniza
+admin-ews-row-conflict = Sin aprovisionar: la fuente de otro usuario ya lee este buzón
+admin-ews-trust-title = Direcciones por confirmar
+admin-ews-trust-help = Estas cuentas activas de los dominios permitidos tienen una dirección que nadie ha avalado (registro abierto, o creadas antes de esta comprobación), así que no reciben ninguna fuente de Exchange gestionada. Confirma una solo cuando sepas que la dirección pertenece a esa persona: al confirmarla, calrs lee para ella el calendario de ese buzón.
+admin-ews-trust-confirm = Confirmar
+admin-ews-trust-more = Se muestran { $shown } de { $total }.
+admin-ews-http-warning = El punto de conexión usa http://: la contraseña de la cuenta de servicio se envía sin cifrar. Es preferible https://.
 # Time off (templates/time_off.html, src/web/time_off.rs, troubleshoot view)
 
 nav-time-off = Ausencias
@@ -2027,8 +2099,8 @@ api-tokens-error-scope = Elige al menos un permiso.
 api-tokens-error-limit = Ya tienes 20 tokens. Revoca uno primero.
 api-tokens-docs = Cómo usar un token se explica en el capítulo API REST de la documentación de calrs.
 admin-api-tokens = Tokens de API
-admin-api-tokens-allow-all = Permitir que todos los usuarios creen tokens de API
-admin-api-tokens-allow-all-help = Desactivado por defecto: solo administración puede crear tokens de acceso personal para la API REST. Al desactivarlo, los tokens creados por otros usuarios dejan de funcionar hasta que se vuelva a activar. Las aplicaciones conectadas por OAuth no se ven afectadas.
+admin-api-tokens-allow-all = Permitir que todos los usuarios usen la API REST
+admin-api-tokens-allow-all-help = Desactivado por defecto: solo administración puede crear tokens de acceso personal o conectar aplicaciones a la API REST mediante OAuth, porque ambos leen datos de los invitados. Al desactivarlo, los tokens y las aplicaciones de API de otros usuarios dejan de funcionar hasta que se vuelva a activar. Los clientes MCP no se ven afectados.
 admin-revoke-apps = Revocar aplicaciones conectadas ({ $count })
 
 # Write destination per event type (#47)
@@ -2042,3 +2114,87 @@ sources-destinations-saved = Guardado. Las nuevas reservas van a los calendarios
 write-destination-not-yours = No se guardó nada: elige uno de tus propios calendarios, para un tipo de evento que atiendas.
 write-destination-unavailable = { $name } (no disponible)
 write-destination-refused = Este calendario rechazó la última reserva ({ $error }), que se escribió según el ajuste de la fuente. La próxima reserva lo volverá a intentar.
+# Booking webhooks (templates/webhooks.html, admin card, #168)
+webhooks-title = Webhooks
+webhooks-back = Volver a los tipos de evento
+webhooks-subtitle = calrs envía un mensaje JSON firmado a estas direcciones cuando una reserva se crea, se solicita, se aprueba, se rechaza, caduca, se cancela o se mueve.
+webhooks-not-allowed = En esta instancia, los webhooks están reservados a los administradores.
+webhooks-endpoints = Destinos
+webhooks-empty = Todavía no hay webhooks. Añade uno abajo para que calrs avise a otro sistema de tus reservas.
+webhooks-scope = Enviar eventos de
+webhooks-scope-personal = Todos mis tipos de evento personales
+webhooks-scope-event-type = Tipo de evento: { $title }
+webhooks-scope-team-event-type = Tipo de evento: { $title } ({ $team })
+webhooks-added-by = Añadido por { $name }
+webhooks-state-off = Desactivado
+webhooks-never-sent = Aún no se ha enviado nada
+webhooks-state-ok = Último envío correcto
+webhooks-state-failing = Último envío fallido
+webhooks-queued =
+    { $count ->
+        [one] 1 envío esperando un nuevo intento
+       *[other] { $count } envíos esperando un nuevo intento
+    }
+webhooks-gave-up =
+    { $count ->
+        [one] 1 envío abandonado tras todos los intentos
+       *[other] { $count } envíos abandonados tras todos los intentos
+    }
+webhooks-send-test = Enviar prueba
+webhooks-enable = Activar
+webhooks-disable = Desactivar
+webhooks-delete = Eliminar
+webhooks-delete-confirm = ¿Eliminar este webhook? Los envíos que aún esperan se descartan.
+webhooks-edit = Editar
+webhooks-url = URL
+webhooks-url-hint = (https)
+webhooks-secret = Secreto de firma
+webhooks-secret-hint = (al menos { $min } caracteres, firma cada petición, no se vuelve a mostrar)
+webhooks-save = Guardar
+webhooks-add = Añadir un webhook
+webhooks-add-submit = Añadir webhook
+webhooks-privacy-note = Cada mensaje contiene el nombre, el correo, el teléfono y las notas del invitado. Envíalo solo a un sistema al que confíes esos datos.
+webhooks-notice-created = Webhook añadido. Usa «Enviar prueba» para comprobar que llega.
+webhooks-notice-updated = Webhook guardado.
+webhooks-notice-deleted = Webhook eliminado.
+webhooks-notice-enabled = Webhook activado.
+webhooks-notice-disabled = Webhook desactivado. Los envíos que aún esperaban se han descartado.
+webhooks-notice-test-ok = Prueba entregada: el destino respondió con un estado 2xx.
+webhooks-error-url = Introduce una URL completa, por ejemplo https://hooks.example.com/calrs.
+webhooks-error-https = La URL debe empezar por https://. El http simple solo funciona con un host de la lista de hosts privados permitidos.
+webhooks-error-credentials = Quita el usuario y la contraseña de la URL: el secreto de firma autentica a calrs.
+webhooks-error-secret = El secreto de firma debe tener entre 16 y 256 caracteres.
+webhooks-error-scope = No puedes añadir un webhook a ese tipo de evento.
+webhooks-error-limit = Este ámbito ya tiene el máximo de 10 webhooks.
+webhooks-error-test = La prueba no se entregó. El motivo aparece junto al webhook.
+admin-webhooks = Webhooks de reservas
+admin-webhooks-help =
+    { $count ->
+        [one] Hay 1 webhook configurado en esta instancia.
+       *[other] Hay { $count } webhooks configurados en esta instancia.
+    }
+admin-webhooks-allow-all = Permitir que cualquier usuario añada webhooks
+admin-webhooks-allow-all-help = Desactivado por defecto: un webhook envía nombres, correos y teléfonos de invitados a una dirección elegida por el usuario, así que solo los administradores pueden añadirlos. Desactivarlo detiene los webhooks que añadieron otros usuarios.
+admin-webhooks-manage = Gestionar tus webhooks
+webhooks-events = Eventos
+webhooks-events-all = Todos los eventos
+webhooks-event-created = Reservada (confirmada)
+webhooks-event-requested = Solicitada (esperando aprobación)
+webhooks-event-confirmed = Aprobada
+webhooks-event-declined = Rechazada
+webhooks-event-expired = Caducada sin respuesta
+webhooks-event-cancelled = Cancelada
+webhooks-event-rescheduled = Movida
+webhooks-error-events = Elige al menos un evento.
+webhooks-error-test-limit = Demasiadas pruebas en poco tiempo. Espera unos minutos y vuelve a intentarlo.
+webhooks-added-by-former = Añadido por un antiguo miembro
+webhooks-signature-help = Cada petición va firmada: <code>X-Calrs-Signature: sha256=&lt;hex&gt;</code> es un HMAC-SHA256 del cuerpo sin procesar, con el secreto de firma como clave. El contenido y las comprobaciones del receptor se describen en la página Webhooks de la documentación de calrs.
+webhooks-state-suspended = Suspendido: quien lo añadió ya no puede gestionar este tipo de evento. Hazte cargo de él para reanudarlo.
+webhooks-adopt = Hacerse cargo
+webhooks-notice-adopted = Webhook asumido y reanudado.
+webhooks-event-claimed = Asumida por un observador
+webhooks-error-address = No se puede usar esta dirección: calrs solo envía a direcciones públicas de Internet, salvo que el host esté en la lista de hosts privados permitidos.
+webhooks-adopt-help = Hacerte cargo de él lo hace tuyo y lo reanuda. Confirma la dirección a la que envía y define un nuevo secreto de firma: quien lo añadió puede conocer el anterior. Los envíos que aún esperan se descartan.
+webhooks-error-not-suspended = Solo se puede asumir un webhook suspendido.
+webhooks-error-new-secret = La URL apunta ahora a otro host: introduce también un nuevo secreto de firma.
+webhooks-url-masked-hint = (solo quien lo añadió ve la URL completa: vuelve a introducirla para guardar)

@@ -597,6 +597,189 @@
   </form>
 </div>
 
+<!-- Organization-wide Exchange (EWS) through impersonation -->
+<div class="card" id="ews-global">
+  <h2>{{ t("admin-ews-title") }}</h2>
+  <div style="margin-bottom: 1rem; font-size: 0.875rem; color: var(--text-secondary);">
+    {{ t("admin-status") }}
+    {% if ews_global_enabled %}<strong style="color: var(--success);">{{ t("admin-status-enabled") }}</strong>
+    {% else %}<span style="color: var(--text-muted);">{{ t("admin-status-disabled") }}</span>{% endif %}
+    {% if ews_global_url %}&middot; {{ t("admin-ews-endpoint") }}: <span style="color: var(--text-muted);">{{ ews_global_url }}</span>{% endif %}
+    {% if ews_global_enabled %}&middot; {{ t("admin-ews-managed-count") }} <span style="color: var(--text-muted);">{{ ews_managed_source_count }}</span>{% endif %}
+  </div>
+  {% if ews_notice == "saved" %}
+  <p style="color: var(--success); font-size: 0.875rem;">{% if ews_provisioned is none %}{{ t("admin-ews-notice-saved") }}{% else %}{{ t("admin-ews-notice-provisioned", count=ews_provisioned) }}{% endif %}</p>
+  {% if ews_selections_lost %}<p class="adm-error-text" style="font-size: 0.875rem;">{{ t("admin-ews-notice-selections-reset", count=ews_selections_lost) }}</p>{% endif %}
+  {% if ews_reconfirm %}<p class="adm-error-text" style="font-size: 0.875rem;">{{ t("admin-ews-notice-reconfirm", count=ews_reconfirm) }}</p>{% endif %}
+  {% elif ews_notice == "invalid-url" %}
+  <p class="adm-error-text" style="font-size: 0.875rem;">{{ t("admin-ews-notice-invalid-url") }}</p>
+  {% elif ews_notice == "incomplete" %}
+  <p class="adm-error-text" style="font-size: 0.875rem;">{{ t("admin-ews-notice-incomplete") }}</p>
+  {% elif ews_notice == "override-domains" %}
+  <p class="adm-error-text" style="font-size: 0.875rem;">{{ t("admin-ews-notice-override-domains") }}</p>
+  {% elif ews_notice == "trusted" %}
+  <p style="color: var(--success); font-size: 0.875rem;">{{ t("admin-ews-notice-trusted") }}</p>
+  {% elif ews_notice == "https-required" %}
+  <p class="adm-error-text" style="font-size: 0.875rem;">{{ t("admin-ews-notice-https-required") }}</p>
+  {% elif ews_notice == "password-cleared" %}
+  <p class="adm-error-text" style="font-size: 0.875rem;">{{ t("admin-ews-notice-password-cleared") }}</p>
+  {% elif ews_notice == "trust-changed" %}
+  <p class="adm-error-text" style="font-size: 0.875rem;">{{ t("admin-ews-notice-trust-changed") }}</p>
+  {% elif ews_notice == "source-removed" %}
+  <p style="color: var(--success); font-size: 0.875rem;">{{ t("admin-ews-notice-source-removed") }}</p>
+  {% elif ews_notice == "removed" %}
+  <p style="color: var(--success); font-size: 0.875rem;">{{ t("admin-ews-notice-removed", count=ews_provisioned or 0) }}</p>
+  {% elif ews_notice == "provision-failed" %}
+  <p class="adm-error-text" style="font-size: 0.875rem;">{{ t("admin-ews-notice-provision-failed") }}</p>
+  {% endif %}
+  {% if ews_global_enabled and registration_enabled %}
+  <p style="font-size: 0.875rem; color: var(--adm-warn);">{{ t("admin-ews-registration-warning") }}</p>
+  {% endif %}
+  {% if ews_url_insecure %}
+  <p style="font-size: 0.875rem; color: var(--adm-warn);">{{ t("admin-ews-http-warning") }}</p>
+  {% endif %}
+  <p style="color: var(--text-muted); font-size: 0.875rem; margin-bottom: 0.75rem;">
+    {{ t("admin-ews-help") | safe }}
+  </p>
+  <form method="post" action="/dashboard/admin/ews">
+    <div style="margin-bottom: 1rem;">
+      <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.925rem; cursor: pointer;">
+        <input type="checkbox" name="ews_global_enabled" value="on" {% if ews_global_enabled %}checked{% endif %} style="width: 1rem; height: 1rem; flex-shrink: 0;">
+        {{ t("admin-ews-enable") }}
+      </label>
+    </div>
+    <div class="form-group">
+      <label>{{ t("admin-ews-url") }}</label>
+      <input type="url" name="ews_global_url" value="{{ ews_global_url }}" placeholder="https://mail.example.com/EWS/Exchange.asmx">
+    </div>
+    <div class="form-group">
+      <label>{{ t("admin-ews-username") }}</label>
+      <input type="text" name="ews_service_username" value="{{ ews_service_username }}" placeholder="svc-calrs@example.com">
+    </div>
+    <div class="form-group">
+      <label>{{ t("admin-ews-password") }} <span class="hint">{{ t("admin-ews-password-keep") }}</span></label>
+      <input type="password" name="ews_service_password" value="" placeholder="{% if ews_has_password %}{{ t('admin-ews-password-unchanged') }}{% else %}{{ t('admin-ews-password-placeholder') }}{% endif %}">
+    </div>
+    <div class="form-group">
+      <label>{{ t("admin-ews-from-domain") }} <span class="hint">{{ t("admin-ews-optional") }}</span></label>
+      <input type="text" name="ews_impersonation_from_domain" value="{{ ews_impersonation_from_domain }}" placeholder="example.local">
+    </div>
+    <div class="form-group">
+      <label>{{ t("admin-ews-domain") }} <span class="hint">{{ t("admin-ews-optional") }}</span></label>
+      <input type="text" name="ews_impersonation_domain" value="{{ ews_impersonation_domain }}" placeholder="example.com">
+      <span style="font-size: 0.8rem; color: var(--text-muted);">
+        {{ t("admin-ews-domain-help") | safe }}
+      </span>
+    </div>
+    <div style="margin-bottom: 1rem;">
+      <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.925rem; cursor: pointer;">
+        <input type="checkbox" name="ews_auto_provision" value="on" {% if ews_auto_provision %}checked{% endif %} style="width: 1rem; height: 1rem; flex-shrink: 0;">
+        {{ t("admin-ews-auto") }}
+      </label>
+      <span style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">
+        {{ t("admin-ews-auto-help") }}
+      </span>
+    </div>
+    <div style="margin-bottom: 1rem;">
+      <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.925rem; cursor: pointer;">
+        <input type="checkbox" name="ews_lock_user_sources" value="on" {% if ews_lock_user_sources %}checked{% endif %} style="width: 1rem; height: 1rem; flex-shrink: 0;">
+        {{ t("admin-ews-lock") }}
+      </label>
+      <span style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">
+        {{ t("admin-ews-lock-help") }}
+      </span>
+    </div>
+    <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.75rem;">
+      {{ t("admin-ews-disable-note") }}
+    </p>
+    <button type="submit" class="adm-btn adm-btn-primary">{{ t("admin-ews-save") }}</button>
+    <button type="submit" name="provision_now" value="1" class="adm-btn" style="margin-left: 0.5rem;">{{ t("admin-ews-save-provision") | safe }}</button>
+  </form>
+  {% if ews_managed_source_count > 0 or ews_has_password %}
+  <form method="post" action="/dashboard/admin/ews/remove" style="margin-top: 1rem;" data-confirm="{{ t('admin-ews-remove-confirm') }}" onsubmit="return confirm(this.dataset.confirm);">
+    <button type="submit" class="adm-btn adm-btn-danger-outline">{{ t("admin-ews-remove") }}</button>
+  </form>
+  {% endif %}
+
+  {% if ews_managed_sources %}
+  <div style="margin-top: 1.5rem;">
+    <h3 style="margin-bottom: 0.5rem; font-size: 1rem;">{{ t("admin-ews-status-title") }}</h3>
+    <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.75rem;">
+      {{ t("admin-ews-status-summary", ok=ews_managed_ok_count, total=ews_managed_source_count) }}
+    </p>
+    <div class="adm-table-wrap">
+      <table class="adm-table">
+        <thead><tr><th>{{ t("admin-ews-col-user") }}</th><th>{{ t("admin-ews-col-mailbox") }}</th><th>{{ t("admin-ews-col-last-sync") }}</th><th>{{ t("admin-ews-col-status") }}</th><th></th></tr></thead>
+        <tbody>
+          {% for s in ews_managed_sources %}
+          <tr>
+            <td>{{ s.email }}</td>
+            <td class="adm-muted">{{ s.mailbox }}</td>
+            <td class="adm-muted adm-nowrap">{% if s.last_synced %}{{ s.last_synced }}{% else %}{{ t("admin-never") }}{% endif %}</td>
+            <td>
+              {% if s.status == "suspended" %}
+                <span class="adm-muted">{{ t("admin-ews-row-suspended") }}</span>
+              {% elif s.status == "untrusted" %}
+                <span class="adm-error-text">{{ t("admin-ews-row-untrusted") }}</span>
+              {% elif s.status == "conflict" %}
+                <span class="adm-error-text">{{ t("admin-ews-row-conflict") }}</span>
+              {% elif not s.enabled %}
+                <span class="adm-muted">{{ t("admin-ews-row-disabled") }}</span>
+              {% elif s.ok %}
+                <span style="color: var(--success);">{{ t("admin-ews-row-synced") }}</span>
+              {% else %}
+                <span class="adm-error-text">{% if s.status == "no-mailbox" %}{{ t("admin-ews-row-no-mailbox") }}{% elif s.status == "never" %}{{ t("admin-ews-row-never") }}{% else %}{{ s.error }}{% endif %}</span>
+              {% endif %}
+              {% if s.taken_over_from %}<div class="adm-muted" style="font-size: 0.8rem;">{{ t("admin-ews-row-taken-over", user=s.taken_over_from, when=s.taken_over_at) }}</div>{% endif %}
+            </td>
+            <td style="text-align: right;">
+              {% if s.user_id %}
+              <form method="post" action="/dashboard/admin/ews/remove-user" style="display: inline;" data-confirm="{{ t('admin-ews-row-remove-confirm', email=s.email) }}" onsubmit="return confirm(this.dataset.confirm);">
+                <input type="hidden" name="user_id" value="{{ s.user_id }}">
+                <button type="submit" class="adm-btn">{{ t("admin-ews-row-remove") }}</button>
+              </form>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% endif %}
+
+  {% if ews_untrusted_users %}
+  <div style="margin-top: 1.5rem;" id="ews-trust">
+    <h3 style="margin-bottom: 0.5rem; font-size: 1rem;">{{ t("admin-ews-trust-title") }}</h3>
+    <p class="adm-muted" style="font-size: 0.8rem; margin-bottom: 0.75rem;">{{ t("admin-ews-trust-help") }}</p>
+    <div class="adm-table-wrap">
+      <table class="adm-table">
+        <thead><tr><th>{{ t("admin-ews-col-user") }}</th><th>{{ t("admin-ews-col-mailbox") }}</th><th></th></tr></thead>
+        <tbody>
+          {% for u in ews_untrusted_users %}
+          <tr>
+            <td>{{ u.name }} <span class="adm-muted">{{ u.email }}</span></td>
+            <td class="adm-muted">{% if u.mailbox %}{{ u.mailbox }}{% else %}{{ t("admin-ews-trust-no-mailbox") }}{% endif %}</td>
+            <td style="text-align: right;">
+              <form method="post" action="/dashboard/admin/ews/trust" style="display: inline;">
+                <input type="hidden" name="user_id" value="{{ u.id }}">
+                <input type="hidden" name="email" value="{{ u.email }}">
+                <input type="hidden" name="mailbox" value="{{ u.mailbox or '' }}">
+                <button type="submit" class="adm-btn">{{ t("admin-ews-trust-confirm") }}</button>
+              </form>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% if ews_untrusted_count > ews_untrusted_users | length %}
+    <p class="adm-muted" style="font-size: 0.8rem; margin-top: 0.5rem;">{{ t("admin-ews-trust-more", shown=ews_untrusted_users | length, total=ews_untrusted_count) }}</p>
+    {% endif %}
+  </div>
+  {% endif %}
+</div>
+
 <!-- Captcha settings -->
 <div class="card">
   <h2>{{ t("admin-captcha") }}</h2>
@@ -962,6 +1145,20 @@
   sync();
 })();
 </script>
+<!-- Booking webhooks (#168): who may add them -->
+<div class="card">
+  <h2>{{ t("admin-webhooks") }}</h2>
+  <p style="font-size: 0.875rem; color: var(--text-secondary); margin-bottom: 1rem;">{{ t("admin-webhooks-help", count=webhook_count) }}</p>
+  <form method="post" action="/dashboard/admin/webhooks/policy">
+    <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.925rem; cursor: pointer;">
+      <input type="checkbox" name="allow_all_users" value="on" {% if webhooks_allow_all_users %}checked{% endif %} style="width: 1rem; height: 1rem;">
+      {{ t("admin-webhooks-allow-all") }}
+    </label>
+    <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin: 0.375rem 0 0.75rem;">{{ t("admin-webhooks-allow-all-help") }}</span>
+    <button type="submit" class="adm-btn">{{ t("admin-save-policy") }}</button>
+  </form>
+  <p style="font-size: 0.8rem; color: var(--text-muted); margin-top: 1rem;"><a href="/dashboard/webhooks">{{ t("admin-webhooks-manage") }}</a></p>
+</div>
 </section>
 <!-- ============ meetings ============ -->
 <section class="adm-panel" id="panel-meetings" role="tabpanel" data-panel="meetings" aria-label="{{ t('admin-tab-meetings') }}">

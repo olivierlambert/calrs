@@ -1688,6 +1688,7 @@ email-pending-expired-action = Pick another time
 bae-body-host-busy = The host (or a required team member) is no longer free at this time. Ask the guest to pick another slot.
 bookings-error-generic = Something went wrong.
 bookings-error-no-bookable-dates = This event type has no bookable dates left, so the guest could not pick a new time. Extend its date range first.
+bookings-error-reschedule-pending = The guest was already asked to pick a new time and has not answered yet.
 troubleshoot-detail-pending-request = { $title } (pending request)
 etf-pending-blocks-slot = Pending requests block the time slot
 etf-pending-blocks-slot-help = While a request waits for your answer, nobody else can book that time, on this event type or any of your others.
@@ -1939,6 +1940,77 @@ directory-empty = No meetings found. Try another search.
 directory-favorites-empty = No favorites found. Star meetings in the directory to see them here.
 directory-with-hosts = With { $names }
 
+# Global Exchange (EWS) impersonation: admin card and managed sources
+sources-admin-managed = Admin-managed
+sources-admin-managed-title = Provisioned by the administrator
+sources-locked-notice = Your administrator manages Exchange centrally. Adding additional calendar sources is disabled.
+sources-locked-by-admin = Adding personal calendar sources is disabled by the administrator. Your Exchange calendar is managed centrally.
+sources-managed-no-edit = This calendar source is provisioned by the administrator and cannot be edited.
+sources-managed-no-remove = This calendar source is provisioned by the administrator and cannot be removed.
+sources-managed-global-disabled = This source is admin-managed, but global Exchange is disabled.
+admin-ews-title = Exchange (EWS): global impersonation
+admin-ews-help = Configure a single Exchange Web Services endpoint and a service account holding the <code>ApplicationImpersonation</code> RBAC role. Each user's calendar is then read through impersonation, so they enter no credentials. PowerShell on Exchange: <code>New-ManagementRoleAssignment -Name CalrsImpersonation -Role ApplicationImpersonation -User svc-calrs@yourdomain</code>.
+admin-ews-endpoint = Endpoint
+admin-ews-managed-count = Managed sources:
+admin-ews-enable = Enable global Exchange via impersonation
+admin-ews-url = EWS endpoint URL
+admin-ews-username = Service account username
+admin-ews-password = Service account password
+admin-ews-password-keep = (leave empty to keep current)
+admin-ews-password-unchanged = (unchanged)
+admin-ews-password-placeholder = service-account password
+admin-ews-domain = Mailbox domain
+admin-ews-optional = (optional)
+admin-ews-domain-help = Fill in both when the addresses calrs knows (AD UPN, OIDC email) are on another domain than the Exchange mailboxes. Only an address in exactly the users' domain is rewritten, keeping its local part: <code>alice@example.local</code> → <code>alice@example.com</code>. Addresses in any other domain are used as they are. Leave both empty to impersonate each user's calrs address as it is.
+admin-ews-auto = Auto-provision for all users (existing + future)
+admin-ews-auto-help = When checked, every enabled user whose address is trusted gets a managed Exchange source: accounts created with calrs user create, SSO accounts whose email the identity provider verified, and addresses confirmed below. Saving here runs the batch immediately.
+admin-ews-lock = Prevent regular users from adding their own calendar sources
+admin-ews-lock-help = Admins bypass this lock. Existing user-added sources stay until you delete them.
+admin-ews-disable-note = While the feature is off, managed sources are kept but not synced, and no booking is written to them. Switching it on again resumes them.
+admin-ews-remove = Remove managed sources and clear the service password
+admin-ews-remove-confirm = Delete every managed Exchange source, with the calendars and busy times calrs cached from it, and the stored service password? Global Exchange is switched off. Bookings already written into the mailboxes stay there.
+admin-ews-notice-removed = Managed sources removed: { $count }. The service password is cleared and global Exchange is off. Bookings already written into the mailboxes stay there.
+admin-ews-notice-https-required = The EWS endpoint must use https://: the service account password is sent with every request. Nothing was saved.
+admin-ews-notice-password-cleared = Settings saved. The endpoint or the service account changed, so the stored password was cleared: it must be entered again before global Exchange works.
+admin-ews-notice-source-removed = Managed source removed, with its cached calendars and busy times.
+admin-ews-row-remove = Remove
+admin-ews-row-remove-confirm = Remove the managed Exchange source of { $email }, with its cached calendars and busy times? Auto-provisioning creates it again at the next save, confirmation or SSO login; suspending the account keeps it off.
+admin-ews-trust-no-mailbox = none (the address names no mailbox)
+admin-ews-notice-selections-reset = The mailbox some managed sources read changed, so their calendars are rediscovered. Event types whose calendar selection was reset: { $count } (listed in the server log).
+admin-ews-notice-reconfirm = The domain override now maps some confirmed addresses to another mailbox. Addresses to confirm again: { $count } (see the list below).
+admin-ews-row-taken-over = Taken over from { $user } on { $when }
+admin-ews-notice-trust-changed = Nothing confirmed: this account's address, or the mailbox it opens, changed since the page was shown. Review the list again.
+sources-managed-user-untrusted = This source is admin-managed, but the account's address is not confirmed yet, so it is not synced.
+sources-managed-user-suspended = This source is admin-managed, but the account is disabled, so it is not synced.
+admin-ews-save = Save EWS settings
+admin-ews-save-provision = Save &amp; provision all users now
+admin-ews-status-title = Per-user sync status
+admin-ews-status-summary = { $ok } of { $total } managed mailboxes syncing. A user with no Exchange mailbox (e.g. a local admin account) will always show an error. That is expected.
+admin-ews-col-user = User
+admin-ews-col-mailbox = Mailbox
+admin-ews-col-last-sync = Last sync
+admin-ews-col-status = Status
+admin-ews-row-disabled = disabled
+admin-ews-row-synced = Synced
+admin-ews-row-never = Never synced
+admin-ews-row-no-mailbox = No Exchange mailbox
+admin-ews-notice-saved = Exchange settings saved.
+admin-ews-notice-provisioned = Exchange settings saved. Managed sources created: { $count }.
+admin-ews-notice-invalid-url = The EWS endpoint URL is not valid (http(s) only, no private address unless allowlisted). Nothing was saved.
+admin-ews-notice-incomplete = To switch global Exchange on, fill in the endpoint URL, the service account and its password. Nothing was saved.
+admin-ews-notice-provision-failed = Settings saved, but provisioning the managed sources failed. See the server log.
+admin-ews-registration-warning = Self-registration is open. Accounts created that way never get a managed Exchange source, not even with "provision all users now": nothing proves they own their address. To give one of them a mailbox, confirm the address below, or run calrs user trust-email, once you know it belongs to that person.
+admin-ews-from-domain = Users' domain
+admin-ews-notice-override-domains = The mailbox domain override needs both domains, each a plain domain such as example.com: the domain your users sign in with and the domain of their mailboxes. Nothing was saved.
+admin-ews-notice-trusted = Address confirmed. While global Exchange is on, the user's managed source is created now: see the status table.
+admin-ews-row-suspended = Account disabled: not synced
+admin-ews-row-untrusted = Address not confirmed: not synced
+admin-ews-row-conflict = Not provisioned: another user's source already reads this mailbox
+admin-ews-trust-title = Addresses to confirm
+admin-ews-trust-help = These enabled accounts in the allowed email domains have an address nobody vouched for (self-registered, or created before this check existed), so they get no managed Exchange source. Confirm one only when you know the address belongs to that person: confirming lets calrs read that mailbox's calendar for them.
+admin-ews-trust-confirm = Confirm
+admin-ews-trust-more = Showing { $shown } of { $total }.
+admin-ews-http-warning = The endpoint uses http://: the service account password is sent unencrypted. Prefer https://.
 # Time off (templates/time_off.html, src/web/time_off.rs, troubleshoot view)
 
 nav-time-off = Time off
@@ -2029,8 +2101,8 @@ api-tokens-error-scope = Choose at least one permission.
 api-tokens-error-limit = You already have 20 tokens. Revoke one first.
 api-tokens-docs = How to use a token is described in the REST API chapter of the calrs documentation.
 admin-api-tokens = API tokens
-admin-api-tokens-allow-all = Let all users create API tokens
-admin-api-tokens-allow-all-help = Off by default: only administrators can create personal access tokens for the REST API. Turning this off stops the tokens other users created until it is turned on again. Applications connected through OAuth are not affected.
+admin-api-tokens-allow-all = Let all users use the REST API
+admin-api-tokens-allow-all-help = Off by default: only administrators can create personal access tokens or connect applications to the REST API through OAuth, since both read guest data. Turning this off stops the tokens and API applications of other users until it is turned on again. MCP clients are not affected.
 admin-revoke-apps = Revoke connected apps ({ $count })
 
 # Write destination per event type (#47)
@@ -2044,3 +2116,87 @@ sources-destinations-saved = Saved. New bookings go to the calendars chosen here
 write-destination-not-yours = Nothing was saved: choose one of your own calendars, for an event type you host.
 write-destination-unavailable = { $name } (unavailable)
 write-destination-refused = This calendar refused the last booking ({ $error }), which went to the source setting instead. The next booking tries it again.
+# Booking webhooks (templates/webhooks.html, admin card, #168)
+webhooks-title = Webhooks
+webhooks-back = Back to event types
+webhooks-subtitle = calrs sends a signed JSON message to these addresses when a booking is made, requested, approved, declined, expires, is cancelled or moves.
+webhooks-not-allowed = Webhooks are limited to administrators on this instance.
+webhooks-endpoints = Endpoints
+webhooks-empty = No webhooks yet. Add one below to have calrs notify another system of your bookings.
+webhooks-scope = Send events for
+webhooks-scope-personal = All my personal event types
+webhooks-scope-event-type = Event type: { $title }
+webhooks-scope-team-event-type = Event type: { $title } ({ $team })
+webhooks-added-by = Added by { $name }
+webhooks-state-off = Switched off
+webhooks-never-sent = Nothing sent yet
+webhooks-state-ok = Last delivery succeeded
+webhooks-state-failing = Last delivery failed
+webhooks-queued =
+    { $count ->
+        [one] 1 delivery waiting for a retry
+       *[other] { $count } deliveries waiting for a retry
+    }
+webhooks-gave-up =
+    { $count ->
+        [one] 1 delivery given up after every retry
+       *[other] { $count } deliveries given up after every retry
+    }
+webhooks-send-test = Send test
+webhooks-enable = Switch on
+webhooks-disable = Switch off
+webhooks-delete = Remove
+webhooks-delete-confirm = Remove this webhook? Deliveries still waiting for it are dropped.
+webhooks-edit = Edit
+webhooks-url = URL
+webhooks-url-hint = (https)
+webhooks-secret = Signing secret
+webhooks-secret-hint = (at least { $min } characters, signs every request, never shown again)
+webhooks-save = Save
+webhooks-add = Add a webhook
+webhooks-add-submit = Add webhook
+webhooks-privacy-note = Each message contains the guest's name, email, phone number and notes. Only send it to a system you trust with that data.
+webhooks-notice-created = Webhook added. Use "Send test" to check that it arrives.
+webhooks-notice-updated = Webhook saved.
+webhooks-notice-deleted = Webhook removed.
+webhooks-notice-enabled = Webhook switched on.
+webhooks-notice-disabled = Webhook switched off. Deliveries still waiting for it were dropped.
+webhooks-notice-test-ok = Test delivered: the endpoint answered with a 2xx status.
+webhooks-error-url = Enter a full URL, such as https://hooks.example.com/calrs.
+webhooks-error-https = The URL must start with https://. Plain http only works for a host on the private-host allowlist.
+webhooks-error-credentials = Remove the user name and password from the URL: the signing secret authenticates calrs.
+webhooks-error-secret = The signing secret must be 16 to 256 characters long.
+webhooks-error-scope = You cannot add a webhook to that event type.
+webhooks-error-limit = This scope already has the maximum of 10 webhooks.
+webhooks-error-test = The test was not delivered. The reason is shown with the webhook.
+admin-webhooks = Booking webhooks
+admin-webhooks-help =
+    { $count ->
+        [one] 1 webhook is configured on this instance.
+       *[other] { $count } webhooks are configured on this instance.
+    }
+admin-webhooks-allow-all = Let any user add webhooks
+admin-webhooks-allow-all-help = Off by default: a webhook sends guest names, emails and phone numbers to an address of the user's choosing, so only admins may add one. Turning this off stops the webhooks other users added.
+admin-webhooks-manage = Manage your webhooks
+webhooks-events = Events
+webhooks-events-all = All events
+webhooks-event-created = Booked (confirmed)
+webhooks-event-requested = Requested (waiting for approval)
+webhooks-event-confirmed = Approved
+webhooks-event-declined = Declined
+webhooks-event-expired = Expired unanswered
+webhooks-event-cancelled = Cancelled
+webhooks-event-rescheduled = Rescheduled
+webhooks-error-events = Pick at least one event.
+webhooks-error-test-limit = Too many tests in a short time. Wait a few minutes and try again.
+webhooks-added-by-former = Added by a former member
+webhooks-signature-help = Each request is signed: <code>X-Calrs-Signature: sha256=&lt;hex&gt;</code> is an HMAC-SHA256 of the raw body, keyed with the signing secret. The body and the checks a receiver should make are described on the Webhooks page of the calrs documentation.
+webhooks-state-suspended = Suspended: the person who added it can no longer manage this event type. Take it over to resume it.
+webhooks-adopt = Take over
+webhooks-notice-adopted = Webhook taken over and resumed.
+webhooks-event-claimed = Claimed by a watcher
+webhooks-error-address = This address cannot be used: calrs only sends to public internet addresses, unless the host is on the private-host allowlist.
+webhooks-adopt-help = Taking it over makes it yours and resumes it. Confirm the address it sends to and set a new signing secret: the previous one may be known to the person who added it. Deliveries still waiting are dropped.
+webhooks-error-not-suspended = Only a suspended webhook can be taken over.
+webhooks-error-new-secret = The URL now points to another host: enter a new signing secret too.
+webhooks-url-masked-hint = (only the person who added it sees the full URL: enter it again to save)

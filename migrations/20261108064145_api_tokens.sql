@@ -33,9 +33,21 @@ CREATE TABLE api_idempotency (
     status INTEGER,
     response TEXT,
     created_at INTEGER NOT NULL,
+    -- Renewed every 30 seconds while the first request runs; a key whose
+    -- lease is two minutes old was abandoned (the process stopped).
+    lease_at INTEGER NOT NULL,
     PRIMARY KEY (user_id, key)
 );
 CREATE INDEX idx_api_idempotency_created ON api_idempotency(created_at);
+
+-- Bookings created through the API, for the per-user daily cap (each one
+-- sends emails from the instance). Kept a day.
+CREATE TABLE api_booking_log (
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    booking_id TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+);
+CREATE INDEX idx_api_booking_log_user ON api_booking_log(user_id, created_at);
 
 -- Off by default: only admins may create personal access tokens. OAuth
 -- clients, which every grant approves interactively, are not affected.

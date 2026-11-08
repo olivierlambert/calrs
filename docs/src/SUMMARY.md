@@ -12,6 +12,7 @@
 - [Teams](./teams.md)
 - [Shared Resources](./resources.md)
 - [SMS Notifications](./sms.md)
+- [Webhooks](./webhooks.md)
 - [Authentication](./authentication.md)
 - [MCP Integration](./mcp.md)
 - [REST API](./api.md)
@@ -20,6 +21,7 @@
 # Administration
 
 - [Admin Dashboard](./admin.md)
+- [EWS Impersonation](./ews-impersonation.md)
 - [Deployment](./deployment.md)
 
 # Reference

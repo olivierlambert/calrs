@@ -20,6 +20,7 @@ mod directory;
 mod duplicate_event_type;
 mod emails;
 mod event_types;
+mod ews_global;
 mod format;
 mod guards;
 mod guest_footer;
@@ -36,6 +37,7 @@ mod resources;
 mod security;
 mod sources;
 mod time_off;
+mod webhooks;
 mod write_destinations;
 mod writeback_failures;
 

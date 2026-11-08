@@ -1678,6 +1678,7 @@ email-pending-expired-action = Vali muu aeg
 bae-body-host-busy = Korraldaja (või vajalik meeskonnaliige) ei ole sel ajal enam vaba. Palu külalisel valida mõni muu aeg.
 bookings-error-generic = Midagi läks valesti.
 bookings-error-no-bookable-dates = Sellel sündmuse tüübil pole enam broneeritavaid kuupäevi, nii et külaline ei saaks uut aega valida. Pikenda kõigepealt selle kuupäevavahemikku.
+bookings-error-reschedule-pending = Külaliselt on juba palutud uus aeg valida ja ta pole veel vastanud.
 troubleshoot-detail-pending-request = { $title } (ootel taotlus)
 etf-pending-blocks-slot = Ootel taotlused blokeerivad aja
 etf-pending-blocks-slot-help = Kuni taotlus ootab sinu vastust, ei saa keegi teine seda aega broneerida, ei selles ega sinu teistes sündmuse tüüpides.
@@ -1928,6 +1929,77 @@ directory-empty = Kohtumisi ei leitud. Proovi teist otsingut.
 directory-favorites-empty = Lemmikuid ei leitud. Lisa kohtumised kataloogist lemmikutesse, et neid siin näha.
 directory-with-hosts = Kellega: { $names }
 
+# Global Exchange (EWS) impersonation: admin card and managed sources
+sources-admin-managed = Administraatori hallatav
+sources-admin-managed-title = Administraatori seadistatud
+sources-locked-notice = Sinu administraator haldab Exchange'i tsentraalselt. Täiendavate kalendriallikate lisamine on keelatud.
+sources-locked-by-admin = Administraator on isiklike kalendriallikate lisamise keelanud. Sinu Exchange'i kalendrit hallatakse tsentraalselt.
+sources-managed-no-edit = Selle kalendriallika on seadistanud administraator ja seda ei saa muuta.
+sources-managed-no-remove = Selle kalendriallika on seadistanud administraator ja seda ei saa eemaldada.
+sources-managed-global-disabled = Seda allikat haldab administraator, kuid globaalne Exchange on keelatud.
+admin-ews-title = Exchange (EWS): globaalne esindamine
+admin-ews-help = Seadista üks Exchange Web Servicesi lõpp-punkt ja teenusekonto, millel on RBAC-roll <code>ApplicationImpersonation</code>. Iga kasutaja kalendrit loetakse siis esindamise kaudu ning neil pole vaja mandaate sisestada. PowerShell Exchange'is: <code>New-ManagementRoleAssignment -Name CalrsImpersonation -Role ApplicationImpersonation -User svc-calrs@sinudomeen</code>.
+admin-ews-endpoint = Lõpp-punkt
+admin-ews-managed-count = Hallatavad allikad:
+admin-ews-enable = Luba globaalne Exchange esindamise kaudu
+admin-ews-url = EWS-i lõpp-punkti URL
+admin-ews-username = Teenusekonto kasutajanimi
+admin-ews-password = Teenusekonto parool
+admin-ews-password-keep = (jäta tühjaks, et praegune säilitada)
+admin-ews-password-unchanged = (muutmata)
+admin-ews-password-placeholder = teenusekonto parool
+admin-ews-domain = Postkastide domeen
+admin-ews-optional = (valikuline)
+admin-ews-domain-help = Täida mõlemad, kui calrsile teadaolevad aadressid (AD UPN, OIDC e-post) on teises domeenis kui Exchange'i postkastid. Ümber kirjutatakse ainult täpselt kasutajate domeenis olev aadress, kohalik osa jääb samaks: <code>alice@example.local</code> → <code>alice@example.com</code>. Mis tahes muu domeeni aadresse kasutatakse muutmata. Jäta mõlemad tühjaks, et esindada iga kasutaja calrsi aadressi muutmata kujul.
+admin-ews-auto = Seadista automaatselt kõigile kasutajatele (olemasolevad + tulevased)
+admin-ews-auto-help = Märgituna saab iga aktiivne usaldusväärse aadressiga kasutaja hallatava Exchange'i allika: käsuga calrs user create loodud kontod, SSO-kontod, mille e-posti identiteedipakkuja on kinnitanud, ja allpool kinnitatud aadressid. Salvestamine käivitab toimingu kohe.
+admin-ews-lock = Takista tavakasutajatel oma kalendriallikate lisamist
+admin-ews-lock-help = Administraatoreid see ei piira. Kasutajate juba lisatud allikad jäävad alles, kuni te need kustutate.
+admin-ews-disable-note = Kui funktsioon on välja lülitatud, jäävad hallatud allikad alles, kuid neid ei sünkroonita ja neisse ei kirjutata ühtegi broneeringut. Uuesti sisselülitamine jätkab nendega.
+admin-ews-remove = Eemalda hallatud allikad ja kustuta teenusekonto parool
+admin-ews-remove-confirm = Kas kustutada kõik hallatud Exchange'i allikad koos kalendrite ja hõivatud aegadega, mille calrs neist salvestas, ning salvestatud teenusekonto parool? Globaalne Exchange lülitatakse välja. Postkastidesse juba kirjutatud broneeringud jäävad sinna.
+admin-ews-notice-removed = Eemaldatud hallatud allikaid: { $count }. Teenusekonto parool on kustutatud ja globaalne Exchange on välja lülitatud. Postkastidesse juba kirjutatud broneeringud jäävad sinna.
+admin-ews-notice-https-required = EWS-i lõpp-punkt peab kasutama https://: teenusekonto parool saadetakse iga päringuga. Midagi ei salvestatud.
+admin-ews-notice-password-cleared = Seaded salvestati. Lõpp-punkt või teenusekonto muutus, seega salvestatud parool kustutati: see tuleb uuesti sisestada, enne kui globaalne Exchange töötab.
+admin-ews-notice-source-removed = Hallatud allikas eemaldati koos salvestatud kalendrite ja hõivatud aegadega.
+admin-ews-row-remove = Eemalda
+admin-ews-row-remove-confirm = Kas eemaldada kasutaja { $email } hallatud Exchange'i allikas koos salvestatud kalendrite ja hõivatud aegadega? Automaatne loomine loob selle uuesti järgmisel salvestamisel, kinnitamisel või SSO-sisselogimisel; konto peatamine hoiab selle ära.
+admin-ews-trust-no-mailbox = puudub (aadress ei vasta ühelegi postkastile)
+admin-ews-notice-selections-reset = Mõne hallatud allika loetav postkast muutus, seega nende kalendrid tuvastatakse uuesti. Sündmuse tüübid, mille kalendrivalik lähtestati: { $count } (loetletud serveri logis).
+admin-ews-notice-reconfirm = Domeeni asendus seob nüüd mõned kinnitatud aadressid teise postkastiga. Uuesti kinnitamist vajavaid aadresse: { $count } (vt allolevat loendit).
+admin-ews-row-taken-over = Üle võetud kasutajalt { $user } { $when }
+admin-ews-notice-trust-changed = Midagi ei kinnitatud: selle konto aadress või postkast, mille see avab, on pärast lehe kuvamist muutunud. Vaata loend uuesti üle.
+sources-managed-user-untrusted = Seda allikat haldab administraator, kuid konto aadress pole veel kinnitatud, seega seda ei sünkroonita.
+sources-managed-user-suspended = Seda allikat haldab administraator, kuid konto on keelatud, seega seda ei sünkroonita.
+admin-ews-save = Salvesta EWS-i seaded
+admin-ews-save-provision = Salvesta &amp; seadista kohe kõigile kasutajatele
+admin-ews-status-title = Sünkroonimise olek kasutajate kaupa
+admin-ews-status-summary = Sünkroonimisel on { $ok } / { $total } hallatavat postkasti. Kasutaja, kellel pole Exchange'i postkasti (nt kohalik administraatorikonto), näitab alati viga. See on ootuspärane.
+admin-ews-col-user = Kasutaja
+admin-ews-col-mailbox = Postkast
+admin-ews-col-last-sync = Viimane sünkroonimine
+admin-ews-col-status = Olek
+admin-ews-row-disabled = keelatud
+admin-ews-row-synced = Sünkroonitud
+admin-ews-row-never = Pole kunagi sünkroonitud
+admin-ews-row-no-mailbox = Exchange'i postkasti pole
+admin-ews-notice-saved = Exchange'i seaded salvestatud.
+admin-ews-notice-provisioned = Exchange'i seaded salvestatud. Loodud hallatavaid allikaid: { $count }.
+admin-ews-notice-invalid-url = EWS-i lõpp-punkti URL ei sobi (ainult http(s), privaatne aadress ainult lubatud loendist). Midagi ei salvestatud.
+admin-ews-notice-incomplete = Globaalse Exchange'i lubamiseks täida lõpp-punkti URL, teenusekonto ja selle parool. Midagi ei salvestatud.
+admin-ews-notice-provision-failed = Seaded salvestati, kuid hallatavate allikate seadistamine ebaõnnestus. Vaata serveri logi.
+admin-ews-registration-warning = Vaba registreerumine on lubatud. Nii loodud kontod ei saa kunagi hallatavat Exchange'i allikat, isegi mitte valikuga „seadista kohe kõigile kasutajatele“: miski ei tõesta, et aadress kuulub neile. Kui soovid mõnele neist postkasti anda, kinnita tema aadress allpool või käivita calrs user trust-email, kui tead, et see kuulub sellele inimesele.
+admin-ews-from-domain = Kasutajate domeen
+admin-ews-notice-override-domains = Domeeni asendus vajab mõlemat domeeni, kumbki lihtne domeen nagu example.com: see, millega sinu kasutajad sisse logivad, ja nende postkastide domeen. Midagi ei salvestatud.
+admin-ews-notice-trusted = Aadress kinnitatud. Kuni globaalne Exchange on sees, luuakse kasutaja hallatav allikas kohe: vaata olekutabelit.
+admin-ews-row-suspended = Konto keelatud: ei sünkroonita
+admin-ews-row-untrusted = Aadress kinnitamata: ei sünkroonita
+admin-ews-row-conflict = Seadistamata: teise kasutaja allikas loeb seda postkasti juba
+admin-ews-trust-title = Kinnitamist ootavad aadressid
+admin-ews-trust-help = Nendel lubatud domeenide aktiivsetel kontodel on aadress, mille eest keegi pole vastutanud (vaba registreerumine või loodud enne seda kontrolli), seega ei saa nad hallatavat Exchange'i allikat. Kinnita aadress ainult siis, kui tead, et see kuulub sellele inimesele: kinnitamisel loeb calrs tema jaoks selle postkasti kalendrit.
+admin-ews-trust-confirm = Kinnita
+admin-ews-trust-more = Kuvatakse { $shown } / { $total }.
+admin-ews-http-warning = Lõpp-punkt kasutab http://: teenusekonto parool saadetakse krüptimata kujul. Eelista https://.
 # Time off (templates/time_off.html, src/web/time_off.rs, troubleshoot view)
 
 nav-time-off = Eemalolekud
@@ -2027,8 +2099,8 @@ api-tokens-error-scope = Vali vähemalt üks õigus.
 api-tokens-error-limit = Sul on juba 20 võtit. Tühista enne üks.
 api-tokens-docs = Võtme kasutamist kirjeldab calrsi dokumentatsiooni REST API peatükk.
 admin-api-tokens = API-võtmed
-admin-api-tokens-allow-all = Luba kõigil kasutajatel API-võtmeid luua
-admin-api-tokens-allow-all-help = Vaikimisi väljas: REST API isiklikke juurdepääsuvõtmeid saavad luua ainult haldajad. Väljalülitamine peatab teiste kasutajate võtmed, kuni see uuesti sisse lülitatakse. OAuthi kaudu ühendatud rakendusi see ei mõjuta.
+admin-api-tokens-allow-all = Luba kõigil kasutajatel REST API-t kasutada
+admin-api-tokens-allow-all-help = Vaikimisi väljas: isiklikke juurdepääsuvõtmeid luua või rakendusi OAuthi kaudu REST API-ga ühendada saavad ainult haldajad, sest mõlemad loevad külaliste andmeid. Väljalülitamine peatab teiste kasutajate võtmed ja API-rakendused, kuni see uuesti sisse lülitatakse. MCP-kliente see ei mõjuta.
 admin-revoke-apps = Tühista ühendatud rakendused ({ $count })
 
 # Write destination per event type (#47)
@@ -2042,3 +2114,87 @@ sources-destinations-saved = Salvestatud. Uued broneeringud lähevad siin valitu
 write-destination-not-yours = Midagi ei salvestatud: vali üks oma kalendritest sündmuse tüübi jaoks, mida sa juhid.
 write-destination-unavailable = { $name } (pole saadaval)
 write-destination-refused = See kalender lükkas viimase broneeringu tagasi ({ $error }), mistõttu kirjutati see allika seadistuse järgi. Järgmine broneering proovib uuesti.
+# Booking webhooks (templates/webhooks.html, admin card, #168)
+webhooks-title = Veebihaagid
+webhooks-back = Tagasi sündmuse tüüpide juurde
+webhooks-subtitle = calrs saadab neile aadressidele allkirjastatud JSON-sõnumi, kui broneering tehakse, seda taotletakse, see kinnitatakse, lükatakse tagasi, aegub, tühistatakse või viiakse üle.
+webhooks-not-allowed = Selles instantsis on veebihaagid ainult administraatoritele.
+webhooks-endpoints = Sihtaadressid
+webhooks-empty = Veebihaake veel pole. Lisa allpool üks, et calrs teavitaks teist süsteemi sinu broneeringutest.
+webhooks-scope = Saada sündmused
+webhooks-scope-personal = Kõik minu isiklikud sündmuse tüübid
+webhooks-scope-event-type = Sündmuse tüüp: { $title }
+webhooks-scope-team-event-type = Sündmuse tüüp: { $title } ({ $team })
+webhooks-added-by = Lisas { $name }
+webhooks-state-off = Välja lülitatud
+webhooks-never-sent = Midagi pole veel saadetud
+webhooks-state-ok = Viimane saatmine õnnestus
+webhooks-state-failing = Viimane saatmine ebaõnnestus
+webhooks-queued =
+    { $count ->
+        [one] 1 saadetis ootab uut katset
+       *[other] { $count } saadetist ootavad uut katset
+    }
+webhooks-gave-up =
+    { $count ->
+        [one] 1 saadetisest loobuti pärast kõiki katseid
+       *[other] { $count } saadetisest loobuti pärast kõiki katseid
+    }
+webhooks-send-test = Saada test
+webhooks-enable = Lülita sisse
+webhooks-disable = Lülita välja
+webhooks-delete = Eemalda
+webhooks-delete-confirm = Kas eemaldada see veebihaak? Veel ootavad saadetised jäetakse ära.
+webhooks-edit = Muuda
+webhooks-url = URL
+webhooks-url-hint = (https)
+webhooks-secret = Allkirja saladus
+webhooks-secret-hint = (vähemalt { $min } märki, allkirjastab iga päringu, seda ei näidata enam kunagi)
+webhooks-save = Salvesta
+webhooks-add = Lisa veebihaak
+webhooks-add-submit = Lisa veebihaak
+webhooks-privacy-note = Iga sõnum sisaldab külalise nime, e-posti, telefoninumbrit ja märkmeid. Saada see ainult süsteemile, mida usaldad nende andmetega.
+webhooks-notice-created = Veebihaak lisatud. Kasuta nuppu „Saada test“, et kontrollida, kas see jõuab kohale.
+webhooks-notice-updated = Veebihaak salvestatud.
+webhooks-notice-deleted = Veebihaak eemaldatud.
+webhooks-notice-enabled = Veebihaak sisse lülitatud.
+webhooks-notice-disabled = Veebihaak välja lülitatud. Veel oodanud saadetised jäeti ära.
+webhooks-notice-test-ok = Test kohale toimetatud: sihtaadress vastas olekuga 2xx.
+webhooks-error-url = Sisesta täielik URL, näiteks https://hooks.example.com/calrs.
+webhooks-error-https = URL peab algama https:// abil. Lihtne http töötab ainult lubatud privaathostide loendis oleva hosti puhul.
+webhooks-error-credentials = Eemalda URL-ist kasutajanimi ja parool: calrsi autendib allkirja saladus.
+webhooks-error-secret = Allkirja saladus peab olema 16 kuni 256 märki pikk.
+webhooks-error-scope = Sa ei saa sellele sündmuse tüübile veebihaaki lisada.
+webhooks-error-limit = Sellel ulatusel on juba maksimaalselt 10 veebihaaki.
+webhooks-error-test = Testi ei toimetatud kohale. Põhjus on näha veebihaagi juures.
+admin-webhooks = Broneeringute veebihaagid
+admin-webhooks-help =
+    { $count ->
+        [one] Selles instantsis on seadistatud 1 veebihaak.
+       *[other] Selles instantsis on seadistatud { $count } veebihaaki.
+    }
+admin-webhooks-allow-all = Luba igal kasutajal veebihaake lisada
+admin-webhooks-allow-all-help = Vaikimisi väljas: veebihaak saadab külaliste nimed, e-posti aadressid ja telefoninumbrid kasutaja valitud aadressile, seega saavad neid lisada ainult administraatorid. Väljalülitamine peatab teiste kasutajate lisatud veebihaagid.
+admin-webhooks-manage = Halda oma veebihaake
+webhooks-events = Sündmused
+webhooks-events-all = Kõik sündmused
+webhooks-event-created = Broneeritud (kinnitatud)
+webhooks-event-requested = Taotletud (ootab kinnitust)
+webhooks-event-confirmed = Kinnitatud
+webhooks-event-declined = Tagasi lükatud
+webhooks-event-expired = Vastuseta aegunud
+webhooks-event-cancelled = Tühistatud
+webhooks-event-rescheduled = Üle viidud
+webhooks-error-events = Vali vähemalt üks sündmus.
+webhooks-error-test-limit = Liiga palju teste lühikese aja jooksul. Oota paar minutit ja proovi uuesti.
+webhooks-added-by-former = Lisas endine liige
+webhooks-signature-help = Iga päring on allkirjastatud: <code>X-Calrs-Signature: sha256=&lt;hex&gt;</code> on töötlemata sisu HMAC-SHA256, mille võti on allkirja saladus. Sisu ja vastuvõtja kontrolle kirjeldab calrsi dokumentatsiooni leht Webhooks.
+webhooks-state-suspended = Peatatud: selle lisaja ei saa enam seda sündmuse tüüpi hallata. Võta see üle, et seda jätkata.
+webhooks-adopt = Võta üle
+webhooks-notice-adopted = Veebihaak üle võetud ja jätkatud.
+webhooks-event-claimed = Jälgija võttis üle
+webhooks-error-address = Seda aadressi ei saa kasutada: calrs saadab ainult avalikele internetiaadressidele, välja arvatud juhul, kui host on lubatud privaathostide loendis.
+webhooks-adopt-help = Ülevõtmine teeb selle sinu omaks ja jätkab seda. Kinnita aadress, kuhu see saadab, ja määra uus allkirja saladus: selle lisaja võib vana teada. Veel ootavad saadetised jäetakse ära.
+webhooks-error-not-suspended = Üle võtta saab ainult peatatud veebihaaki.
+webhooks-error-new-secret = URL osutab nüüd teisele hostile: sisesta ka uus allkirja saladus.
+webhooks-url-masked-hint = (täielikku URL-i näeb ainult selle lisaja: salvestamiseks sisesta see uuesti)

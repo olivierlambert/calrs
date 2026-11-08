@@ -13,6 +13,7 @@ mod connected_apps;
 mod dashboard;
 mod directory;
 mod event_types;
+mod ews_admin;
 mod format;
 mod hosts;
 mod invites;
@@ -26,6 +27,8 @@ mod public_pages;
 mod sources;
 mod teams;
 mod time_off;
+mod webhook_pages;
+pub(crate) mod webhooks;
 mod week_start;
 mod write_targets;
 pub(crate) mod writeback;
@@ -88,6 +91,8 @@ use public_pages::*;
 use sources::*;
 use teams::*;
 use time_off::*;
+use webhook_pages::*;
+pub use webhooks::run_webhook_loop;
 use write_targets::*;
 
 /// Simple per-IP rate limiter for login attempts.
@@ -155,6 +160,8 @@ pub struct AppState {
     pub templates: Environment<'static>,
     pub login_limiter: RateLimiter,
     pub booking_limiter: RateLimiter,
+    /// "Send test" on the webhooks page, per user (#168).
+    pub webhook_test_limiter: RateLimiter,
     /// OAuth authorizations, token exchanges and revocations, per client
     /// address (`oauth::rate_limit`).
     pub oauth_limiter: RateLimiter,
@@ -168,11 +175,20 @@ pub struct AppState {
     pub api_limiter: RateLimiter,
     /// REST API slot reads and writes, per user (`api::heavy_limit`).
     pub api_heavy_limiter: RateLimiter,
+    /// Personal access tokens just created, waiting to be shown once on the
+    /// page the creation redirects to (`api_tokens`): flash id to
+    /// (user id, secret, created).
+    pub(crate) api_token_flash:
+        std::sync::Mutex<HashMap<String, (String, String, std::time::Instant)>>,
     pub data_dir: PathBuf,
     pub secret_key: [u8; 32],
     pub theme_css: tokio::sync::RwLock<String>,
     pub company_link: tokio::sync::RwLock<Option<String>>,
     pub captcha_config: tokio::sync::RwLock<Option<captcha::CaptchaConfig>>,
+    /// Global EWS impersonation: when `Some`, every user has a managed source
+    /// row that the sync loop drives with the SOAP `ExchangeImpersonation`
+    /// header. Reloaded when the admin saves changes.
+    pub ews_global: tokio::sync::RwLock<Option<crate::ews::global::EwsGlobalConfig>>,
     /// Org-wide meeting provider config (Jitsi + webhook). Cached so guest
     /// slot/booking pages don't hit `auth_config` on every render. Rebuilt
     /// when the admin saves changes.
@@ -688,6 +704,7 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
     let initial_theme_css = build_theme_css(&pool).await;
     let initial_company_link = get_company_link(&pool).await;
     let initial_captcha = captcha::load_captcha_config(&pool, &secret_key).await;
+    let initial_ews_global = crate::ews::global::load_ews_global_config(&pool, &secret_key).await;
     let initial_meeting = meeting::load_config(&pool, &secret_key).await;
     let initial_csp = build_csp(&initial_captcha);
     let initial_german_formal = load_german_formal(&pool).await;
@@ -698,17 +715,20 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
         // 10 login attempts per IP per 15 minutes
         login_limiter: RateLimiter::new(10, 900),
         booking_limiter: RateLimiter::new(10, 300),
+        webhook_test_limiter: RateLimiter::new(10, 600),
         oauth_limiter: RateLimiter::new(60, 300),
         oauth_register_limiter: RateLimiter::new(30, 900),
         mcp_limiter: RateLimiter::new(120, 60),
         mcp_request_limiter: RateLimiter::new(600, 60),
         api_limiter: RateLimiter::new(300, 60),
         api_heavy_limiter: RateLimiter::new(60, 300),
+        api_token_flash: std::sync::Mutex::new(HashMap::new()),
         secret_key,
         data_dir,
         theme_css: tokio::sync::RwLock::new(initial_theme_css),
         company_link: tokio::sync::RwLock::new(initial_company_link),
         captcha_config: tokio::sync::RwLock::new(initial_captcha),
+        ews_global: tokio::sync::RwLock::new(initial_ews_global),
         meeting_config: tokio::sync::RwLock::new(initial_meeting),
         csp: tokio::sync::RwLock::new(initial_csp),
         csp_baseline: build_csp(&None),
@@ -915,6 +935,22 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
         .route("/dashboard/admin/smtp", post(admin_update_smtp))
         .route("/dashboard/admin/smtp/test", post(admin_update_smtp_test))
         .route("/dashboard/admin/smtp/clear", post(admin_update_smtp_clear))
+        .route(
+            "/dashboard/admin/ews",
+            post(ews_admin::admin_update_ews_global),
+        )
+        .route(
+            "/dashboard/admin/ews/trust",
+            post(ews_admin::admin_trust_email),
+        )
+        .route(
+            "/dashboard/admin/ews/remove",
+            post(ews_admin::admin_remove_managed_sources),
+        )
+        .route(
+            "/dashboard/admin/ews/remove-user",
+            post(ews_admin::admin_remove_user_source),
+        )
         .route("/dashboard/admin/sms", post(admin_update_sms))
         .route("/dashboard/admin/sms/test", post(admin_update_sms_test))
         .route("/dashboard/admin/sms/clear", post(admin_update_sms_clear))
@@ -923,6 +959,19 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
             "/dashboard/admin/guest-footer",
             post(admin_update_guest_footer),
         )
+        .route(
+            "/dashboard/admin/webhooks/policy",
+            post(admin_update_webhook_policy),
+        )
+        .route(
+            "/dashboard/webhooks",
+            get(webhooks_page).post(create_webhook),
+        )
+        .route("/dashboard/webhooks/{id}/update", post(update_webhook))
+        .route("/dashboard/webhooks/{id}/toggle", post(toggle_webhook))
+        .route("/dashboard/webhooks/{id}/delete", post(delete_webhook))
+        .route("/dashboard/webhooks/{id}/test", post(test_webhook))
+        .route("/dashboard/webhooks/{id}/adopt", post(adopt_webhook))
         .route("/dashboard/admin/jitsi", post(admin_update_jitsi))
         .route(
             "/dashboard/admin/meeting-webhook",

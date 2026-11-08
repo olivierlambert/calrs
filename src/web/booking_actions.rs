@@ -317,6 +317,8 @@ pub(super) async fn approve_booking_by_token(
     }
 
     tracing::info!(booking_id = %bid, "booking approved via token");
+    // Take the webhook queue's place before the meeting link is minted (#168).
+    let webhook = webhooks::reserve(&state.pool, &bid, webhooks::Event::Confirmed).await;
 
     // start_at/end_at are naive in the event type's timezone; convert to the
     // guest's tz so the email body and the ICS attachment match what the
@@ -369,6 +371,7 @@ pub(super) async fn approve_booking_by_token(
         true,
     )
     .await;
+    webhook.fill(webhooks::Context::default()).await;
 
     let guest_language = crate::email::stored_booking_language(&state.pool, &bid).await;
 
@@ -654,6 +657,13 @@ pub(super) async fn decline_booking_by_token(
     let date_label = format_date_label(&date, lang);
 
     let reason = form.reason.filter(|r| !r.trim().is_empty());
+    webhooks::enqueue(
+        &state.pool,
+        &bid,
+        webhooks::Event::Declined,
+        webhooks::Context::declined(reason.clone()),
+    )
+    .await;
 
     // Send decline notification to guest
     if let Ok(Some(smtp_config)) =
@@ -1194,6 +1204,15 @@ pub(super) async fn guest_cancel_booking(
     };
 
     tracing::info!(booking_id = %bid, "booking cancelled by guest");
+    // Queued before the calendar deletes below, which can take a while.
+    let reason = form.reason.filter(|r| !r.trim().is_empty());
+    webhooks::enqueue(
+        &state.pool,
+        &bid,
+        webhooks::Event::Cancelled,
+        webhooks::Context::cancelled(webhooks::Actor::Guest, reason.clone()),
+    )
+    .await;
 
     // Find the host user_id for CalDAV delete
     let host_user_id: Option<String> = sqlx::query_scalar(
@@ -1216,8 +1235,6 @@ pub(super) async fn guest_cancel_booking(
     let (date, start_time, end_time) =
         booking_strings_in_guest_tz(&start_at, &end_at, stored_tz, guest_tz_parsed);
     let date_label = format_date_label(&date, lang);
-
-    let reason = form.reason.filter(|r| !r.trim().is_empty());
 
     // The language the guest booked in, as every other guest email uses,
     // not the browser this cancel happens to come from (#209): the page's.
@@ -2108,6 +2125,16 @@ pub(super) async fn guest_reschedule_booking(
         }
         return internal_error_response("database query", &e);
     }
+    // The new status (confirmed, or pending when it needs approval) rides
+    // in the payload, the old times in `previous`. Queued before the
+    // resource release below, which is a network call.
+    webhooks::enqueue(
+        &state.pool,
+        &booking_id,
+        webhooks::Event::Rescheduled,
+        webhooks::Context::rescheduled(&old_start_at, &old_end_at, new_status),
+    )
+    .await;
     if let Some(old_rid) = release_old {
         resource_release_one(&state.pool, &state.secret_key, &uid, &old_rid).await;
     }
@@ -2582,6 +2609,9 @@ pub(super) async fn host_reschedule_booking(
         HostReschedule::NoBookableDates => {
             Redirect::to("/dashboard/bookings?error=no-bookable-dates").into_response()
         }
+        HostReschedule::AlreadyRequested => {
+            Redirect::to("/dashboard/bookings?error=reschedule-pending").into_response()
+        }
         HostReschedule::NotFound | HostReschedule::Requested => {
             Redirect::to("/dashboard/bookings").into_response()
         }
@@ -2595,6 +2625,8 @@ pub(super) enum HostReschedule {
     NotFound,
     /// The event type has no bookable day left to offer the guest.
     NoBookableDates,
+    /// The guest was already asked and has not picked a new time yet.
+    AlreadyRequested,
     /// The guest was given a new reschedule link (and emailed it).
     Requested,
 }
@@ -2648,15 +2680,22 @@ pub(super) async fn host_request_reschedule(
         return HostReschedule::NoBookableDates;
     }
 
-    // Generate new reschedule token and set the host-initiated flag
+    // Generate new reschedule token and set the host-initiated flag. A
+    // request the guest has not answered yet is not sent again: each one
+    // emails the guest (the guest's reschedule clears the flag).
     let new_reschedule_token = uuid::Uuid::new_v4().to_string();
-    let _ = sqlx::query(
-        "UPDATE bookings SET reschedule_token = ?, reschedule_by_host = 1 WHERE id = ?",
+    let changed = sqlx::query(
+        "UPDATE bookings SET reschedule_token = ?, reschedule_by_host = 1 WHERE id = ? AND reschedule_by_host = 0",
     )
     .bind(&new_reschedule_token)
     .bind(&bid)
     .execute(&state.pool)
-    .await;
+    .await
+    .map(|r| r.rows_affected())
+    .unwrap_or(0);
+    if changed == 0 {
+        return HostReschedule::AlreadyRequested;
+    }
 
     tracing::info!(booking_id = %bid, guest = %guest_email, "host requested reschedule — guest will pick new time");
 
@@ -3050,6 +3089,13 @@ pub(super) async fn claim_booking(
     }
 
     tracing::info!(booking_id = %booking_id, claimant_user_id = %claimant_user_id, "booking claimed");
+    webhooks::enqueue(
+        &state.pool,
+        &booking_id,
+        webhooks::Event::Claimed,
+        webhooks::Context::default(),
+    )
+    .await;
 
     // Fetch booking + claimant details for CalDAV push and email
     let booking: Option<(

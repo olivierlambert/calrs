@@ -1680,6 +1680,7 @@ email-pending-expired-action = Kies een ander tijdstip
 bae-body-host-busy = De organisator (of een vereist teamlid) is op dit tijdstip niet meer beschikbaar. Vraag de gast een ander tijdslot te kiezen.
 bookings-error-generic = Er is iets misgegaan.
 bookings-error-no-bookable-dates = Dit afspraaktype heeft geen boekbare dagen meer, dus de gast kan geen nieuwe tijd kiezen. Verleng eerst de boekingsperiode.
+bookings-error-reschedule-pending = De gast is al gevraagd een nieuwe tijd te kiezen en heeft nog niet gereageerd.
 troubleshoot-detail-pending-request = { $title } (openstaande aanvraag)
 etf-pending-blocks-slot = Openstaande aanvragen blokkeren het tijdslot
 etf-pending-blocks-slot-help = Zolang een aanvraag op je antwoord wacht, kan niemand anders dat tijdstip boeken, bij dit en bij je andere afspraaktypes.
@@ -1930,6 +1931,77 @@ directory-empty = Geen afspraken gevonden. Probeer een andere zoekopdracht.
 directory-favorites-empty = Geen favorieten gevonden. Voeg afspraken uit de gids toe aan je favorieten om ze hier te zien.
 directory-with-hosts = Met { $names }
 
+# Global Exchange (EWS) impersonation: admin card and managed sources
+sources-admin-managed = Beheerd door admin
+sources-admin-managed-title = Door de beheerder ingericht
+sources-locked-notice = Je beheerder beheert Exchange centraal. Extra agendabronnen toevoegen is uitgeschakeld.
+sources-locked-by-admin = De beheerder heeft het toevoegen van persoonlijke agendabronnen uitgeschakeld. Je Exchange-agenda wordt centraal beheerd.
+sources-managed-no-edit = Deze agendabron is door de beheerder ingericht en kan niet worden bewerkt.
+sources-managed-no-remove = Deze agendabron is door de beheerder ingericht en kan niet worden verwijderd.
+sources-managed-global-disabled = Deze bron wordt door de beheerder beheerd, maar globale Exchange is uitgeschakeld.
+admin-ews-title = Exchange (EWS): globale impersonatie
+admin-ews-help = Stel één Exchange Web Services-eindpunt in en een serviceaccount met de RBAC-rol <code>ApplicationImpersonation</code>. De agenda van elke gebruiker wordt dan via impersonatie gelezen, zonder dat er inloggegevens nodig zijn. PowerShell op Exchange: <code>New-ManagementRoleAssignment -Name CalrsImpersonation -Role ApplicationImpersonation -User svc-calrs@jouwdomein</code>.
+admin-ews-endpoint = Eindpunt
+admin-ews-managed-count = Beheerde bronnen:
+admin-ews-enable = Globale Exchange via impersonatie inschakelen
+admin-ews-url = URL van het EWS-eindpunt
+admin-ews-username = Gebruikersnaam van het serviceaccount
+admin-ews-password = Wachtwoord van het serviceaccount
+admin-ews-password-keep = (leeg laten om het huidige te behouden)
+admin-ews-password-unchanged = (ongewijzigd)
+admin-ews-password-placeholder = wachtwoord van het serviceaccount
+admin-ews-domain = Mailboxdomein
+admin-ews-optional = (optioneel)
+admin-ews-domain-help = Vul beide in wanneer de adressen die calrs kent (AD-UPN, OIDC-e-mail) op een ander domein staan dan de Exchange-mailboxen. Alleen een adres in precies het domein van de gebruikers wordt herschreven, met behoud van het lokale deel: <code>alice@example.local</code> → <code>alice@example.com</code>. Adressen in elk ander domein worden ongewijzigd gebruikt. Laat beide leeg om het calrs-adres van elke gebruiker ongewijzigd te gebruiken.
+admin-ews-auto = Automatisch inrichten voor alle gebruikers (bestaande + toekomstige)
+admin-ews-auto-help = Indien aangevinkt krijgt elke actieve gebruiker met een vertrouwd adres een beheerde Exchange-bron: accounts aangemaakt met calrs user create, SSO-accounts waarvan de identiteitsprovider het e-mailadres heeft geverifieerd, en hieronder bevestigde adressen. Opslaan voert de bewerking direct uit.
+admin-ews-lock = Voorkom dat gewone gebruikers eigen agendabronnen toevoegen
+admin-ews-lock-help = Beheerders zijn uitgezonderd. Door gebruikers al toegevoegde bronnen blijven bestaan tot je ze verwijdert.
+admin-ews-disable-note = Zolang de functie uit staat, blijven beheerde bronnen bestaan maar worden ze niet gesynchroniseerd, en wordt er geen boeking naar geschreven. Weer inschakelen hervat ze.
+admin-ews-remove = Beheerde bronnen verwijderen en het wachtwoord van het serviceaccount wissen
+admin-ews-remove-confirm = Alle beheerde Exchange-bronnen verwijderen, met de agenda's en bezette tijden die calrs ervan bewaarde, en het opgeslagen wachtwoord van het serviceaccount? Globale Exchange wordt uitgeschakeld. Boekingen die al in de postvakken zijn geschreven, blijven daar staan.
+admin-ews-notice-removed = Verwijderde beheerde bronnen: { $count }. Het wachtwoord van het serviceaccount is gewist en globale Exchange staat uit. Boekingen die al in de postvakken zijn geschreven, blijven daar staan.
+admin-ews-notice-https-required = Het EWS-eindpunt moet https:// gebruiken: het wachtwoord van het serviceaccount wordt met elk verzoek meegestuurd. Er is niets opgeslagen.
+admin-ews-notice-password-cleared = Instellingen opgeslagen. Het eindpunt of het serviceaccount is gewijzigd, dus het opgeslagen wachtwoord is gewist: het moet opnieuw worden ingevoerd voordat globale Exchange werkt.
+admin-ews-notice-source-removed = Beheerde bron verwijderd, met de bewaarde agenda's en bezette tijden.
+admin-ews-row-remove = Verwijderen
+admin-ews-row-remove-confirm = De beheerde Exchange-bron van { $email } verwijderen, met de bewaarde agenda's en bezette tijden? Automatisch inrichten maakt hem opnieuw aan bij de volgende opslag, bevestiging of SSO-aanmelding; het account opschorten voorkomt dat.
+admin-ews-trust-no-mailbox = geen (het adres wijst geen postvak aan)
+admin-ews-notice-selections-reset = Het postvak dat sommige beheerde bronnen lezen is gewijzigd, dus hun agenda's worden opnieuw gevonden. Afspraaktypen waarvan de agendaselectie is gereset: { $count } (vermeld in het serverlogboek).
+admin-ews-notice-reconfirm = De domeinvervanging koppelt sommige bevestigde adressen nu aan een ander postvak. Opnieuw te bevestigen adressen: { $count } (zie de lijst hieronder).
+admin-ews-row-taken-over = Overgenomen van { $user } op { $when }
+admin-ews-notice-trust-changed = Niets bevestigd: het adres van dit account, of het postvak dat het opent, is gewijzigd sinds de pagina werd getoond. Bekijk de lijst opnieuw.
+sources-managed-user-untrusted = Deze bron wordt door de beheerder beheerd, maar het adres van het account is nog niet bevestigd, dus hij wordt niet gesynchroniseerd.
+sources-managed-user-suspended = Deze bron wordt door de beheerder beheerd, maar het account is uitgeschakeld, dus hij wordt niet gesynchroniseerd.
+admin-ews-save = EWS-instellingen opslaan
+admin-ews-save-provision = Opslaan &amp; nu voor alle gebruikers inrichten
+admin-ews-status-title = Synchronisatiestatus per gebruiker
+admin-ews-status-summary = { $ok } van { $total } beheerde mailboxen worden gesynchroniseerd. Een gebruiker zonder Exchange-mailbox (bijv. een lokaal beheerdersaccount) toont altijd een fout. Dat is normaal.
+admin-ews-col-user = Gebruiker
+admin-ews-col-mailbox = Mailbox
+admin-ews-col-last-sync = Laatste synchronisatie
+admin-ews-col-status = Status
+admin-ews-row-disabled = uitgeschakeld
+admin-ews-row-synced = Gesynchroniseerd
+admin-ews-row-never = Nooit gesynchroniseerd
+admin-ews-row-no-mailbox = Geen Exchange-mailbox
+admin-ews-notice-saved = Exchange-instellingen opgeslagen.
+admin-ews-notice-provisioned = Exchange-instellingen opgeslagen. Aangemaakte beheerde bronnen: { $count }.
+admin-ews-notice-invalid-url = De URL van het EWS-eindpunt is ongeldig (alleen http(s), geen privéadres tenzij toegestaan). Er is niets opgeslagen.
+admin-ews-notice-incomplete = Vul de eindpunt-URL, het serviceaccount en het wachtwoord in om globale Exchange in te schakelen. Er is niets opgeslagen.
+admin-ews-notice-provision-failed = Instellingen opgeslagen, maar het inrichten van de beheerde bronnen is mislukt. Zie het serverlog.
+admin-ews-registration-warning = Vrije registratie staat open. Zo aangemaakte accounts krijgen nooit een beheerde Exchange-bron, ook niet via "nu voor alle gebruikers inrichten": niets bewijst dat het adres van hen is. Om een van hen een mailbox te geven, bevestig je het adres hieronder, of voer je calrs user trust-email uit, zodra je weet dat het van die persoon is.
+admin-ews-from-domain = Domein van de gebruikers
+admin-ews-notice-override-domains = Het overschrijven van het domein heeft beide domeinen nodig, elk een gewoon domein zoals example.com: het domein waarmee je gebruikers inloggen en dat van hun mailboxen. Er is niets opgeslagen.
+admin-ews-notice-trusted = Adres bevestigd. Zolang globale Exchange aan staat, wordt de beheerde bron van de gebruiker nu aangemaakt: zie de statustabel.
+admin-ews-row-suspended = Account uitgeschakeld: niet gesynchroniseerd
+admin-ews-row-untrusted = Adres niet bevestigd: niet gesynchroniseerd
+admin-ews-row-conflict = Niet ingericht: de bron van een andere gebruiker leest deze mailbox al
+admin-ews-trust-title = Te bevestigen adressen
+admin-ews-trust-help = Deze actieve accounts in de toegestane domeinen hebben een adres waar niemand voor instaat (vrije registratie, of aangemaakt vóór deze controle), dus krijgen ze geen beheerde Exchange-bron. Bevestig een adres alleen als je weet dat het van die persoon is: na bevestiging leest calrs voor hen de agenda van die mailbox.
+admin-ews-trust-confirm = Bevestigen
+admin-ews-trust-more = { $shown } van { $total } getoond.
+admin-ews-http-warning = Het endpoint gebruikt http://: het wachtwoord van het serviceaccount wordt onversleuteld verzonden. Gebruik bij voorkeur https://.
 # Time off (templates/time_off.html, src/web/time_off.rs, troubleshoot view)
 
 nav-time-off = Afwezigheid
@@ -2029,8 +2101,8 @@ api-tokens-error-scope = Kies minstens één recht.
 api-tokens-error-limit = Je hebt al 20 tokens. Trek er eerst een in.
 api-tokens-docs = Hoe je een token gebruikt, staat in het hoofdstuk REST API van de calrs-documentatie.
 admin-api-tokens = API-tokens
-admin-api-tokens-allow-all = Alle gebruikers API-tokens laten maken
-admin-api-tokens-allow-all-help = Standaard uit: alleen beheerders kunnen persoonlijke toegangstokens voor de REST API maken. Uitzetten schort de tokens van andere gebruikers op tot het weer aan wordt gezet. Apps die via OAuth zijn gekoppeld, merken er niets van.
+admin-api-tokens-allow-all = Alle gebruikers de REST API laten gebruiken
+admin-api-tokens-allow-all-help = Standaard uit: alleen beheerders kunnen persoonlijke toegangstokens maken of apps via OAuth aan de REST API koppelen, omdat beide gastgegevens lezen. Uitzetten schort de tokens en API-apps van andere gebruikers op tot het weer aan wordt gezet. MCP-clients merken er niets van.
 admin-revoke-apps = Gekoppelde apps intrekken ({ $count })
 
 # Write destination per event type (#47)
@@ -2044,3 +2116,87 @@ sources-destinations-saved = Opgeslagen. Nieuwe boekingen gaan naar de hier geko
 write-destination-not-yours = Er is niets opgeslagen: kies een van je eigen agenda's, voor een afspraaktype dat je begeleidt.
 write-destination-unavailable = { $name } (niet beschikbaar)
 write-destination-refused = Deze agenda weigerde de laatste boeking ({ $error }), die volgens de instelling van de bron is geschreven. De volgende boeking probeert het opnieuw.
+# Booking webhooks (templates/webhooks.html, admin card, #168)
+webhooks-title = Webhooks
+webhooks-back = Terug naar afspraaktypes
+webhooks-subtitle = calrs stuurt een ondertekend JSON-bericht naar deze adressen wanneer een boeking wordt gemaakt, aangevraagd, goedgekeurd, afgewezen, verloopt, wordt geannuleerd of verzet.
+webhooks-not-allowed = Op deze instantie zijn webhooks voorbehouden aan beheerders.
+webhooks-endpoints = Bestemmingen
+webhooks-empty = Nog geen webhooks. Voeg er hieronder een toe zodat calrs een ander systeem op de hoogte houdt van je boekingen.
+webhooks-scope = Gebeurtenissen sturen voor
+webhooks-scope-personal = Al mijn persoonlijke afspraaktypes
+webhooks-scope-event-type = Afspraaktype: { $title }
+webhooks-scope-team-event-type = Afspraaktype: { $title } ({ $team })
+webhooks-added-by = Toegevoegd door { $name }
+webhooks-state-off = Uitgeschakeld
+webhooks-never-sent = Nog niets verstuurd
+webhooks-state-ok = Laatste aflevering gelukt
+webhooks-state-failing = Laatste aflevering mislukt
+webhooks-queued =
+    { $count ->
+        [one] 1 aflevering wacht op een nieuwe poging
+       *[other] { $count } afleveringen wachten op een nieuwe poging
+    }
+webhooks-gave-up =
+    { $count ->
+        [one] 1 aflevering opgegeven na alle pogingen
+       *[other] { $count } afleveringen opgegeven na alle pogingen
+    }
+webhooks-send-test = Test versturen
+webhooks-enable = Inschakelen
+webhooks-disable = Uitschakelen
+webhooks-delete = Verwijderen
+webhooks-delete-confirm = Deze webhook verwijderen? Afleveringen die nog wachten vervallen.
+webhooks-edit = Bewerken
+webhooks-url = URL
+webhooks-url-hint = (https)
+webhooks-secret = Ondertekeningsgeheim
+webhooks-secret-hint = (minstens { $min } tekens, ondertekent elk verzoek, wordt nooit meer getoond)
+webhooks-save = Opslaan
+webhooks-add = Een webhook toevoegen
+webhooks-add-submit = Webhook toevoegen
+webhooks-privacy-note = Elk bericht bevat de naam, het e-mailadres, het telefoonnummer en de notities van de gast. Stuur het alleen naar een systeem dat je die gegevens toevertrouwt.
+webhooks-notice-created = Webhook toegevoegd. Gebruik "Test versturen" om te controleren of hij aankomt.
+webhooks-notice-updated = Webhook opgeslagen.
+webhooks-notice-deleted = Webhook verwijderd.
+webhooks-notice-enabled = Webhook ingeschakeld.
+webhooks-notice-disabled = Webhook uitgeschakeld. Afleveringen die nog wachtten zijn vervallen.
+webhooks-notice-test-ok = Test afgeleverd: de bestemming antwoordde met een 2xx-status.
+webhooks-error-url = Vul een volledige URL in, bijvoorbeeld https://hooks.example.com/calrs.
+webhooks-error-https = De URL moet beginnen met https://. Gewoon http werkt alleen voor een host op de lijst met toegestane privéhosts.
+webhooks-error-credentials = Haal de gebruikersnaam en het wachtwoord uit de URL: het ondertekeningsgeheim authenticeert calrs.
+webhooks-error-secret = Het ondertekeningsgeheim moet 16 tot 256 tekens lang zijn.
+webhooks-error-scope = Je kunt geen webhook aan dat afspraaktype toevoegen.
+webhooks-error-limit = Dit bereik heeft al het maximum van 10 webhooks.
+webhooks-error-test = De test is niet afgeleverd. De reden staat bij de webhook.
+admin-webhooks = Boekingswebhooks
+admin-webhooks-help =
+    { $count ->
+        [one] Op deze instantie is 1 webhook ingesteld.
+       *[other] Op deze instantie zijn { $count } webhooks ingesteld.
+    }
+admin-webhooks-allow-all = Alle gebruikers webhooks laten toevoegen
+admin-webhooks-allow-all-help = Standaard uit: een webhook stuurt namen, e-mailadressen en telefoonnummers van gasten naar een adres dat de gebruiker kiest, dus alleen beheerders mogen er een toevoegen. Uitschakelen stopt de webhooks die andere gebruikers hebben toegevoegd.
+admin-webhooks-manage = Je webhooks beheren
+webhooks-events = Gebeurtenissen
+webhooks-events-all = Alle gebeurtenissen
+webhooks-event-created = Geboekt (bevestigd)
+webhooks-event-requested = Aangevraagd (wacht op goedkeuring)
+webhooks-event-confirmed = Goedgekeurd
+webhooks-event-declined = Afgewezen
+webhooks-event-expired = Onbeantwoord verlopen
+webhooks-event-cancelled = Geannuleerd
+webhooks-event-rescheduled = Verzet
+webhooks-error-events = Kies minstens één gebeurtenis.
+webhooks-error-test-limit = Te veel tests in korte tijd. Wacht een paar minuten en probeer het opnieuw.
+webhooks-added-by-former = Toegevoegd door een voormalig lid
+webhooks-signature-help = Elk verzoek is ondertekend: <code>X-Calrs-Signature: sha256=&lt;hex&gt;</code> is een HMAC-SHA256 van de ruwe inhoud met het ondertekeningsgeheim als sleutel. De inhoud en de controles aan ontvangende kant staan op de pagina Webhooks van de calrs-documentatie.
+webhooks-state-suspended = Opgeschort: wie hem heeft toegevoegd, kan dit afspraaktype niet meer beheren. Neem hem over om hem te hervatten.
+webhooks-adopt = Overnemen
+webhooks-notice-adopted = Webhook overgenomen en hervat.
+webhooks-event-claimed = Geclaimd door een volger
+webhooks-error-address = Dit adres kan niet worden gebruikt: calrs stuurt alleen naar openbare internetadressen, tenzij de host op de lijst met toegestane privéhosts staat.
+webhooks-adopt-help = Door hem over te nemen wordt hij van jou en hervat hij. Bevestig het adres waar hij naartoe stuurt en stel een nieuw ondertekeningsgeheim in: wie hem heeft toegevoegd, kent het oude misschien. Afleveringen die nog wachten vervallen.
+webhooks-error-not-suspended = Alleen een opgeschorte webhook kan worden overgenomen.
+webhooks-error-new-secret = De URL verwijst nu naar een andere host: vul ook een nieuw ondertekeningsgeheim in.
+webhooks-url-masked-hint = (alleen wie hem heeft toegevoegd ziet de volledige URL: vul hem opnieuw in om op te slaan)

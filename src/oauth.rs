@@ -718,7 +718,10 @@ async fn consent(
         redirect.query_pairs_mut().append_pair("state", s);
     }
     redirect.query_pairs_mut().append_pair("iss", &issuer());
-    if form.decision == "deny" {
+    // The REST API is for admins unless the admin opened it to everyone
+    // (#169): a user it is closed to cannot approve a grant for it.
+    let api_closed = params.resource == api_resource() && !api_allowed(&mut tx, &user).await?;
+    if form.decision == "deny" || api_closed {
         redirect
             .query_pairs_mut()
             .append_pair("error", "access_denied");
@@ -907,6 +910,25 @@ async fn revoke(
     Ok((StatusCode::OK, [("Cache-Control", "no-store")]).into_response())
 }
 
+/// Whether `user` may use the REST API with a personal access token or an
+/// OAuth grant (#169): admins, and everyone once the admin turned on
+/// `auth_config.api_tokens_allow_all_users`. Checked at consent, at token
+/// creation and on every API request, so turning it off takes effect at once.
+pub(crate) async fn api_allowed(
+    conn: &mut SqliteConnection,
+    user: &User,
+) -> Result<bool, sqlx::Error> {
+    if user.role == "admin" {
+        return Ok(true);
+    }
+    Ok(sqlx::query_scalar::<_, bool>(
+        "SELECT api_tokens_allow_all_users FROM auth_config WHERE id = 'singleton'",
+    )
+    .fetch_optional(conn)
+    .await?
+    .unwrap_or(false))
+}
+
 /// Revalidates the user on every call, so disabling/deleting an account takes
 /// effect immediately. Browser session cookies and upstream tokens never work.
 pub async fn bearer_user(
@@ -1070,6 +1092,10 @@ pub async fn cleanup(pool: &SqlitePool) -> Result<(), sqlx::Error> {
         .execute(pool)
         .await?;
     sqlx::query("DELETE FROM api_idempotency WHERE created_at <= ?")
+        .bind(now - 86400)
+        .execute(pool)
+        .await?;
+    sqlx::query("DELETE FROM api_booking_log WHERE created_at <= ?")
         .bind(now - 86400)
         .execute(pool)
         .await?;

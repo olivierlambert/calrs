@@ -153,7 +153,9 @@ async fn main() -> Result<()> {
         Commands::Booking { command } => {
             commands::booking::run(&pool, &secret_key, command).await?
         }
-        Commands::User { command } => commands::user::run(&pool, &data_dir, command).await?,
+        Commands::User { command } => {
+            commands::user::run(&pool, &data_dir, &secret_key, command).await?
+        }
         Commands::Resource { command } => commands::resource::run(command).await?,
         Commands::Config { command } => commands::config::run(&pool, &secret_key, command).await?,
         Commands::Serve { port, host } => {
@@ -174,6 +176,8 @@ async fn main() -> Result<()> {
             let reminder_pool = pool.clone();
             let reminder_key = secret_key;
             tokio::spawn(web::run_reminder_loop(reminder_pool, reminder_key));
+            // Outgoing booking webhooks (#168): delivered off the request path.
+            tokio::spawn(web::run_webhook_loop(pool.clone(), secret_key));
 
             let router = web::create_router(pool, data_dir, secret_key).await;
             let addr = std::net::SocketAddr::from((host, port));

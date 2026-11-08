@@ -19,6 +19,11 @@ const BODY_LIMIT: usize = 16 * 1024;
 const PAGE: usize = 100;
 /// Longest slot window, in days.
 const MAX_SLOT_DAYS: i64 = 31;
+/// Bookings one user may create through the API in 24 hours.
+const API_DAILY_BOOKINGS: i64 = 50;
+/// Additional attendees one API booking may carry, whatever the event type
+/// allows on its booking page.
+const API_MAX_ATTENDEES: usize = 10;
 
 pub(super) fn router() -> Router<Arc<AppState>> {
     let v1 = Router::new()
@@ -137,7 +142,32 @@ fn en(key: &str) -> String {
 /// `pat:<id>`) its rate limit counts against.
 pub(super) struct Caller {
     pub(super) user: crate::models::User,
+    scope: String,
     credential: String,
+}
+
+impl Caller {
+    fn has(&self, scope: &str) -> bool {
+        self.scope.split_whitespace().any(|s| s == scope)
+    }
+
+    /// A booking as a write answers with it: in full with `bookings:read`,
+    /// else only its id and status, so a write-only token reads nothing.
+    /// `booking_answer` of a `{"booking": ...}` answer; an error passes as is.
+    fn booking_answer_of(&self, answer: Value) -> Value {
+        match answer.get("booking") {
+            Some(booking) => self.booking_answer(booking.clone()),
+            None => answer,
+        }
+    }
+
+    fn booking_answer(&self, booking: Value) -> Value {
+        if self.has("bookings:read") {
+            json!({ "booking": booking })
+        } else {
+            json!({"booking": {"id": booking["id"], "status": booking["status"]}})
+        }
+    }
 }
 
 fn challenge_value(error: &str, scope: &str) -> String {
@@ -216,6 +246,7 @@ async fn authenticate(
         }
     }
     let token = crate::oauth::bearer_token(headers);
+    let presented = token.is_some();
     let found = match token {
         Some(token) if token.starts_with(PAT_PREFIX) => personal_token_user(&state.pool, token)
             .await?
@@ -226,16 +257,33 @@ async fn authenticate(
             .map(|(user, scope, grant)| (user, scope, format!("grant:{grant}"))),
         None => None,
     };
+    // An OAuth grant for the API stops working, like a personal token,
+    // when the admin closes the API to users who are not admins.
+    let found = match found {
+        Some((user, scope, credential)) if credential.starts_with("grant:") => {
+            let mut conn = state.pool.acquire().await?;
+            crate::oauth::api_allowed(&mut conn, &user)
+                .await?
+                .then_some((user, scope, credential))
+        }
+        other => other,
+    };
     let Some((user, scope_list, credential)) = found else {
         let mut error = ApiError::new(
             StatusCode::UNAUTHORIZED,
             "unauthorized",
             "A valid Bearer token is required.",
         );
-        error.challenge = Some(challenge_value(
-            "invalid_token",
-            &crate::oauth::API_SCOPES.join(" "),
-        ));
+        // RFC 6750 section 3.1: no error code when no token was presented.
+        error.challenge = Some(if presented {
+            challenge_value("invalid_token", &crate::oauth::API_SCOPES.join(" "))
+        } else {
+            format!(
+                "Bearer resource_metadata=\"{}/.well-known/oauth-protected-resource/api/v1\", scope=\"{}\"",
+                crate::oauth::issuer(),
+                crate::oauth::API_SCOPES.join(" ")
+            )
+        });
         return Err(error);
     };
     if !scope_list.split_whitespace().any(|s| s == scope) {
@@ -254,7 +302,11 @@ async fn authenticate(
     {
         return Err(rate_limited());
     }
-    Ok(Caller { user, credential })
+    Ok(Caller {
+        user,
+        scope: scope_list,
+        credential,
+    })
 }
 
 fn rate_limited() -> ApiError {
@@ -340,6 +392,16 @@ fn json_body<T: serde::de::DeserializeOwned>(
     serde_json::from_slice(body).map_err(|e| ApiError::bad("invalid_json", e.to_string()))
 }
 
+type ApiPath = Result<Path<String>, axum::extract::rejection::PathRejection>;
+
+/// The `{id}` of the path: a malformed one (bad percent-encoding) answers
+/// the JSON 404 rather than axum's plain-text rejection.
+fn path_id(path: ApiPath) -> Result<String, ApiError> {
+    let Path(id) = path.map_err(|_| ApiError::not_found())?;
+    check_id(&id)?;
+    Ok(id)
+}
+
 /// Ids are UUIDs; anything long is not one of ours.
 fn check_id(id: &str) -> Result<(), ApiError> {
     if id.is_empty() || id.len() > 64 {
@@ -421,10 +483,10 @@ async fn list_event_types(
 async fn get_event_type(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
-    Path(id): Path<String>,
+    path: ApiPath,
 ) -> ApiResult {
     let caller = authenticate(&state, &headers, "event-types:read").await?;
-    check_id(&id)?;
+    let id = path_id(path)?;
     let Some(manages) = event_type_access(&state.pool, &caller.user.id, &id).await? else {
         return Err(ApiError::not_found());
     };
@@ -482,11 +544,11 @@ async fn get_event_type(
 async fn event_type_slots(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
-    Path(id): Path<String>,
+    path: ApiPath,
     query: QueryParams,
 ) -> ApiResult {
     let caller = authenticate(&state, &headers, "slots:read").await?;
-    check_id(&id)?;
+    let id = path_id(path)?;
     let params = query_params(query, &["from", "to", "timezone"])?;
     let date = |name: &str| -> Result<NaiveDate, ApiError> {
         let value = params
@@ -630,7 +692,8 @@ async fn api_slots(
         ) else {
             continue;
         };
-        let Some(start) = host_tz.from_local_datetime(&local).earliest() else {
+        // The engine only offers wall times that name one instant.
+        let Some(start) = host_tz.from_local_datetime(&local).single() else {
             continue;
         };
         let start = start.with_timezone(&Utc);
@@ -860,10 +923,10 @@ async fn list_bookings(
 async fn get_booking(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
-    Path(id): Path<String>,
+    path: ApiPath,
 ) -> ApiResult {
     let caller = authenticate(&state, &headers, "bookings:read").await?;
-    check_id(&id)?;
+    let id = path_id(path)?;
     match hosted_booking(&state.pool, &caller.user.id, &id).await? {
         Some(booking) => Ok(ok(StatusCode::OK, json!({ "booking": booking }))),
         None => Err(ApiError::not_found()),
@@ -899,13 +962,50 @@ async fn create_booking(
     let request: CreateBooking = json_body(&headers, &body, false)?;
     let key = idempotency_key(&headers)?;
     let Some(key) = key else {
-        return create_booking_inner(&state, &caller, request).await;
+        return create_booking_inner(&state, &caller, request)
+            .await
+            .map(|(status, value)| ok(status, caller.booking_answer_of(value)));
     };
     match idempotency_begin(&state.pool, &caller.user.id, key, &body).await? {
-        Idempotency::Replay(response) => Ok(response),
+        Idempotency::Replay(status, stored) => {
+            // The stored answer is only handed back to someone who may still
+            // book this event type, and in the shape this token may read.
+            check_id(&request.event_type_id)?;
+            if event_type_access(&state.pool, &caller.user.id, &request.event_type_id).await?
+                != Some(true)
+            {
+                return Err(ApiError::not_found());
+            }
+            let mut response = ok(status, caller.booking_answer_of(stored));
+            response
+                .headers_mut()
+                .insert("idempotency-replayed", "true".parse().unwrap());
+            Ok(response)
+        }
         Idempotency::Proceed => {
+            // Keep the key's lease alive for as long as the booking runs.
+            let lease = tokio::spawn({
+                let pool = state.pool.clone();
+                let user = caller.user.id.clone();
+                let key = key.to_string();
+                async move {
+                    loop {
+                        tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+                        let _ = sqlx::query("UPDATE api_idempotency SET lease_at = ? WHERE user_id = ? AND key = ? AND response IS NULL")
+                            .bind(Utc::now().timestamp())
+                            .bind(&user)
+                            .bind(&key)
+                            .execute(&pool)
+                            .await;
+                    }
+                }
+            });
             let result = create_booking_inner(&state, &caller, request).await;
-            Ok(idempotency_finish(&state.pool, &caller.user.id, key, result).await)
+            lease.abort();
+            // The full answer is kept; this token gets what its scopes allow.
+            let (status, value) =
+                idempotency_finish(&state.pool, &caller.user.id, key, result).await;
+            Ok(ok(status, caller.booking_answer_of(value)))
         }
     }
 }
@@ -941,7 +1041,7 @@ async fn create_booking_inner(
     state: &AppState,
     caller: &Caller,
     request: CreateBooking,
-) -> ApiResult {
+) -> Result<(StatusCode, Value), ApiError> {
     check_id(&request.event_type_id)?;
     let user = &caller.user;
     match event_type_access(&state.pool, &user.id, &request.event_type_id).await? {
@@ -958,6 +1058,22 @@ async fn create_booking_inner(
     if let Err(key) = validate_booking_input(&request.name, &request.email, &request.notes) {
         return Err(ApiError::bad("invalid_request", en(key)));
     }
+    // Every booking emails the guest, the attendees and the hosts: a token
+    // cannot make the instance's SMTP send without bound.
+    let made: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM api_booking_log WHERE user_id = ? AND created_at > ?",
+    )
+    .bind(&user.id)
+    .bind(Utc::now().timestamp() - 86400)
+    .fetch_one(&state.pool)
+    .await?;
+    if made >= API_DAILY_BOOKINGS {
+        return Err(ApiError::new(
+            StatusCode::TOO_MANY_REQUESTS,
+            "daily_limit_reached",
+            format!("At most {API_DAILY_BOOKINGS} bookings per user per 24 hours through the API."),
+        ));
+    }
     let lang = match request.language.as_deref() {
         Some(code) => crate::i18n::supported_code(code)
             .ok_or_else(|| ApiError::bad("invalid_request", "Unsupported language."))?,
@@ -966,6 +1082,17 @@ async fn create_booking_inner(
             .as_deref()
             .and_then(crate::i18n::supported_code)
             .unwrap_or("en"),
+    };
+    // The instance addresses German speakers as "Sie": the guest's emails
+    // follow, as they would from the booking page (`detect_from_headers`).
+    let lang = if lang == "de"
+        && state
+            .german_formal
+            .load(std::sync::atomic::Ordering::Relaxed)
+    {
+        "de-formal"
+    } else {
+        lang
     };
     let start = chrono::DateTime::parse_from_rfc3339(&request.start)
         .map_err(|_| ApiError::bad("invalid_start", "start must be an RFC 3339 instant."))?
@@ -982,11 +1109,19 @@ async fn create_booking_inner(
             "start must fall on a whole minute.",
         ));
     }
-    if request.attendees.len() > 100
-        || request
-            .attendees
-            .iter()
-            .any(|a| a.contains(',') || a.len() > 255)
+    if request.attendees.len() > API_MAX_ATTENDEES {
+        return Err(ApiError::new(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "too_many_attendees",
+            format!(
+                "At most {API_MAX_ATTENDEES} additional attendees per booking through the API."
+            ),
+        ));
+    }
+    if request
+        .attendees
+        .iter()
+        .any(|a| a.contains(',') || a.len() > 255)
     {
         return Err(ApiError::bad("invalid_request", "Invalid attendees."));
     }
@@ -1062,7 +1197,14 @@ async fn create_booking_inner(
         .bind(&booked.id)
         .fetch_one(&state.pool)
         .await?;
-    Ok(ok(
+    // Recorded for the daily cap on API bookings (`API_DAILY_BOOKINGS`).
+    sqlx::query("INSERT INTO api_booking_log (user_id, booking_id, created_at) VALUES (?, ?, ?)")
+        .bind(&user.id)
+        .bind(&booked.id)
+        .bind(Utc::now().timestamp())
+        .execute(&state.pool)
+        .await?;
+    Ok((
         StatusCode::CREATED,
         json!({"booking": booking_json(row, false)}),
     ))
@@ -1129,11 +1271,11 @@ async fn write_refusal(pool: &SqlitePool, user_id: &str, id: &str, action: &str)
 async fn cancel_booking_api(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
-    Path(id): Path<String>,
+    path: ApiPath,
     body: BodyBytes,
 ) -> ApiResult {
     let caller = authenticate(&state, &headers, "bookings:write").await?;
-    check_id(&id)?;
+    let id = path_id(path)?;
     heavy_limit(&state, &caller).await?;
     let body = body_bytes(body)?;
     let request: CancelBody = json_body(&headers, &body, true)?;
@@ -1147,7 +1289,10 @@ async fn cancel_booking_api(
         HostCancel::Done(status) => {
             tracing::info!(booking_id = %id, status, credential = %caller.credential, "booking ended through the API");
             let booking = hosted_booking(&state.pool, &caller.user.id, &id).await?;
-            Ok(ok(StatusCode::OK, json!({ "booking": booking })))
+            Ok(ok(
+                StatusCode::OK,
+                caller.booking_answer(booking.unwrap_or(Value::Null)),
+            ))
         }
         HostCancel::Unchanged => Err(ApiError::new(
             StatusCode::CONFLICT,
@@ -1163,11 +1308,11 @@ async fn cancel_booking_api(
 async fn request_reschedule_api(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
-    Path(id): Path<String>,
+    path: ApiPath,
     body: BodyBytes,
 ) -> ApiResult {
     let caller = authenticate(&state, &headers, "bookings:write").await?;
-    check_id(&id)?;
+    let id = path_id(path)?;
     heavy_limit(&state, &caller).await?;
     let body = body_bytes(body)?;
     let _: EmptyBody = json_body(&headers, &body, true)?;
@@ -1175,8 +1320,16 @@ async fn request_reschedule_api(
         HostReschedule::Requested => {
             tracing::info!(booking_id = %id, credential = %caller.credential, "reschedule requested through the API");
             let booking = hosted_booking(&state.pool, &caller.user.id, &id).await?;
-            Ok(ok(StatusCode::OK, json!({ "booking": booking })))
+            Ok(ok(
+                StatusCode::OK,
+                caller.booking_answer(booking.unwrap_or(Value::Null)),
+            ))
         }
+        HostReschedule::AlreadyRequested => Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "reschedule_already_requested",
+            en("bookings-error-reschedule-pending"),
+        )),
         HostReschedule::NoBookableDates => Err(ApiError::new(
             StatusCode::CONFLICT,
             "no_bookable_dates",
@@ -1193,8 +1346,8 @@ async fn request_reschedule_api(
 enum Idempotency {
     /// First time this key is seen: do the work, then `idempotency_finish`.
     Proceed,
-    /// The stored answer of the first request.
-    Replay(Response),
+    /// The stored answer of the first request: its status and body.
+    Replay(StatusCode, Value),
 }
 
 /// The `Idempotency-Key` header: 1 to 255 visible ASCII characters.
@@ -1225,24 +1378,25 @@ async fn idempotency_begin(
 ) -> Result<Idempotency, ApiError> {
     let now = Utc::now().timestamp();
     let request_hash = crate::oauth::hash(&String::from_utf8_lossy(body));
-    // An expired key, or a first request that never finished (the process
-    // stopped), is forgotten.
+    // An expired key, or a first request whose lease stopped being renewed
+    // (the process stopped), is forgotten.
     sqlx::query(
         "DELETE FROM api_idempotency WHERE user_id = ? AND key = ?
-           AND (created_at <= ? OR (response IS NULL AND created_at <= ?))",
+           AND (created_at <= ? OR (response IS NULL AND lease_at <= ?))",
     )
     .bind(user_id)
     .bind(key)
     .bind(now - 86400)
-    .bind(now - 300)
+    .bind(now - 120)
     .execute(pool)
     .await?;
     let inserted = sqlx::query(
-        "INSERT OR IGNORE INTO api_idempotency (user_id, key, request_hash, created_at) VALUES (?, ?, ?, ?)",
+        "INSERT OR IGNORE INTO api_idempotency (user_id, key, request_hash, created_at, lease_at) VALUES (?, ?, ?, ?, ?)",
     )
     .bind(user_id)
     .bind(key)
     .bind(&request_hash)
+    .bind(now)
     .bind(now)
     .execute(pool)
     .await?;
@@ -1273,15 +1427,8 @@ async fn idempotency_begin(
     match (status, response) {
         (Some(status), Some(body)) => {
             let status = StatusCode::from_u16(status as u16).unwrap_or(StatusCode::OK);
-            let mut response =
-                (status, [("content-type", "application/json")], body).into_response();
-            response
-                .headers_mut()
-                .insert("cache-control", "no-store".parse().unwrap());
-            response
-                .headers_mut()
-                .insert("idempotency-replayed", "true".parse().unwrap());
-            Ok(Idempotency::Replay(response))
+            let body = serde_json::from_str(&body).unwrap_or(Value::Null);
+            Ok(Idempotency::Replay(status, body))
         }
         _ => Err(ApiError::new(
             StatusCode::CONFLICT,
@@ -1297,19 +1444,17 @@ async fn idempotency_finish(
     pool: &SqlitePool,
     user_id: &str,
     key: &str,
-    result: ApiResult,
-) -> Response {
-    let response = match result {
-        Ok(response) => response,
-        Err(error) => error.into_response(),
+    result: Result<(StatusCode, Value), ApiError>,
+) -> (StatusCode, Value) {
+    let (status, value) = match result {
+        Ok(answer) => answer,
+        Err(error) => {
+            let status = error.status;
+            let value = json!({"error": {"code": error.code, "message": error.message}});
+            (status, value)
+        }
     };
-    let status = response.status();
-    let (parts, body) = response.into_parts();
-    let bytes = match axum::body::to_bytes(body, BODY_LIMIT * 64).await {
-        Ok(bytes) => bytes,
-        Err(e) => return ApiError::internal("idempotency body", &e).into_response(),
-    };
-    let stored = if status.is_server_error() {
+    let stored = if status.is_server_error() || status == StatusCode::TOO_MANY_REQUESTS {
         sqlx::query("DELETE FROM api_idempotency WHERE user_id = ? AND key = ?")
             .bind(user_id)
             .bind(key)
@@ -1320,7 +1465,7 @@ async fn idempotency_finish(
             "UPDATE api_idempotency SET status = ?, response = ? WHERE user_id = ? AND key = ?",
         )
         .bind(status.as_u16() as i64)
-        .bind(String::from_utf8_lossy(&bytes).into_owned())
+        .bind(value.to_string())
         .bind(user_id)
         .bind(key)
         .execute(pool)
@@ -1329,5 +1474,5 @@ async fn idempotency_finish(
     if let Err(e) = stored {
         tracing::error!(error = %e, "API idempotency record failed");
     }
-    Response::from_parts(parts, axum::body::Body::from(bytes))
+    (status, value)
 }

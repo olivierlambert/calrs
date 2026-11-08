@@ -6,6 +6,8 @@ use super::*;
 
 /// Tokens one user may hold.
 const MAX_TOKENS: i64 = 20;
+/// How long a created token's secret waits to be shown.
+const FLASH_LIFETIME: std::time::Duration = std::time::Duration::from_secs(300);
 /// The lifetimes offered, in days; 0 = never expires.
 const EXPIRY_DAYS: [i64; 5] = [7, 30, 90, 365, 0];
 
@@ -23,18 +25,14 @@ pub(super) fn router() -> Router<Arc<AppState>> {
 }
 
 /// Whether `user` may create personal access tokens: admins, and everyone
-/// when the admin turned the switch on.
+/// when the admin turned the switch on (`oauth::api_allowed`).
 pub(super) async fn can_create_api_tokens(pool: &SqlitePool, user: &crate::models::User) -> bool {
-    if user.role == "admin" {
-        return true;
+    match pool.acquire().await {
+        Ok(mut conn) => crate::oauth::api_allowed(&mut conn, user)
+            .await
+            .unwrap_or(false),
+        Err(_) => false,
     }
-    sqlx::query_scalar::<_, bool>(
-        "SELECT api_tokens_allow_all_users FROM auth_config WHERE id = 'singleton'",
-    )
-    .fetch_optional(pool)
-    .await
-    .unwrap_or(None)
-    .unwrap_or(false)
 }
 
 /// The day a token event happened, in the reader's language and timezone.
@@ -136,7 +134,15 @@ async fn tokens_page(
     auth_user: crate::auth::AuthUser,
     Query(query): Query<HashMap<String, String>>,
 ) -> Response {
+    // The secret of a token just created, shown this once: the flash is
+    // taken, so a reload (or the back button) shows it no more.
+    let created = query.get("created").and_then(|id| {
+        let mut flash = state.api_token_flash.lock().ok()?;
+        let (user, secret, at) = flash.remove(id)?;
+        (user == auth_user.user.id && at.elapsed() < FLASH_LIFETIME).then_some(secret)
+    });
     let extras = PageExtras {
+        created,
         revoked: query.contains_key("revoked"),
         ..Default::default()
     };
@@ -258,11 +264,23 @@ async fn create_token(
     match result {
         Ok(true) => {
             tracing::info!(user = %user.email, scopes = %scopes.join(" "), days, "API token created");
-            let extras = PageExtras {
-                created: Some(token),
-                ..Default::default()
-            };
-            render_page(&state, &auth_user, extras).await
+            // Post/Redirect/Get: a reload of the answer creates nothing. The
+            // secret waits server-side for the page the redirect opens.
+            let flash_id = crate::oauth::random_token();
+            if let Ok(mut flash) = state.api_token_flash.lock() {
+                flash.retain(|_, (_, _, at)| at.elapsed() < FLASH_LIFETIME);
+                flash.insert(
+                    flash_id.clone(),
+                    (user.id.clone(), token, std::time::Instant::now()),
+                );
+            }
+            (
+                [("Cache-Control", "no-store")],
+                Redirect::to(&format!(
+                    "/dashboard/settings/api-tokens?created={flash_id}"
+                )),
+            )
+                .into_response()
         }
         Ok(false) => render_page(&state, &auth_user, error("api-tokens-error-limit")).await,
         Err(e) => internal_error_response("create api token", &e),

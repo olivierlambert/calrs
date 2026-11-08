@@ -422,6 +422,16 @@ sources-subtitle = Kalender, die calrs liest, um zu wissen, wann Sie beschäftig
 event-types-subtitle = Die Termine, die andere bei Ihnen buchen können. Kopieren Sie einen Link oder betten Sie ihn auf Ihrer Website ein.
 settings-subtitle = Ihr öffentliches Profil, Sprache, Zeitzone und Standard-Arbeitszeiten.
 
+admin-ews-http-warning = Der Endpunkt verwendet http://: Das Passwort des Dienstkontos wird unverschlüsselt gesendet. Verwenden Sie besser https://.
+sources-locked-notice = Ihr Administrator verwaltet Exchange zentral. Das Hinzufügen weiterer Kalenderquellen ist deaktiviert.
+sources-locked-by-admin = Das Hinzufügen persönlicher Kalenderquellen wurde vom Administrator deaktiviert. Ihr Exchange-Kalender wird zentral verwaltet.
+admin-ews-lock-help = Administratoren sind ausgenommen. Bereits von Benutzern hinzugefügte Quellen bleiben bestehen, bis Sie sie löschen.
+admin-ews-notice-incomplete = Um globales Exchange zu aktivieren, geben Sie die Endpunkt-URL, das Dienstkonto und dessen Passwort an. Es wurde nichts gespeichert.
+admin-ews-registration-warning = Die Selbstregistrierung ist offen. So erstellte Konten erhalten nie eine verwaltete Exchange-Quelle, auch nicht über „jetzt für alle Benutzer bereitstellen“: Nichts beweist, dass ihnen ihre Adresse gehört. Um einem davon ein Postfach zu geben, bestätigen Sie die Adresse unten oder führen Sie calrs user trust-email aus, sobald Sie wissen, dass sie dieser Person gehört.
+admin-ews-help = Richten Sie einen einzelnen Exchange-Web-Services-Endpunkt und ein Dienstkonto mit der RBAC-Rolle <code>ApplicationImpersonation</code> ein. Der Kalender jedes Benutzers wird dann per Impersonation gelesen, ohne dass Zugangsdaten eingegeben werden müssen. PowerShell auf Exchange: <code>New-ManagementRoleAssignment -Name CalrsImpersonation -Role ApplicationImpersonation -User svc-calrs@ihredomain</code>.
+admin-ews-domain-help = Füllen Sie beide aus, wenn die Adressen, die calrs kennt (AD-UPN, OIDC-E-Mail), auf einer anderen Domain liegen als die Exchange-Postfächer. Nur eine Adresse in genau der Domain der Benutzer wird umgeschrieben, der lokale Teil bleibt erhalten: <code>alice@example.local</code> → <code>alice@example.com</code>. Adressen jeder anderen Domain werden unverändert verwendet. Lassen Sie beide leer, um die calrs-Adresse jedes Benutzers unverändert zu verwenden.
+admin-ews-notice-override-domains = Die Domain-Ersetzung braucht beide Domains, jeweils eine einfache Domain wie example.com: die, mit der sich Ihre Benutzer anmelden, und die ihrer Postfächer. Es wurde nichts gespeichert.
+admin-ews-trust-help = Diese aktiven Konten in den erlaubten Domains haben eine Adresse, für die niemand bürgt (selbst registriert oder vor dieser Prüfung angelegt), und erhalten daher keine verwaltete Exchange-Quelle. Bestätigen Sie eine Adresse nur, wenn Sie wissen, dass sie dieser Person gehört: Damit liest calrs für sie den Kalender dieses Postfachs.
 # Time off (templates/time_off.html)
 
 time-off-subtitle = Zeiträume, in denen Sie keine Buchungen annehmen. Alle Terminarten, die Sie anbieten, persönliche wie die Ihrer Teams, richten sich danach. Gäste sehen nur, dass diese Zeiten nicht verfügbar sind.
@@ -458,3 +468,17 @@ api-tokens-error-limit = Sie haben bereits 20 Tokens. Widerrufen Sie zuerst eine
 etf-write-destination-help = Nur für diese Terminart. Standardmäßig landen sie im Schreibkalender jeder Ihrer Quellen. Bei einer Team-Terminart gilt das nur für die Buchungen, die Sie übernehmen.
 sources-destinations-help = Wählen Sie für jede Terminart den Kalender, in den ihre bestätigten Buchungen geschrieben werden. Bei einer Team-Terminart gilt das für die Buchungen, die Sie übernehmen; die anderen Mitglieder wählen ihren eigenen. Bereits geschriebene Buchungen ziehen beim nächsten Schreiben um: bei einer Verschiebung, Freigabe, Wiederholung oder Übernahme.
 write-destination-not-yours = Nichts wurde gespeichert: Wählen Sie einen Ihrer eigenen Kalender, für eine Terminart, die Sie übernehmen.
+# Booking webhooks (#168): the messages that address the reader
+webhooks-empty = Noch keine Webhooks. Fügen Sie unten einen hinzu, damit calrs ein anderes System über Ihre Buchungen informiert.
+webhooks-privacy-note = Jede Nachricht enthält Name, E-Mail, Telefonnummer und Notizen des Gastes. Senden Sie sie nur an ein System, dem Sie diese Daten anvertrauen.
+webhooks-notice-created = Webhook hinzugefügt. Prüfen Sie mit „Test senden“, ob er ankommt.
+webhooks-error-url = Geben Sie eine vollständige URL ein, zum Beispiel https://hooks.example.com/calrs.
+webhooks-error-credentials = Entfernen Sie Benutzername und Passwort aus der URL: Das Signaturgeheimnis authentifiziert calrs.
+webhooks-error-scope = Sie können dieser Terminart keinen Webhook hinzufügen.
+admin-webhooks-manage = Ihre Webhooks verwalten
+webhooks-error-events = Wählen Sie mindestens ein Ereignis aus.
+webhooks-error-test-limit = Zu viele Tests in kurzer Zeit. Warten Sie ein paar Minuten und versuchen Sie es erneut.
+webhooks-state-suspended = Ausgesetzt: Die Person, die ihn hinzugefügt hat, kann diese Terminart nicht mehr verwalten. Übernehmen Sie ihn, um ihn fortzusetzen.
+webhooks-adopt-help = Wenn Sie ihn übernehmen, gehört er Ihnen und läuft wieder. Bestätigen Sie die Adresse, an die er sendet, und legen Sie ein neues Signaturgeheimnis fest: Die Person, die ihn hinzugefügt hat, kennt das alte womöglich. Noch wartende Zustellungen werden verworfen.
+webhooks-error-new-secret = Die URL zeigt jetzt auf einen anderen Host: Geben Sie auch ein neues Signaturgeheimnis ein.
+webhooks-url-masked-hint = (nur die Person, die ihn hinzugefügt hat, sieht die vollständige URL: geben Sie sie zum Speichern erneut ein)
