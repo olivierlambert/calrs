@@ -21,6 +21,7 @@ mod emails;
 mod event_types;
 mod ews_global;
 mod format;
+mod google_copies;
 mod guards;
 mod guest_footer;
 mod hosts;

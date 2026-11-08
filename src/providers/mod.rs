@@ -132,6 +132,13 @@ pub trait CalendarProvider: Send + Sync {
     /// Delete an event by UID.
     async fn delete_event(&self, calendar_id: &str, uid: &str) -> Result<()>;
 
+    /// Delete the copy of a booking that moved to another calendar (#47).
+    /// A provider that may notify attendees when its quiet path fails
+    /// (Google) returns the error instead, for a later try; others delete.
+    async fn release_event(&self, calendar_id: &str, uid: &str) -> Result<()> {
+        self.delete_event(calendar_id, uid).await
+    }
+
     /// Whether an event with this UID can be read back from the calendar.
     ///
     /// `Ok(true)` when the server confirms it is there, `Ok(false)` when the
@@ -166,6 +173,21 @@ pub trait CalendarProvider: Send + Sync {
         None
     }
 }
+
+/// A write the server accepted that is not complete: on Google, the event is
+/// on the calendar but its attendees could not be set. A write-back counts
+/// it as a failure to retry, with the event there (`WriteBackError::Verify`),
+/// so the booking keeps its href and a cancellation still deletes it.
+#[derive(Debug)]
+pub struct WrittenIncomplete(pub String);
+
+impl std::fmt::Display for WrittenIncomplete {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for WrittenIncomplete {}
 
 /// Why a calendar write-back did not land (#162).
 #[derive(Debug)]
@@ -246,10 +268,13 @@ pub async fn put_and_verify(
     uid: &str,
     ics: &str,
 ) -> std::result::Result<(), WriteBackError> {
-    provider
-        .put_event(calendar_id, uid, ics)
-        .await
-        .map_err(WriteBackError::Put)?;
+    if let Err(e) = provider.put_event(calendar_id, uid, ics).await {
+        return Err(if e.downcast_ref::<WrittenIncomplete>().is_some() {
+            WriteBackError::Verify(e)
+        } else {
+            WriteBackError::Put(e)
+        });
+    }
     match provider.event_exists(calendar_id, uid).await {
         Ok(true) => Ok(()),
         Ok(false) => Err(WriteBackError::NotReadable),
@@ -268,6 +293,8 @@ mod tests {
     #[derive(Default)]
     struct FakeProvider {
         put_fails: bool,
+        /// Writes, then reports the write incomplete.
+        put_incomplete: bool,
         drop_writes: bool,
         exists_fails: bool,
         stored: Mutex<Vec<String>>,
@@ -291,6 +318,10 @@ mod tests {
             Ok(DeltaResult::default())
         }
         async fn put_event(&self, _: &str, uid: &str, _: &str) -> Result<()> {
+            if self.put_incomplete {
+                self.stored.lock().unwrap().push(uid.to_string());
+                return Err(anyhow::Error::new(WrittenIncomplete("no attendees".into())));
+            }
             if self.put_fails {
                 anyhow::bail!("PUT returned 400 Bad Request");
             }
@@ -365,5 +396,20 @@ mod tests {
             .unwrap_err();
         assert!(matches!(err, WriteBackError::Verify(_)));
         assert!(err.to_string().contains("503"));
+    }
+
+    /// An incomplete write is a failure with the event there, so the
+    /// write-back keeps its href and retries.
+    #[tokio::test]
+    async fn an_incomplete_write_fails_with_the_event_there() {
+        let p = FakeProvider {
+            put_incomplete: true,
+            ..Default::default()
+        };
+        let err = put_and_verify(&p, "/cal/", "uid-1", "ics")
+            .await
+            .unwrap_err();
+        assert!(matches!(err, WriteBackError::Verify(_)), "{err}");
+        assert!(err.event_may_exist());
     }
 }
