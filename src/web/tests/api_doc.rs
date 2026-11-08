@@ -549,7 +549,7 @@ async fn answers_match_the_documented_schemas() {
         panic!("POST /bookings request: {e}");
     }
     let answers = &doc["components"]["schemas"]["CreateBooking"]["properties"]["answers"];
-    assert_eq!(answers["type"], "object");
+    assert_eq!(answers["type"], json!(["object", "null"]));
     assert_eq!(
         answers["additionalProperties"]["oneOf"]
             .as_array()
@@ -557,15 +557,41 @@ async fn answers_match_the_documented_schemas() {
         Some(3),
         "{answers}"
     );
-    for wrong in [
-        json!({"plate": 5}),
-        json!({"plate": null}),
-        json!({"topics": [1]}),
+    let mut absent = create.clone();
+    absent["answers"] = Value::Null;
+    assert_eq!(conforms(&doc, &absent, request_schema, "request"), Ok(()));
+    let one_of = "one variant of oneOf must match";
+    for (wrong, at) in [
+        (
+            json!({"plate": 5}),
+            format!("request.answers.plate: {one_of}"),
+        ),
+        (
+            json!({"plate": null}),
+            format!("request.answers.plate: {one_of}"),
+        ),
+        (
+            json!({"topics": [1]}),
+            format!("request.answers.topics: {one_of}"),
+        ),
+        (
+            json!("AB-123"),
+            "request.answers: string, expected".to_string(),
+        ),
     ] {
         let mut body = create.clone();
         body["answers"] = wrong;
-        assert!(conforms(&doc, &body, request_schema, "request").is_err());
+        let error = conforms(&doc, &body, request_schema, "request").unwrap_err();
+        assert!(error.starts_with(&at), "{error}");
     }
+    // The array branch is refused on its item, not on its type.
+    let mut body = create.clone();
+    body["answers"] = json!({"topics": [1]});
+    let error = conforms(&doc, &body, request_schema, "request").unwrap_err();
+    assert!(
+        error.contains("request.answers.topics[0]: integer"),
+        "{error}"
+    );
     let (status, body) = send(&app, api_post("/api/v1/bookings", &token, &create)).await;
     assert_eq!(status, StatusCode::CREATED, "{body}");
     check(&doc, "/bookings", "post", status, &body);

@@ -437,6 +437,7 @@ fn parse_answer(
             link_url: q.link_url.clone(),
             in_calendar: q.in_calendar,
             answered_at: answered_at.to_string(),
+            attested_by: None,
         },
     }))
 }
@@ -484,30 +485,70 @@ pub(super) async fn read_submission(
     })
 }
 
+/// The `answers` object of a `POST /api/v1/bookings`, in body order, with
+/// any repeated key kept: a JSON map would silently keep the last one,
+/// where `parse_api_answers` refuses it.
+#[derive(Debug, Default)]
+pub(crate) struct ApiAnswers(pub(crate) Vec<(String, serde_json::Value)>);
+
+impl<'de> Deserialize<'de> for ApiAnswers {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Entries;
+        impl<'de> serde::de::Visitor<'de> for Entries {
+            type Value = ApiAnswers;
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("an object of answers keyed by question key")
+            }
+            fn visit_map<A: serde::de::MapAccess<'de>>(
+                self,
+                mut map: A,
+            ) -> Result<ApiAnswers, A::Error> {
+                let mut entries = Vec::new();
+                while let Some(entry) = map.next_entry()? {
+                    entries.push(entry);
+                }
+                Ok(ApiAnswers(entries))
+            }
+        }
+        deserializer.deserialize_map(Entries)
+    }
+}
+
+/// A key the request named, echoed in a refusal only when it could be a
+/// question's (no stored key is longer than `MAX_KEY`).
+fn echoed(key: &str) -> String {
+    if key.chars().count() <= MAX_KEY {
+        key.to_string()
+    } else {
+        "(too long)".to_string()
+    }
+}
+
 /// Reads the `answers` object of a `POST /api/v1/bookings` (#169, #210),
 /// keyed by question key: a string for a text question, an option id for a
 /// single choice, an array of option ids for a multiple choice, a boolean
 /// for a checkbox. Each value becomes the field the booking form would post
 /// and goes through `parse_answer`, so the API takes exactly what the form
 /// takes. Every required question must be answered, a required checkbox
-/// with `true`; an optional checkbox left out is stored as not ticked, as on
-/// the form. The refusal is an English message naming the key, like the
-/// API's other errors.
+/// with `true`; a question left out stores nothing, since the guest was
+/// never asked it. A consent answered `true` is the caller's, not the
+/// guest's: it carries `attestation`. The refusal is an English message
+/// naming the key, like the API's other errors.
 pub(crate) fn parse_api_answers(
     form: &BookingForm,
-    answers: &serde_json::Map<String, serde_json::Value>,
+    answers: &ApiAnswers,
+    attestation: &crate::email::Attestation,
 ) -> Result<Vec<NewAnswer>, String> {
     use serde_json::Value;
     let mut fields = HashMap::new();
-    for (key, value) in answers {
+    let mut sent = std::collections::HashSet::new();
+    for (key, value) in &answers.0 {
         let Some(q) = form.questions.iter().find(|q| q.key == *key) else {
-            // No stored key is longer, so a longer one is not echoed back.
-            return Err(if key.chars().count() <= MAX_KEY {
-                format!("Unknown question {key}.")
-            } else {
-                "Unknown question key.".to_string()
-            });
+            return Err(format!("Unknown question {}.", echoed(key)));
         };
+        if !sent.insert(key.as_str()) {
+            return Err(format!("Question {key} is answered twice."));
+        }
         match (q.kind, value) {
             (Kind::ShortText | Kind::LongText | Kind::SingleChoice, Value::String(text)) => {
                 fields.insert(field_name(&q.id), text.clone());
@@ -541,8 +582,17 @@ pub(crate) fn parse_api_answers(
     let answered_at = now_utc();
     let mut parsed = Vec::new();
     for q in &form.questions {
+        // Left out: nothing is stored, unless it had to be answered.
+        if !sent.contains(q.key.as_str()) && !q.required {
+            continue;
+        }
         match parse_answer(q, &fields, &answered_at) {
-            Ok(Some(answer)) => parsed.push(answer),
+            Ok(Some(mut new)) => {
+                if new.answer.consent && new.answer.value == "yes" {
+                    new.answer.attested_by = Some(attestation.clone());
+                }
+                parsed.push(new);
+            }
             Ok(None) => {}
             Err(refusal) => {
                 let key = &q.key;
@@ -585,8 +635,9 @@ pub(crate) async fn insert_answers(
             serde_json::to_string(&a.option_ids).ok()
         };
         sqlx::query(
-            "INSERT INTO booking_answers (id, booking_id, question_id, position, key, kind, label, value, value_ids, consent, link_url, in_calendar, answered_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO booking_answers (id, booking_id, question_id, position, key, kind, label, value, value_ids, consent, link_url, in_calendar, answered_at,
+                                          attested_by_user_id, attested_by_name, attested_via, attested_credential_id)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(uuid::Uuid::new_v4().to_string())
         .bind(booking_id)
@@ -601,6 +652,10 @@ pub(crate) async fn insert_answers(
         .bind(&a.link_url)
         .bind(a.in_calendar)
         .bind(&a.answered_at)
+        .bind(a.attested_by.as_ref().map(|by| &by.user_id))
+        .bind(a.attested_by.as_ref().map(|by| &by.name))
+        .bind(a.attested_by.as_ref().map(|by| &by.via))
+        .bind(a.attested_by.as_ref().map(|by| &by.credential_id))
         .execute(&mut **tx)
         .await?;
     }
@@ -619,10 +674,29 @@ type AnswerRow = (
     Option<String>,
     bool,
     String,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
 );
 
 fn answer_from_row(
-    (booking, key, kind, label, value, value_ids, consent, link_url, in_calendar, answered_at): AnswerRow,
+    (
+        booking,
+        key,
+        kind,
+        label,
+        value,
+        value_ids,
+        consent,
+        link_url,
+        in_calendar,
+        answered_at,
+        attested_by,
+        attested_name,
+        attested_via,
+        attested_credential,
+    ): AnswerRow,
 ) -> (String, BookingAnswer) {
     (
         booking,
@@ -639,11 +713,18 @@ fn answer_from_row(
             link_url,
             in_calendar,
             answered_at,
+            attested_by: attested_by.map(|user_id| crate::email::Attestation {
+                user_id,
+                name: attested_name.unwrap_or_default(),
+                via: attested_via.unwrap_or_default(),
+                credential_id: attested_credential.unwrap_or_default(),
+            }),
         },
     )
 }
 
-const ANSWER_COLUMNS: &str = "ba.key, ba.kind, ba.label, ba.value, ba.value_ids, ba.consent, ba.link_url, ba.in_calendar, ba.answered_at";
+const ANSWER_COLUMNS: &str = "ba.key, ba.kind, ba.label, ba.value, ba.value_ids, ba.consent, ba.link_url, ba.in_calendar, ba.answered_at,
+     ba.attested_by_user_id, ba.attested_by_name, ba.attested_via, ba.attested_credential_id";
 
 /// A booking's answers, in form order, by the booking's uid. Read by
 /// `booking_guest_input`, so every path that rebuilds `BookingDetails` from

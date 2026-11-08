@@ -91,4 +91,7 @@ Invite links ask the same questions. Bookings created with
 `calrs booking create` ask none: the host is the one booking. A booking
 through the REST API asks none either, unless it sends `answers`, keyed by
 question key; then they are checked like the form's, required questions
-included, and stored the same way (see [REST API](api.md)).
+included, and stored the same way (see [REST API](api.md)). A consent ticked
+that way is recorded as attested by the host who sent it, with the token
+used: hosts read "Agreed, recorded by" that host, and the guest is told it
+was recorded on their behalf, never that they agreed.

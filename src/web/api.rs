@@ -17,10 +17,15 @@ use utoipa::ToSchema;
 pub(super) const PAT_PREFIX: &str = "calrs_pat_";
 /// Request bodies are small JSON objects.
 const BODY_LIMIT: usize = 16 * 1024;
-/// `POST /bookings` can carry the answers to booking questions (#210): up
-/// to 20 questions of 5000 characters each plus the notes, at up to four
-/// bytes a character, fits in this.
-const BOOKING_BODY_LIMIT: usize = 512 * 1024;
+/// `POST /bookings` can carry the answers to booking questions (#210). The
+/// worst body the form's limits allow: every question a long text at its
+/// maximum, each character written as an escaped surrogate pair
+/// (`\uD83D\uDE00`, 12 bytes), the notes' 5000 bytes as `\u00XX` escapes
+/// (6 bytes each), and 64 KiB for the other fields, keys and option ids.
+const BOOKING_BODY_WORST: usize =
+    super::questions::MAX_QUESTIONS * super::questions::MAX_LONG_ANSWER * 12 + 5000 * 6 + 64 * 1024;
+const BOOKING_BODY_LIMIT: usize = 3 * 512 * 1024;
+const _: () = assert!(BOOKING_BODY_LIMIT >= BOOKING_BODY_WORST);
 /// Page size of the lists.
 const PAGE: usize = 100;
 /// Longest slot window, in days.
@@ -807,6 +812,30 @@ pub(super) struct QuestionAnswer {
     /// When the guest sent the booking form, in UTC.
     #[schema(format = DateTime)]
     answered_at: String,
+    /// Null unless a host ticked this consent for the guest through the
+    /// API: the guest did not tick it, the host recorded it.
+    #[schema(required = true)]
+    attested_by: Option<Attested>,
+}
+
+fn attested_via_schema() -> utoipa::openapi::Object {
+    string_enum(
+        &["api_token", "oauth"],
+        false,
+        "`api_token`: a personal access token, `credential_id` its id. `oauth`: an OAuth application, `credential_id` its client id.",
+    )
+}
+
+/// Who recorded a consent on the guest's behalf through the API.
+#[derive(Serialize, ToSchema)]
+pub(super) struct Attested {
+    /// The user who recorded it.
+    user_id: String,
+    /// Their name when they did.
+    name: String,
+    #[schema(schema_with = attested_via_schema)]
+    via: String,
+    credential_id: String,
 }
 
 fn api_answers(answers: Vec<crate::email::BookingAnswer>) -> Vec<QuestionAnswer> {
@@ -821,6 +850,12 @@ fn api_answers(answers: Vec<crate::email::BookingAnswer>) -> Vec<QuestionAnswer>
             consent: a.consent,
             link_url: a.link_url,
             answered_at: a.answered_at,
+            attested_by: a.attested_by.map(|by| Attested {
+                user_id: by.user_id,
+                name: by.name,
+                via: by.via,
+                credential_id: by.credential_id,
+            }),
         })
         .collect()
 }
@@ -1609,7 +1644,7 @@ pub(super) struct CreateBooking {
     /// speakers formally.
     language: Option<String>,
     #[schema(schema_with = create_answers_schema)]
-    answers: Option<serde_json::Map<String, Value>>,
+    answers: Option<super::questions::ApiAnswers>,
 }
 
 /// The `answers` of `CreateBooking`: a map from question key to a string,
@@ -1637,10 +1672,10 @@ fn create_answers_schema() -> utoipa::openapi::Object {
         .item(of(Type::Boolean, "A `checkbox`: ticked or not."))
         .build();
     ObjectBuilder::new()
-        .schema_type(SchemaType::new(Type::Object))
+        .schema_type(SchemaType::from_iter([Type::Object, Type::Null]))
         .additional_properties(Some(Schema::OneOf(value)))
         .description(Some(
-            "The guest's answers to the event type's booking questions, keyed by the question's `key` (`GET /event-types/{id}` lists the questions and their option ids). When sent, every `required` question must be answered, a required checkbox with `true`; an optional checkbox left out is stored as not ticked; an unknown key, an option the question does not offer, an answer of the wrong type or over its length is refused. The answers are stored as the guest would have read them, and shown in the hosts' emails and calendar event, the guest's confirmation email and booking webhooks, as for a booking from the booking page. When left out, no question is asked and the booking carries no answers. `notes` is kept either way, whatever the event type's notes setting.",
+            "The guest's answers to the event type's booking questions, keyed by the question's `key` (`GET /event-types/{id}` lists the questions and their option ids). When sent, every `required` question must be answered, a required checkbox with `true`; a question left out stores nothing; an unknown key, a key given twice, an option the question does not offer, an answer of the wrong type or over its length is refused. The answers are stored as the guest would have read them, and shown in the hosts' emails and calendar event, the guest's confirmation email and booking webhooks, as for a booking from the booking page. A consent sent as `true` is recorded as attested by you, with this token (`attested_by`): hosts read it as agreed and recorded by you, the guest as recorded on their behalf by you. When left out (or null), no question is asked and the booking carries no answers. `notes` is kept either way, whatever the event type's notes setting.",
         ))
         .examples([json!({
             "licence_plate": "AB-123-CD",
@@ -1736,6 +1771,35 @@ pub(super) async fn create_booking(
     }
 }
 
+/// The caller as the attester of a consent it ticks for the guest: the user,
+/// their name now, and the credential (a personal access token's id, or the
+/// OAuth client's id, which outlives its grant).
+async fn attestation(
+    pool: &SqlitePool,
+    caller: &Caller,
+) -> Result<crate::email::Attestation, ApiError> {
+    let (via, credential_id) = if let Some(id) = caller.credential.strip_prefix("pat:") {
+        ("api_token", id.to_string())
+    } else {
+        let grant = caller
+            .credential
+            .strip_prefix("grant:")
+            .unwrap_or(&caller.credential);
+        let client: Option<String> =
+            sqlx::query_scalar("SELECT client_id FROM oauth_grants WHERE id = ?")
+                .bind(grant)
+                .fetch_optional(pool)
+                .await?;
+        ("oauth", client.unwrap_or_else(|| grant.to_string()))
+    };
+    Ok(crate::email::Attestation {
+        user_id: caller.user.id.clone(),
+        name: caller.user.name.clone(),
+        via: via.to_string(),
+        credential_id,
+    })
+}
+
 /// Map a refusal of the booking cores to the API's error.
 fn refusal_error(refusal: BookingRefusal) -> ApiError {
     match refusal {
@@ -1798,7 +1862,8 @@ async fn create_booking_inner(
     let answers = match &request.answers {
         Some(answers) => {
             let form = super::questions::booking_form(&state.pool, &request.event_type_id).await?;
-            super::questions::parse_api_answers(&form, answers)
+            let attestation = attestation(&state.pool, caller).await?;
+            super::questions::parse_api_answers(&form, answers, &attestation)
                 .map_err(|message| ApiError::bad(ErrorCode::InvalidRequest, message))?
         }
         None => Vec::new(),

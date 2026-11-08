@@ -139,7 +139,7 @@ slot computation makes of it (no event titles, no calendar names).
 ## Conventions
 
 - JSON only. Request bodies need `Content-Type: application/json` (415
-  otherwise) and are limited to 16 KiB, 512 KiB for `POST /bookings`, which
+  otherwise) and are limited to 16 KiB, 1.5 MiB for `POST /bookings`, which
   can carry long answers (413). Unknown fields and unknown query parameters
   are refused (400).
 - Times are RFC 3339. calrs answers in UTC (`2026-11-10T08:00:00Z`).
@@ -296,7 +296,8 @@ them the order near those rows can be off by the timezone's offset.
                 "notes": "About the renewal"},
       "answers": [{"key": "company", "label": "Company", "kind": "short_text",
                    "value": "Martin SARL", "option_ids": [], "consent": false,
-                   "link_url": null, "answered_at": "2026-11-07T09:12:44Z"}],
+                   "link_url": null, "answered_at": "2026-11-07T09:12:44Z",
+                   "attested_by": null}],
       "attendees": ["paul@example.com"],
       "location": {"type": "link", "value": "https://meet.example.com/abc"},
       "host_notes": "Prefers mornings."
@@ -364,9 +365,23 @@ Books an event type you manage for a guest.
   question allows it), the guest's confirmation email and the webhooks show
   them as for a booking from the page. When `answers` is sent, every
   required question must be answered and a required checkbox (a consent)
-  must be `true`; an optional checkbox left out is stored as not ticked. An
-  unknown key, an option the question does not offer, an answer of the wrong
-  type or over its length answers 400 `invalid_request`, naming the key.
+  must be `true`. A question left out stores nothing, since the guest was
+  never asked it (on the booking page an unticked box is stored as "no").
+  An unknown key, a key given twice, an option the question does not offer,
+  an answer of the wrong type or over its length answers 400
+  `invalid_request`, naming the key.
+- **A consent sent as `true` is your attestation, not the guest's tick.**
+  The answer row, which is the consent record, stores who recorded it: your
+  user id and name, and the credential (`via` `api_token` with the personal
+  access token's id, or `oauth` with the OAuth application's client id).
+  Reads and webhooks return it as `attested_by`
+  (`{"user_id", "name", "via", "credential_id"}`, `null` on every answer the
+  guest gave). Hosts see such a consent as "Agreed, recorded by" you on the
+  bookings and notes pages and in their emails; the guest's emails say it
+  was recorded on their behalf by you, never "You agreed". Only send `true`
+  when the guest did agree, to you. The record stays with the booking for as
+  long as its answers do, and is not affected by the 24-hour purge of the
+  API's own logs.
 - Without `answers`, no question is asked, even required ones: you are
   booking for the guest, as with `calrs booking create`, and the booking has
   no answers. This is how integrations written before answers keep working.

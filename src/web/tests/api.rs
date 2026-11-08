@@ -1017,7 +1017,7 @@ async fn api_booking_validates_its_input() {
         api_post(
             "/api/v1/bookings",
             &token,
-            &with("notes", json!("x".repeat(600 * 1024))),
+            &with("notes", json!("x".repeat(2 * 1024 * 1024))),
         ),
     )
     .await;
