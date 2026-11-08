@@ -80,7 +80,10 @@ pub(super) async fn spawn_mock_dav(mode: DavMode) -> (String, Arc<MockDav>) {
                 let mode = *dav.mode.lock().unwrap();
                 match mode {
                     DavMode::Reject => (StatusCode::BAD_REQUEST, String::new()),
-                    DavMode::Gone => (StatusCode::NOT_FOUND, String::new()),
+                    DavMode::Gone => (
+                        StatusCode::NOT_FOUND,
+                        "<html><body><h1>Not here</h1></body></html>".to_string(),
+                    ),
                     DavMode::Drop => (StatusCode::CREATED, String::new()),
                     DavMode::Ok => {
                         dav.stored.lock().unwrap().insert(path, body);

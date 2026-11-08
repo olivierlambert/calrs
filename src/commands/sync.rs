@@ -1150,7 +1150,7 @@ async fn remove_orphaned_events(
 /// What confirms, before an orphaned booking is cancelled, that its event is
 /// really gone from the host's calendar.
 #[derive(Clone, Copy)]
-enum OrphanCheck<'a> {
+pub(crate) enum OrphanCheck<'a> {
     /// CalDAV: a HEAD/PROPFIND on the event. `None` skips the check (paths
     /// with no client at hand).
     Caldav(Option<&'a CaldavClient>),
@@ -1160,7 +1160,7 @@ enum OrphanCheck<'a> {
 
 /// What [`cancel_orphaned_booking`] did.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum OrphanOutcome {
+pub(crate) enum OrphanOutcome {
     /// Nothing to do: no confirmed booking of this source's host has this
     /// UID, the meeting is already over, or another path changed it first.
     NoAction,
@@ -1172,7 +1172,7 @@ enum OrphanOutcome {
     Inconclusive,
 }
 
-async fn cancel_orphaned_booking(
+pub(crate) async fn cancel_orphaned_booking(
     pool: &SqlitePool,
     key: &[u8; 32],
     check: OrphanCheck<'_>,
@@ -1209,6 +1209,14 @@ async fn cancel_orphaned_booking(
          JOIN caldav_sources cs ON cs.id = ?
          JOIN accounts sa ON sa.id = cs.account_id AND sa.user_id = u.id
          WHERE b.uid = ? AND b.status = 'confirmed'
+           -- The href names a copy on this source (#47): the same path on
+           -- another server is another calendar.
+           AND (b.caldav_source_id = cs.id
+                OR (b.caldav_source_id IS NULL
+                    AND NOT EXISTS (SELECT 1 FROM booking_write_copies oc
+                                    WHERE oc.booking_uid = b.uid
+                                      AND oc.calendar_href = b.caldav_calendar_href
+                                      AND oc.source_id <> cs.id)))
            AND (b.caldav_calendar_href = cs.write_calendar_href
                 OR EXISTS (SELECT 1 FROM booking_write_copies bc
                            JOIN calendars wc ON wc.source_id = bc.source_id
@@ -1440,6 +1448,14 @@ pub(crate) async fn cancel_orphaned_bookings(
                          AND sa.user_id = COALESCE(b.assigned_user_id, a.user_id)
          WHERE b.status = 'confirmed'
            AND b.caldav_calendar_href IS NOT NULL
+           -- The href names a copy on this source (#47): the same path on
+           -- another server is another calendar.
+           AND (b.caldav_source_id = cs.id
+                OR (b.caldav_source_id IS NULL
+                    AND NOT EXISTS (SELECT 1 FROM booking_write_copies oc
+                                    WHERE oc.booking_uid = b.uid
+                                      AND oc.calendar_href = b.caldav_calendar_href
+                                      AND oc.source_id <> cs.id)))
            AND ((b.caldav_calendar_href = cs.write_calendar_href
                  AND NOT EXISTS (SELECT 1 FROM calendars wc
                                  WHERE wc.source_id = cs.id

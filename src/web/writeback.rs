@@ -64,6 +64,31 @@ fn summarize(failures: &[(String, String)]) -> String {
     }
 }
 
+/// The lock serialising pushes of one booking, created on first use and
+/// dropped once nobody holds it.
+fn booking_push_lock(booking_uid: &str) -> std::sync::Arc<tokio::sync::Mutex<()>> {
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex, OnceLock, Weak};
+    static LOCKS: OnceLock<Mutex<HashMap<String, Weak<tokio::sync::Mutex<()>>>>> = OnceLock::new();
+    let mut locks = LOCKS
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    locks.retain(|_, lock| lock.strong_count() > 0);
+    if let Some(lock) = locks.get(booking_uid).and_then(Weak::upgrade) {
+        return lock;
+    }
+    let lock = Arc::new(tokio::sync::Mutex::new(()));
+    locks.insert(booking_uid.to_string(), Arc::downgrade(&lock));
+    lock
+}
+
+/// Hold the push lock of a booking, for tests.
+#[cfg(test)]
+pub(super) async fn hold_push_lock(booking_uid: &str) -> tokio::sync::OwnedMutexGuard<()> {
+    booking_push_lock(booking_uid).lock_owned().await
+}
+
 /// Push a booking to every calendar it belongs to (see
 /// `booking_write_targets`) and record the outcome on the booking. Returns
 /// the failures as (user id, message), empty on success.
@@ -75,6 +100,11 @@ pub(super) async fn push_and_record(
     details: &crate::email::BookingDetails,
     kind: PushKind,
 ) -> Vec<(String, String)> {
+    // One push per booking at a time: two pushes racing a change of
+    // destination could each release the copy the other just wrote (#47).
+    let lock = booking_push_lock(booking_uid);
+    let _guard = lock.lock().await;
+
     let mut failures = Vec::new();
     let targets = super::booking_write_targets(pool, booking_uid, user_id).await;
     // Read before anything is written: whether earlier copies may need to
@@ -85,6 +115,13 @@ pub(super) async fn push_and_record(
     let mut pushed_ok = Vec::with_capacity(targets.len());
     for target in &targets {
         let (mut sources, mut plan) = super::host_write_sources(pool, booking_uid, target).await;
+        if was_written && plan == super::WritePlan::Destination && !had_copies.contains(target) {
+            // The booking's first push to a chosen destination: what the
+            // source setting wrote before is recorded first, so it is
+            // released once this push lands, or deleted by a cancellation
+            // if it never does.
+            super::record_source_copies(pool, booking_uid, target).await;
+        }
         // The only host-language text in the event is the phone label, and
         // each copy belongs to its target: every collective member reads it
         // in their own language, and a caller that left `host_language`
@@ -100,7 +137,7 @@ pub(super) async fn push_and_record(
             details
         };
         let owner = super::CopyOwner::Host;
-        let mut messages = super::push_to_sources(
+        let mut pushed = super::push_to_sources(
             pool,
             key,
             target,
@@ -113,16 +150,24 @@ pub(super) async fn push_and_record(
         )
         .await;
         if plan == super::WritePlan::Destination {
-            if let [refused] = messages.as_slice() {
-                if super::definitive_refusal(refused) {
-                    // The chosen calendar is gone or read-only: write to the
-                    // source setting instead, so the booking is on a
-                    // calendar, and tell the host on the sources page.
-                    tracing::warn!(uid = %booking_uid, user_id = %target, error = %refused, "chosen write calendar refused the booking; writing it to the source setting");
-                    super::note_refusal(pool, booking_uid, target, refused).await;
-                    sources = super::default_write_sources(pool, target).await;
+            let refusal = match pushed.as_slice() {
+                [only] => only.refusal.clone(),
+                _ => None,
+            };
+            if let Some(refusal) = refusal {
+                // The chosen calendar is gone or read-only: tell the host on
+                // the sources page, and write to the source setting instead
+                // when there is one. With none, the refusal stays a failure,
+                // so the badge and the alert still reach the host.
+                super::note_refusal(pool, booking_uid, target, &refusal).await;
+                let fallback = super::default_write_sources(pool, target).await;
+                if fallback.is_empty() {
+                    tracing::warn!(uid = %booking_uid, user_id = %target, refusal = %refusal, "chosen write calendar refused the booking and there is no source write calendar to fall back to");
+                } else {
+                    tracing::warn!(uid = %booking_uid, user_id = %target, refusal = %refusal, "chosen write calendar refused the booking; writing it to the source setting");
+                    sources = fallback;
                     plan = super::WritePlan::Source;
-                    messages = super::push_to_sources(
+                    pushed = super::push_to_sources(
                         pool,
                         key,
                         target,
@@ -135,13 +180,13 @@ pub(super) async fn push_and_record(
                     )
                     .await;
                 }
-            } else if messages.is_empty() {
+            } else if pushed.is_empty() {
                 super::clear_refusal(pool, booking_uid, target).await;
             }
         }
-        pushed_ok.push(messages.is_empty());
-        for msg in messages {
-            failures.push((target.clone(), msg));
+        pushed_ok.push(pushed.is_empty());
+        for failure in pushed {
+            failures.push((target.clone(), failure.message));
         }
         plans.push((sources, plan));
     }
@@ -166,7 +211,6 @@ pub(super) async fn push_and_record(
                         target,
                         *plan,
                         &host_collections,
-                        had_copies.contains(target),
                     )
                     .await,
                 );
@@ -177,11 +221,11 @@ pub(super) async fn push_and_record(
         );
     }
     if !released.is_empty() {
-        let written: Vec<String> = plans
+        let written: Vec<super::CopyPlace> = plans
             .iter()
             .zip(&pushed_ok)
             .filter(|(_, ok)| **ok)
-            .flat_map(|((rows, _), _)| rows.iter().map(|row| row.4.clone()))
+            .flat_map(|((rows, _), _)| rows.iter().map(|row| (row.0.clone(), row.4.clone())))
             .collect();
         super::repoint_href(pool, booking_uid, &released, &written).await;
     }

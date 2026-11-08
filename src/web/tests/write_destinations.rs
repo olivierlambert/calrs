@@ -969,12 +969,17 @@ async fn a_destination_refusing_writes_falls_back_to_the_source_setting() {
     assert_eq!(dest_dav.paths(), vec![format!("/dav/gone/{uid}.ics")]);
     assert_eq!(work_dav.stored(), 0);
     assert_eq!(refusal(&pool, &et_id, &host).await, None);
-    assert!(definitive_refusal(
-        "Work: PUT http://x/a.ics returned 403 Forbidden"
-    ));
-    assert!(!definitive_refusal(
-        "Work: PUT http://x/a.ics returned 503 Service Unavailable"
-    ));
+    // The note is the status line, never the server's HTML body.
+    sqlx::query("UPDATE event_type_write_targets SET last_refused_at = datetime('now')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    dest_dav.set_mode(DavMode::Gone);
+    push_fresh(&pool, &host, &uid).await;
+    assert_eq!(
+        refusal(&pool, &et_id, &host).await.as_deref(),
+        Some("404 Not Found")
+    );
 }
 
 /// A choice whose source is disabled stays selected (as unavailable) and
@@ -1142,4 +1147,248 @@ async fn a_retry_that_moves_the_hosts_copy_rewrites_the_claimants() {
     // The first write, the host's copy at the destination, and the
     // claimant's copy written again on the shared calendar.
     assert_eq!(p.dav.puts(), 3);
+}
+
+// --- Second review ---
+
+/// A PUT refused for good is a permanent refusal, from the status and the
+/// server's answer, never from a message; a rate limit and a write that was
+/// accepted but not verified are not.
+#[test]
+fn only_a_definitive_refusal_counts() {
+    use crate::caldav::refused_for_good;
+    assert!(refused_for_good(404, ""));
+    assert!(refused_for_good(405, ""));
+    assert!(refused_for_good(403, "<error>forbidden</error>"));
+    assert!(!refused_for_good(
+        403,
+        r#"{"error":{"errors":[{"reason":"rateLimitExceeded"}]}}"#
+    ));
+    assert!(!refused_for_good(403, "userRateLimitExceeded"));
+    assert!(!refused_for_good(503, ""));
+    assert!(!refused_for_good(400, ""));
+    let verify = crate::providers::WriteBackError::Verify(anyhow::anyhow!("returned 404"));
+    assert_eq!(verify.permanent_refusal(), None);
+    let named =
+        crate::providers::WriteBackError::Put(anyhow::anyhow!("PUT returned 404 Not Found"));
+    assert_eq!(named.permanent_refusal(), None);
+    let refused = crate::providers::WriteBackError::Put(anyhow::Error::new(
+        crate::providers::PermanentRefusal {
+            summary: "404 Not Found".to_string(),
+            message: "PUT http://x returned 404 Not Found".to_string(),
+        },
+    ));
+    assert_eq!(refused.permanent_refusal(), Some("404 Not Found"));
+}
+
+/// EWS: a folder gone or not writable is a permanent refusal too.
+#[test]
+fn ews_access_denied_and_folder_not_found_are_permanent() {
+    use crate::ews::permanent_write_fault;
+    let prefix = crate::ews::soap::SOAP_FAULT_PREFIX;
+    assert_eq!(
+        permanent_write_fault(&format!("{prefix}ErrorAccessDenied: Access is denied.")),
+        Some("ErrorAccessDenied")
+    );
+    assert_eq!(
+        permanent_write_fault(&format!("{prefix}ErrorFolderNotFound")),
+        Some("ErrorFolderNotFound")
+    );
+    assert_eq!(
+        permanent_write_fault(&format!("{prefix}ErrorServerBusy")),
+        None
+    );
+    assert_eq!(permanent_write_fault("ErrorAccessDenied"), None);
+}
+
+/// Two sources on different servers with the same calendar path: once the
+/// booking moved from A to B, neither the delta path nor the sweep of A may
+/// take A's 404 for the booking's.
+#[tokio::test]
+async fn the_same_path_on_another_server_is_not_the_bookings_calendar() {
+    let p = personal_fixture().await;
+    push_fresh(&p.pool, &p.host, &p.uid).await;
+    let (b_dav, b_source, b_cal) = second_source(&p.pool, &p.host, DavMode::Ok, "/dav/cal/").await;
+    choose(&p.pool, &p.et_id, &p.host, &b_cal).await;
+    push_fresh(&p.pool, &p.host, &p.uid).await;
+    assert_eq!(p.dav.stored(), 0);
+    assert_eq!(b_dav.paths(), vec![format!("/dav/cal/{}.ics", p.uid)]);
+    let stored: (Option<String>, Option<String>) =
+        sqlx::query_as("SELECT caldav_calendar_href, caldav_source_id FROM bookings WHERE id = ?")
+            .bind(&p.id)
+            .fetch_one(&p.pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        stored,
+        (Some("/dav/cal/".to_string()), Some(b_source.clone()))
+    );
+
+    // A's delta reports the uid gone, its server confirms: not this booking.
+    let outcome = crate::commands::sync::cancel_orphaned_booking(
+        &p.pool,
+        &[0u8; 32],
+        crate::commands::sync::OrphanCheck::Caldav(None),
+        &p.source_id,
+        &p.uid,
+    )
+    .await;
+    assert_eq!(outcome, crate::commands::sync::OrphanOutcome::NoAction);
+    // B not synced yet: the sweep of A leaves it too.
+    cancel_orphaned_bookings(&p.pool, &[0u8; 32], None, &p.source_id).await;
+    assert_eq!(booking_status(&p.pool, &p.id).await, "confirmed");
+    // B's own sweep still watches it.
+    cancel_orphaned_bookings(&p.pool, &[0u8; 32], None, &b_source).await;
+    assert_eq!(booking_status(&p.pool, &p.id).await, "cancelled");
+}
+
+/// A first move whose write to the destination is accepted but not
+/// verified keeps the source-setting copy recorded, so the cancellation
+/// still deletes it.
+#[tokio::test]
+async fn an_unverified_first_move_still_lets_the_cancellation_delete_the_old_copy() {
+    let p = personal_fixture().await;
+    push_fresh(&p.pool, &p.host, &p.uid).await;
+    let (dest_dav, _, dest_cal) =
+        second_source(&p.pool, &p.host, DavMode::Drop, "/dav/chosen/").await;
+    choose(&p.pool, &p.et_id, &p.host, &dest_cal).await;
+    push_fresh(&p.pool, &p.host, &p.uid).await;
+    assert_eq!(dest_dav.puts(), 1);
+    assert_eq!(p.dav.stored(), 1);
+    let (error, _, _, href, _) = writeback_state(&p.pool, &p.id).await;
+    assert!(error.is_some());
+    assert_eq!(href.as_deref(), Some("/dav/chosen/"));
+    caldav_delete_booking(&p.pool, &[0u8; 32], &p.host, &p.uid).await;
+    assert_eq!(p.dav.stored(), 0);
+    assert!(copies(&p.pool, &p.uid).await.is_empty());
+}
+
+/// The background sweep backs off between attempts, gives up after the
+/// last, and drops the rows of bookings that are over.
+#[tokio::test]
+async fn the_leftover_sweep_backs_off_gives_up_and_prunes_past_bookings() {
+    let p = personal_fixture().await;
+    choose(&p.pool, &p.et_id, &p.host, &p.coaching_cal).await;
+    push_fresh(&p.pool, &p.host, &p.uid).await;
+    sqlx::query("UPDATE bookings SET status = 'cancelled' WHERE id = ?")
+        .bind(&p.id)
+        .execute(&p.pool)
+        .await
+        .unwrap();
+    p.dav.fail_deletes(true);
+    let key = [0u8; 32];
+    let mut now = Utc::now();
+    assert_eq!(sweep_leftover_copies(&p.pool, &key, now).await, 1);
+    let (attempts, next): (i64, Option<String>) =
+        sqlx::query_as("SELECT delete_attempts, next_delete_at FROM booking_write_copies")
+            .fetch_one(&p.pool)
+            .await
+            .unwrap();
+    assert_eq!(attempts, 1);
+    assert!(next.is_some());
+    // Not due yet.
+    assert_eq!(sweep_leftover_copies(&p.pool, &key, now).await, 0);
+    for _ in 0..writeback::RETRY_DELAYS_MIN.len() {
+        now += Duration::hours(9);
+        assert_eq!(sweep_leftover_copies(&p.pool, &key, now).await, 1);
+    }
+    // Given up after the last attempt.
+    assert!(copies(&p.pool, &p.uid).await.is_empty());
+    assert_eq!(p.dav.stored(), 1);
+
+    // A booking that is over: its rows go without a delete.
+    let past = insert_v1_booking(
+        &p.pool,
+        &p.et_id,
+        "past@dest.test",
+        Utc::now() - Duration::days(2),
+        30,
+        "confirmed",
+        &[],
+    )
+    .await;
+    let past_uid = format!("uid-{past}");
+    record_copy(&p.pool, &past_uid, &p.host, &p.source_id, "/dav/coaching/").await;
+    sweep_leftover_copies(&p.pool, &key, Utc::now()).await;
+    assert!(copies(&p.pool, &past_uid).await.is_empty());
+}
+
+/// With nothing to fall back to, a refusal stays a write-back failure, so
+/// the host sees the badge and gets the alert.
+#[tokio::test]
+async fn a_refusal_with_no_source_write_calendar_is_a_failure() {
+    let pool = setup_test_db().await;
+    let host = insert_role_user(&pool, "host@nofallback.test", "user").await;
+    let et_id = insert_personal_et(&pool, &host, "nofallback").await;
+    let (_, _, dest_cal) = second_source(&pool, &host, DavMode::Gone, "/dav/gone/").await;
+    choose(&pool, &et_id, &host, &dest_cal).await;
+    let id = insert_v1_booking(
+        &pool,
+        &et_id,
+        "guest@nofallback.test",
+        Utc::now() + Duration::days(10),
+        30,
+        "confirmed",
+        &[],
+    )
+    .await;
+    push_fresh(&pool, &host, &format!("uid-{id}")).await;
+    let (error, attempts, next, _, _) = writeback_state(&pool, &id).await;
+    assert!(error.unwrap_or_default().contains("404"));
+    assert_eq!(attempts, 1);
+    assert!(next.is_some());
+    assert!(refusal(&pool, &et_id, &host).await.is_some());
+}
+
+/// Choosing another calendar clears the refusal noted on the earlier one.
+#[tokio::test]
+async fn changing_the_choice_clears_the_refusal() {
+    let p = personal_fixture().await;
+    set_destination(&p.pool, &p.host, &p.et_id, &p.coaching_cal)
+        .await
+        .unwrap();
+    note_refusal(&p.pool, &p.uid, &p.host, "404 Not Found").await;
+    assert!(refusal(&p.pool, &p.et_id, &p.host).await.is_some());
+    // Saving the same choice again keeps it.
+    set_destination(&p.pool, &p.host, &p.et_id, &p.coaching_cal)
+        .await
+        .unwrap();
+    assert!(refusal(&p.pool, &p.et_id, &p.host).await.is_some());
+    set_destination(&p.pool, &p.host, &p.et_id, &p.work_cal)
+        .await
+        .unwrap();
+    assert_eq!(refusal(&p.pool, &p.et_id, &p.host).await, None);
+}
+
+/// A copy recorded on a disabled source is left alone, like writes, and
+/// stays recorded for when the source comes back.
+#[tokio::test]
+async fn copies_on_a_disabled_source_are_left_alone() {
+    let p = personal_fixture().await;
+    choose(&p.pool, &p.et_id, &p.host, &p.coaching_cal).await;
+    push_fresh(&p.pool, &p.host, &p.uid).await;
+    sqlx::query("UPDATE caldav_sources SET enabled = 0 WHERE id = ?")
+        .bind(&p.source_id)
+        .execute(&p.pool)
+        .await
+        .unwrap();
+    caldav_delete_booking(&p.pool, &[0u8; 32], &p.host, &p.uid).await;
+    assert_eq!(p.dav.stored(), 1);
+    assert_eq!(copies(&p.pool, &p.uid).await.len(), 1);
+}
+
+/// Pushes of one booking run one at a time.
+#[tokio::test]
+async fn pushes_of_one_booking_are_serialised() {
+    let p = personal_fixture().await;
+    let guard = writeback::hold_push_lock(&p.uid).await;
+    let pool = p.pool.clone();
+    let host = p.host.clone();
+    let uid = p.uid.clone();
+    let push = tokio::spawn(async move { push_fresh(&pool, &host, &uid).await });
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    assert_eq!(p.dav.puts(), 0);
+    drop(guard);
+    push.await.unwrap();
+    assert_eq!(p.dav.puts(), 1);
 }

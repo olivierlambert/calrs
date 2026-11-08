@@ -350,6 +350,12 @@ impl CaldavClient {
         let status = resp.status();
         if !status.is_success() && status.as_u16() != 201 && status.as_u16() != 204 {
             let body = resp.text().await.unwrap_or_default();
+            if refused_for_good(status.as_u16(), &body) {
+                return Err(anyhow::Error::new(crate::providers::PermanentRefusal {
+                    summary: status.to_string(),
+                    message: format!("PUT {url} returned {status}"),
+                }));
+            }
             bail!("PUT {} returned {} — {}", url, status, body);
         }
 
@@ -1191,6 +1197,17 @@ const REPORT_CALENDAR_DATA: &str = r#"<?xml version="1.0" encoding="utf-8"?>
     </c:comp-filter>
   </c:filter>
 </c:calendar-query>"#;
+
+/// Whether a refused PUT will be refused again on a retry (#47): the
+/// calendar is gone (404), does not take writes (405), or forbids them
+/// (403). Google answers its rate limits with a 403 too, which passes.
+pub(crate) fn refused_for_good(status: u16, body: &str) -> bool {
+    match status {
+        404 | 405 => true,
+        403 => !(body.contains("rateLimitExceeded") || body.contains("userRateLimitExceeded")),
+        _ => false,
+    }
+}
 
 #[cfg(test)]
 mod tests {
