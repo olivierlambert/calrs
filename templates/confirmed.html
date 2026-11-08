@@ -38,7 +38,7 @@
   {% endif %}
   {% if answers is defined and answers %}
     {% for a in answers %}
-    <div class="detail"><strong>{{ a.label }}</strong> {{ a.value }}</div>
+    <div class="detail"><strong>{{ a.heading }}</strong> {{ a.value }}</div>
     {% endfor %}
   {% endif %}
   {% if additional_attendees is defined and additional_attendees %}

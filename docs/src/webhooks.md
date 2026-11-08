@@ -160,9 +160,11 @@ X-Calrs-Signature: sha256=4f0c...e9
   none. `key` is the question's stable identifier (it survives a rename),
   `label` the question as the guest read it. `value` is the text typed, the
   chosen labels joined by ", " for a choice, or `yes` / `no` for a checkbox;
-  `option_ids` are the chosen options' stable ids. `consent` marks a consent
-  checkbox and `link_url` the policy it linked to. An optional question left
-  empty is not listed; a checkbox always is.
+  `option_ids` are the chosen options' stable ids: match on them rather than
+  on `value`, which is for display (a choice whose label contains a comma
+  reads the same as two choices). `consent` marks a consent checkbox and
+  `link_url` the policy it linked to. An optional question left empty is not
+  listed; a checkbox always is.
 - **`reason`** is the cancellation or decline reason, the same text the guest
   is shown.
 - **`team`** is `{ "id", "slug", "name" }` for a team event type.

@@ -2126,3 +2126,78 @@ fn ics_carries_the_booking_sequence() {
     };
     assert!(generate_cancel_ics(&cancel).contains("\r\nSEQUENCE:2\r\n"));
 }
+
+fn details_with_long_question() -> BookingDetails {
+    BookingDetails {
+        event_title: "Intake".into(),
+        date: "2026-12-01".into(),
+        start_time: "10:00".into(),
+        end_time: "10:30".into(),
+        guest_name: "Guest".into(),
+        guest_email: "guest@example.com".into(),
+        guest_timezone: "UTC".into(),
+        host_name: "Host".into(),
+        host_email: "host@example.com".into(),
+        uid: "u@calrs".into(),
+        answers: vec![
+            BookingAnswer {
+                kind: "short_text".into(),
+                label: "Company".into(),
+                value: "Example Ltd".into(),
+                ..Default::default()
+            },
+            BookingAnswer {
+                kind: "checkbox".into(),
+                label:
+                    "I agree that my answers are shared with the case workers of the association"
+                        .into(),
+                value: "yes".into(),
+                consent: true,
+                ..Default::default()
+            },
+            BookingAnswer {
+                kind: "single_choice".into(),
+                label: "Where are the tyres?".into(),
+                value: "At the shop".into(),
+                ..Default::default()
+            },
+        ],
+        ..Default::default()
+    }
+}
+
+/// An answer reads like the built-in rows in the plain-text body: the
+/// question, a colon unless it already ends in punctuation, the answer.
+#[test]
+fn plain_text_answers_are_separated_from_their_question() {
+    let mail = compose_host_notification(&details_with_long_question());
+    assert!(
+        mail.plain.contains("Company: Example Ltd"),
+        "{}",
+        mail.plain
+    );
+    assert!(mail.plain.contains("Where are the tyres? At the shop"));
+    let mail = compose_guest_pending_notice(&details_with_long_question(), None, None);
+    assert!(
+        mail.plain.contains("Company: Example Ltd"),
+        "{}",
+        mail.plain
+    );
+    assert_eq!(answer_heading("Notes:"), "Notes:");
+    assert_eq!(answer_heading("Company "), "Company:");
+}
+
+/// A long question is not squeezed into the one-line label column: it sits
+/// above its answer, so the email does not stretch sideways.
+#[test]
+fn a_long_question_is_stacked_above_its_answer() {
+    let mail = compose_host_notification(&details_with_long_question());
+    let at = mail.html.find("I agree that my answers").unwrap();
+    let row = &mail.html[mail.html[..at].rfind("<tr>").unwrap()..at];
+    assert!(row.contains("colspan=\"2\""), "{row}");
+    assert!(!row.contains("nowrap"), "{row}");
+    // A short label keeps the two-column row.
+    let at = mail.html.find("Company:").unwrap();
+    let row = &mail.html[mail.html[..at].rfind("<tr>").unwrap()..at];
+    assert!(row.contains("white-space:nowrap"), "{row}");
+}

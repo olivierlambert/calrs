@@ -75,6 +75,9 @@ pub(super) fn render_html_email_in(
 /// block after the content and the note, above the "sent by calrs" bar.
 /// Only emails to a guest pass one.
 #[allow(clippy::too_many_arguments)]
+/// Labels longer than this are stacked above their value in HTML emails.
+pub(super) const STACKED_LABEL_CHARS: usize = 40;
+
 pub(super) fn render_html_email_full(
     lang: &str,
     greeting: &str,
@@ -91,6 +94,22 @@ pub(super) fn render_html_email_full(
     let mut detail_rows = String::new();
     for (i, row) in rows.iter().enumerate() {
         let bg = if i % 2 == 0 { "#f8f9fa" } else { "#ffffff" };
+        // A long label (a host's booking question, up to 1000 characters for
+        // a consent) cannot sit in the one-line label column: it goes above
+        // its value, across the table (#210).
+        if row.label.chars().count() > STACKED_LABEL_CHARS {
+            detail_rows.push_str(&format!(
+                "<tr>\
+                   <td colspan=\"2\" style=\"padding:8px 12px;background:{bg};\">\
+                     <div style=\"color:#6b7280;font-size:13px;\">{}</div>\
+                     <div style=\"color:#111827;font-size:14px;margin-top:2px;\">{}</div>\
+                   </td>\
+                 </tr>",
+                h(&row.label),
+                h(&row.value).replace("\r\n", "\n").replace('\n', "<br>"),
+            ));
+            continue;
+        }
         detail_rows.push_str(&format!(
             "<tr>\
                <td style=\"padding:8px 12px;color:#6b7280;font-size:13px;white-space:nowrap;vertical-align:top;\">{}</td>\
@@ -660,6 +679,19 @@ pub fn answer_display(answer: &BookingAnswer, lang: &str, reader: AnswerReader) 
     }
 }
 
+/// A question as the label of its answer, ended like the built-in labels
+/// ("Notes:") so the plain-text line reads "Company: Example Ltd". A question
+/// that already ends in punctuation keeps it ("Where are the tyres? At the
+/// shop").
+pub fn answer_heading(label: &str) -> String {
+    let label = label.trim_end();
+    if label.ends_with([':', '?', '!', '\u{ff1a}', '\u{ff1f}']) {
+        label.to_string()
+    } else {
+        format!("{label}:")
+    }
+}
+
 /// One detail row per answer, after the notes, labelled with the question
 /// as the guest read it.
 pub(super) fn push_answer_rows(
@@ -669,7 +701,10 @@ pub(super) fn push_answer_rows(
     reader: AnswerReader,
 ) {
     for a in answers {
-        rows.push(row(a.label.clone(), answer_display(a, lang, reader)));
+        rows.push(row(
+            answer_heading(&a.label),
+            answer_display(a, lang, reader),
+        ));
     }
 }
 
@@ -682,8 +717,8 @@ fn calendar_answer_lines(details: &BookingDetails) -> Vec<String> {
         .filter(|a| a.in_calendar)
         .map(|a| {
             sanitize_ics(&format!(
-                "{}: {}",
-                a.label,
+                "{} {}",
+                answer_heading(&a.label),
                 answer_display(a, host_lang(details), AnswerReader::Host)
             ))
         })

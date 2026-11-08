@@ -176,8 +176,9 @@ pub(super) async fn push_and_record_within(
         }
         // The only host-language text in the event is the phone label and
         // the written-out checkbox answers (#210), and each copy belongs to
-        // its target: every collective member reads it in their own language, and a caller that left `host_language`
-        // unset (a claim) no longer falls back to English (#266).
+        // its target: every collective member reads it in their own
+        // language, and a caller that left `host_language` unset (a claim)
+        // no longer falls back to English (#266).
         let localized;
         let details = if details.guest_phone.is_some() || !details.answers.is_empty() {
             localized = crate::email::BookingDetails {

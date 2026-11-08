@@ -587,6 +587,7 @@ pub(crate) fn display_rows(
         .map(|a| {
             context! {
                 label => a.label,
+                heading => crate::email::answer_heading(&a.label),
                 value => crate::email::answer_display(a, lang, reader),
             }
         })
@@ -830,7 +831,12 @@ pub(crate) fn parse_editor(
                 let mut key = base.clone();
                 let mut n = 2;
                 while used_keys.contains(&key) {
-                    key = format!("{base}_{n}");
+                    // Shorten the base so the suffix keeps the key within
+                    // `MAX_KEY` (keys are ASCII, so bytes are characters).
+                    let suffix = format!("_{n}");
+                    let room = MAX_KEY - suffix.len();
+                    let stem = base[..base.len().min(room)].trim_end_matches('_');
+                    key = format!("{stem}{suffix}");
                     n += 1;
                 }
                 used_keys.push(key.clone());
@@ -924,9 +930,8 @@ pub(crate) async fn editor_context(
     }
 }
 
-/// Saves an event type's notes mode and questions, in one transaction.
-/// `None` leaves that part as stored: a form posted without the editor (an
-/// older page, a script) never erases the questions.
+/// Saves an event type's notes mode and questions on its own, for tests.
+#[cfg(test)]
 pub(crate) async fn save(
     pool: &SqlitePool,
     event_type_id: &str,
@@ -934,18 +939,32 @@ pub(crate) async fn save(
     notes: Option<&str>,
 ) -> sqlx::Result<()> {
     let mut tx = pool.begin().await?;
+    save_in(&mut tx, event_type_id, questions, notes).await?;
+    tx.commit().await
+}
+
+/// Saves an event type's notes mode and questions inside `tx`, the
+/// transaction that writes the event type itself, so the two land together
+/// or not at all. `None` leaves that part as stored: a form posted without
+/// the editor (an older page, a script) never erases the questions.
+pub(crate) async fn save_in(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    event_type_id: &str,
+    questions: Option<&[Question]>,
+    notes: Option<&str>,
+) -> sqlx::Result<()> {
     if let Some(mode) = notes {
         sqlx::query("UPDATE event_types SET notes_mode = ? WHERE id = ?")
             .bind(notes_mode(mode))
             .bind(event_type_id)
-            .execute(&mut *tx)
+            .execute(&mut **tx)
             .await?;
     }
     if let Some(questions) = questions {
         let stored: Vec<String> =
             sqlx::query_scalar("SELECT id FROM event_type_questions WHERE event_type_id = ?")
                 .bind(event_type_id)
-                .fetch_all(&mut *tx)
+                .fetch_all(&mut **tx)
                 .await?;
         // Removed questions go first, so a new question may reuse the key
         // of one deleted in the same save. Their answers keep the snapshot
@@ -957,7 +976,7 @@ pub(crate) async fn save(
             sqlx::query("DELETE FROM event_type_questions WHERE id = ? AND event_type_id = ?")
                 .bind(id)
                 .bind(event_type_id)
-                .execute(&mut *tx)
+                .execute(&mut **tx)
                 .await?;
         }
         for (position, q) in questions.iter().enumerate() {
@@ -981,7 +1000,7 @@ pub(crate) async fn save(
                 .bind(q.in_calendar)
                 .bind(&q.id)
                 .bind(event_type_id)
-                .execute(&mut *tx)
+                .execute(&mut **tx)
                 .await?;
             } else {
                 sqlx::query(
@@ -1000,10 +1019,10 @@ pub(crate) async fn save(
                 .bind(q.consent)
                 .bind(&q.link_url)
                 .bind(q.in_calendar)
-                .execute(&mut *tx)
+                .execute(&mut **tx)
                 .await?;
             }
         }
     }
-    tx.commit().await
+    Ok(())
 }

@@ -55,6 +55,9 @@ CREATE TABLE booking_answers (
     answered_at TEXT NOT NULL
 );
 CREATE INDEX idx_booking_answers_booking ON booking_answers(booking_id);
+-- Deleting a question sets `question_id` NULL on its answers: without this
+-- index that would scan every answer of the instance.
+CREATE INDEX idx_booking_answers_question ON booking_answers(question_id);
 
 -- The built-in notes field: 'off' hides it, 'optional' (as before) shows it,
 -- 'required' makes the guest fill it in.

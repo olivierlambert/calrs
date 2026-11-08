@@ -10,7 +10,7 @@ fn answer_plain_lines(lang: &str, answers: &[BookingAnswer]) -> String {
         .map(|a| {
             format!(
                 "{} {}\n",
-                a.label,
+                answer_heading(&a.label),
                 answer_display(a, lang, AnswerReader::Guest)
             )
         })

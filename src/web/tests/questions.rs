@@ -268,6 +268,26 @@ fn editor_dedupes_keys_and_keeps_stored_ones() {
     assert_eq!(qs[2].key, "company_3");
 }
 
+/// A suffix never pushes a key past `MAX_KEY`, and labels with no Latin
+/// letter still get unique keys.
+#[test]
+fn deduped_keys_stay_unique_and_within_the_limit() {
+    let long = "a".repeat(80);
+    let items: Vec<serde_json::Value> = (0..12)
+        .map(|_| serde_json::json!({"kind": "short_text", "label": long}))
+        .chain((0..3).map(|_| serde_json::json!({"kind": "short_text", "label": "住所"})))
+        .collect();
+    let qs = editor(serde_json::Value::Array(items)).unwrap();
+    let keys: Vec<&str> = qs.iter().map(|q| q.key.as_str()).collect();
+    assert!(keys.iter().all(|k| k.len() <= MAX_KEY), "{keys:?}");
+    let mut unique = keys.clone();
+    unique.sort();
+    unique.dedup();
+    assert_eq!(unique.len(), keys.len(), "{keys:?}");
+    assert_eq!(keys[11], format!("{}_12", "a".repeat(MAX_KEY - 3)));
+    assert_eq!(&keys[12..], ["question", "question_2", "question_3"]);
+}
+
 #[test]
 fn keys_from_labels() {
     assert_eq!(
@@ -1088,6 +1108,41 @@ async fn duplicate_copies_the_questions_and_the_notes_mode() {
             (&b.key, &b.label, &b.options)
         );
     }
+}
+
+/// The event type and its questions are written in one transaction: when
+/// the questions cannot be stored, a new event type is not left behind.
+#[tokio::test]
+async fn a_failed_question_save_leaves_no_half_saved_event_type() {
+    let (app, pool, session, _) = setup_test_app().await;
+    sqlx::query(
+        "CREATE TRIGGER refuse_questions BEFORE INSERT ON event_type_questions
+         BEGIN SELECT RAISE(ABORT, 'refused'); END",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let csrf = "csrf-q-atomic";
+    let questions = urlencoding::encode(r#"[{"kind":"short_text","label":"Company"}]"#);
+    let body = format!(
+        "_csrf={csrf}&title=Atomic&slug=atomic&duration_min=30&location_type=link&location_value=https%3A%2F%2Fmeet.example.com&questions={questions}"
+    );
+    let response = app
+        .oneshot(post_form(
+            "/dashboard/event-types/new",
+            &session,
+            csrf,
+            &body,
+        ))
+        .await
+        .unwrap();
+    // A database failure is a server error, as for any event type write.
+    assert_eq!(response.status(), 500);
+    let created: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM event_types WHERE slug = 'atomic'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(created, 0);
 }
 
 // --- Display surfaces ---

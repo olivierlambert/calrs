@@ -271,7 +271,8 @@ them the order near those rows can be off by the timezone's offset.
 `uid` is the iCalendar UID of the invitation (the one webhooks carry).
 `host_notes` are the hosts' own notes on the booking. `answers` are the
 guest's answers to the event type's [booking questions](booking-questions.md),
-in the shape webhooks use.
+in the shape webhooks use; match choices on `option_ids`, `value` is for
+display.
 
 ### `GET /api/v1/bookings/{id}`
 
@@ -310,7 +311,8 @@ Books an event type you manage for a guest.
 - The event type's [booking questions](booking-questions.md) are not asked:
   you are booking for the guest, as with `calrs booking create`. `notes` is
   stored as given whatever the notes field setting, and the booking has no
-  answers.
+  answers. Known limit of this version: the API cannot send answers, even for
+  required questions.
 
 The booking goes through the booking page's own code: the same validation, a
 re-check of the time against the slot engine and of the shared resources
