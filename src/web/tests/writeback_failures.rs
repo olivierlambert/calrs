@@ -896,6 +896,20 @@ async fn a_claim_writes_the_claimants_copy_and_keeps_the_hosts_href() {
     assert_eq!(href.as_deref(), Some("/dav/cal/"));
 }
 
+/// A host writing to two calendars (a CalDAV source and a Microsoft one,
+/// say) gets the booking in both; cancelling it removes both copies, not only
+/// the one the stored href names.
+#[tokio::test]
+async fn cancelling_deletes_the_copy_in_every_host_write_calendar() {
+    let (pool, first, host, _, uid) = writeback_fixture(DavMode::Ok).await;
+    let (base, second) = spawn_mock_dav(DavMode::Ok).await;
+    seed_write_source(&pool, &host, &base).await;
+    push_fresh(&pool, &host, &uid).await;
+    assert_eq!((first.stored(), second.stored()), (1, 1));
+    caldav_delete_booking(&pool, &[0u8; 32], &host, &uid).await;
+    assert_eq!((first.stored(), second.stored()), (0, 0));
+}
+
 /// Cancelling a claimed booking removes the claimant's copy with the host's.
 #[tokio::test]
 async fn cancelling_a_claimed_booking_deletes_the_claimants_copy() {

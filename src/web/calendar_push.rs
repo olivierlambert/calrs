@@ -356,13 +356,16 @@ async fn write_provider_for_source(
     ))
 }
 
-/// Delete a booking from a user's CalDAV calendar by looking up their write-enabled source directly.
-/// Used for team bookings where we don't track per-booking caldav_calendar_href.
+/// Delete a booking by uid from every write source of a user, but
+/// `except_source`. Used for team bookings where we don't track a
+/// per-booking caldav_calendar_href, and for the copies a push wrote to a
+/// user's other write sources.
 async fn caldav_delete_for_user(
     pool: &SqlitePool,
     key: &[u8; 32],
     user_id: &str,
     booking_uid: &str,
+    except_source: Option<&str>,
 ) {
     let sources: Vec<(
         String,
@@ -397,6 +400,9 @@ async fn caldav_delete_for_user(
         provider_type,
     ) in &sources
     {
+        if except_source == Some(source_id.as_str()) {
+            continue;
+        }
         let delete_result = match write_provider_for_source(
             pool,
             key,
@@ -477,7 +483,7 @@ pub(super) async fn write_collections(pool: &SqlitePool, user_id: &str) -> Vec<C
 /// host's would. A no-op for a booking nobody claimed.
 pub(crate) async fn claimant_delete_booking(pool: &SqlitePool, key: &[u8; 32], booking_uid: &str) {
     if let Some(claimant) = booking_claimant(pool, booking_uid).await {
-        caldav_delete_for_user(pool, key, &claimant, booking_uid).await;
+        caldav_delete_for_user(pool, key, &claimant, booking_uid, None).await;
     }
 }
 
@@ -517,7 +523,7 @@ pub(crate) async fn caldav_delete_booking(
         // Collective: one stored href cannot describe N member calendars;
         // delete by uid from every member's write sources instead.
         for target in &targets {
-            caldav_delete_for_user(pool, key, target, booking_uid).await;
+            caldav_delete_for_user(pool, key, target, booking_uid, None).await;
         }
         return;
     }
@@ -577,7 +583,7 @@ pub(crate) async fn caldav_delete_booking(
             // changed since the push). Best effort: delete by uid from the
             // target's current write sources.
             tracing::warn!(uid = %booking_uid, user_id = %target, href = %calendar_href, "calendar delete: stored href matches no write source, falling back to delete-by-uid");
-            caldav_delete_for_user(pool, key, target, booking_uid).await;
+            caldav_delete_for_user(pool, key, target, booking_uid, None).await;
             return;
         }
     };
@@ -602,6 +608,10 @@ pub(crate) async fn caldav_delete_booking(
     if let Err(e) = delete_result {
         tracing::error!(uid = %booking_uid, error = %e, "calendar event delete failed");
     }
+    // A push writes the booking to every write source of the host, not only
+    // the one the stored href names (a CalDAV source and a Microsoft one,
+    // say): delete the other copies by uid too.
+    caldav_delete_for_user(pool, key, cache_user, booking_uid, Some(&source_id)).await;
 
     // Also remove the cached event from local DB so it doesn't block availability
     let _ = sqlx::query(
