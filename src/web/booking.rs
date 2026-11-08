@@ -668,6 +668,14 @@ pub(super) async fn handle_group_booking(
         }
         return internal_error_response("database query", &e);
     }
+    // Take the webhook queue's place now, before the meeting link is minted:
+    // a cancellation landing meanwhile is ordered after this event (#168).
+    let webhook = webhooks::reserve(
+        &state.pool,
+        &id,
+        webhooks::Event::new_booking(needs_approval),
+    )
+    .await;
     drop(resource_guard);
 
     tracing::info!(booking_id = %id, event_type = %slug, guest = %form.email, "booking created");
@@ -696,6 +704,8 @@ pub(super) async fn handle_group_booking(
         !needs_approval,
     )
     .await;
+    // The meeting link is known: the webhook payload can be written.
+    webhook.fill(webhooks::Context::default()).await;
     let details = crate::email::BookingDetails {
         utc_times: crate::booking_time::ics_times(&start_at, &end_at),
         event_title: et_title.clone(),
@@ -1293,6 +1303,14 @@ async fn handle_dynamic_group_booking(
         }
         return internal_error_response("database query", &e);
     }
+    // Take the webhook queue's place now, before the meeting link is minted:
+    // a cancellation landing meanwhile is ordered after this event (#168).
+    let webhook = webhooks::reserve(
+        &state.pool,
+        &id,
+        webhooks::Event::new_booking(needs_approval),
+    )
+    .await;
     drop(resource_guard);
 
     tracing::info!(booking_id = %id, event_type = %slug, guest = %form.email, dynamic_group = %combined_username, "dynamic group booking created");
@@ -1310,6 +1328,8 @@ async fn handle_dynamic_group_booking(
         !needs_approval,
     )
     .await;
+    // The meeting link is known: the webhook payload can be written.
+    webhook.fill(webhooks::Context::default()).await;
     let details = crate::email::BookingDetails {
         utc_times: crate::booking_time::ics_times(&start_at, &end_at),
         event_title: et_title.clone(),
@@ -1839,6 +1859,14 @@ pub(super) async fn handle_booking_for_user(
         }
         return internal_error_response("database query", &e);
     }
+    // Take the webhook queue's place now, before the meeting link is minted:
+    // a cancellation landing meanwhile is ordered after this event (#168).
+    let webhook = webhooks::reserve(
+        &state.pool,
+        &id,
+        webhooks::Event::new_booking(needs_approval),
+    )
+    .await;
     drop(resource_guard);
 
     tracing::info!(booking_id = %id, event_type = %slug, guest = %form.email, "booking created");
@@ -1881,6 +1909,8 @@ pub(super) async fn handle_booking_for_user(
         !needs_approval,
     )
     .await;
+    // The meeting link is known: the webhook payload can be written.
+    webhook.fill(webhooks::Context::default()).await;
 
     if let Some((host_name, host_email)) = host {
         let details = crate::email::BookingDetails {
@@ -2686,6 +2716,14 @@ pub(super) async fn handle_booking(
         }
         return internal_error_response("database query", &e);
     }
+    // Take the webhook queue's place now, before the meeting link is minted:
+    // a cancellation landing meanwhile is ordered after this event (#168).
+    let webhook = webhooks::reserve(
+        &state.pool,
+        &id,
+        webhooks::Event::new_booking(needs_approval),
+    )
+    .await;
     drop(resource_guard);
 
     tracing::info!(booking_id = %id, event_type = %slug, guest = %form.email, "booking created");
@@ -2719,6 +2757,8 @@ pub(super) async fn handle_booking(
             !needs_approval,
         )
         .await;
+        // The meeting link is known: the webhook payload can be written.
+        webhook.fill(webhooks::Context::default()).await;
         let details = crate::email::BookingDetails {
             utc_times: crate::booking_time::ics_times(&start_at, &end_at),
             event_title: et_title.clone(),

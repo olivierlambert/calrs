@@ -36,6 +36,7 @@ mod resources;
 mod security;
 mod sources;
 mod time_off;
+mod webhooks;
 mod write_destinations;
 mod writeback_failures;
 

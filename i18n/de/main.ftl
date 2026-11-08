@@ -2081,3 +2081,87 @@ sources-destinations-saved = Gespeichert. Neue Buchungen landen in den hier gew�
 write-destination-not-yours = Nichts wurde gespeichert: Wähle einen deiner eigenen Kalender, für eine Terminart, die du übernimmst.
 write-destination-unavailable = { $name } (nicht verfügbar)
 write-destination-refused = Dieser Kalender hat die letzte Buchung abgelehnt ({ $error }); sie wurde stattdessen nach der Einstellung der Quelle geschrieben. Die nächste Buchung versucht es erneut.
+# Booking webhooks (templates/webhooks.html, admin card, #168)
+webhooks-title = Webhooks
+webhooks-back = Zurück zu den Terminarten
+webhooks-subtitle = calrs sendet eine signierte JSON-Nachricht an diese Adressen, wenn eine Buchung angelegt, angefragt, bestätigt, abgelehnt, abgelaufen, storniert oder verschoben wird.
+webhooks-not-allowed = Webhooks sind auf dieser Instanz Administratoren vorbehalten.
+webhooks-endpoints = Endpunkte
+webhooks-empty = Noch keine Webhooks. Füge unten einen hinzu, damit calrs ein anderes System über deine Buchungen informiert.
+webhooks-scope = Ereignisse senden für
+webhooks-scope-personal = Alle meine persönlichen Terminarten
+webhooks-scope-event-type = Terminart: { $title }
+webhooks-scope-team-event-type = Terminart: { $title } ({ $team })
+webhooks-added-by = Hinzugefügt von { $name }
+webhooks-state-off = Ausgeschaltet
+webhooks-never-sent = Noch nichts gesendet
+webhooks-state-ok = Letzte Zustellung erfolgreich
+webhooks-state-failing = Letzte Zustellung fehlgeschlagen
+webhooks-queued =
+    { $count ->
+        [one] 1 Zustellung wartet auf einen neuen Versuch
+       *[other] { $count } Zustellungen warten auf einen neuen Versuch
+    }
+webhooks-gave-up =
+    { $count ->
+        [one] 1 Zustellung nach allen Versuchen aufgegeben
+       *[other] { $count } Zustellungen nach allen Versuchen aufgegeben
+    }
+webhooks-send-test = Test senden
+webhooks-enable = Einschalten
+webhooks-disable = Ausschalten
+webhooks-delete = Entfernen
+webhooks-delete-confirm = Diesen Webhook entfernen? Noch wartende Zustellungen werden verworfen.
+webhooks-edit = Bearbeiten
+webhooks-url = URL
+webhooks-url-hint = (https)
+webhooks-secret = Signaturgeheimnis
+webhooks-secret-hint = (mindestens { $min } Zeichen, signiert jede Anfrage, wird nie wieder angezeigt)
+webhooks-save = Speichern
+webhooks-add = Webhook hinzufügen
+webhooks-add-submit = Webhook hinzufügen
+webhooks-privacy-note = Jede Nachricht enthält Name, E-Mail, Telefonnummer und Notizen des Gastes. Sende sie nur an ein System, dem du diese Daten anvertraust.
+webhooks-notice-created = Webhook hinzugefügt. Prüfe mit „Test senden“, ob er ankommt.
+webhooks-notice-updated = Webhook gespeichert.
+webhooks-notice-deleted = Webhook entfernt.
+webhooks-notice-enabled = Webhook eingeschaltet.
+webhooks-notice-disabled = Webhook ausgeschaltet. Noch wartende Zustellungen wurden verworfen.
+webhooks-notice-test-ok = Test zugestellt: Der Endpunkt hat mit einem 2xx-Status geantwortet.
+webhooks-error-url = Gib eine vollständige URL ein, zum Beispiel https://hooks.example.com/calrs.
+webhooks-error-https = Die URL muss mit https:// beginnen. Einfaches http geht nur für einen Host auf der Liste erlaubter privater Hosts.
+webhooks-error-credentials = Entferne Benutzername und Passwort aus der URL: Das Signaturgeheimnis authentifiziert calrs.
+webhooks-error-secret = Das Signaturgeheimnis muss 16 bis 256 Zeichen lang sein.
+webhooks-error-scope = Du kannst dieser Terminart keinen Webhook hinzufügen.
+webhooks-error-limit = Für diesen Bereich gibt es bereits die maximal 10 Webhooks.
+webhooks-error-test = Der Test wurde nicht zugestellt. Der Grund steht beim Webhook.
+admin-webhooks = Buchungs-Webhooks
+admin-webhooks-help =
+    { $count ->
+        [one] Auf dieser Instanz ist 1 Webhook eingerichtet.
+       *[other] Auf dieser Instanz sind { $count } Webhooks eingerichtet.
+    }
+admin-webhooks-allow-all = Allen Benutzern erlauben, Webhooks hinzuzufügen
+admin-webhooks-allow-all-help = Standardmäßig aus: Ein Webhook sendet Namen, E-Mail-Adressen und Telefonnummern von Gästen an eine vom Benutzer gewählte Adresse, daher dürfen nur Administratoren einen hinzufügen. Ausschalten stoppt die Webhooks, die andere Benutzer hinzugefügt haben.
+admin-webhooks-manage = Deine Webhooks verwalten
+webhooks-events = Ereignisse
+webhooks-events-all = Alle Ereignisse
+webhooks-event-created = Gebucht (bestätigt)
+webhooks-event-requested = Angefragt (wartet auf Bestätigung)
+webhooks-event-confirmed = Bestätigt
+webhooks-event-declined = Abgelehnt
+webhooks-event-expired = Unbeantwortet abgelaufen
+webhooks-event-cancelled = Storniert
+webhooks-event-rescheduled = Verschoben
+webhooks-error-events = Wähle mindestens ein Ereignis aus.
+webhooks-error-test-limit = Zu viele Tests in kurzer Zeit. Warte ein paar Minuten und versuche es erneut.
+webhooks-added-by-former = Hinzugefügt von einem ehemaligen Mitglied
+webhooks-signature-help = Jede Anfrage ist signiert: <code>X-Calrs-Signature: sha256=&lt;hex&gt;</code> ist ein HMAC-SHA256 des unveränderten Inhalts mit dem Signaturgeheimnis als Schlüssel. Inhalt und die Prüfungen auf Empfängerseite beschreibt die Seite Webhooks der calrs-Dokumentation.
+webhooks-state-suspended = Ausgesetzt: Die Person, die ihn hinzugefügt hat, kann diese Terminart nicht mehr verwalten. Übernimm ihn, um ihn fortzusetzen.
+webhooks-adopt = Übernehmen
+webhooks-notice-adopted = Webhook übernommen und fortgesetzt.
+webhooks-event-claimed = Von einem Beobachter übernommen
+webhooks-error-address = Diese Adresse kann nicht verwendet werden: calrs sendet nur an öffentliche Internetadressen, außer der Host steht auf der Liste erlaubter privater Hosts.
+webhooks-adopt-help = Wenn du ihn übernimmst, gehört er dir und läuft wieder. Bestätige die Adresse, an die er sendet, und lege ein neues Signaturgeheimnis fest: Die Person, die ihn hinzugefügt hat, kennt das alte womöglich. Noch wartende Zustellungen werden verworfen.
+webhooks-error-not-suspended = Nur ein ausgesetzter Webhook kann übernommen werden.
+webhooks-error-new-secret = Die URL zeigt jetzt auf einen anderen Host: Gib auch ein neues Signaturgeheimnis ein.
+webhooks-url-masked-hint = (nur die Person, die ihn hinzugefügt hat, sieht die vollständige URL: gib sie zum Speichern erneut ein)

@@ -25,6 +25,8 @@ mod public_pages;
 mod sources;
 mod teams;
 mod time_off;
+mod webhook_pages;
+pub(crate) mod webhooks;
 mod week_start;
 mod write_targets;
 pub(crate) mod writeback;
@@ -87,6 +89,8 @@ use public_pages::*;
 use sources::*;
 use teams::*;
 use time_off::*;
+use webhook_pages::*;
+pub use webhooks::run_webhook_loop;
 use write_targets::*;
 
 /// Simple per-IP rate limiter for login attempts.
@@ -154,6 +158,8 @@ pub struct AppState {
     pub templates: Environment<'static>,
     pub login_limiter: RateLimiter,
     pub booking_limiter: RateLimiter,
+    /// "Send test" on the webhooks page, per user (#168).
+    pub webhook_test_limiter: RateLimiter,
     /// OAuth authorizations, token exchanges and revocations, per client
     /// address (`oauth::rate_limit`).
     pub oauth_limiter: RateLimiter,
@@ -692,6 +698,7 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
         // 10 login attempts per IP per 15 minutes
         login_limiter: RateLimiter::new(10, 900),
         booking_limiter: RateLimiter::new(10, 300),
+        webhook_test_limiter: RateLimiter::new(10, 600),
         oauth_limiter: RateLimiter::new(60, 300),
         oauth_register_limiter: RateLimiter::new(30, 900),
         mcp_limiter: RateLimiter::new(120, 60),
@@ -930,6 +937,19 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
             "/dashboard/admin/guest-footer",
             post(admin_update_guest_footer),
         )
+        .route(
+            "/dashboard/admin/webhooks/policy",
+            post(admin_update_webhook_policy),
+        )
+        .route(
+            "/dashboard/webhooks",
+            get(webhooks_page).post(create_webhook),
+        )
+        .route("/dashboard/webhooks/{id}/update", post(update_webhook))
+        .route("/dashboard/webhooks/{id}/toggle", post(toggle_webhook))
+        .route("/dashboard/webhooks/{id}/delete", post(delete_webhook))
+        .route("/dashboard/webhooks/{id}/test", post(test_webhook))
+        .route("/dashboard/webhooks/{id}/adopt", post(adopt_webhook))
         .route("/dashboard/admin/jitsi", post(admin_update_jitsi))
         .route(
             "/dashboard/admin/meeting-webhook",

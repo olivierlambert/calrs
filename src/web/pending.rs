@@ -165,6 +165,13 @@ pub(super) async fn sweep_pending_requests(
             reason = "expired: the host did not respond before the deadline",
             "pending request declined"
         );
+        super::webhooks::enqueue(
+            pool,
+            bid,
+            super::webhooks::Event::Expired,
+            super::webhooks::Context::default(),
+        )
+        .await;
         // Notifications go out in the background, like the booking flow's
         // (`spawn_emails`): a slow relay or a burst of expiries must not hold
         // up the reminders this loop sends next. The decline above is

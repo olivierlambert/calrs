@@ -460,3 +460,17 @@ apps-empty = Keine Anwendung verbunden. Ein MCP-Client bittet beim ersten Verbin
 etf-write-destination-help = Nur für diese Terminart. Standardmäßig landen sie im Schreibkalender jeder Ihrer Quellen. Bei einer Team-Terminart gilt das nur für die Buchungen, die Sie übernehmen.
 sources-destinations-help = Wählen Sie für jede Terminart den Kalender, in den ihre bestätigten Buchungen geschrieben werden. Bei einer Team-Terminart gilt das für die Buchungen, die Sie übernehmen; die anderen Mitglieder wählen ihren eigenen. Bereits geschriebene Buchungen ziehen beim nächsten Schreiben um: bei einer Verschiebung, Freigabe, Wiederholung oder Übernahme.
 write-destination-not-yours = Nichts wurde gespeichert: Wählen Sie einen Ihrer eigenen Kalender, für eine Terminart, die Sie übernehmen.
+# Booking webhooks (#168): the messages that address the reader
+webhooks-empty = Noch keine Webhooks. Fügen Sie unten einen hinzu, damit calrs ein anderes System über Ihre Buchungen informiert.
+webhooks-privacy-note = Jede Nachricht enthält Name, E-Mail, Telefonnummer und Notizen des Gastes. Senden Sie sie nur an ein System, dem Sie diese Daten anvertrauen.
+webhooks-notice-created = Webhook hinzugefügt. Prüfen Sie mit „Test senden“, ob er ankommt.
+webhooks-error-url = Geben Sie eine vollständige URL ein, zum Beispiel https://hooks.example.com/calrs.
+webhooks-error-credentials = Entfernen Sie Benutzername und Passwort aus der URL: Das Signaturgeheimnis authentifiziert calrs.
+webhooks-error-scope = Sie können dieser Terminart keinen Webhook hinzufügen.
+admin-webhooks-manage = Ihre Webhooks verwalten
+webhooks-error-events = Wählen Sie mindestens ein Ereignis aus.
+webhooks-error-test-limit = Zu viele Tests in kurzer Zeit. Warten Sie ein paar Minuten und versuchen Sie es erneut.
+webhooks-state-suspended = Ausgesetzt: Die Person, die ihn hinzugefügt hat, kann diese Terminart nicht mehr verwalten. Übernehmen Sie ihn, um ihn fortzusetzen.
+webhooks-adopt-help = Wenn Sie ihn übernehmen, gehört er Ihnen und läuft wieder. Bestätigen Sie die Adresse, an die er sendet, und legen Sie ein neues Signaturgeheimnis fest: Die Person, die ihn hinzugefügt hat, kennt das alte womöglich. Noch wartende Zustellungen werden verworfen.
+webhooks-error-new-secret = Die URL zeigt jetzt auf einen anderen Host: Geben Sie auch ein neues Signaturgeheimnis ein.
+webhooks-url-masked-hint = (nur die Person, die ihn hinzugefügt hat, sieht die vollständige URL: geben Sie sie zum Speichern erneut ein)

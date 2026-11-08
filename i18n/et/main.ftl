@@ -2081,3 +2081,87 @@ sources-destinations-saved = Salvestatud. Uued broneeringud lähevad siin valitu
 write-destination-not-yours = Midagi ei salvestatud: vali üks oma kalendritest sündmuse tüübi jaoks, mida sa juhid.
 write-destination-unavailable = { $name } (pole saadaval)
 write-destination-refused = See kalender lükkas viimase broneeringu tagasi ({ $error }), mistõttu kirjutati see allika seadistuse järgi. Järgmine broneering proovib uuesti.
+# Booking webhooks (templates/webhooks.html, admin card, #168)
+webhooks-title = Veebihaagid
+webhooks-back = Tagasi sündmuse tüüpide juurde
+webhooks-subtitle = calrs saadab neile aadressidele allkirjastatud JSON-sõnumi, kui broneering tehakse, seda taotletakse, see kinnitatakse, lükatakse tagasi, aegub, tühistatakse või viiakse üle.
+webhooks-not-allowed = Selles instantsis on veebihaagid ainult administraatoritele.
+webhooks-endpoints = Sihtaadressid
+webhooks-empty = Veebihaake veel pole. Lisa allpool üks, et calrs teavitaks teist süsteemi sinu broneeringutest.
+webhooks-scope = Saada sündmused
+webhooks-scope-personal = Kõik minu isiklikud sündmuse tüübid
+webhooks-scope-event-type = Sündmuse tüüp: { $title }
+webhooks-scope-team-event-type = Sündmuse tüüp: { $title } ({ $team })
+webhooks-added-by = Lisas { $name }
+webhooks-state-off = Välja lülitatud
+webhooks-never-sent = Midagi pole veel saadetud
+webhooks-state-ok = Viimane saatmine õnnestus
+webhooks-state-failing = Viimane saatmine ebaõnnestus
+webhooks-queued =
+    { $count ->
+        [one] 1 saadetis ootab uut katset
+       *[other] { $count } saadetist ootavad uut katset
+    }
+webhooks-gave-up =
+    { $count ->
+        [one] 1 saadetisest loobuti pärast kõiki katseid
+       *[other] { $count } saadetisest loobuti pärast kõiki katseid
+    }
+webhooks-send-test = Saada test
+webhooks-enable = Lülita sisse
+webhooks-disable = Lülita välja
+webhooks-delete = Eemalda
+webhooks-delete-confirm = Kas eemaldada see veebihaak? Veel ootavad saadetised jäetakse ära.
+webhooks-edit = Muuda
+webhooks-url = URL
+webhooks-url-hint = (https)
+webhooks-secret = Allkirja saladus
+webhooks-secret-hint = (vähemalt { $min } märki, allkirjastab iga päringu, seda ei näidata enam kunagi)
+webhooks-save = Salvesta
+webhooks-add = Lisa veebihaak
+webhooks-add-submit = Lisa veebihaak
+webhooks-privacy-note = Iga sõnum sisaldab külalise nime, e-posti, telefoninumbrit ja märkmeid. Saada see ainult süsteemile, mida usaldad nende andmetega.
+webhooks-notice-created = Veebihaak lisatud. Kasuta nuppu „Saada test“, et kontrollida, kas see jõuab kohale.
+webhooks-notice-updated = Veebihaak salvestatud.
+webhooks-notice-deleted = Veebihaak eemaldatud.
+webhooks-notice-enabled = Veebihaak sisse lülitatud.
+webhooks-notice-disabled = Veebihaak välja lülitatud. Veel oodanud saadetised jäeti ära.
+webhooks-notice-test-ok = Test kohale toimetatud: sihtaadress vastas olekuga 2xx.
+webhooks-error-url = Sisesta täielik URL, näiteks https://hooks.example.com/calrs.
+webhooks-error-https = URL peab algama https:// abil. Lihtne http töötab ainult lubatud privaathostide loendis oleva hosti puhul.
+webhooks-error-credentials = Eemalda URL-ist kasutajanimi ja parool: calrsi autendib allkirja saladus.
+webhooks-error-secret = Allkirja saladus peab olema 16 kuni 256 märki pikk.
+webhooks-error-scope = Sa ei saa sellele sündmuse tüübile veebihaaki lisada.
+webhooks-error-limit = Sellel ulatusel on juba maksimaalselt 10 veebihaaki.
+webhooks-error-test = Testi ei toimetatud kohale. Põhjus on näha veebihaagi juures.
+admin-webhooks = Broneeringute veebihaagid
+admin-webhooks-help =
+    { $count ->
+        [one] Selles instantsis on seadistatud 1 veebihaak.
+       *[other] Selles instantsis on seadistatud { $count } veebihaaki.
+    }
+admin-webhooks-allow-all = Luba igal kasutajal veebihaake lisada
+admin-webhooks-allow-all-help = Vaikimisi väljas: veebihaak saadab külaliste nimed, e-posti aadressid ja telefoninumbrid kasutaja valitud aadressile, seega saavad neid lisada ainult administraatorid. Väljalülitamine peatab teiste kasutajate lisatud veebihaagid.
+admin-webhooks-manage = Halda oma veebihaake
+webhooks-events = Sündmused
+webhooks-events-all = Kõik sündmused
+webhooks-event-created = Broneeritud (kinnitatud)
+webhooks-event-requested = Taotletud (ootab kinnitust)
+webhooks-event-confirmed = Kinnitatud
+webhooks-event-declined = Tagasi lükatud
+webhooks-event-expired = Vastuseta aegunud
+webhooks-event-cancelled = Tühistatud
+webhooks-event-rescheduled = Üle viidud
+webhooks-error-events = Vali vähemalt üks sündmus.
+webhooks-error-test-limit = Liiga palju teste lühikese aja jooksul. Oota paar minutit ja proovi uuesti.
+webhooks-added-by-former = Lisas endine liige
+webhooks-signature-help = Iga päring on allkirjastatud: <code>X-Calrs-Signature: sha256=&lt;hex&gt;</code> on töötlemata sisu HMAC-SHA256, mille võti on allkirja saladus. Sisu ja vastuvõtja kontrolle kirjeldab calrsi dokumentatsiooni leht Webhooks.
+webhooks-state-suspended = Peatatud: selle lisaja ei saa enam seda sündmuse tüüpi hallata. Võta see üle, et seda jätkata.
+webhooks-adopt = Võta üle
+webhooks-notice-adopted = Veebihaak üle võetud ja jätkatud.
+webhooks-event-claimed = Jälgija võttis üle
+webhooks-error-address = Seda aadressi ei saa kasutada: calrs saadab ainult avalikele internetiaadressidele, välja arvatud juhul, kui host on lubatud privaathostide loendis.
+webhooks-adopt-help = Ülevõtmine teeb selle sinu omaks ja jätkab seda. Kinnita aadress, kuhu see saadab, ja määra uus allkirja saladus: selle lisaja võib vana teada. Veel ootavad saadetised jäetakse ära.
+webhooks-error-not-suspended = Üle võtta saab ainult peatatud veebihaaki.
+webhooks-error-new-secret = URL osutab nüüd teisele hostile: sisesta ka uus allkirja saladus.
+webhooks-url-masked-hint = (täielikku URL-i näeb ainult selle lisaja: salvestamiseks sisesta see uuesti)
