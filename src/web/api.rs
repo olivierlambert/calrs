@@ -235,8 +235,8 @@ impl Caller {
             booking
         } else {
             to_json(&BookingRef {
-                id: booking["id"].as_str().unwrap_or_default().to_string(),
-                status: booking["status"].as_str().unwrap_or_default().to_string(),
+                id: booking["id"].clone(),
+                status: booking["status"].clone(),
             })
         };
         to_json(&WriteAnswer { booking })
@@ -741,20 +741,26 @@ pub(super) struct BookingAnswer {
 /// What a write answers to a token without `bookings:read`.
 #[derive(Serialize, ToSchema)]
 pub(super) struct BookingRef {
-    id: String,
+    /// Copied from the booking as read back (null only if it vanished
+    /// meanwhile), as the answer always was.
+    #[schema(value_type = String)]
+    id: Value,
     #[schema(schema_with = booking_status_schema)]
-    status: String,
+    status: Value,
 }
 
+/// `anyOf`, not `oneOf`: OpenAPI 3.1 objects are open, so a whole `Booking`
+/// also matches `BookingRef`, and a `oneOf` would make strict validators
+/// refuse every full answer.
 fn written_booking_schema() -> utoipa::openapi::Schema {
-    let one_of = utoipa::openapi::schema::OneOfBuilder::new()
+    let any_of = utoipa::openapi::schema::AnyOfBuilder::new()
         .item(utoipa::openapi::Ref::from_schema_name("Booking"))
         .item(utoipa::openapi::Ref::from_schema_name("BookingRef"))
         .description(Some(
             "The whole booking when the token also has `bookings:read`, else only its id and status.",
         ))
         .build();
-    utoipa::openapi::Schema::OneOf(one_of)
+    utoipa::openapi::Schema::AnyOf(any_of)
 }
 
 /// The answer of a write on a booking.
@@ -1933,7 +1939,7 @@ pub(super) async fn cancel_booking_api(
     request_body(content = Option<RescheduleBody>, content_type = "application/json", description = "Optional: an empty body is `{}`."),
     responses(
         (status = 200, description = "Requested, or the request emailed again.", body = WriteAnswer),
-        (status = 400, description = "`invalid_json`."),
+        (status = 400, description = "`invalid_json`. `invalid_request`: an unreadable body."),
         (status = 403, description = "`forbidden`: you host the booking but do not own its event type (with `bookings:read` only; else 404)."),
         (status = 404, description = "`not_found`: no such booking, or one you cannot change."),
         (status = 409, description = "`booking_not_active`: no longer confirmed or pending. `reschedule_already_requested`: the guest has not answered an earlier request. `resend_too_soon`: resent less than an hour ago. `no_reschedule_pending`: `resend` with no request waiting. `no_bookable_dates`: the event type has no bookable day left."),

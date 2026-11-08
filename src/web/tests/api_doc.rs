@@ -208,6 +208,54 @@ async fn the_document_is_openapi_3_1_for_this_instance() {
             .is_some());
     }
 
+    // `conforms` reads objects as closed, but OpenAPI 3.1 objects are open:
+    // a `oneOf` whose branch requires a subset of another's would match a
+    // value of the larger branch twice, which strict validators refuse.
+    fn one_ofs<'a>(value: &'a Value, out: &mut Vec<&'a Vec<Value>>) {
+        match value {
+            Value::Object(map) => {
+                if let Some(Value::Array(branches)) = map.get("oneOf") {
+                    out.push(branches);
+                }
+                map.values().for_each(|v| one_ofs(v, out));
+            }
+            Value::Array(items) => items.iter().for_each(|v| one_ofs(v, out)),
+            _ => {}
+        }
+    }
+    let required = |branch: &Value| -> BTreeSet<String> {
+        let branch = match branch["$ref"].as_str() {
+            Some(r) => &doc["components"]["schemas"][r.trim_start_matches("#/components/schemas/")],
+            None => branch,
+        };
+        branch["required"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|r| r.as_str().map(String::from))
+            .collect()
+    };
+    let mut found = Vec::new();
+    one_ofs(&doc, &mut found);
+    for branches in found {
+        for (i, a) in branches.iter().enumerate() {
+            for (j, b) in branches.iter().enumerate() {
+                if i != j && a.get("$ref").is_some() && b.get("$ref").is_some() {
+                    assert!(
+                        !required(a).is_subset(&required(b)),
+                        "oneOf {a} and {b}: a value of the second matches both"
+                    );
+                }
+            }
+        }
+    }
+    let written = &doc["components"]["schemas"]["WriteAnswer"]["properties"]["booking"];
+    assert_eq!(
+        written["anyOf"].as_array().map(Vec::len),
+        Some(2),
+        "{written}"
+    );
+
     // Request bodies refuse unknown fields, as the handlers do.
     for name in ["CreateBooking", "CancelBody", "RescheduleBody"] {
         assert_eq!(
@@ -352,6 +400,17 @@ fn conforms(doc: &Value, value: &Value, schema: &Value, at: &str) -> Result<(), 
             Ok(())
         } else {
             Err(format!("{at}: one variant of oneOf must match: {errors:?}"))
+        };
+    }
+    if let Some(Value::Array(variants)) = schema.get("anyOf") {
+        let errors: Vec<String> = variants
+            .iter()
+            .filter_map(|v| conforms(doc, value, v, at).err())
+            .collect();
+        return if errors.len() < variants.len() {
+            Ok(())
+        } else {
+            Err(format!("{at}: no variant of anyOf matches: {errors:?}"))
         };
     }
     if let Some(Value::Array(values)) = schema.get("enum") {
@@ -588,7 +647,10 @@ async fn api_docs_renders_the_vendored_viewer_without_the_session() {
     assert!(body.contains(&format!(
         r#"href="/static/swagger-ui/swagger-ui.css?v={version}""#
     )));
-    assert!(body.contains("url: '/api/v1/openapi.json'"));
+    assert!(body.contains("fetch('/api/v1/openapi.json', { credentials: 'omit' })"));
+    // Authorize offers the personal token only: the page cannot complete
+    // the OAuth flow, which the served document still describes.
+    assert!(body.contains("delete schemes.oauth2;"));
     assert!(body.contains("request.credentials = 'omit'"));
     assert!(body.contains("validatorUrl: null"));
     assert!(body.contains("persistAuthorization: false"));

@@ -74,12 +74,13 @@ struct ApiDoc;
 
 /// The document for this instance: the server URL and the OAuth endpoints
 /// follow the base URL, which an administrator can change at runtime.
-pub(crate) fn document() -> openapi::OpenApi {
-    let base = crate::oauth::issuer();
+/// `base` is read once by the caller, so the document and its cache key
+/// always agree.
+pub(crate) fn document(base: &str) -> openapi::OpenApi {
     let mut doc = ApiDoc::openapi();
-    doc.servers = Some(vec![Server::new(crate::oauth::api_resource())]);
+    doc.servers = Some(vec![Server::new(format!("{base}/api/v1"))]);
     let components = doc.components.get_or_insert_with(Default::default);
-    components.add_security_scheme("oauth2", oauth2_scheme(&base));
+    components.add_security_scheme("oauth2", oauth2_scheme(base));
     components.add_security_scheme("personalAccessToken", personal_token_scheme());
     doc
 }
@@ -222,7 +223,7 @@ fn document_text() -> Arc<str> {
             return text.clone();
         }
     }
-    let text: Arc<str> = serde_json::to_string(&document())
+    let text: Arc<str> = serde_json::to_string(&document(&base))
         .unwrap_or_else(|_| "{}".to_string())
         .into();
     *cache = Some((base, text.clone()));

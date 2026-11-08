@@ -45,22 +45,40 @@
   syncDark();
   new MutationObserver(syncDark).observe(root, { attributes: true, attributeFilter: ['class'] });
   if (typeof SwaggerUIBundle !== 'function') return;
-  window.ui = SwaggerUIBundle({
-    url: '/api/v1/openapi.json',
-    dom_id: '#swagger-ui',
-    // No call to validator.swagger.io: the page talks to this origin only.
-    validatorUrl: null,
-    // The token pasted under Authorize lives in this page's memory only.
-    persistAuthorization: false,
-    deepLinking: false,
-    defaultModelsExpandDepth: 0,
-    // Never send this browser's cookies with a request: the API ignores
-    // them, and the session must not travel with a pasted token either.
-    requestInterceptor: function (request) {
-      request.credentials = 'omit';
-      return request;
-    }
-  });
+  // The document describes the `oauth2` scheme for applications, but this
+  // page cannot complete that flow: Authorize offers the personal token
+  // only. The served document keeps the scheme; this page's copy drops it.
+  fetch('/api/v1/openapi.json', { credentials: 'omit' })
+    .then(function (response) { return response.json(); })
+    .then(function (spec) {
+      var schemes = (spec.components || {}).securitySchemes || {};
+      delete schemes.oauth2;
+      Object.keys(spec.paths || {}).forEach(function (path) {
+        var item = spec.paths[path];
+        Object.keys(item).forEach(function (method) {
+          var op = item[method];
+          if (op && Array.isArray(op.security)) {
+            op.security = op.security.filter(function (r) { return !('oauth2' in r); });
+          }
+        });
+      });
+      window.ui = SwaggerUIBundle({
+        spec: spec,
+        dom_id: '#swagger-ui',
+        // No call to validator.swagger.io: the page talks to this origin only.
+        validatorUrl: null,
+        // The token pasted under Authorize lives in this page's memory only.
+        persistAuthorization: false,
+        deepLinking: false,
+        defaultModelsExpandDepth: 0,
+        // Never send this browser's cookies with a request: the API ignores
+        // them, and the session must not travel with a pasted token either.
+        requestInterceptor: function (request) {
+          request.credentials = 'omit';
+          return request;
+        }
+      });
+    });
 })();
 </script>
 {% endblock %}

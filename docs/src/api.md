@@ -26,8 +26,10 @@ one made on the booking page.
   token into `personalAccessToken`, then **Try it out** on an operation. The
   page never sends your session cookie (the API would ignore it anyway), and
   the token stays in the page's memory until you leave it. The requests are
-  real: `POST /bookings` books, and emails the guest. The `oauth2` scheme is
-  listed for applications; the page cannot complete that flow itself.
+  real: `POST /bookings` books, and emails the guest. **Authorize** offers the
+  personal token only: the page cannot complete the OAuth flow, so it hides
+  the `oauth2` scheme, which the JSON document still describes for
+  applications.
 
 ## Authentication
 

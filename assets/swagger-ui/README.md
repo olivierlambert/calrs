@@ -48,6 +48,12 @@ c3cfe8248c4b0b89673600fb829924eafbac6de4bc4b2b06f5f5243483074d0a  swagger-ui.css
 `src/web/tests/api_doc.rs` pins these hashes, so a changed file fails the
 tests until the change is reviewed and the hashes updated here and there.
 
+`swagger-ui.css` ends with `/*# sourceMappingURL=swagger-ui.css.map*/`.
+The map is not vendored (it is for debugging Swagger UI itself), so a browser
+with its developer tools open asks for it and gets a 404 from the allowlist.
+That is harmless and only seen in devtools; the comment stays, since the file
+is kept byte-identical to upstream for the hash pin.
+
 ## Updating
 
 1. `npm pack swagger-ui-dist@<version>` in an empty directory and extract it.
