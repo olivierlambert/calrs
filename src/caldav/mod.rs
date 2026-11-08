@@ -21,25 +21,62 @@ pub struct CaldavClient {
 }
 
 /// Check if an IP address is in a private/reserved range (SSRF protection).
+/// Anything that is not ordinary public unicast counts as private: an
+/// operator who needs one of these hosts lists it in the private-host
+/// allowlist. IPv6 forms that carry an IPv4 address (mapped, compatible,
+/// NAT64 well-known prefix, 6to4) are judged by that IPv4 address.
 fn is_private_ip(ip: &IpAddr) -> bool {
     match ip {
-        IpAddr::V4(v4) => {
-            v4.is_loopback()          // 127.0.0.0/8
-                || v4.is_private()    // 10/8, 172.16/12, 192.168/16
-                || v4.is_link_local() // 169.254/16
-                || v4.is_unspecified()
-                || v4.octets()[0] == 100 && (v4.octets()[1] & 0xC0) == 64 // 100.64/10 (CGNAT)
-        }
-        IpAddr::V6(v6) => {
-            v6.is_loopback()       // ::1
-                || v6.is_unspecified() // ::
-                || {
-                    let seg = v6.segments();
-                    seg[0] == 0xfe80 // fe80::/10 link-local
-                        || seg[0] == 0xfc00 || seg[0] == 0xfd00 // fc00::/7 ULA
-                }
-        }
+        IpAddr::V4(v4) => is_private_v4(v4),
+        IpAddr::V6(v6) => is_private_v6(v6),
     }
+}
+
+fn is_private_v4(v4: &std::net::Ipv4Addr) -> bool {
+    let [a, b, _, _] = v4.octets();
+    a == 0 // 0.0.0.0/8 ("this network", 0.0.0.0 included)
+        || v4.is_loopback() // 127.0.0.0/8
+        || v4.is_private() // 10/8, 172.16/12, 192.168/16
+        || v4.is_link_local() // 169.254/16
+        || (a == 100 && (b & 0xC0) == 64) // 100.64/10 (CGNAT)
+        || (a == 198 && (b & 0xFE) == 18) // 198.18/15 (benchmarking)
+        || v4.is_multicast() // 224/4
+        || a >= 240 // 240/4 reserved, 255.255.255.255 broadcast included
+}
+
+fn is_private_v6(v6: &std::net::Ipv6Addr) -> bool {
+    if v6.is_loopback() || v6.is_unspecified() {
+        return true; // ::1, ::
+    }
+    let seg = v6.segments();
+    // ::ffff:a.b.c.d (mapped) and ::a.b.c.d (compatible) reach that IPv4 host.
+    if let Some(v4) = v6.to_ipv4() {
+        return is_private_v4(&v4);
+    }
+    let embedded = |hi: u16, lo: u16| {
+        std::net::Ipv4Addr::new((hi >> 8) as u8, hi as u8, (lo >> 8) as u8, lo as u8)
+    };
+    // ::ffff:0:a.b.c.d (SIIT, IPv4-translated, RFC 2765) reaches that host.
+    if seg[..6] == [0, 0, 0, 0, 0xffff, 0] {
+        return is_private_v4(&embedded(seg[6], seg[7]));
+    }
+    // 64:ff9b::/96, the NAT64 well-known prefix: the gateway connects to the
+    // IPv4 address in the last 32 bits.
+    if seg[..6] == [0x64, 0xff9b, 0, 0, 0, 0] {
+        return is_private_v4(&embedded(seg[6], seg[7]));
+    }
+    // 64:ff9b:1::/48 is for local NAT64 deployments: not public.
+    if seg[0] == 0x64 && seg[1] == 0xff9b && seg[2] == 1 {
+        return true;
+    }
+    // 2002::/16 (6to4) embeds the IPv4 address in bits 16 to 47.
+    if seg[0] == 0x2002 {
+        return is_private_v4(&embedded(seg[1], seg[2]));
+    }
+    (seg[0] & 0xfe00) == 0xfc00 // fc00::/7 unique local
+        || (seg[0] & 0xffc0) == 0xfe80 // fe80::/10 link-local
+        || (seg[0] & 0xffc0) == 0xfec0 // fec0::/10 site-local (deprecated)
+        || (seg[0] & 0xff00) == 0xff00 // ff00::/8 multicast
 }
 
 /// Hostnames that are permitted to resolve to private/reserved IPs.
@@ -2132,6 +2169,78 @@ END:VCALENDAR</c:calendar-data>
     /// within a process, so a second test touching the same env var would race.
     /// The lock is crate-wide rather than module-local because `commands::config`
     /// reads this same variable.
+    #[test]
+    fn private_ranges_are_recognised() {
+        let private = [
+            "0.0.0.0",
+            "0.1.2.3",
+            "127.0.0.1",
+            "10.1.2.3",
+            "172.16.0.1",
+            "192.168.1.1",
+            "169.254.169.254",
+            "100.64.0.1",
+            "100.127.255.254",
+            "198.18.0.1",
+            "198.19.255.255",
+            "224.0.0.1",
+            "239.255.255.250",
+            "240.0.0.1",
+            "255.255.255.255",
+            "::",
+            "::1",
+            "::ffff:10.0.0.1",
+            "::ffff:127.0.0.1",
+            "::10.0.0.1",
+            "::127.0.0.1",
+            "::ffff:0:10.0.0.1",
+            "::ffff:0:127.0.0.1",
+            "::ffff:0:169.254.169.254",
+            "64:ff9b::a00:1",
+            "64:ff9b::7f00:1",
+            "64:ff9b:1::1",
+            "2002:a00:1::1",
+            "2002:c0a8:101::1",
+            "fc00::1",
+            "fd00::1",
+            "fd12:3456::1",
+            "fdff:ffff::1",
+            "fe80::1",
+            "febf::1",
+            "fec0::1",
+            "feff::1",
+            "ff02::1",
+            "ff05::2",
+        ];
+        for ip in private {
+            let parsed: IpAddr = ip.parse().unwrap();
+            assert!(is_private_ip(&parsed), "{ip} should be private");
+        }
+        let public = [
+            "1.1.1.1",
+            "8.8.8.8",
+            "93.184.215.14",
+            "100.63.255.255",
+            "100.128.0.1",
+            "198.17.255.255",
+            "198.20.0.1",
+            "223.255.255.255",
+            "172.32.0.1",
+            "2001:4860:4860::8888",
+            "2606:4700::1111",
+            "::ffff:8.8.8.8",
+            "::ffff:0:8.8.8.8",
+            "64:ff9b::808:808",
+            "2002:808:808::1",
+            "fe00::1",
+            "fbff::1",
+        ];
+        for ip in public {
+            let parsed: IpAddr = ip.parse().unwrap();
+            assert!(!is_private_ip(&parsed), "{ip} should be public");
+        }
+    }
+
     #[test]
     fn allowlist_env_var_opts_host_out_of_private_ip_check() {
         // No async runtime in a plain `#[test]`, so blocking on the lock is safe.
