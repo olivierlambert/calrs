@@ -1334,6 +1334,8 @@ admin-sms-test-checked = Inloggegevens geaccepteerd.
 admin-sms-test-error = De SMS-gateway heeft het verzoek geweigerd.
 admin-sms-captcha-warning = Het boekingsformulier is openbaar en het ontvangende nummer komt van de gast, dus SMS zonder captcha is een open relay waarvoor iemand anders jou kosten kan laten maken. Stel hierboven de captcha in en beperk de bestemmingslanden in de instellingen van je gateway zelf.
 admin-sms-sent-today = Vandaag verzonden:
+admin-sms-segments-today = Vandaag gefactureerde segmenten:
+admin-sms-unknown-today = Zonder antwoord van de gateway, meegeteld voor de limiet:
 admin-sms-of-cap = van { $cap }
 admin-sms-config-error = Fout in SMS-configuratie:
 admin-sms-gateway = Gateway:
@@ -1346,8 +1348,8 @@ admin-sms-docs = API-documentatie van { $provider }
 admin-sms-country = Standaard landcode
 admin-sms-country-hint = (gebruikt als gasten een lokaal telefoonnummer invoeren)
 admin-sms-daily-cap = Daglimiet
-admin-sms-daily-cap-hint = (berichten per dag voor de hele installatie, 0 voor geen limiet)
-admin-sms-daily-cap-help = Boven de limiet stopt calrs met SMS'en en blijft het e-mails versturen, zodat boekingen nooit mislukken omdat het SMS-budget op is.
+admin-sms-daily-cap-hint = (gefactureerde SMS-segmenten per UTC-dag voor de hele installatie, 0 voor geen limiet)
+admin-sms-daily-cap-help = Een bericht tot 160 tekens is één segment, of tot 70 als het een teken buiten het GSM-alfabet bevat; een langer bericht kost één segment per 153 tekens (67), en testberichten tellen ook mee. Boven de limiet stopt calrs met SMS'en en blijft het e-mails versturen, zodat boekingen nooit mislukken omdat het SMS-budget op is.
 admin-save-sms = SMS-instellingen opslaan
 admin-send-test-sms = Stuur een testbericht naar
 admin-send-test-sms-hint-check = (laat leeg om alleen de inloggegevens te controleren)
@@ -1888,6 +1890,8 @@ admin-sms-check-accepted = Inloggegevens geaccepteerd door de gateway.
 admin-sms-bad-number = Dat is geen bruikbaar telefoonnummer.
 admin-sms-test-body = Testbericht van calrs. Je sms-gateway werkt.
 admin-sms-test-accepted = Testbericht geaccepteerd door de gateway.
+admin-sms-test-over-cap = De dagelijkse SMS-limiet is bereikt, dus het testbericht is niet verzonden. Testberichten tellen mee voor de daglimiet zoals alle andere.
+admin-sms-test-ledger-failed = Het SMS-gebruik kon niet worden vastgelegd, dus het testbericht is niet verzonden.
 
 ## Local multi-factor authentication
 

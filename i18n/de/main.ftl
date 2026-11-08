@@ -1332,6 +1332,8 @@ admin-sms-test-checked = Zugangsdaten akzeptiert.
 admin-sms-test-error = Das SMS-Gateway hat die Anfrage abgelehnt.
 admin-sms-captcha-warning = Das Buchungsformular ist öffentlich und die Empfängernummer kommt vom Gast. SMS ohne Captcha sind daher ein offenes Relay, das jemand anderes auf deine Kosten nutzen kann. Richte oben das Captcha ein und beschränke die Zielländer in den Einstellungen deines Gateways.
 admin-sms-sent-today = Heute gesendet:
+admin-sms-segments-today = Heute abgerechnete Segmente:
+admin-sms-unknown-today = Ohne Antwort des Gateways, auf das Limit angerechnet:
 admin-sms-of-cap = von { $cap }
 admin-sms-config-error = Fehler in der SMS-Konfiguration:
 admin-sms-gateway = Gateway:
@@ -1344,8 +1346,8 @@ admin-sms-docs = API-Dokumentation von { $provider }
 admin-sms-country = Standard-Ländervorwahl
 admin-sms-country-hint = (wird verwendet, wenn Gäste eine lokale Telefonnummer eingeben)
 admin-sms-daily-cap = Tageslimit
-admin-sms-daily-cap-hint = (Nachrichten pro Tag für die gesamte Instanz, 0 für kein Limit)
-admin-sms-daily-cap-help = Jenseits des Limits verschickt calrs keine SMS mehr und sendet weiter E-Mails, damit Buchungen nie am erschöpften SMS-Budget scheitern.
+admin-sms-daily-cap-hint = (abgerechnete SMS-Segmente pro UTC-Tag für die gesamte Instanz, 0 für kein Limit)
+admin-sms-daily-cap-help = Eine Nachricht mit bis zu 160 Zeichen ist ein Segment, oder bis zu 70, wenn sie ein Zeichen außerhalb des GSM-Alphabets enthält; eine längere Nachricht wird mit einem Segment je 153 Zeichen (67) abgerechnet, und Testnachrichten zählen mit. Jenseits des Limits verschickt calrs keine SMS mehr und sendet weiter E-Mails, damit Buchungen nie am erschöpften SMS-Budget scheitern.
 admin-save-sms = SMS-Einstellungen speichern
 admin-send-test-sms = Testnachricht senden an
 admin-send-test-sms-hint-check = (leer lassen, um nur die Zugangsdaten zu prüfen)
@@ -1886,6 +1888,8 @@ admin-sms-check-accepted = Zugangsdaten vom Gateway akzeptiert.
 admin-sms-bad-number = Das ist keine verwendbare Telefonnummer.
 admin-sms-test-body = calrs-Testnachricht. Dein SMS-Gateway funktioniert.
 admin-sms-test-accepted = Testnachricht vom Gateway angenommen.
+admin-sms-test-over-cap = Das heutige SMS-Limit ist erreicht, daher wurde die Testnachricht nicht gesendet. Testnachrichten zählen wie alle anderen zum Tageslimit.
+admin-sms-test-ledger-failed = Die SMS-Nutzung konnte nicht erfasst werden, daher wurde die Testnachricht nicht gesendet.
 
 ## Local multi-factor authentication
 

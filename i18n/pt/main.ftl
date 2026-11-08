@@ -1332,6 +1332,8 @@ admin-sms-test-checked = Credenciais aceitas.
 admin-sms-test-error = O gateway de SMS recusou a requisição.
 admin-sms-captcha-warning = O formulário de agendamento é público e o número do destinatário vem do convidado, então SMS sem captcha é um relay aberto que outra pessoa pode cobrar de você. Configure o captcha acima e restrinja os países de destino nas configurações do seu gateway.
 admin-sms-sent-today = Enviados hoje:
+admin-sms-segments-today = Segmentos cobrados hoje:
+admin-sms-unknown-today = Sem resposta do gateway, contados no limite:
 admin-sms-of-cap = de { $cap }
 admin-sms-config-error = Erro na configuração de SMS:
 admin-sms-gateway = Gateway:
@@ -1344,8 +1346,8 @@ admin-sms-docs = Documentação da API do { $provider }
 admin-sms-country = Código de país padrão
 admin-sms-country-hint = (usado quando os convidados informam um número local)
 admin-sms-daily-cap = Limite diário
-admin-sms-daily-cap-hint = (mensagens por dia para toda a instância, 0 para não limitar)
-admin-sms-daily-cap-help = Passado o limite, o calrs para de enviar SMS e continua enviando e-mails, para que nenhum agendamento falhe porque o orçamento de SMS acabou.
+admin-sms-daily-cap-hint = (segmentos de SMS cobrados por dia UTC para toda a instância, 0 para não limitar)
+admin-sms-daily-cap-help = Uma mensagem de até 160 caracteres é um segmento, ou de até 70 se tiver um caractere fora do alfabeto GSM; uma mais longa é cobrada como um segmento a cada 153 caracteres (67), e as mensagens de teste também contam. Passado o limite, o calrs para de enviar SMS e continua enviando e-mails, para que nenhum agendamento falhe porque o orçamento de SMS acabou.
 admin-save-sms = Salvar as configurações de SMS
 admin-send-test-sms = Enviar uma mensagem de teste para
 admin-send-test-sms-hint-check = (deixe em branco para apenas verificar as credenciais)
@@ -1886,6 +1888,8 @@ admin-sms-check-accepted = Credenciais aceitas pelo gateway.
 admin-sms-bad-number = Esse número de telefone não é utilizável.
 admin-sms-test-body = Mensagem de teste do calrs. Seu gateway SMS funciona.
 admin-sms-test-accepted = Mensagem de teste aceita pelo gateway.
+admin-sms-test-over-cap = O limite diário de SMS foi atingido, então a mensagem de teste não foi enviada. Mensagens de teste contam para o limite diário como qualquer outra.
+admin-sms-test-ledger-failed = Não foi possível registrar o uso de SMS, então a mensagem de teste não foi enviada.
 
 ## Local multi-factor authentication
 

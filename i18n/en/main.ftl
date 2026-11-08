@@ -1342,6 +1342,8 @@ admin-sms-test-checked = Credentials accepted.
 admin-sms-test-error = The SMS gateway refused the request.
 admin-sms-captcha-warning = The booking form is public and the recipient number comes from the guest, so SMS without a captcha is an open relay someone else can bill you for. Configure the captcha above, and restrict destination countries in your gateway's own settings.
 admin-sms-sent-today = Sent today:
+admin-sms-segments-today = Billed segments today:
+admin-sms-unknown-today = No answer from the gateway, counted against the limit:
 admin-sms-of-cap = of { $cap }
 admin-sms-config-error = SMS configuration error:
 admin-sms-gateway = Gateway:
@@ -1354,8 +1356,8 @@ admin-sms-docs = { $provider } API documentation
 admin-sms-country = Default country code
 admin-sms-country-hint = (used when guests enter a local phone number)
 admin-sms-daily-cap = Daily limit
-admin-sms-daily-cap-hint = (messages per day for the whole instance, 0 for no limit)
-admin-sms-daily-cap-help = Past the limit calrs stops texting and keeps sending email, so bookings never fail because the SMS budget ran out.
+admin-sms-daily-cap-hint = (billed SMS segments per UTC day for the whole instance, 0 for no limit)
+admin-sms-daily-cap-help = A message of up to 160 characters is one segment, or up to 70 when it holds a character outside the GSM alphabet; a longer message is billed one segment per 153 characters (67), and test messages count too. Past the limit calrs stops texting and keeps sending email, so bookings never fail because the SMS budget ran out.
 admin-save-sms = Save SMS settings
 admin-send-test-sms = Send a test message to
 admin-send-test-sms-hint-check = (leave empty to only check the credentials)
@@ -1897,6 +1899,8 @@ admin-sms-check-accepted = Credentials accepted by the gateway.
 admin-sms-bad-number = That is not a usable phone number.
 admin-sms-test-body = calrs test message. Your SMS gateway works.
 admin-sms-test-accepted = Test message accepted by the gateway.
+admin-sms-test-over-cap = Today's SMS limit is reached, so the test message was not sent. Test messages count against the daily limit like any other.
+admin-sms-test-ledger-failed = The SMS usage could not be recorded, so the test message was not sent.
 
 ## Local multi-factor authentication
 
