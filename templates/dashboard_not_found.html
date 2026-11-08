@@ -1,0 +1,11 @@
+{% extends "dashboard_base.html" %}
+{% block title %}{{ t("dash-not-found-title") }}, calrs{% endblock %}
+{% block dashboard_content %}
+<header class="page-header">
+  <div class="page-header-text">
+    <h1 class="page-title">{{ t("dash-not-found-title") }}</h1>
+    <p class="page-subtitle">{{ t("dash-not-found-body") }}</p>
+  </div>
+</header>
+<p class="empty-line"><a href="/dashboard">{{ t("nav-overview") }}</a></p>
+{% endblock %}

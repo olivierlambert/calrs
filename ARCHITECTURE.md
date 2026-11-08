@@ -59,10 +59,13 @@ Every user-facing string goes through Fluent (`i18n/`).
 | `src/windows_zones.rs` | Windows timezone names (`Eastern Standard Time`) mapped to IANA ids, from CLDR's `windowsZones.xml` |
 | `src/resources.rs` | Shared bookable resources: feed sync, busy intervals, pick at booking time |
 | `src/booking_window.rs` | `BookingWindow`: booking horizon ∩ bookable date range, shared by web and CLI |
+| `src/time_off.rs` | Per-user time off (#46): parsing a typed period, storage, and the busy intervals the slot engine adds for a user (tests in `src/time_off/tests.rs`) |
 | `src/google_meet.rs` | Google Meet links through the Google Calendar API |
 | `src/google_calendar.rs` | Google Calendar API beside CalDAV: out-of-office events as busy time (#240), and booking writes to Google that Google does not announce (#237: attendees set with `sendUpdates=none`, called from `CaldavClient::put_event`/`delete_event`) |
 | `src/oauth2_caldav.rs` | Google OAuth2 tokens for CalDAV access |
 | `src/caldav/mod.rs` | CalDAV client: discovery, fetch, sync-collection, PUT/DELETE (on Google, PUT/DELETE detour through `google_calendar`) |
+| `src/caldav/multistatus.rs` | Reading WebDAV multistatus answers by namespace: calendar listing, events, sync deltas, principal and home discovery (tests in `src/caldav/multistatus/tests.rs`) |
+| `src/xml.rs` | Bounded, namespace-aware XML tree over `quick-xml`, used by the CalDAV client |
 | `src/ews/` | Exchange Web Services client (SOAP, autodiscover, parsing) |
 | `src/providers/` | `CalendarProvider` trait (`mod.rs`), CalDAV adapter, dispatch in `src/providers/factory.rs` |
 | `src/sms/` | `SmsProvider` trait, gateway adapters, phone normalisation, message bodies |
@@ -88,6 +91,7 @@ Every user-facing string goes through Fluent (`i18n/`).
 | `meeting.rs` | Auto-generated meeting links (Jitsi, webhook, Google Meet) |
 | `captcha.rs` | Cap captcha config and server-side verification |
 | `dashboard.rs` | Dashboard overview, event types and bookings lists, host cancel/confirm, settings, avatar |
+| `booking_notes.rs` | Host notes on a booking (#173): who may read and edit them (`note_booking`, the one gate), the notes page and its POST |
 | `overview_stats.rs` | Dashboard overview data: masthead sentence, the day ruler (bookable hours from event type rules and overrides, calrs bookings, anonymous calendar busy time), the week list, the 12-week chart, the 30-day figures (tests in `tests/overview_stats.rs`). The dashboard identity (tokens, timetable rows, status marks) lives in `templates/dashboard_base.html`; `tests/guards.rs` fails if its tells come back |
 | `directory.rs` | Searchable booking directory, visibility checks, personal meeting favorites and dashboard shortcuts |
 | `event_types.rs` | Event type forms (personal and team), availability overrides, form parsing helpers |
@@ -96,7 +100,9 @@ Every user-facing string goes through Fluent (`i18n/`).
 | `sources.rs` | Calendar sources: add, edit, test, sync, remove, write-back setup, calendars to sync, Google connect |
 | `admin.rs` | Admin panel: users, auth and OIDC, theme, captcha, SMTP, SMS, meeting links, resources, impersonation |
 | `admin_stats.rs` | Admin overview figures: users, bookings per week, rankings, calendar and write-back health, inventory (aggregate queries, tests in `tests/admin_stats.rs`). `users.last_login_at` is stamped by a trigger on `sessions` (migration 080) |
+| `time_off.rs` | The Time off page (`/dashboard/time-off`): list, add, delete the signed-in user's own periods |
 | `branding.rs` | Theme CSS, embed pages, static assets baked into the binary |
+| `listing.rs` | Shared pieces of long lists: case-blind `GLOB` search patterns bound into SQL (`ci_glob`, `ci_contains`) and the page links (`Pager`, `partials/pager.html`) used by the directory and the admin Users tab |
 | `format.rs` | Date and time labels for pages, emails and the dashboard |
 | `week_start.rs` | Calendar display preference: event override → account owner's default → site default (Monday); named weekday keys, independent of availability's `0=Sunday` storage |
 | `tests/` | Web tests, one file per area (below) |
@@ -106,9 +112,9 @@ Every user-facing string goes through Fluent (`i18n/`).
 with `use super::*` and sees those fixtures and every item of `web`:
 `security`, `auth_pages`, `branding`, `format`, `availability`, `resources`,
 `hosts`, `event_types`, `invites`, `booking`, `public_pages`,
-`booking_actions`, `dashboard`, `sources`, `admin`, `emails`,
+`booking_actions`, `booking_notes`, `dashboard`, `sources`, `admin`, `emails`,
 `page_language`, `guards`, plus `booking_time`, `pending_hold`,
-`writeback_failures`, `organizer` and `duplicate_event_type`.
+`writeback_failures`, `organizer`, `duplicate_event_type` and `time_off`.
 
 ### `src/email/`
 
@@ -117,9 +123,10 @@ with `use super::*` and sees those fixtures and every item of `web`:
 | `mod.rs` | Shared data (`BookingDetails`, `CancellationDetails`, `RescheduleDetails`), language helpers, `pub use` of the files below |
 | `transport.rs` | `SmtpConfig` (env and DB), `Sender` (who an email comes from), `send_email` with its timeouts |
 | `render.rs` | HTML and plain-text layout, ICS generation, time conversion, `EmailParts` / `send_composed` |
+| `footer.rs` | The guest email footer (#223): length limit, the lookup (event type, else instance default), the markdown subset rendered to HTML and plain text, with a link scheme allowlist |
 | `guest.rs` | Guest emails: confirmation, pending, decline, cancellation, reminder, reschedule, pick a new time, invite |
 | `host.rs` | Host, member, watcher and claimant emails |
-| `tests/` | `transport.rs`, `render.rs`, `messages.rs`, shared fixtures in `tests/mod.rs` |
+| `tests/` | `transport.rs`, `render.rs`, `messages.rs`, `guest_footer.rs`, shared fixtures in `tests/mod.rs` |
 
 Call sites use `crate::email::name` whatever file `name` lives in.
 
@@ -166,7 +173,9 @@ Call sites use `crate::email::name` whatever file `name` lives in.
   `src/commands/sync_health.rs` (failure tracking).
 - **Availability** (`src/web/availability.rs`). `compute_slots` combines
   weekly rules, date overrides, minimum notice, horizon, frequency limits and
-  busy intervals (synced events, bookings including pending holds, resources).
+  busy intervals (synced events, bookings including pending holds, time off,
+  resources). Per-user busy time comes from `fetch_busy_times_for_user_opts`,
+  the one place time off (`src/time_off.rs`) is added.
   Team event types pick a member (round robin) or require all (collective).
   The troubleshoot view explains a day's result.
 - **Booking lifecycle**. Statuses: `pending`, `confirmed`, `cancelled`,

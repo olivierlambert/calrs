@@ -616,7 +616,7 @@
 </details>
 
 <!-- Collapsible: Access & notifications -->
-<details class="card collapsible-section" style="margin-top: 1rem;"{% if editing and ((form_visibility is defined and form_visibility and form_visibility != "public") or (form_reminder_minutes is defined and form_reminder_minutes and form_reminder_minutes != 0)) %} open{% endif %}>
+<details class="card collapsible-section" style="margin-top: 1rem;"{% if editing and ((form_visibility is defined and form_visibility and form_visibility != "public") or (form_reminder_minutes is defined and form_reminder_minutes and form_reminder_minutes != 0) or (form_guest_email_footer is defined and form_guest_email_footer)) %} open{% endif %}>
   <summary class="collapsible-header">
     <h2>{{ t("etf-section-access") }}</h2>
     <span class="collapsible-hint" id="access-hint"></span>
@@ -643,6 +643,47 @@
       </select>
       <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">{{ t("etf-reminder-help") }}</span>
     </div>
+    {% if can_edit_guest_footer is defined and can_edit_guest_footer %}
+    <div class="form-group" style="margin-top: 0.75rem;">
+      <label for="guest_email_footer">{{ t("etf-guest-footer") }} <span class="hint">{{ t("team-form-optional") }}</span></label>
+      <div style="border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden;">
+        <div class="md-toolbar" data-target="guest_email_footer" style="display: flex; gap: 0.25rem; padding: 0.375rem 0.5rem; background: var(--surface-hover); border-bottom: 1px solid var(--border);">
+          <button type="button" data-action="bold" title="{{ t('editor-bold-short') }}" style="padding: 0.25rem 0.5rem; background: none; border: 1px solid transparent; border-radius: 3px; cursor: pointer; font-weight: 700; font-size: 0.85rem; color: var(--text); font-family: inherit; line-height: 1;">B</button>
+          <button type="button" data-action="italic" title="{{ t('editor-italic-short') }}" style="padding: 0.25rem 0.5rem; background: none; border: 1px solid transparent; border-radius: 3px; cursor: pointer; font-style: italic; font-size: 0.85rem; color: var(--text); font-family: inherit; line-height: 1;">I</button>
+          <button type="button" data-action="link" title="{{ t('editor-link-short') }}" style="padding: 0.25rem 0.5rem; background: none; border: 1px solid transparent; border-radius: 3px; cursor: pointer; font-size: 0.85rem; color: var(--text); font-family: inherit; line-height: 1;">&#128279;</button>
+          <div style="flex: 1;"></div>
+          <button type="button" class="md-preview-toggle" title="{{ t('editor-toggle-preview') }}" style="padding: 0.25rem 0.5rem; background: none; border: 1px solid transparent; border-radius: 3px; cursor: pointer; font-size: 0.75rem; color: var(--text-muted); font-family: inherit; line-height: 1;">{{ t("editor-preview") }}</button>
+        </div>
+        <textarea id="guest_email_footer" name="guest_email_footer" rows="3" data-max-chars="500" data-md-links="email" placeholder="{{ t('etf-guest-footer-placeholder') }}" style="border: none; border-radius: 0; width: 100%; resize: vertical; padding: 0.5rem 0.75rem; font-family: inherit; font-size: 0.9rem; background: var(--surface); color: var(--text); box-sizing: border-box;">{{ form_guest_email_footer }}</textarea>
+        <div id="guest_email_footer-preview" style="display: none; padding: 0.5rem 0.75rem; min-height: 4rem; font-size: 0.9rem; color: var(--text); background: var(--surface);"></div>
+      </div>
+      <div style="display: flex; justify-content: space-between; gap: 0.75rem; margin-top: 0.25rem;">
+        <span class="hint" style="font-size: 0.8rem; color: var(--text-muted);">{{ t("etf-guest-footer-help") }}</span>
+        <span id="guest_email_footer-count" style="font-size: 0.8rem; color: var(--text-muted); white-space: nowrap;">0 / 500</span>
+      </div>
+    </div>
+    <script>
+    (function() {
+      var ta = document.getElementById('guest_email_footer');
+      var out = document.getElementById('guest_email_footer-count');
+      if (!ta || !out) return;
+      // Count characters the way the server does (code points), not UTF-16
+      // units: an emoji is one character, so `maxlength` would stop early.
+      var max = parseInt(ta.getAttribute('data-max-chars'), 10);
+      var tooLong = {{ t('validate-guest-footer-too-long') | tojson }};
+      function update() {
+        var n = Array.from(ta.value.replace(/\r\n?/g, '\n').trim()).length;
+        out.textContent = n + ' / ' + max;
+        out.style.color = n > max ? 'var(--error-text)' : '';
+        ta.setCustomValidity(n > max ? tooLong : '');
+      }
+      ta.addEventListener('input', update);
+      // The toolbar edits the value without an input event.
+      document.querySelector('.md-toolbar[data-target="guest_email_footer"]').addEventListener('click', function() { setTimeout(update, 0); });
+      update();
+    })();
+    </script>
+    {% endif %}
   </div>
 </details>
 

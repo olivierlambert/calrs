@@ -24,6 +24,11 @@ sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "sqlite", "migrate
 # HTTP client (for CalDAV)
 reqwest = { version = "0.11", features = ["rustls-tls", "json"], default-features = false }
 
+# XML (CalDAV/WebDAV multistatus responses)
+quick-xml = "0.39"
+# Charset decoding of capped CalDAV bodies, as reqwest's text() does it
+encoding_rs = "0.8"
+
 # Time & timezone
 chrono = { version = "0.4", features = ["serde"] }
 chrono-tz = "0.8"
@@ -91,6 +96,10 @@ unic-langid = "0.9"
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"
+# The source guards in src/web/tests/guards.rs walk struct literals with a
+# real Rust parser; span-locations gives them line numbers.
+syn = { version = "2", features = ["full", "visit"] }
+proc-macro2 = { version = "1", features = ["span-locations"] }
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tarpaulin)'] }

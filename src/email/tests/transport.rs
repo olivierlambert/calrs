@@ -877,7 +877,7 @@ async fn host_with_special_characters_in_the_name_is_emailed() {
     };
     tokio::time::timeout(
         std::time::Duration::from_secs(10),
-        send_host_cancellation(&plaintext_config(port, ""), &details),
+        send_host_cancellation(&plaintext_config(port, ""), &details, None),
     )
     .await
     .expect("send timed out")

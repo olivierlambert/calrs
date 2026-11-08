@@ -1,7 +1,14 @@
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use reqwest::{Client, RequestBuilder};
 use std::net::IpAddr;
 use std::time::Duration;
+
+mod multistatus;
+
+use multistatus::{
+    calendar_home_set, current_user_principal, parse_calendar_list, parse_event_responses,
+    parse_sync_response, propfind_resource_exists,
+};
 
 /// Host portion of Google's CalDAV API. Used to short-circuit the discovery
 /// flow, since Google's PROPFIND responses don't follow RFC 4791 closely
@@ -262,18 +269,8 @@ impl CaldavClient {
             .send()
             .await?;
 
-        let status = resp.status();
-        tracing::debug!(url = %url, status = %status, "PROPFIND response received");
-
-        if !status.is_success() && status.as_u16() != 207 {
-            // Surface the response body. Servers like Google embed the actual reason
-            // (insufficient scope, API not enabled, etc.) in the body, not the status line.
-            let body = resp.text().await.unwrap_or_default();
-            let snippet: String = body.chars().take(500).collect();
-            bail!("PROPFIND {} returned {}: {}", url, status, snippet);
-        }
-
-        Ok(resp.text().await?)
+        tracing::debug!(url = %url, status = %resp.status(), "PROPFIND response received");
+        multistatus_body(resp, "PROPFIND", url).await
     }
 
     /// Check if the server supports CalDAV.
@@ -338,13 +335,15 @@ impl CaldavClient {
             "PROPFIND principal response received"
         );
 
-        // Extract href inside <X:current-user-principal><Y:href>...</Y:href></X:current-user-principal>
-        // Uses namespace-agnostic search to handle any prefix (d:, D:, or arbitrary like a:)
-        if let Some(inner) = extract_tag(&text, "d:current-user-principal") {
-            if let Some(href) = extract_tag(&inner, "d:href") {
-                tracing::debug!(principal = %href, "discovered principal URL");
-                return Ok(href);
-            }
+        let (principal, text) = parse_blocking(text, current_user_principal).await;
+        let principal = principal
+            .inspect_err(
+                |_| tracing::debug!(response_body = %text, "unreadable principal response"),
+            )
+            .context("Could not read the principal PROPFIND response")?;
+        if let Some(href) = principal {
+            tracing::debug!(principal = %href, "discovered principal URL");
+            return Ok(href);
         }
 
         tracing::debug!(response_body = %text, "failed to parse principal from response");
@@ -361,13 +360,15 @@ impl CaldavClient {
             "PROPFIND calendar-home response received"
         );
 
-        // Extract href inside <X:calendar-home-set><Y:href>...</Y:href></X:calendar-home-set>
-        // Uses namespace-agnostic search to handle any prefix (cal:, C:, or arbitrary like a:)
-        if let Some(inner) = extract_tag(&text, "cal:calendar-home-set") {
-            if let Some(href) = extract_tag(&inner, "d:href") {
-                tracing::debug!(calendar_home = %href, "discovered calendar-home-set");
-                return Ok(href);
-            }
+        let (home, text) = parse_blocking(text, calendar_home_set).await;
+        let home = home
+            .inspect_err(
+                |_| tracing::debug!(response_body = %text, "unreadable calendar-home-set response"),
+            )
+            .context("Could not read the calendar-home-set PROPFIND response")?;
+        if let Some(href) = home {
+            tracing::debug!(calendar_home = %href, "discovered calendar-home-set");
+            return Ok(href);
         }
 
         tracing::debug!(response_body = %text, "failed to parse calendar-home-set from response");
@@ -378,7 +379,14 @@ impl CaldavClient {
     pub async fn list_calendars(&self, home_url: &str) -> Result<Vec<CalendarInfo>> {
         let url = self.resolve_url(home_url);
         let text = self.propfind(&url, "1", PROPFIND_CALENDARS).await?;
-        let calendars = parse_calendar_list(&text);
+        let (calendars, text) = parse_blocking(text, parse_calendar_list).await;
+        let calendars = calendars
+            .inspect_err(
+                |_| tracing::debug!(response_body = %text, "unreadable calendar list response"),
+            )
+            .with_context(|| {
+                format!("Could not read the calendar list PROPFIND response from {url}")
+            })?;
         tracing::debug!(
             calendar_count = calendars.len(),
             response_len = text.len(),
@@ -438,8 +446,7 @@ impl CaldavClient {
 
         let status = resp.status();
         if !status.is_success() && status.as_u16() != 201 && status.as_u16() != 204 {
-            let body = resp.text().await.unwrap_or_default();
-            bail!("PUT {} returned {} — {}", url, status, body);
+            bail!("PUT {} returned {}", url, status);
         }
 
         Ok(())
@@ -513,8 +520,10 @@ impl CaldavClient {
             if s.as_u16() == 207 {
                 // The outer 207 only says the server answered. Whether the
                 // event is there is the resource's own status inside the body.
-                let xml = resp.text().await?;
-                return match propfind_resource_exists(&xml) {
+                let xml = read_body(resp, crate::xml::MAX_INPUT_BYTES).await?;
+                let (exists, _) =
+                    parse_blocking(xml, |xml| Ok(propfind_resource_exists(xml))).await;
+                return match exists.ok().flatten() {
                     Some(exists) => Ok(exists),
                     None => bail!(
                         "PROPFIND {} returned a multistatus without a usable status",
@@ -572,8 +581,7 @@ impl CaldavClient {
 
         let status = resp.status();
         if !status.is_success() && status.as_u16() != 204 && status.as_u16() != 404 {
-            let body = resp.text().await.unwrap_or_default();
-            bail!("DELETE {} returned {} — {}", url, status, body);
+            bail!("DELETE {} returned {}", url, status);
         }
 
         Ok(())
@@ -596,9 +604,11 @@ impl CaldavClient {
             .send()
             .await?;
 
-        let text = resp.text().await?;
-        let events = parse_event_responses(&text);
-        Ok(events)
+        let text = multistatus_body(resp, "REPORT", &url).await?;
+        parse_blocking(text, parse_event_responses)
+            .await
+            .0
+            .with_context(|| format!("Could not read the calendar REPORT response from {url}"))
     }
 
     /// Perform a sync-collection REPORT (RFC 6578) to get changes since a sync-token.
@@ -611,7 +621,8 @@ impl CaldavClient {
     ) -> Result<SyncResult> {
         let url = self.resolve_url(calendar_href);
 
-        // Tokens are stored decoded (see `xml_text`), so escape them again.
+        // Tokens are stored decoded (the parser decodes entities), so escape
+        // them again.
         let token_value = xml_escape(sync_token.unwrap_or(""));
         let body = format!(
             r#"<?xml version="1.0" encoding="utf-8"?>
@@ -641,12 +652,11 @@ impl CaldavClient {
         if status.as_u16() == 403 || status.as_u16() == 412 || status.as_u16() == 405 {
             bail!("sync-token invalid or not supported (HTTP {})", status);
         }
-        if !status.is_success() && status.as_u16() != 207 {
-            bail!("sync-collection REPORT returned {}", status);
-        }
-
-        let text = resp.text().await?;
-        Ok(parse_sync_response(&text))
+        let text = multistatus_body(resp, "sync-collection REPORT", &url).await?;
+        parse_blocking(text, parse_sync_response)
+            .await
+            .0
+            .with_context(|| format!("Could not read the sync-collection response from {url}"))
     }
 
     /// Fetch events from a calendar starting from a given UTC datetime.
@@ -689,17 +699,103 @@ impl CaldavClient {
             .send()
             .await?;
 
-        let status = resp.status();
-        let text = resp.text().await?;
-
-        // If the server doesn't support time-range, fall back to full fetch
-        if !status.is_success() {
+        // A server that rejects the time-range filter answers with an error
+        // status: fall back to the unfiltered fetch, which checks its own.
+        if !resp.status().is_success() {
             return self.fetch_events(calendar_href).await;
         }
 
-        let events = parse_event_responses(&text);
-        Ok(events)
+        let text = multistatus_body(resp, "REPORT", &url).await?;
+        parse_blocking(text, parse_event_responses)
+            .await
+            .0
+            .with_context(|| format!("Could not read the calendar REPORT response from {url}"))
     }
+}
+
+/// The body of an answer that must be a multistatus: a PROPFIND, or a
+/// REPORT whose result the sync stores or acts on. Only 207 Multi-Status is
+/// accepted, and 200 OK, which some servers send with the same multistatus
+/// body (the parse then requires one). Any other status is an error, so an
+/// error page, or an empty 5xx body, can never read as an empty calendar.
+///
+/// The error names the status code and reason only, never the body: on a
+/// shared calendar an error page can quote other people's event data, and
+/// the message is stored and shown on the sources page.
+async fn multistatus_body(resp: reqwest::Response, what: &str, url: &str) -> Result<String> {
+    let status = resp.status();
+    if status.as_u16() != 207 && status != reqwest::StatusCode::OK {
+        bail!("{what} {url} returned {status}");
+    }
+    read_body(resp, crate::xml::MAX_INPUT_BYTES).await
+}
+
+/// Read a response body as text, refusing one over `cap` bytes as it
+/// arrives rather than after holding all of it: a declared length over the
+/// cap fails before anything is read. Decoded with the charset of the
+/// `Content-Type` (UTF-8 by default), as reqwest's `text()` does.
+async fn read_body(mut resp: reqwest::Response, cap: usize) -> Result<String> {
+    let url = resp.url().to_string();
+    if let Some(len) = resp.content_length() {
+        if len > cap as u64 {
+            bail!("response from {url} is {len} bytes, more than the {cap} calrs reads");
+        }
+    }
+    let encoding = response_encoding(resp.headers());
+    let mut body = Vec::new();
+    while let Some(chunk) = resp.chunk().await? {
+        if body.len() + chunk.len() > cap {
+            bail!("response from {url} is more than the {cap} bytes calrs reads");
+        }
+        body.extend_from_slice(&chunk);
+    }
+    if encoding == encoding_rs::UTF_8 {
+        // The usual case: valid UTF-8 becomes the string without a copy.
+        match String::from_utf8(body) {
+            Ok(text) => return Ok(text),
+            Err(invalid) => body = invalid.into_bytes(),
+        }
+    }
+    let (text, _, _) = encoding.decode(&body);
+    Ok(text.into_owned())
+}
+
+/// Run a parse on the blocking pool: a large document takes real CPU, and
+/// the same runtime serves the booking pages. The text comes back with the
+/// result, for the callers that log it.
+async fn parse_blocking<T, F>(text: String, parse: F) -> (Result<T>, String)
+where
+    T: Send + 'static,
+    F: FnOnce(&str) -> Result<T> + Send + 'static,
+{
+    let task = tokio::task::spawn_blocking(move || {
+        let parsed = parse(&text);
+        (parsed, text)
+    });
+    match task.await {
+        Ok(done) => done,
+        Err(e) => (
+            Err(anyhow::anyhow!("CalDAV response parser failed: {e}")),
+            String::new(),
+        ),
+    }
+}
+
+/// The encoding named by a `Content-Type` charset parameter, else UTF-8.
+fn response_encoding(headers: &reqwest::header::HeaderMap) -> &'static encoding_rs::Encoding {
+    headers
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| {
+            value.split(';').skip(1).find_map(|param| {
+                let (name, label) = param.split_once('=')?;
+                name.trim()
+                    .eq_ignore_ascii_case("charset")
+                    .then(|| label.trim().trim_matches('"'))
+            })
+        })
+        .and_then(|label| encoding_rs::Encoding::for_label(label.as_bytes()))
+        .unwrap_or(encoding_rs::UTF_8)
 }
 
 #[derive(Debug, Clone)]
@@ -716,6 +812,10 @@ pub struct SyncResult {
     pub new_sync_token: Option<String>,
     pub changed: Vec<RawEvent>,
     pub deleted_hrefs: Vec<String>,
+    /// The server stopped before reporting every change (RFC 6578 section
+    /// 3.6, a 507 on the collection itself): `new_sync_token` is where it
+    /// stopped, and more changes follow from there.
+    pub truncated: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -724,566 +824,11 @@ pub struct RawEvent {
     pub ical_data: String,
 }
 
-/// Detect a `calendar` resourcetype element with any (or no) namespace prefix.
-///
-/// Matches `<cal:calendar/>`, `<C:calendar/>`, `<C:calendar />` (Radicale emits a
-/// space before the self-closing slash), unprefixed `<calendar xmlns="…">`, and
-/// the open form `<C:calendar>`. It must NOT match longer local names that merely
-/// start with `calendar` (`calendar-color`, `calendar-data`,
-/// `supported-calendar-component-set`) nor `addressbook` collections, so we
-/// require the element's local name to end exactly after `calendar`.
-fn has_calendar_resourcetype(block: &str) -> bool {
-    const NAME: &str = "calendar";
-    let mut from = 0;
-    while let Some(rel) = block[from..].find(NAME) {
-        let start = from + rel;
-        let end = start + NAME.len();
-        from = end;
-
-        // The character after the local name must terminate it: a self-closing
-        // slash, the tag's closing '>', or whitespace before attributes. A '-'
-        // (or anything else) means a longer name like "calendar-color".
-        let terminates = matches!(block[end..].chars().next(), Some('/') | Some('>'))
-            || block[end..].chars().next().is_some_and(char::is_whitespace);
-        if !terminates {
-            continue;
-        }
-
-        // The text before "calendar" must open an element: '<' directly
-        // (unprefixed) or "<prefix:" (namespaced).
-        let before = &block[..start];
-        if before.ends_with('<') {
-            return true;
-        }
-        if let Some(prefix) = before.strip_suffix(':') {
-            let trimmed = prefix.trim_end_matches(|c: char| {
-                c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.')
-            });
-            if trimmed.len() < prefix.len() && trimmed.ends_with('<') {
-                return true;
-            }
-        }
-    }
-    false
-}
-
-fn parse_calendar_list(xml: &str) -> Vec<CalendarInfo> {
-    let mut calendars = Vec::new();
-    for response_block in split_responses(xml) {
-        // Only include actual calendar collections (resourcetype contains a
-        // `calendar` element), skipping plain collections and addressbooks.
-        if !has_calendar_resourcetype(response_block) {
-            continue;
-        }
-        let href = extract_tag(response_block, "d:href").unwrap_or_default();
-        if href.is_empty() {
-            continue;
-        }
-        let display_name = extract_tag(response_block, "d:displayname");
-        let color = extract_tag(response_block, "aic:calendar-color")
-            .or_else(|| extract_tag(response_block, "x1:calendar-color"));
-        let ctag = extract_tag(response_block, "cso:getctag")
-            .or_else(|| extract_tag(response_block, "cs:getctag"));
-        let sync_token = extract_tag(response_block, "d:sync-token");
-        calendars.push(CalendarInfo {
-            href,
-            display_name,
-            color,
-            ctag,
-            sync_token,
-        });
-    }
-    calendars
-}
-
-fn parse_sync_response(xml: &str) -> SyncResult {
-    let mut changed = Vec::new();
-    let mut deleted_hrefs = Vec::new();
-
-    // Extract the new sync-token from the multistatus envelope (outside response blocks)
-    let new_sync_token = extract_tag(xml, "d:sync-token");
-
-    for response_block in split_responses(xml) {
-        let href = extract_tag(response_block, "d:href").unwrap_or_default();
-        if href.is_empty() {
-            continue;
-        }
-
-        // A `<d:response>` element carries the resource's status in one of two ways
-        // (RFC 4918 §9.1, mutually exclusive):
-        //   1. A direct child `<d:status>` element  — the resource-level status
-        //      (e.g. `404 Not Found` for a deletion in a sync-collection delta).
-        //   2. One or more `<d:propstat>` elements, each with its OWN `<d:status>`
-        //      describing which requested properties were found vs missing on the
-        //      (still-existing) resource.
-        //
-        // The status check below must only look at case (1). Looking at the first
-        // `<d:status>` tag anywhere in the response block misreads a property-level
-        // 404 — for example, a propstat reporting that `<d:getetag>` was not
-        // returned — as if the whole resource had been deleted. That mis-classification
-        // wrongly cancelled live customer bookings in production on 2026-05-14.
-        // Strip `<d:propstat>` subtrees before the status lookup so only the
-        // resource-level status is considered.
-        let stripped = strip_propstat_blocks(response_block);
-        if let Some(status) = extract_tag(&stripped, "d:status") {
-            if status.contains("404") || status.contains("410") {
-                deleted_hrefs.push(href);
-                continue;
-            }
-        }
-
-        // Otherwise it's an addition/modification — extract calendar data from
-        // the original (un-stripped) block, since calendar-data lives inside a
-        // propstat by definition.
-        let ical_data = extract_tag(response_block, "cal:calendar-data")
-            .or_else(|| extract_tag(response_block, "c:calendar-data"))
-            .map(|s| crate::utils::normalize_line_endings(&s).into_owned())
-            .unwrap_or_default();
-        if !ical_data.is_empty() {
-            changed.push(RawEvent { href, ical_data });
-        }
-    }
-
-    SyncResult {
-        new_sync_token,
-        changed,
-        deleted_hrefs,
-    }
-}
-
-/// Read the multistatus answer to a depth:0 PROPFIND on one resource. Depth 0
-/// returns a single `<response>`, so the first one is the resource asked about.
-///
-/// - `Some(false)`: its resource-level `<status>` is 404 or 410.
-/// - `Some(true)`: its resource-level status is 2xx, or it has no
-///   resource-level status but carries `<propstat>` blocks. A propstat 404
-///   means a property is missing on a resource that exists, not that the
-///   resource is gone (the misreading `parse_sync_response` guards against).
-/// - `None`: no response, or another resource-level status; the caller can't
-///   tell and must not act on it.
-fn propfind_resource_exists(xml: &str) -> Option<bool> {
-    let block = *split_responses(xml).first()?;
-    let (stripped, propstats) = strip_propstat(block);
-    if let Some(status) = extract_tag(&stripped, "d:status") {
-        if status.contains("404") || status.contains("410") {
-            return Some(false);
-        }
-        let is_2xx = status
-            .split_whitespace()
-            .nth(1)
-            .is_some_and(|code| code.len() == 3 && code.starts_with('2'));
-        return is_2xx.then_some(true);
-    }
-    (propstats > 0).then_some(true)
-}
-
-/// Remove every `<propstat>…</propstat>` subtree from a WebDAV response fragment.
-///
-/// Used by `parse_sync_response` to isolate the resource-level `<d:status>` from
-/// any property-level statuses nested inside propstat elements. Accepts any
-/// namespace prefix, a wider set than `extract_tag` reads (`is_xml_prefix`): a
-/// propstat left in place would have its property 404 read as "the resource is
-/// gone", while stripping one too many only hides a status. Tolerates malformed
-/// XML (leaves an unmatched open tag in place) rather than failing.
-fn strip_propstat_blocks(s: &str) -> String {
-    strip_propstat(s).0
-}
-
-/// `strip_propstat_blocks`, also counting the propstat elements with content
-/// that were removed (a self-closing `<propstat/>` is dropped but not counted).
-fn strip_propstat(s: &str) -> (String, usize) {
-    // Where each propstat close tag last appears, so an open tag with no close
-    // after it is skipped without searching the rest of the input.
-    let last_close = last_propstat_closes(s);
-    let mut result = String::with_capacity(s.len());
-    let mut rest = s;
-    let mut removed = 0;
-    while let Some((start, name)) = find_propstat_open(rest) {
-        let at = s.len() - rest.len() + start;
-        let open_len = open_tag_len(&rest[start..]);
-        if let Some(len) = open_len.filter(|&len| rest[start..start + len].ends_with("/>")) {
-            // `<propstat/>` is a whole element with nothing inside.
-            result.push_str(&rest[..start]);
-            rest = &rest[start + len..];
-            continue;
-        }
-        // An open tag that never ends (a `<` in an attribute value, invalid
-        // but seen) still has its close searched for from just past the `<`.
-        let len = open_len.unwrap_or(1);
-        let close = last_close
-            .get(name)
-            .filter(|&&c| c >= at + len)
-            .and_then(|_| find_element_close(&rest[start + len..], name))
-            .map(|(close_start, close_len)| start + len + close_start + close_len);
-        match close {
-            Some(end) => {
-                result.push_str(&rest[..start]);
-                rest = &rest[end..];
-                removed += 1;
-            }
-            None => {
-                // Malformed, or not a tag at all: keep it and look further.
-                result.push_str(&rest[..=start]);
-                rest = &rest[start + 1..];
-            }
-        }
-    }
-    result.push_str(rest);
-    (result, removed)
-}
-
-/// The XML name starting at `s`: everything up to whitespace or one of
-/// `< > / = " '`, a superset of what XML allows in a name.
-fn xml_name(s: &str) -> &str {
-    let end = s
-        .find(|c: char| c.is_whitespace() || matches!(c, '<' | '>' | '/' | '=' | '"' | '\''))
-        .unwrap_or(s.len());
-    &s[..end]
-}
-
-/// Whether `name` is `propstat` under no prefix or any one prefix.
-fn is_propstat_name(name: &str) -> bool {
-    name == "propstat"
-        || name
-            .strip_suffix(":propstat")
-            .is_some_and(|prefix| !prefix.is_empty() && !prefix.contains(':'))
-}
-
-/// Find the first `<propstat` or `<prefix:propstat` open tag in `s`, returning
-/// where its `<` is and the tag name with its prefix. A longer name such as
-/// `<d:propstats>` does not count, and neither do close tags.
-fn find_propstat_open(s: &str) -> Option<(usize, &str)> {
-    for (lt, _) in s.match_indices('<') {
-        let name = xml_name(&s[lt + 1..]);
-        let after = s[lt + 1 + name.len()..].chars().next();
-        let delimited = after.is_some_and(|c| c.is_whitespace() || matches!(c, '>' | '/'));
-        if delimited && is_propstat_name(name) {
-            return Some((lt, name));
-        }
-    }
-    None
-}
-
-/// Start of the last `</name>` close tag of each propstat name in `s`.
-fn last_propstat_closes(s: &str) -> std::collections::HashMap<&str, usize> {
-    let mut last = std::collections::HashMap::new();
-    for (i, _) in s.match_indices("</") {
-        let name = xml_name(&s[i + 2..]);
-        if is_propstat_name(name) && close_tag_len(&s[i..], name).is_some() {
-            last.insert(name, i);
-        }
-    }
-    last
-}
-
-/// Length of the close tag `</name>` that `s` starts with, allowing whitespace
-/// before the `>`.
-fn close_tag_len(s: &str, name: &str) -> Option<usize> {
-    let after = s.strip_prefix("</")?.strip_prefix(name)?;
-    let spaces = after.len() - after.trim_start().len();
-    after[spaces..]
-        .starts_with('>')
-        .then_some(2 + name.len() + spaces + 1)
-}
-
-/// Length of the open tag `s` starts with, up to and including its `>`, skipping
-/// any `>` inside a quoted attribute value. XML allows no `<` in a tag, even
-/// quoted, so the search stops at the next one.
-fn open_tag_len(s: &str) -> Option<usize> {
-    let mut quote = None;
-    for (i, b) in s.bytes().enumerate() {
-        match (quote, b) {
-            (_, b'<') if i > 0 => return None,
-            (None, b'"' | b'\'') => quote = Some(b),
-            (Some(q), _) if b == q => quote = None,
-            (None, b'>') => return Some(i + 1),
-            _ => {}
-        }
-    }
-    None
-}
-
-/// Find the close tag `</name>` in `s`, allowing whitespace before the `>`,
-/// returning where it starts and its length.
-fn find_element_close(s: &str, name: &str) -> Option<(usize, usize)> {
-    let open = format!("</{name}");
-    s.match_indices(&open)
-        .find_map(|(i, _)| Some((i, close_tag_len(&s[i..], name)?)))
-}
-
-/// Whether `p` is a namespace prefix as `extract_tag` reads one: 1 to 10
-/// letters, digits or underscores. `strip_propstat_blocks` accepts more.
-fn is_xml_prefix(p: &str) -> bool {
-    !p.is_empty() && p.chars().count() <= 10 && p.chars().all(|c| c.is_alphanumeric() || c == '_')
-}
-
-fn parse_event_responses(xml: &str) -> Vec<RawEvent> {
-    let mut events = Vec::new();
-    for response_block in split_responses(xml) {
-        let href = extract_tag(response_block, "d:href").unwrap_or_default();
-        let ical_data = extract_tag(response_block, "cal:calendar-data")
-            .or_else(|| extract_tag(response_block, "c:calendar-data"))
-            .map(|s| crate::utils::normalize_line_endings(&s).into_owned())
-            .unwrap_or_default();
-        if !ical_data.is_empty() {
-            events.push(RawEvent { href, ical_data });
-        }
-    }
-    events
-}
-
-/// Split a multistatus XML response into individual response blocks.
-/// Handles multiple namespace prefixes: `<d:response>`, `<D:response>`, `<response>`,
-/// and any arbitrary prefix (e.g. `<a:response>`).
-fn split_responses(xml: &str) -> Vec<&str> {
-    // Positions of every opening `response` tag under any (or no) prefix, in
-    // document order. A following '>' or whitespace rules out longer names
-    // like `responsedescription`. Each match only looks back over its own
-    // prefix, so this stays linear.
-    let starts: Vec<usize> = xml
-        .match_indices("response")
-        .filter_map(|(idx, _)| {
-            let end = idx + "response".len();
-            if !xml[end..].starts_with(|c: char| c == '>' || c.is_whitespace()) {
-                return None;
-            }
-            let before = &xml[..idx];
-            if before.ends_with('<') {
-                return Some(idx - 1);
-            }
-            let prefix = before.strip_suffix(':')?;
-            let rest = prefix
-                .trim_end_matches(|c: char| c.is_alphanumeric() || matches!(c, '-' | '_' | '.'));
-            (rest.len() < prefix.len() && rest.ends_with('<')).then(|| rest.len() - 1)
-        })
-        .collect();
-
-    // Each block runs from after the tag's '>' (past any attributes, such as
-    // Kerio Connect's `<a:response xmlns:f="…">`) to the next tag, or the end
-    // of the document. Tags without a '>' are skipped.
-    starts
-        .iter()
-        .enumerate()
-        .filter_map(|(n, &i)| {
-            let end = starts.get(n + 1).copied().unwrap_or(xml.len());
-            let gt = xml[i..end].find('>')?;
-            Some(&xml[i + gt + 1..end])
-        })
-        .collect()
-}
-
-/// Known namespace prefix aliases for CalDAV servers.
-/// Maps canonical prefixes to alternatives seen in the wild.
-const PREFIX_ALIASES: &[(&str, &[&str])] = &[
-    ("d", &["D"]),                 // DAV: namespace
-    ("cal", &["C", "CAL"]),        // CalDAV namespace (SOGo uses C:)
-    ("c", &["C", "cal"]),          // CalDAV namespace (alternate)
-    ("cso", &["cs", "CSO", "CS"]), // Calendar Server namespace
-    ("aic", &["x1", "AIC"]),       // Apple iCal namespace
-];
-
-/// Extract the text content of an XML tag, trying multiple namespace prefix variants.
-/// For example, `extract_tag(xml, "d:href")` will also try `D:href` and `href` (unprefixed).
-fn extract_tag(xml: &str, tag: &str) -> Option<String> {
-    // Build list of variants: original, aliases, unprefixed
-    let mut variants = vec![tag.to_string()];
-    if let Some(colon) = tag.find(':') {
-        let prefix = &tag[..colon];
-        let local = &tag[colon + 1..];
-
-        // Add known aliases
-        for &(canonical, aliases) in PREFIX_ALIASES {
-            if prefix.eq_ignore_ascii_case(canonical) {
-                for alias in aliases {
-                    variants.push(format!("{}:{}", alias, local));
-                }
-                break;
-            }
-        }
-
-        // Swap case as fallback: d:href -> D:href, D:href -> d:href
-        let alt_prefix = if prefix.chars().all(|c| c.is_lowercase()) {
-            prefix.to_uppercase()
-        } else {
-            prefix.to_lowercase()
-        };
-        let swapped = format!("{}:{}", alt_prefix, local);
-        if !variants.contains(&swapped) {
-            variants.push(swapped);
-        }
-
-        // Also try unprefixed (default namespace)
-        variants.push(local.to_string());
-    }
-
-    for variant in &variants {
-        if let Some(result) = extract_tag_exact(xml, variant) {
-            return Some(result);
-        }
-    }
-
-    // Final fallback: search for any prefix with this local name (handles arbitrary prefixes like SOGo's "a:")
-    if let Some(colon) = tag.find(':') {
-        let local = &tag[colon + 1..];
-        if let Some(result) = extract_tag_any_prefix(xml, local) {
-            return Some(result);
-        }
-    }
-
-    None
-}
-
-fn extract_tag_exact(xml: &str, tag: &str) -> Option<String> {
-    let open = format!("<{}", tag);
-    let close = format!("</{}>", tag);
-    if let Some(start) = xml.find(&open) {
-        // Skip past any attributes on the opening tag (e.g. <aic:calendar-color symbolic-color="custom">)
-        let after_open = &xml[start + open.len()..];
-        let content_start = if after_open.starts_with('>') {
-            start + open.len() + 1
-        } else {
-            start + open.len() + after_open.find('>')? + 1
-        };
-        if let Some(end) = find_close_tag(&xml[content_start..], &close) {
-            let value = xml_text(&xml[content_start..content_start + end])
-                .trim()
-                .to_string();
-            if !value.is_empty() {
-                return Some(value);
-            }
-        }
-    }
-    None
-}
-
-/// Position of `close` in `content`, ignoring matches inside CDATA sections
-/// (a CDATA display name may itself contain `</d:displayname>`).
-fn find_close_tag(content: &str, close: &str) -> Option<usize> {
-    let mut pos = 0;
-    loop {
-        let rest = &content[pos..];
-        let close_at = rest.find(close)?;
-        match rest.find("<![CDATA[") {
-            Some(cdata_at) if cdata_at < close_at => {
-                let cdata_end = rest[cdata_at..].find("]]>")?;
-                pos += cdata_at + cdata_end + 3;
-            }
-            _ => return Some(pos + close_at),
-        }
-    }
-}
-
 /// Escape text for use as XML element content.
 fn xml_escape(text: &str) -> String {
     text.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
-}
-
-/// Turn the raw content of an element into its text value: unwrap CDATA
-/// sections (Fastmail sends `<d:displayname><![CDATA[Work]]></d:displayname>`)
-/// and decode entity references (`&amp;`, `&#13;`, ...) outside them.
-/// Content containing child elements is returned unchanged so callers can
-/// keep extracting from it (e.g. `<d:href>` inside `calendar-home-set`).
-fn xml_text(raw: &str) -> String {
-    const CDATA_OPEN: &str = "<![CDATA[";
-    const CDATA_CLOSE: &str = "]]>";
-    let mut out = String::with_capacity(raw.len());
-    let mut rest = raw;
-    loop {
-        let (text, cdata) = match rest.find(CDATA_OPEN) {
-            Some(i) => (&rest[..i], Some(&rest[i + CDATA_OPEN.len()..])),
-            None => (rest, None),
-        };
-        if text.contains('<') {
-            return raw.to_string();
-        }
-        out.push_str(&decode_entities(text));
-        let Some(after_open) = cdata else {
-            return out;
-        };
-        let Some(end) = after_open.find(CDATA_CLOSE) else {
-            return raw.to_string();
-        };
-        out.push_str(&after_open[..end]);
-        rest = &after_open[end + CDATA_CLOSE.len()..];
-    }
-}
-
-/// Decode the predefined XML entities and numeric character references,
-/// leaving unknown or malformed references as they are.
-fn decode_entities(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    let mut rest = text;
-    while let Some(amp) = rest.find('&') {
-        out.push_str(&rest[..amp]);
-        let after = &rest[amp + 1..];
-        let decoded = after.find(';').and_then(|semi| {
-            let name = &after[..semi];
-            let ch = match name {
-                "amp" => Some('&'),
-                "lt" => Some('<'),
-                "gt" => Some('>'),
-                "quot" => Some('"'),
-                "apos" => Some('\''),
-                _ => name
-                    .strip_prefix("#x")
-                    .or_else(|| name.strip_prefix("#X"))
-                    .and_then(|hex| u32::from_str_radix(hex, 16).ok())
-                    .or_else(|| name.strip_prefix('#').and_then(|dec| dec.parse().ok()))
-                    .and_then(char::from_u32),
-            };
-            ch.map(|c| (c, semi))
-        });
-        match decoded {
-            Some((c, semi)) => {
-                out.push(c);
-                rest = &after[semi + 1..];
-            }
-            None => {
-                out.push('&');
-                rest = after;
-            }
-        }
-    }
-    out.push_str(rest);
-    out
-}
-
-/// Search for a tag by its local name with any (or no) namespace prefix.
-/// For example, `extract_tag_any_prefix(xml, "calendar-home-set")` will match
-/// `<a:calendar-home-set>`, `<xyz:calendar-home-set>`, or `<calendar-home-set>`.
-fn extract_tag_any_prefix(xml: &str, local_name: &str) -> Option<String> {
-    // Pattern: find any occurrence of ":local_name" preceded by "<" and a short prefix,
-    // or the tag without a prefix
-    let search = format!(":{}", local_name);
-    let mut pos = 0;
-    while pos < xml.len() {
-        // Look for ":local_name" or "<local_name"
-        if let Some(colon_pos) = xml[pos..].find(&search) {
-            let abs_colon = pos + colon_pos;
-            // Walk backwards to find the "<" and extract the prefix
-            let mut lt_pos = abs_colon;
-            while lt_pos > 0 && xml.as_bytes()[lt_pos - 1] != b'<' {
-                lt_pos -= 1;
-            }
-            if lt_pos > 0 {
-                lt_pos -= 1; // point to '<'
-                let full_tag = &xml[lt_pos + 1..abs_colon + 1 + local_name.len()];
-                // Verify the prefix is a simple XML name (letters/digits, typically 1-3 chars)
-                let prefix_part = &xml[lt_pos + 1..abs_colon];
-                if is_xml_prefix(prefix_part) {
-                    if let Some(result) = extract_tag_exact(xml, full_tag) {
-                        return Some(result);
-                    }
-                }
-            }
-            pos = abs_colon + 1;
-        } else {
-            break;
-        }
-    }
-    None
 }
 
 // --- XML Templates ---
@@ -1330,265 +875,267 @@ const REPORT_CALENDAR_DATA: &str = r#"<?xml version="1.0" encoding="utf-8"?>
 mod tests {
     use super::*;
 
-    // --- extract_tag ---
+    // --- HTTP status and body checks (#325) ---
 
-    #[test]
-    fn extract_simple_tag() {
-        let xml = "<d:href>/principals/users/alice/</d:href>";
-        assert_eq!(
-            extract_tag(xml, "d:href"),
-            Some("/principals/users/alice/".to_string())
-        );
+    /// One response carrying everything the four sync calls read: a calendar
+    /// resourcetype for the listing, calendar data for the REPORTs, and a
+    /// sync token.
+    const MULTISTATUS: &str = r#"<d:multistatus xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav"><d:response><d:href>/dav/cal/e.ics</d:href><d:propstat><d:prop><d:resourcetype><c:calendar/></d:resourcetype><c:calendar-data>BEGIN:VCALENDAR</c:calendar-data></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response><d:sync-token>t2</d:sync-token></d:multistatus>"#;
+
+    /// A server answering every request with what `reply` returns for its
+    /// method and body: (status, content type, body).
+    async fn serve<F>(reply: F) -> String
+    where
+        F: Fn(&str, &str) -> (u16, &'static str, Vec<u8>) + Clone + Send + Sync + 'static,
+    {
+        use axum::http::{header, Method, StatusCode};
+        let app = axum::Router::new().fallback(move |method: Method, body: String| {
+            let reply = reply.clone();
+            async move {
+                let (status, content_type, bytes) = reply(method.as_str(), &body);
+                (
+                    StatusCode::from_u16(status).unwrap(),
+                    [(header::CONTENT_TYPE, content_type)],
+                    bytes,
+                )
+            }
+        });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+        format!("http://127.0.0.1:{port}/dav/")
     }
 
-    #[test]
-    fn extract_tag_with_attributes() {
-        let xml = r#"<aic:calendar-color symbolic-color="custom">#1F6BFF</aic:calendar-color>"#;
-        assert_eq!(
-            extract_tag(xml, "aic:calendar-color"),
-            Some("#1F6BFF".to_string())
-        );
+    /// A server answering one request with a chunked 207 (no length known
+    /// up front), with the extra `headers` lines.
+    async fn serve_chunked(headers: &'static str, chunks: Vec<Vec<u8>>) -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = [0u8; 4096];
+            let _ = socket.read(&mut request).await;
+            let mut out = format!(
+                "HTTP/1.1 207 Multi-Status\r\n{headers}Transfer-Encoding: chunked\r\nConnection: close\r\n\r\n"
+            )
+            .into_bytes();
+            for chunk in chunks {
+                out.extend(format!("{:x}\r\n", chunk.len()).bytes());
+                out.extend(chunk);
+                out.extend(b"\r\n");
+            }
+            out.extend(b"0\r\n\r\n");
+            let _ = socket.write_all(&out).await;
+        });
+        format!("http://127.0.0.1:{port}/")
     }
 
-    #[test]
-    fn extract_tag_not_found() {
-        let xml = "<d:href>/path/</d:href>";
-        assert_eq!(extract_tag(xml, "d:displayname"), None);
+    async fn get(url: &str) -> reqwest::Response {
+        reqwest::Client::new().get(url).send().await.unwrap()
     }
 
-    #[test]
-    fn extract_tag_empty_content() {
-        let xml = "<d:displayname></d:displayname>";
-        assert_eq!(extract_tag(xml, "d:displayname"), None);
+    #[tokio::test]
+    async fn error_statuses_fail_every_call_the_sync_acts_on() {
+        let cases: [(u16, &'static str, &'static str); 3] = [
+            (500, "text/plain", ""),
+            (
+                503,
+                "text/html",
+                "<html><body><h1>503 Service Unavailable</h1><p>Back soon</p></body></html>",
+            ),
+            (403, "application/xml", ""),
+        ];
+        for (status, content_type, body) in cases {
+            let base = serve(move |_, _| (status, content_type, body.as_bytes().to_vec())).await;
+            let client = CaldavClient::new(&base, "u", "p");
+            let code = status.to_string();
+            let errors = [
+                client.list_calendars("/dav/").await.map(|_| ()),
+                client.fetch_events("/dav/cal/").await.map(|_| ()),
+                client
+                    .fetch_events_since("/dav/cal/", "20260101T000000Z")
+                    .await
+                    .map(|_| ()),
+                client
+                    .sync_collection("/dav/cal/", Some("t1"))
+                    .await
+                    .map(|_| ()),
+                client.sync_collection("/dav/cal/", None).await.map(|_| ()),
+                client.discover_principal().await.map(|_| ()),
+            ];
+            for (n, result) in errors.into_iter().enumerate() {
+                let err = format!("{:#}", result.unwrap_err());
+                assert!(err.contains(&code), "call {n} on {status}: {err}");
+            }
+        }
+        // The body never reaches the message: on a shared calendar an error
+        // page can quote other people's events, and the message is stored.
+        let base = serve(|_, _| {
+            (
+                503,
+                "text/html",
+                b"<p>SUMMARY:Alice - medical appointment</p>".to_vec(),
+            )
+        })
+        .await;
+        let client = CaldavClient::new(&base, "u", "p");
+        let errors = [
+            client.fetch_events("/dav/cal/").await.map(|_| ()),
+            client.list_calendars("/dav/").await.map(|_| ()),
+            client.put_event("/dav/cal/", "x", "BEGIN:VCALENDAR").await,
+            client.delete_event("/dav/cal/", "x").await,
+        ];
+        for result in errors {
+            let err = format!("{:#}", result.unwrap_err());
+            assert!(err.contains("503 Service Unavailable"), "{err}");
+            assert!(!err.contains("Alice"), "{err}");
+        }
     }
 
-    #[test]
-    fn extract_tag_whitespace_content() {
-        let xml = "<d:displayname>  My Calendar  </d:displayname>";
-        assert_eq!(
-            extract_tag(xml, "d:displayname"),
-            Some("My Calendar".to_string())
-        );
+    #[tokio::test]
+    async fn multistatus_answers_are_read_under_207_and_200() {
+        for status in [207, 200] {
+            let base =
+                serve(move |_, _| (status, "application/xml", MULTISTATUS.as_bytes().to_vec()))
+                    .await;
+            let client = CaldavClient::new(&base, "u", "p");
+            assert_eq!(client.list_calendars("/dav/").await.unwrap().len(), 1);
+            assert_eq!(client.fetch_events("/dav/cal/").await.unwrap().len(), 1);
+            let since = client
+                .fetch_events_since("/dav/cal/", "20260101T000000Z")
+                .await
+                .unwrap();
+            assert_eq!(since[0].ical_data, "BEGIN:VCALENDAR");
+            let delta = client
+                .sync_collection("/dav/cal/", Some("t1"))
+                .await
+                .unwrap();
+            assert_eq!(delta.new_sync_token.as_deref(), Some("t2"));
+        }
     }
 
-    #[test]
-    fn extract_tag_cdata() {
-        // Fastmail wraps displayname in CDATA
-        let xml = "<d:displayname><![CDATA[Work]]></d:displayname>";
-        assert_eq!(extract_tag(xml, "d:displayname"), Some("Work".to_string()));
-        let xml = "<d:displayname><![CDATA[ R&D <team> ]]></d:displayname>";
-        assert_eq!(
-            extract_tag(xml, "d:displayname"),
-            Some("R&D <team>".to_string())
-        );
-        let xml = "<d:displayname><![CDATA[]]></d:displayname>";
-        assert_eq!(extract_tag(xml, "d:displayname"), None);
-        // A closing tag inside CDATA doesn't end the element
-        let xml = "<d:displayname><![CDATA[a</d:displayname>b]]></d:displayname>";
-        assert_eq!(
-            extract_tag(xml, "d:displayname"),
-            Some("a</d:displayname>b".to_string())
-        );
+    #[tokio::test]
+    async fn empty_or_unexpected_success_answers_are_errors() {
+        for (status, body) in [
+            (207, ""),
+            (200, ""),
+            (200, "<html><body/></html>"),
+            (204, ""),
+        ] {
+            let base =
+                serve(move |_, _| (status, "application/xml", body.as_bytes().to_vec())).await;
+            let client = CaldavClient::new(&base, "u", "p");
+            assert!(
+                client.fetch_events("/dav/cal/").await.is_err(),
+                "{status} {body:?}"
+            );
+            assert!(client.list_calendars("/dav/").await.is_err());
+            assert!(client
+                .sync_collection("/dav/cal/", Some("t"))
+                .await
+                .is_err());
+        }
     }
 
-    #[test]
-    fn sync_token_roundtrips_through_xml() {
-        let xml = "<d:sync-token>https://example.com/sync?a=1&amp;b=&lt;2&gt;</d:sync-token>";
-        let token = extract_tag(xml, "d:sync-token").unwrap();
-        assert_eq!(token, "https://example.com/sync?a=1&b=<2>");
-        assert_eq!(
-            xml_escape(&token),
-            "https://example.com/sync?a=1&amp;b=&lt;2&gt;"
-        );
-    }
-
-    #[test]
-    fn extract_tag_decodes_entities() {
-        let xml = "<d:displayname>Sales &amp; Marketing &#x2764;&#65;</d:displayname>";
-        assert_eq!(
-            extract_tag(xml, "d:displayname"),
-            Some("Sales & Marketing \u{2764}A".to_string())
-        );
-        let xml = "<C:calendar-data>BEGIN:VCALENDAR&#13;\nSUMMARY:a &lt; b &unknown; &amp</C:calendar-data>";
-        assert_eq!(
-            extract_tag(xml, "cal:calendar-data"),
-            Some("BEGIN:VCALENDAR\r\nSUMMARY:a < b &unknown; &amp".to_string())
-        );
-    }
-
-    #[test]
-    fn extract_tag_nested() {
-        let xml = "<d:current-user-principal><d:href>/principals/alice/</d:href></d:current-user-principal>";
-        // Searching for d:href within the principal block
-        assert_eq!(
-            extract_tag(xml, "d:href"),
-            Some("/principals/alice/".to_string())
-        );
-    }
-
-    // --- extract_tag case variants (SOGo uses D: and C:) ---
-
-    #[test]
-    fn extract_tag_uppercase_dav_prefix() {
-        let xml = "<D:href>/principals/users/alice/</D:href>";
-        assert_eq!(
-            extract_tag(xml, "d:href"),
-            Some("/principals/users/alice/".to_string())
-        );
-    }
-
-    #[test]
-    fn extract_tag_uppercase_caldav_prefix() {
-        let xml = "<C:calendar-home-set><D:href>/cal/home/</D:href></C:calendar-home-set>";
-        assert_eq!(
-            extract_tag(xml, "cal:calendar-home-set"),
-            Some("<D:href>/cal/home/</D:href>".to_string())
-        );
-    }
-
-    #[test]
-    fn extract_tag_unprefixed() {
-        let xml = "<href>/dav/principals/user/</href>";
-        assert_eq!(
-            extract_tag(xml, "d:href"),
-            Some("/dav/principals/user/".to_string())
-        );
-    }
-
-    // --- extract_tag arbitrary prefix (SOGo uses a: for CalDAV namespace) ---
-
-    #[test]
-    fn extract_tag_arbitrary_prefix() {
-        let xml = r#"<a:calendar-home-set><D:href xmlns:D="DAV:">/SOGo/dav/user/Calendar/</D:href></a:calendar-home-set>"#;
-        assert_eq!(
-            extract_tag(xml, "cal:calendar-home-set"),
-            Some(r#"<D:href xmlns:D="DAV:">/SOGo/dav/user/Calendar/</D:href>"#.to_string())
-        );
-    }
-
-    #[test]
-    fn extract_tag_sogo_calendar_home_full_flow() {
-        // Real SOGo response from issue #15
-        let xml = r#"<?xml version="1.0" encoding="utf-8"?>
-<D:multistatus xmlns:D="DAV:" xmlns:a="urn:ietf:params:xml:ns:caldav"><D:response><D:href>/SOGo/dav/guess.who@echirolles.fr/</D:href><D:propstat><D:status>HTTP/1.1 200 OK</D:status><D:prop><a:calendar-home-set><D:href xmlns:D="DAV:">/SOGo/dav/guess.who@echirolles.fr/Calendar/</D:href></a:calendar-home-set></D:prop></D:propstat></D:response></D:multistatus>"#;
-        // extract_tag should find calendar-home-set even with a: prefix
-        let inner = extract_tag(xml, "cal:calendar-home-set").unwrap();
-        let href = extract_tag(&inner, "d:href").unwrap();
-        assert_eq!(href, "/SOGo/dav/guess.who@echirolles.fr/Calendar/");
-    }
-
-    // --- split_responses ---
-
-    #[test]
-    fn split_responses_uppercase() {
-        let xml = r#"<D:multistatus><D:response><D:href>/a</D:href></D:response><D:response><D:href>/b</D:href></D:response></D:multistatus>"#;
-        let blocks = split_responses(xml);
-        assert_eq!(blocks.len(), 2);
-    }
-
-    #[test]
-    fn parse_calendars_kerio_namespace_on_response_tag() {
-        // Kerio Connect declares the CalDAV namespace on the <response> tag of
-        // calendar entries only; plain folders get a bare <a:response>.
-        let xml = r#"<a:multistatus xmlns:a="DAV:"><a:response><a:href>/u/MAIL/</a:href><a:propstat><a:prop><a:resourcetype><a:collection/></a:resourcetype><a:displayname>NonCalendarDir</a:displayname></a:prop></a:propstat></a:response><a:response xmlns:g="urn:ietf:params:xml:ns:caldav"><a:href>/u/CAL/</a:href><a:propstat><a:prop><a:resourcetype><a:collection/><g:calendar/></a:resourcetype><a:displayname>Calendar</a:displayname></a:prop></a:propstat></a:response></a:multistatus>"#;
-        let cals = parse_calendar_list(xml);
-        assert_eq!(cals.len(), 1);
-        assert_eq!(cals[0].href, "/u/CAL/");
-        assert_eq!(cals[0].display_name.as_deref(), Some("Calendar"));
-    }
-
-    #[test]
-    fn parse_events_kerio_bare_cr_line_endings() {
-        // Kerio Connect separates iCalendar lines with a bare CR.
-        let xml = "<a:multistatus xmlns:a=\"DAV:\" xmlns:c=\"urn:ietf:params:xml:ns:caldav\">\
-<a:response><a:href>/full-calendars/d.com/u/CAL/x.eml</a:href>\
-<a:propstat><a:status>HTTP/1.1 200 OK</a:status><a:prop>\
-<c:calendar-data>BEGIN:VCALENDAR\rVERSION:2.0\rBEGIN:VEVENT\r\
-UID:kerio-1\rRRULE:FREQ=WEEKLY;UNTIL=20270131T225900Z;INTERVAL=2;BYDAY=TU\r\
-DTSTART;TZID=Europe/Amsterdam:20260519T133000\r\
-DTEND;TZID=Europe/Amsterdam:20260519T140000\r\
-TRANSP:OPAQUE\rEND:VEVENT\rEND:VCALENDAR\r\n\
-</c:calendar-data></a:prop></a:propstat></a:response></a:multistatus>";
-
-        let events = parse_event_responses(xml);
+    #[tokio::test]
+    async fn a_rejected_time_range_still_falls_back_to_the_full_fetch() {
+        let base = serve(|method, body| {
+            if method == "REPORT" && body.contains("time-range") {
+                (400, "text/plain", b"time-range not supported".to_vec())
+            } else {
+                (207, "application/xml", MULTISTATUS.as_bytes().to_vec())
+            }
+        })
+        .await;
+        let client = CaldavClient::new(&base, "u", "p");
+        let events = client
+            .fetch_events_since("/dav/cal/", "20260101T000000Z")
+            .await
+            .unwrap();
         assert_eq!(events.len(), 1);
-        let vevent = &crate::utils::split_vevents(&events[0].ical_data)[0];
-        let field = |name| crate::utils::extract_vevent_field(vevent, name);
-        assert_eq!(field("UID").as_deref(), Some("kerio-1"));
-        assert_eq!(field("DTSTART").as_deref(), Some("20260519T133000"));
-        assert_eq!(field("DTEND").as_deref(), Some("20260519T140000"));
-        assert!(field("RRULE").is_some());
+
+        // The fallback checks its own status.
+        let base = serve(|method, body| {
+            if method == "REPORT" && body.contains("time-range") {
+                (400, "text/plain", Vec::new())
+            } else {
+                (500, "text/plain", Vec::new())
+            }
+        })
+        .await;
+        let err = CaldavClient::new(&base, "u", "p")
+            .fetch_events_since("/dav/cal/", "20260101T000000Z")
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("500"), "{err}");
     }
 
-    #[test]
-    fn split_responses_mixed_prefixes_with_attributes() {
-        // Both prefixes are bound to DAV:. The first response carries an
-        // attribute; each response must keep its own href and properties.
-        let xml = r#"<d:multistatus xmlns:d="DAV:" xmlns:a="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav"><d:response xmlns:x="urn:x"><d:href>/u/MAIL/</d:href><d:propstat><d:prop><d:resourcetype><d:collection/></d:resourcetype><d:displayname>Mail</d:displayname></d:prop></d:propstat></d:response><a:response><a:href>/u/CAL/</a:href><a:propstat><a:prop><a:resourcetype><a:collection/><c:calendar/></a:resourcetype><a:displayname>Calendar</a:displayname></a:prop></a:propstat></a:response></d:multistatus>"#;
-        let blocks = split_responses(xml);
-        assert_eq!(blocks.len(), 2);
-        assert_eq!(
-            extract_tag(blocks[0], "d:href").as_deref(),
-            Some("/u/MAIL/")
-        );
-        assert_eq!(
-            extract_tag(blocks[0], "d:displayname").as_deref(),
-            Some("Mail")
-        );
-        assert!(!has_calendar_resourcetype(blocks[0]));
-        assert_eq!(extract_tag(blocks[1], "d:href").as_deref(), Some("/u/CAL/"));
-        assert_eq!(
-            extract_tag(blocks[1], "d:displayname").as_deref(),
-            Some("Calendar")
-        );
-        let cals = parse_calendar_list(xml);
-        assert_eq!(cals.len(), 1);
-        assert_eq!(cals[0].href, "/u/CAL/");
+    #[tokio::test]
+    async fn a_rejected_sync_token_still_reads_as_unsupported() {
+        for status in [403, 405, 412] {
+            let base = serve(move |_, _| (status, "application/xml", Vec::new())).await;
+            let err = CaldavClient::new(&base, "u", "p")
+                .sync_collection("/dav/cal/", Some("old"))
+                .await
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains("sync-token invalid or not supported"), "{err}");
+        }
     }
 
-    // --- parse_calendar_list with uppercase prefixes (SOGo) ---
+    #[tokio::test]
+    async fn bodies_over_the_cap_are_refused_as_they_arrive() {
+        // A declared length over the cap fails before the body is read.
+        let base = serve(|_, _| (207, "application/xml", vec![b'x'; 2000])).await;
+        let err = read_body(get(&base).await, 1000)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("2000 bytes"), "{err}");
+        assert_eq!(read_body(get(&base).await, 2000).await.unwrap().len(), 2000);
 
-    #[test]
-    fn parse_calendars_sogo_uppercase() {
-        let xml = r#"
-<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
-  <D:response>
-    <D:href>/SOGo/dav/user/Calendar/personal/</D:href>
-    <D:propstat><D:prop>
-      <D:resourcetype><D:collection/><C:calendar/></D:resourcetype>
-      <D:displayname>Personal Calendar</D:displayname>
-    </D:prop></D:propstat>
-  </D:response>
-  <D:response>
-    <D:href>/SOGo/dav/user/Calendar/</D:href>
-    <D:propstat><D:prop>
-      <D:resourcetype><D:collection/></D:resourcetype>
-    </D:prop></D:propstat>
-  </D:response>
-</D:multistatus>"#;
-
-        let cals = parse_calendar_list(xml);
-        assert_eq!(cals.len(), 1);
-        assert_eq!(cals[0].href, "/SOGo/dav/user/Calendar/personal/");
-        assert_eq!(cals[0].display_name, Some("Personal Calendar".to_string()));
+        // Without a length (chunked), reading stops once past the cap.
+        let chunks = vec![vec![b'x'; 600]; 3];
+        let url = serve_chunked("", chunks.clone()).await;
+        let err = read_body(get(&url).await, 1000)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("more than the 1000 bytes"), "{err}");
+        let url = serve_chunked("", chunks).await;
+        assert_eq!(read_body(get(&url).await, 1800).await.unwrap().len(), 1800);
     }
 
-    #[test]
-    fn parse_calendars_sogo_unprefixed_xmlns() {
-        // SoGo uses unprefixed <calendar xmlns="urn:ietf:params:xml:ns:caldav"/> instead of <C:calendar/>
-        let xml = r#"<?xml version="1.0" encoding="utf-8"?>
-<D:multistatus xmlns:D="DAV:" xmlns:b="http://calendarserver.org/ns/" xmlns:a="http://apple.com/ns/ical/"><D:response><D:href>/SOGo/dav/user@example.com/Calendar/</D:href><D:propstat><D:status>HTTP/1.1 200 OK</D:status><D:prop><D:resourcetype><D:collection/></D:resourcetype><D:displayname>Calendar</D:displayname></D:prop></D:propstat></D:response><D:response><D:href>/SOGo/dav/user@example.com/Calendar/personal/</D:href><D:propstat><D:status>HTTP/1.1 200 OK</D:status><D:prop><D:resourcetype><D:collection/><calendar xmlns="urn:ietf:params:xml:ns:caldav"/><vevent-collection xmlns="http://groupdav.org/"/><vtodo-collection xmlns="http://groupdav.org/"/><schedule-outbox xmlns="urn:ietf:params:xml:ns:caldav"/></D:resourcetype><D:displayname>Personal Calendar</D:displayname><a:calendar-color>#AAAAAAFF</a:calendar-color><b:getctag>-1</b:getctag><D:sync-token>-1</D:sync-token></D:prop></D:propstat></D:response></D:multistatus>"#;
+    #[tokio::test]
+    async fn parses_run_on_the_blocking_pool_and_hand_the_text_back() {
+        let caller = std::thread::current().id();
+        let (parser, text) =
+            parse_blocking("<x/>".to_string(), |_| Ok(std::thread::current().id())).await;
+        assert_ne!(parser.unwrap(), caller, "parsed on the async thread");
+        assert_eq!(text, "<x/>");
+        let (failed, text) = parse_blocking("bad".to_string(), parse_event_responses).await;
+        assert!(failed.is_err());
+        assert_eq!(text, "bad");
+    }
 
-        let cals = parse_calendar_list(xml);
-        assert_eq!(cals.len(), 1);
-        assert_eq!(
-            cals[0].href,
-            "/SOGo/dav/user@example.com/Calendar/personal/"
-        );
-        assert_eq!(cals[0].display_name, Some("Personal Calendar".to_string()));
-        assert_eq!(cals[0].color, Some("#AAAAAAFF".to_string()));
-        assert_eq!(cals[0].ctag, Some("-1".to_string()));
-        assert_eq!(cals[0].sync_token, Some("-1".to_string()));
+    #[tokio::test]
+    async fn bodies_are_decoded_with_their_charset() {
+        let url = serve_chunked(
+            "Content-Type: application/xml; charset=\"ISO-8859-1\"\r\n",
+            vec![b"caf\xe9".to_vec()],
+        )
+        .await;
+        assert_eq!(read_body(get(&url).await, 100).await.unwrap(), "café");
+        let url = serve_chunked(
+            "Content-Type: application/xml\r\n",
+            vec!["café".as_bytes().to_vec()],
+        )
+        .await;
+        assert_eq!(read_body(get(&url).await, 100).await.unwrap(), "café");
     }
 
     // --- resolve_url ---
@@ -1658,563 +1205,6 @@ TRANSP:OPAQUE\rEND:VEVENT\rEND:VCALENDAR\r\n\
             client.resolve_url("/calendars/alice/"),
             "https://cal.example.com/calendars/alice/"
         );
-    }
-
-    // --- parse_calendar_list ---
-
-    #[test]
-    fn parse_calendars_filters_non_calendar() {
-        let xml = r#"
-<d:multistatus>
-  <d:response>
-    <d:href>/dav/calendars/alice/</d:href>
-    <d:propstat><d:prop>
-      <d:resourcetype><d:collection/></d:resourcetype>
-    </d:prop></d:propstat>
-  </d:response>
-  <d:response>
-    <d:href>/dav/calendars/alice/default/</d:href>
-    <d:propstat><d:prop>
-      <d:resourcetype><d:collection/><cal:calendar/></d:resourcetype>
-      <d:displayname>Personal</d:displayname>
-    </d:prop></d:propstat>
-  </d:response>
-  <d:response>
-    <d:href>/dav/calendars/alice/work/</d:href>
-    <d:propstat><d:prop>
-      <d:resourcetype><d:collection/><cal:calendar/></d:resourcetype>
-      <d:displayname>Work</d:displayname>
-      <aic:calendar-color>#FF0000</aic:calendar-color>
-      <cso:getctag>ctag-123</cso:getctag>
-    </d:prop></d:propstat>
-  </d:response>
-</d:multistatus>"#;
-
-        let cals = parse_calendar_list(xml);
-        assert_eq!(cals.len(), 2);
-
-        assert_eq!(cals[0].href, "/dav/calendars/alice/default/");
-        assert_eq!(cals[0].display_name, Some("Personal".to_string()));
-        assert_eq!(cals[0].color, None);
-
-        assert_eq!(cals[1].href, "/dav/calendars/alice/work/");
-        assert_eq!(cals[1].display_name, Some("Work".to_string()));
-        assert_eq!(cals[1].color, Some("#FF0000".to_string()));
-        assert_eq!(cals[1].ctag, Some("ctag-123".to_string()));
-    }
-
-    #[test]
-    fn parse_calendars_alternative_namespaces() {
-        // BlueMind uses x1: for colors and cs: for ctags
-        let xml = r#"
-<d:multistatus>
-  <d:response>
-    <d:href>/dav/cal/</d:href>
-    <d:propstat><d:prop>
-      <d:resourcetype><d:collection/><cal:calendar/></d:resourcetype>
-      <d:displayname>BlueMind Cal</d:displayname>
-      <x1:calendar-color>#00FF00</x1:calendar-color>
-      <cs:getctag>ctag-bm</cs:getctag>
-    </d:prop></d:propstat>
-  </d:response>
-</d:multistatus>"#;
-
-        let cals = parse_calendar_list(xml);
-        assert_eq!(cals.len(), 1);
-        assert_eq!(cals[0].color, Some("#00FF00".to_string()));
-        assert_eq!(cals[0].ctag, Some("ctag-bm".to_string()));
-    }
-
-    #[test]
-    fn parse_calendars_empty_response() {
-        let xml = "<d:multistatus></d:multistatus>";
-        let cals = parse_calendar_list(xml);
-        assert!(cals.is_empty());
-    }
-
-    #[test]
-    fn parse_calendars_radicale() {
-        // Radicale 3.7.3 (issue #132): default DAV namespace (unprefixed href/
-        // displayname/sync-token), C: for caldav, a SPACE before the self-closing
-        // slash (`<C:calendar />`), CR: addressbooks that must be skipped, and the
-        // principal collection itself (which must not be treated as a calendar).
-        let xml = r#"<?xml version='1.0' encoding='utf-8'?>
-<multistatus xmlns="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav" xmlns:CR="urn:ietf:params:xml:ns:carddav" xmlns:CS="http://calendarserver.org/ns/" xmlns:ICAL="http://apple.com/ns/ical/"><response><href>/greg/</href><propstat><prop><resourcetype><principal /><collection /></resourcetype></prop><status>HTTP/1.1 200 OK</status></propstat><propstat><prop><displayname /><ICAL:calendar-color /><CS:getctag /><sync-token /></prop><status>HTTP/1.1 404 Not Found</status></propstat></response><response><href>/greg/0ff70afa/</href><propstat><prop><resourcetype><C:calendar /><collection /></resourcetype><displayname>Calendrier Pro</displayname><ICAL:calendar-color>#f79f78ff</ICAL:calendar-color><CS:getctag>"ctag-pro"</CS:getctag><sync-token>http://radicale.org/ns/sync/pro</sync-token></prop><status>HTTP/1.1 200 OK</status></propstat></response><response><href>/greg/7d2395d4/</href><propstat><prop><resourcetype><CR:addressbook /><collection /></resourcetype><displayname>Contacts Pros</displayname><CS:getctag>"ctag-contacts"</CS:getctag><sync-token>http://radicale.org/ns/sync/contacts</sync-token></prop><status>HTTP/1.1 200 OK</status></propstat><propstat><prop><ICAL:calendar-color /></prop><status>HTTP/1.1 404 Not Found</status></propstat></response><response><href>/greg/a56013c9/</href><propstat><prop><resourcetype><C:calendar /><collection /></resourcetype><displayname>Calendrier Perso</displayname><ICAL:calendar-color>#74bda7ff</ICAL:calendar-color><CS:getctag>"ctag-perso"</CS:getctag><sync-token>http://radicale.org/ns/sync/perso</sync-token></prop><status>HTTP/1.1 200 OK</status></propstat></response></multistatus>"#;
-
-        let cals = parse_calendar_list(xml);
-        assert_eq!(
-            cals.len(),
-            2,
-            "should detect the two C:calendar collections, skipping principal + addressbook"
-        );
-
-        assert_eq!(cals[0].href, "/greg/0ff70afa/");
-        assert_eq!(cals[0].display_name, Some("Calendrier Pro".to_string()));
-        assert_eq!(cals[0].color, Some("#f79f78ff".to_string()));
-        assert_eq!(cals[0].ctag, Some("\"ctag-pro\"".to_string()));
-        assert_eq!(
-            cals[0].sync_token,
-            Some("http://radicale.org/ns/sync/pro".to_string())
-        );
-
-        assert_eq!(cals[1].href, "/greg/a56013c9/");
-        assert_eq!(cals[1].display_name, Some("Calendrier Perso".to_string()));
-        assert_eq!(cals[1].color, Some("#74bda7ff".to_string()));
-    }
-
-    #[test]
-    fn has_calendar_resourcetype_distinguishes_lookalikes() {
-        // Real calendar elements, various prefixes / spacing.
-        assert!(has_calendar_resourcetype("<C:calendar />"));
-        assert!(has_calendar_resourcetype("<C:calendar/>"));
-        assert!(has_calendar_resourcetype("<cal:calendar/>"));
-        assert!(has_calendar_resourcetype(
-            "<calendar xmlns=\"urn:ietf:params:xml:ns:caldav\"/>"
-        ));
-        assert!(has_calendar_resourcetype("<C:calendar></C:calendar>"));
-        // Lookalikes that must NOT count as a calendar resourcetype.
-        assert!(!has_calendar_resourcetype("<ICAL:calendar-color />"));
-        assert!(!has_calendar_resourcetype(
-            "<C:calendar-data>BEGIN:VCALENDAR</C:calendar-data>"
-        ));
-        assert!(!has_calendar_resourcetype(
-            "<C:supported-calendar-component-set />"
-        ));
-        assert!(!has_calendar_resourcetype(
-            "<CR:addressbook /><collection />"
-        ));
-        assert!(!has_calendar_resourcetype("<d:collection/>"));
-    }
-
-    // --- parse_event_responses ---
-
-    // --- parse_sync_response ---
-
-    #[test]
-    fn parse_sync_changes_and_deletions() {
-        let xml = r#"
-<d:multistatus xmlns:d="DAV:" xmlns:cal="urn:ietf:params:xml:ns:caldav">
-  <d:response>
-    <d:href>/cal/event1.ics</d:href>
-    <d:propstat>
-      <d:prop>
-        <d:getetag>"etag1"</d:getetag>
-        <cal:calendar-data>BEGIN:VCALENDAR
-BEGIN:VEVENT
-UID:ev1
-SUMMARY:Changed event
-END:VEVENT
-END:VCALENDAR</cal:calendar-data>
-      </d:prop>
-      <d:status>HTTP/1.1 200 OK</d:status>
-    </d:propstat>
-  </d:response>
-  <d:response>
-    <d:href>/cal/deleted-event.ics</d:href>
-    <d:status>HTTP/1.1 404 Not Found</d:status>
-  </d:response>
-  <d:sync-token>https://example.com/sync/new-token-456</d:sync-token>
-</d:multistatus>"#;
-
-        let result = parse_sync_response(xml);
-        assert_eq!(result.changed.len(), 1);
-        assert_eq!(result.changed[0].href, "/cal/event1.ics");
-        assert!(result.changed[0].ical_data.contains("UID:ev1"));
-        assert_eq!(result.deleted_hrefs, vec!["/cal/deleted-event.ics"]);
-        assert_eq!(
-            result.new_sync_token,
-            Some("https://example.com/sync/new-token-456".to_string())
-        );
-    }
-
-    #[test]
-    fn parse_sync_empty_delta() {
-        let xml = r#"
-<d:multistatus xmlns:d="DAV:">
-  <d:sync-token>https://example.com/sync/token-789</d:sync-token>
-</d:multistatus>"#;
-
-        let result = parse_sync_response(xml);
-        assert!(result.changed.is_empty());
-        assert!(result.deleted_hrefs.is_empty());
-        assert_eq!(
-            result.new_sync_token,
-            Some("https://example.com/sync/token-789".to_string())
-        );
-    }
-
-    #[test]
-    fn parse_sync_multiple_deletions() {
-        let xml = r#"
-<d:multistatus xmlns:d="DAV:">
-  <d:response>
-    <d:href>/cal/a.ics</d:href>
-    <d:status>HTTP/1.1 404 Not Found</d:status>
-  </d:response>
-  <d:response>
-    <d:href>/cal/b.ics</d:href>
-    <d:status>HTTP/1.1 404 Not Found</d:status>
-  </d:response>
-  <d:sync-token>token-new</d:sync-token>
-</d:multistatus>"#;
-
-        let result = parse_sync_response(xml);
-        assert!(result.changed.is_empty());
-        assert_eq!(result.deleted_hrefs.len(), 2);
-    }
-
-    /// Regression test for issue #107 / 2026-05-14 production incident.
-    ///
-    /// Per RFC 4918 §9.1, a `<d:response>` for an existing resource may carry
-    /// one or more `<d:propstat>` blocks, each with its own `<d:status>` that
-    /// describes which requested properties succeeded vs which were not found.
-    /// A 404 inside a propstat is a property-level "this prop doesn't exist on
-    /// this resource", NOT a resource-level deletion. Before the fix, the
-    /// parser took the first `<d:status>` it found anywhere in the response
-    /// block and misread a property-level 404 as a deleted href — which is
-    /// what cancelled customer bookings in production.
-    ///
-    /// This XML reproduces the failure shape: a response with a 404 propstat
-    /// (a property that doesn't exist on the resource) ordered BEFORE a 200
-    /// propstat that carries the actual calendar-data. The parser must
-    /// classify this as a `changed` event, not as a deletion.
-    #[test]
-    fn parse_sync_ignores_property_level_404_in_propstat() {
-        let xml = r#"
-<d:multistatus xmlns:d="DAV:" xmlns:cal="urn:ietf:params:xml:ns:caldav">
-  <d:response>
-    <d:href>/cal/live-event.ics</d:href>
-    <d:propstat>
-      <d:prop><d:getetag/></d:prop>
-      <d:status>HTTP/1.1 404 Not Found</d:status>
-    </d:propstat>
-    <d:propstat>
-      <d:prop>
-        <d:getetag>"abc-123"</d:getetag>
-        <cal:calendar-data>BEGIN:VCALENDAR
-BEGIN:VEVENT
-UID:still-here
-END:VEVENT
-END:VCALENDAR</cal:calendar-data>
-      </d:prop>
-      <d:status>HTTP/1.1 200 OK</d:status>
-    </d:propstat>
-  </d:response>
-  <d:sync-token>https://example.com/sync/t1</d:sync-token>
-</d:multistatus>"#;
-
-        let result = parse_sync_response(xml);
-        assert!(
-            result.deleted_hrefs.is_empty(),
-            "a 404 propstat must NOT be classified as a resource-level deletion; \
-             got deleted_hrefs={:?}",
-            result.deleted_hrefs
-        );
-        assert_eq!(result.changed.len(), 1);
-        assert_eq!(result.changed[0].href, "/cal/live-event.ics");
-        assert!(result.changed[0].ical_data.contains("UID:still-here"));
-    }
-
-    /// Companion to the above: confirm a genuine resource-level deletion
-    /// (a single `<d:status>` directly under `<d:response>`, no propstat)
-    /// is still correctly classified as a deleted href. Strip-only-propstat
-    /// must not over-correct and ignore real deletions.
-    #[test]
-    fn parse_sync_still_detects_real_resource_deletion() {
-        let xml = r#"
-<d:multistatus xmlns:d="DAV:">
-  <d:response>
-    <d:href>/cal/actually-gone.ics</d:href>
-    <d:status>HTTP/1.1 404 Not Found</d:status>
-  </d:response>
-  <d:sync-token>https://example.com/sync/t2</d:sync-token>
-</d:multistatus>"#;
-
-        let result = parse_sync_response(xml);
-        assert_eq!(result.deleted_hrefs, vec!["/cal/actually-gone.ics"]);
-        assert!(result.changed.is_empty());
-    }
-
-    /// 410 Gone (per RFC 7231) means the resource was deliberately removed.
-    /// Some CalDAV servers return 410 instead of 404 for deletions. The parser
-    /// must treat both as resource-level deletions.
-    #[test]
-    fn parse_sync_treats_410_as_deletion() {
-        let xml = r#"
-<d:multistatus xmlns:d="DAV:">
-  <d:response>
-    <d:href>/cal/gone.ics</d:href>
-    <d:status>HTTP/1.1 410 Gone</d:status>
-  </d:response>
-</d:multistatus>"#;
-
-        let result = parse_sync_response(xml);
-        assert_eq!(result.deleted_hrefs, vec!["/cal/gone.ics"]);
-    }
-
-    /// Mixed response: a true deletion (no propstat, resource-level 404),
-    /// a "changed with property-level 404 propstat" entry, and a vanilla
-    /// 200 addition should all coexist in one multistatus and parse correctly.
-    #[test]
-    fn parse_sync_mixed_real_deletion_and_propstat_404() {
-        let xml = r#"
-<d:multistatus xmlns:d="DAV:" xmlns:cal="urn:ietf:params:xml:ns:caldav">
-  <d:response>
-    <d:href>/cal/deleted.ics</d:href>
-    <d:status>HTTP/1.1 404 Not Found</d:status>
-  </d:response>
-  <d:response>
-    <d:href>/cal/has-propstat-404.ics</d:href>
-    <d:propstat>
-      <d:prop><d:displayname/></d:prop>
-      <d:status>HTTP/1.1 404 Not Found</d:status>
-    </d:propstat>
-    <d:propstat>
-      <d:prop>
-        <d:getetag>"e1"</d:getetag>
-        <cal:calendar-data>BEGIN:VCALENDAR
-BEGIN:VEVENT
-UID:withpropstat404
-END:VEVENT
-END:VCALENDAR</cal:calendar-data>
-      </d:prop>
-      <d:status>HTTP/1.1 200 OK</d:status>
-    </d:propstat>
-  </d:response>
-  <d:response>
-    <d:href>/cal/normal.ics</d:href>
-    <d:propstat>
-      <d:prop>
-        <d:getetag>"e2"</d:getetag>
-        <cal:calendar-data>BEGIN:VCALENDAR
-BEGIN:VEVENT
-UID:normal
-END:VEVENT
-END:VCALENDAR</cal:calendar-data>
-      </d:prop>
-      <d:status>HTTP/1.1 200 OK</d:status>
-    </d:propstat>
-  </d:response>
-</d:multistatus>"#;
-
-        let result = parse_sync_response(xml);
-        assert_eq!(result.deleted_hrefs, vec!["/cal/deleted.ics"]);
-        assert_eq!(result.changed.len(), 2);
-        let hrefs: Vec<&str> = result.changed.iter().map(|e| e.href.as_str()).collect();
-        assert!(hrefs.contains(&"/cal/has-propstat-404.ics"));
-        assert!(hrefs.contains(&"/cal/normal.ics"));
-    }
-
-    #[test]
-    fn strip_propstat_blocks_handles_uppercase_and_unprefixed() {
-        // Lowercase prefix
-        let s = "<d:response><d:href>/a</d:href><d:propstat><d:status>404</d:status></d:propstat></d:response>";
-        let out = strip_propstat_blocks(s);
-        assert_eq!(out, "<d:response><d:href>/a</d:href></d:response>");
-
-        // Uppercase prefix (SOGo style)
-        let s = "<D:response><D:href>/b</D:href><D:propstat><D:status>404</D:status></D:propstat></D:response>";
-        let out = strip_propstat_blocks(s);
-        assert_eq!(out, "<D:response><D:href>/b</D:href></D:response>");
-
-        // Unprefixed
-        let s = "<response><href>/c</href><propstat><status>404</status></propstat></response>";
-        let out = strip_propstat_blocks(s);
-        assert_eq!(out, "<response><href>/c</href></response>");
-
-        // `<propstats>` (different element with similar prefix) must NOT be stripped
-        let s = "<d:response><d:propstats-wrapper>keep me</d:propstats-wrapper></d:response>";
-        let out = strip_propstat_blocks(s);
-        assert!(out.contains("propstats-wrapper"));
-        assert!(out.contains("keep me"));
-    }
-
-    #[test]
-    fn strip_propstat_blocks_handles_any_prefix() {
-        let s = "<a:response><a:href>/e</a:href><a:propstat><a:status>HTTP/1.1 404 Not Found</a:status></a:propstat><a:status>HTTP/1.1 200 OK</a:status></a:response>";
-        let out = strip_propstat_blocks(s);
-        assert_eq!(
-            out,
-            "<a:response><a:href>/e</a:href><a:status>HTTP/1.1 200 OK</a:status></a:response>"
-        );
-
-        // Several blocks, attributes on the open tag, mixed prefixes.
-        let s = "<x><ns0:propstat id=\"1\">a</ns0:propstat>k<propstat>b</propstat><D:propstat>c</D:propstat></x>";
-        assert_eq!(strip_propstat_blocks(s), "<x>k</x>");
-
-        // An open tag with no close is left in place.
-        let s = "<a:response><a:propstat>broken</a:response>";
-        assert_eq!(strip_propstat_blocks(s), s);
-        let s = "<r><a:propstat>broken<d:propstat><d:status>404</d:status></d:propstat></r>";
-        assert_eq!(strip_propstat_blocks(s), "<r><a:propstat>broken</r>");
-
-        // A self-closing one is dropped without swallowing the next block.
-        let s = "<r><d:propstat/><d:propstat><d:status>404</d:status></d:propstat></r>";
-        assert_eq!(strip_propstat_blocks(s), "<r></r>");
-    }
-
-    // --- propfind_resource_exists ---
-
-    #[test]
-    fn propfind_resource_level_404_means_gone() {
-        let xml = r#"<d:multistatus xmlns:d="DAV:"><d:response><d:href>/cal/x.ics</d:href>
-<d:status>HTTP/1.1 404 Not Found</d:status></d:response></d:multistatus>"#;
-        assert_eq!(propfind_resource_exists(xml), Some(false));
-        let gone = xml.replace("404 Not Found", "410 Gone");
-        assert_eq!(propfind_resource_exists(&gone), Some(false));
-    }
-
-    #[test]
-    fn propfind_propstat_means_present_even_with_a_missing_property() {
-        let found = r#"<D:multistatus xmlns:D="DAV:"><D:response><D:href>/cal/x.ics</D:href>
-<D:propstat><D:prop><D:getetag>"1"</D:getetag></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat>
-</D:response></D:multistatus>"#;
-        assert_eq!(propfind_resource_exists(found), Some(true));
-        // getetag not returned: a property-level 404 on a resource that exists.
-        let missing_prop = r#"<multistatus xmlns="DAV:"><response><href>/cal/x.ics</href>
-<propstat><prop><getetag/></prop><status>HTTP/1.1 404 Not Found</status></propstat>
-</response></multistatus>"#;
-        assert_eq!(propfind_resource_exists(missing_prop), Some(true));
-    }
-
-    #[test]
-    fn propfind_missing_property_under_any_prefix_is_not_gone() {
-        // A property 404 under an unusual prefix must not read as the event
-        // being gone: the orphan sweep would cancel a live booking on it.
-        let xml = r#"<a:multistatus xmlns:a="DAV:"><a:response><a:href>/cal/x.ics</a:href>
-<a:propstat><a:prop><a:getetag/></a:prop><a:status>HTTP/1.1 404 Not Found</a:status></a:propstat>
-</a:response></a:multistatus>"#;
-        assert_eq!(propfind_resource_exists(xml), Some(true));
-    }
-
-    #[test]
-    fn propfind_reads_the_resource_status_in_unusual_markup() {
-        let gone_prop = "<d:prop><d:getetag/></d:prop><d:status>HTTP/1.1 404 Not Found</d:status>";
-        // A `/>` inside an attribute value does not make the tag self-closing.
-        let xml = format!(
-            "<d:response><d:href>/x.ics</d:href><d:propstat x=\"/>\">{gone_prop}</d:propstat></d:response>"
-        );
-        assert_eq!(propfind_resource_exists(&xml), Some(true));
-        // Whitespace before the `>` of the close tag.
-        let xml = format!(
-            "<d:response><d:href>/x.ics</d:href><d:propstat>{gone_prop}</d:propstat\n></d:response>"
-        );
-        assert_eq!(propfind_resource_exists(&xml), Some(true));
-        // A non-ASCII prefix, which `extract_tag` reads too.
-        let xml = gone_prop.replace("d:", "é:");
-        let xml = format!(
-            "<é:response><é:href>/x.ics</é:href><é:propstat>{xml}</é:propstat></é:response>"
-        );
-        assert_eq!(propfind_resource_exists(&xml), Some(true));
-    }
-
-    #[test]
-    fn propfind_strips_propstat_under_prefixes_extract_tag_does_not_read() {
-        // A propstat under a prefix `extract_tag` rejects, holding a status
-        // under one it reads (legal when both are bound to DAV:).
-        let inner = "<d:prop><d:getetag/></d:prop><d:status>HTTP/1.1 404 Not Found</d:status>";
-        for prefix in ["my-ns", "abcdefghijk"] {
-            let xml = format!(
-                "<{prefix}:response><{prefix}:href>/x</{prefix}:href>\
-<{prefix}:propstat>{inner}</{prefix}:propstat></{prefix}:response>"
-            );
-            assert_eq!(propfind_resource_exists(&xml), Some(true), "{prefix}");
-        }
-        // Something that looks like an open tag but never ends (an apostrophe
-        // in a comment) does not stop the real propstat from being stripped.
-        let xml = format!(
-            "<d:response><d:href>/x.ics</d:href><!-- <propstat isn't -->\
-<d:propstat>{inner}</d:propstat></d:response>"
-        );
-        assert_eq!(propfind_resource_exists(&xml), Some(true));
-        // A `<` inside an attribute value (invalid XML) and a prefix with a
-        // combining mark still have their propstat stripped.
-        let xml = format!(
-            "<d:response><d:href>/x</d:href><d:propstat a=\"x<y\">{inner}</d:propstat></d:response>"
-        );
-        assert_eq!(propfind_resource_exists(&xml), Some(true));
-        let xml = format!(
-            "<d:response><d:href>/x</d:href><e\u{301}:propstat>{inner}</e\u{301}:propstat></d:response>"
-        );
-        assert_eq!(propfind_resource_exists(&xml), Some(true));
-    }
-
-    #[test]
-    fn propfind_status_under_a_prefix_extract_tag_does_not_read_is_unknown() {
-        // `extract_tag` does not read a `my-ns:` status, so a resource-level
-        // 404 under it is unknown rather than gone.
-        let xml = "<my-ns:response><my-ns:href>/x.ics</my-ns:href>\
-<my-ns:status>HTTP/1.1 404 Not Found</my-ns:status></my-ns:response>";
-        assert_eq!(propfind_resource_exists(xml), None);
-        assert!(!is_xml_prefix("my-ns"));
-        assert!(is_xml_prefix("é"));
-        assert!(!is_xml_prefix("abcdefghijk"));
-    }
-
-    #[test]
-    fn propfind_without_a_usable_status_is_unknown() {
-        assert_eq!(propfind_resource_exists(""), None);
-        assert_eq!(propfind_resource_exists("<d:multistatus/>"), None);
-        let forbidden = r#"<d:multistatus><d:response><d:href>/cal/x.ics</d:href>
-<d:status>HTTP/1.1 403 Forbidden</d:status></d:response></d:multistatus>"#;
-        assert_eq!(propfind_resource_exists(forbidden), None);
-        let bare =
-            "<d:multistatus><d:response><d:href>/cal/x.ics</d:href></d:response></d:multistatus>";
-        assert_eq!(propfind_resource_exists(bare), None);
-        // An empty `<propstat/>` carries no status and proves nothing.
-        let empty = "<d:multistatus><d:response><d:href>/cal/x.ics</d:href><d:propstat/>\
-</d:response></d:multistatus>";
-        assert_eq!(propfind_resource_exists(empty), None);
-    }
-
-    // --- parse_event_responses ---
-
-    #[test]
-    fn parse_events_extracts_ical() {
-        let xml = r#"
-<d:multistatus>
-  <d:response>
-    <d:href>/cal/event1.ics</d:href>
-    <d:propstat><d:prop>
-      <cal:calendar-data>BEGIN:VCALENDAR
-BEGIN:VEVENT
-UID:ev1
-END:VEVENT
-END:VCALENDAR</cal:calendar-data>
-    </d:prop></d:propstat>
-  </d:response>
-  <d:response>
-    <d:href>/cal/event2.ics</d:href>
-    <d:propstat><d:prop>
-      <c:calendar-data>BEGIN:VCALENDAR
-BEGIN:VEVENT
-UID:ev2
-END:VEVENT
-END:VCALENDAR</c:calendar-data>
-    </d:prop></d:propstat>
-  </d:response>
-</d:multistatus>"#;
-
-        let events = parse_event_responses(xml);
-        assert_eq!(events.len(), 2);
-        assert_eq!(events[0].href, "/cal/event1.ics");
-        assert!(events[0].ical_data.contains("UID:ev1"));
-        assert_eq!(events[1].href, "/cal/event2.ics");
-        assert!(events[1].ical_data.contains("UID:ev2"));
-    }
-
-    #[test]
-    fn parse_events_skips_empty_data() {
-        let xml = r#"
-<d:multistatus>
-  <d:response>
-    <d:href>/cal/no-data.ics</d:href>
-    <d:propstat><d:prop></d:prop></d:propstat>
-  </d:response>
-</d:multistatus>"#;
-
-        let events = parse_event_responses(xml);
-        assert!(events.is_empty());
     }
 
     // --- CaldavClient::new origin parsing ---

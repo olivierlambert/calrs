@@ -11,6 +11,7 @@
   </div>
   <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 1.25rem;">
     {{ t("overrides-intro", title='<strong>' ~ (event_type_title | escape) ~ '</strong>') | safe }}
+    {{ t("time-off-hint", link='<a href="/dashboard/time-off">' ~ (t("nav-time-off") | escape) ~ '</a>') | safe }}
   </p>
 
   {% if error %}

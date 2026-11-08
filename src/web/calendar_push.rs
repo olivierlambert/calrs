@@ -999,25 +999,62 @@ pub(crate) async fn booking_ics_sequence(pool: &SqlitePool, booking_uid: &str) -
         .unwrap_or(0)
 }
 
-/// Saved language of the watcher who claimed the booking, under the address
-/// the claim listed them as an attendee with (#267). The attendee emails a
-/// later reschedule or cancellation sends them read it instead of the
-/// guest's. Empty when nobody claimed it or the claimant has no saved one.
+/// The attendees a claim added (#267), each with the claimant's saved
+/// language when it is a shipped one. The attendee emails a later reschedule
+/// or cancellation sends them read it instead of the guest's, and carry no
+/// guest footer, since they are staff, not a guest (#223). Empty when nobody
+/// claimed the booking.
+///
+/// The rows are found by `added_by_claim`, so neither a booking email
+/// changed after the claim (the row keeps the claim-time address, which is
+/// where their copies go) nor the claimant's deleted account makes them a
+/// guest's; a deleted claimant's row has no language and reads the
+/// booking's. A claim with no marked row (its insert failed) falls back to
+/// the claimant's current address.
+///
+/// `attendees` is the booking's additional attendees. When the lookup fails
+/// every one of them is returned, without a language: who the claimant is
+/// is unknown, so none of them is treated as a guest and no copy carries the
+/// footer.
 pub(crate) async fn booking_attendee_languages(
     pool: &SqlitePool,
     booking_uid: &str,
-) -> Vec<(String, String)> {
-    sqlx::query_as::<_, (String, Option<String>)>(
-        "SELECT COALESCE(u.booking_email, u.email), u.language FROM bookings b
-         JOIN users u ON u.id = b.claimed_by_user_id WHERE b.uid = ?",
+    attendees: &[String],
+) -> Vec<(String, Option<String>)> {
+    let found = sqlx::query_as::<_, (String, Option<String>)>(
+        "SELECT ba.email, u.language FROM bookings b
+         JOIN booking_attendees ba ON ba.booking_id = b.id AND ba.added_by_claim = 1
+         LEFT JOIN users u ON u.id = ba.claimant_user_id
+         WHERE b.uid = ?
+         UNION ALL
+         SELECT COALESCE(u.booking_email, u.email), u.language FROM bookings b
+         JOIN users u ON u.id = b.claimed_by_user_id
+         WHERE b.uid = ?
+           AND NOT EXISTS (SELECT 1 FROM booking_attendees ba
+                           WHERE ba.booking_id = b.id AND ba.added_by_claim = 1)",
     )
     .bind(booking_uid)
+    .bind(booking_uid)
     .fetch_all(pool)
-    .await
-    .unwrap_or_default()
-    .into_iter()
-    .filter_map(|(email, lang)| crate::email::supported_language(lang).map(|l| (email, l)))
-    .collect()
+    .await;
+    match found {
+        // Kept without a language too: the claimant never gets the guest footer.
+        Ok(rows) => rows
+            .into_iter()
+            .map(|(email, lang)| (email, crate::email::supported_language(lang)))
+            .collect(),
+        Err(e) => {
+            tracing::error!(
+                booking_uid = %booking_uid,
+                error = %e,
+                "claimant lookup failed, no attendee copy gets the guest footer"
+            );
+            attendees
+                .iter()
+                .map(|email| (email.clone(), None))
+                .collect()
+        }
+    }
 }
 
 /// Fill in who holds the invite of a booking being cancelled, declined or
@@ -1050,11 +1087,12 @@ pub(crate) async fn with_invite_holders(
             ..details
         };
     }
+    let attendees = booking_additional_attendees(pool, &details.uid).await;
     crate::email::CancellationDetails {
         invite_sent: true,
         reschedule_pending: was_pending,
-        additional_attendees: booking_additional_attendees(pool, &details.uid).await,
-        attendee_languages: booking_attendee_languages(pool, &details.uid).await,
+        attendee_languages: booking_attendee_languages(pool, &details.uid, &attendees).await,
+        additional_attendees: attendees,
         ..details
     }
 }

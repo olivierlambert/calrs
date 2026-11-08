@@ -332,8 +332,11 @@ pub(super) async fn approve_booking_by_token(
     // token used to stamp the event type owner even for a booking assigned to
     // another member, which later made Google CalDAV 403 the reschedule PUT.
     // See `booking_host_identity`.
-    let (host_name, host_email, host_language) = match booking_host_identity(&state.pool, &uid)
-        .await
+    let (host_name, host_email, host_language, host_reader) = match booking_host_identity_with_id(
+        &state.pool,
+        &uid,
+    )
+    .await
     {
         Some(identity) => identity,
         None => {
@@ -342,9 +345,10 @@ pub(super) async fn approve_booking_by_token(
                 user_id = %user_id,
                 "could not resolve the booking's host identity; falling back to the event type owner"
             );
-            host_contact(&state.pool, &user_id)
-                .await
-                .unwrap_or((host_name, String::new(), None))
+            match host_contact(&state.pool, &user_id).await {
+                Some((name, email, language)) => (name, email, language, Some(user_id.clone())),
+                None => (host_name, String::new(), None, None),
+            }
         }
     };
 
@@ -369,6 +373,9 @@ pub(super) async fn approve_booking_by_token(
     let guest_language = crate::email::stored_booking_language(&state.pool, &bid).await;
 
     let (guest_notes, guest_phone_shown) = booking_guest_input(&state.pool, &uid).await;
+    let additional_attendees = booking_additional_attendees(&state.pool, &uid).await;
+    let attendee_languages =
+        booking_attendee_languages(&state.pool, &uid, &additional_attendees).await;
     let details = crate::email::BookingDetails {
         utc_times: crate::booking_time::ics_times(&start_at, &end_at),
         event_title: event_title.clone(),
@@ -385,7 +392,7 @@ pub(super) async fn approve_booking_by_token(
         guest_phone: guest_phone_shown,
         location: location_display,
         reminder_minutes: None,
-        additional_attendees: booking_additional_attendees(&state.pool, &uid).await,
+        additional_attendees,
         // The guest booked in their own language; the host approving here may
         // well be browsing in another one, so this comes from the booking row
         // rather than from the approver's Accept-Language.
@@ -394,7 +401,8 @@ pub(super) async fn approve_booking_by_token(
         host_timezone: stored_tz.name().to_string(),
         resource_name: booking_resource_label(&state.pool, &uid).await,
         sequence: booking_ics_sequence(&state.pool, &uid).await,
-        attendee_languages: booking_attendee_languages(&state.pool, &uid).await,
+        attendee_languages,
+        guest_footer: crate::email::guest_footer(&state.pool, &event_type_id).await,
     };
 
     // Push to CalDAV calendar
@@ -433,6 +441,10 @@ pub(super) async fn approve_booking_by_token(
         let (cancel_notice_min, reschedule_notice_min) =
             fetch_event_type_notice_minutes(&state.pool, &event_type_id).await;
         let details = details.clone();
+        // The host email goes to the identity the calendar names; the notes
+        // only if that user may still read them (#173).
+        let host_notes =
+            host_notes_for_reader(&state.pool, &details.uid, host_reader.as_deref()).await;
         spawn_emails(async move {
             send_approval_guest_emails(
                 &smtp_config,
@@ -446,7 +458,12 @@ pub(super) async fn approve_booking_by_token(
 
             // Also send host a confirmation email (no ICS, event pushed via CalDAV)
             log_email_result(
-                crate::email::send_host_booking_confirmed(&smtp_config, &details).await,
+                crate::email::send_host_booking_confirmed(
+                    &smtp_config,
+                    &details,
+                    host_notes.as_deref(),
+                )
+                .await,
                 "host_booking_confirmed",
                 &details.uid,
             );
@@ -683,6 +700,7 @@ pub(super) async fn decline_booking_by_token(
                 Some(uid) => booking_ics_sequence(&state.pool, uid).await,
                 None => 0,
             },
+            guest_footer: crate::email::guest_footer_for_booking(&state.pool, &bid).await,
             ..Default::default()
         };
         let details = with_invite_holders(&state.pool, details, true).await;
@@ -907,6 +925,8 @@ pub(super) async fn booking_ics(
         location: location.filter(|l| !l.is_empty()),
         host_timezone: stored_tz.name().to_string(),
         sequence: booking_ics_sequence(&state.pool, &uid).await,
+        // A calendar download, not an email.
+        guest_footer: None,
         ..Default::default()
     };
 
@@ -1223,6 +1243,7 @@ pub(super) async fn guest_cancel_booking(
         host_language: crate::email::supported_language(host_language),
         host_timezone: stored_tz.name().to_string(),
         sequence,
+        guest_footer: crate::email::guest_footer(&state.pool, &et_id).await,
         ..Default::default()
     };
     // Its attendees hold the invite if it was ever confirmed, even when this
@@ -1242,21 +1263,27 @@ pub(super) async fn guest_cancel_booking(
         // the host they booked with (assigned member, or the stored roster
         // and ICS organizer for a collective booking, #161), which is also
         // its sender and Reply-To (#221).
+        // Each notice carries the host notes its recipient may read (#173);
+        // the fallback notice has no known recipient, so none.
         let mut host_notices = Vec::new();
         if let Some(owner) = &host_user_id {
-            for (name, email, language) in
+            for (host_id, name, email, language) in
                 pending_host_recipients(&state.pool, &details.uid, owner).await
             {
-                host_notices.push(crate::email::CancellationDetails {
-                    host_name: name,
-                    host_email: email,
-                    host_language: language,
-                    ..details.clone()
-                });
+                let notes = host_notes_for_reader(&state.pool, &details.uid, Some(&host_id)).await;
+                host_notices.push((
+                    crate::email::CancellationDetails {
+                        host_name: name,
+                        host_email: email,
+                        host_language: language,
+                        ..details.clone()
+                    },
+                    notes,
+                ));
             }
         }
         if host_notices.is_empty() {
-            host_notices.push(details.clone());
+            host_notices.push((details.clone(), None));
         }
         let guest_details = match booking_host_identity(&state.pool, &details.uid).await {
             Some((host_name, host_email, _)) => crate::email::CancellationDetails {
@@ -1277,9 +1304,14 @@ pub(super) async fn guest_cancel_booking(
                 "attendee_cancellation",
                 &details.uid,
             );
-            for host_details in &host_notices {
+            for (host_details, host_notes) in &host_notices {
                 log_email_result(
-                    crate::email::send_host_cancellation(&smtp_config, host_details).await,
+                    crate::email::send_host_cancellation(
+                        &smtp_config,
+                        host_details,
+                        host_notes.as_deref(),
+                    )
+                    .await,
                     "host_cancellation",
                     &details.uid,
                 );
@@ -2094,8 +2126,11 @@ pub(super) async fn guest_reschedule_booking(
     // reschedule never reaches the calendar. See `booking_host_identity`.
     // Each side reads the emails below in their own language: the host in
     // their saved one, the guest in the one stored with the booking (#209).
-    let (host_name, host_email, host_language) = match booking_host_identity(&state.pool, &uid)
-        .await
+    let (host_name, host_email, host_language, host_reader) = match booking_host_identity_with_id(
+        &state.pool,
+        &uid,
+    )
+    .await
     {
         Some(identity) => identity,
         None => {
@@ -2104,11 +2139,12 @@ pub(super) async fn guest_reschedule_booking(
                 user_id = %host_user_id,
                 "could not resolve the booking's host identity; falling back to the event type owner"
             );
-            host_contact(&state.pool, &host_user_id).await.unwrap_or((
-                host_name,
-                String::new(),
-                None,
-            ))
+            match host_contact(&state.pool, &host_user_id).await {
+                Some((name, email, language)) => {
+                    (name, email, language, Some(host_user_id.clone()))
+                }
+                None => (host_name, String::new(), None, None),
+            }
         }
     };
     let booking_language = Some(lang.to_string());
@@ -2183,6 +2219,8 @@ pub(super) async fn guest_reschedule_booking(
                 host_language: host_language.clone(),
                 sequence: booking_ics_sequence(&state.pool, &uid).await,
                 additional_attendees: Vec::new(),
+                // Host-only email: the guest footer is for guests.
+                guest_footer: None,
             };
 
             // Send guest pending notice with new tokens
@@ -2219,9 +2257,12 @@ pub(super) async fn guest_reschedule_booking(
                 guest_language: booking_language,
                 host_timezone: host_tz.name().to_string(),
                 resource_name: booking_resource_label(&state.pool, &uid).await,
+                guest_footer: crate::email::guest_footer_for_booking(&state.pool, &booking_id)
+                    .await,
                 ..Default::default()
             };
             let new_confirm_token = new_confirm_token.clone();
+            let host_notes = host_notes_for_reader(&state.pool, &uid, host_reader.as_deref()).await;
             spawn_emails(async move {
                 let uid = reschedule_details.uid.as_str();
                 log_email_result(
@@ -2230,6 +2271,7 @@ pub(super) async fn guest_reschedule_booking(
                         &reschedule_details,
                         Some(&new_confirm_token),
                         base_url.as_deref(),
+                        host_notes.as_deref(),
                     )
                     .await,
                     "host_reschedule_request",
@@ -2251,6 +2293,9 @@ pub(super) async fn guest_reschedule_booking(
     } else {
         // Confirmed reschedule (host-initiated or guest on non-confirmation event)
         // Push updated event to CalDAV
+        let additional_attendees = booking_additional_attendees(&state.pool, &uid).await;
+        let attendee_languages =
+            booking_attendee_languages(&state.pool, &uid, &additional_attendees).await;
         let push_details = crate::email::BookingDetails {
             utc_times: crate::booking_time::ics_times(&new_start_at, &new_end_at),
             event_title: et_title.clone(),
@@ -2267,12 +2312,13 @@ pub(super) async fn guest_reschedule_booking(
             guest_phone: guest_phone_shown,
             location: loc_value.clone(),
             reminder_minutes: None,
-            additional_attendees: booking_additional_attendees(&state.pool, &uid).await,
+            additional_attendees,
             guest_language: booking_language.clone(),
             host_language: host_language.clone(),
             host_timezone: host_tz.name().to_string(),
             sequence: booking_ics_sequence(&state.pool, &uid).await,
-            attendee_languages: booking_attendee_languages(&state.pool, &uid).await,
+            attendee_languages,
+            guest_footer: crate::email::guest_footer_for_booking(&state.pool, &booking_id).await,
             ..Default::default()
         };
         caldav_push_booking(
@@ -2325,12 +2371,16 @@ pub(super) async fn guest_reschedule_booking(
                 guest_language: booking_language,
                 host_language,
                 sequence: push_details.sequence,
+                guest_footer: push_details.guest_footer.clone(),
                 // The guest's moved invite replaces their confirmation one
                 // whole, so it keeps its attendees and notes (#267).
                 notes: push_details.notes.clone(),
                 additional_attendees: push_details.additional_attendees.clone(),
                 ..Default::default()
             };
+            let host_notes =
+                host_notes_for_reader(&state.pool, &reschedule_details.uid, host_reader.as_deref())
+                    .await;
             spawn_emails(async move {
                 let uid = reschedule_details.uid.as_str();
                 // Notify guest with confirmation + ICS
@@ -2378,7 +2428,12 @@ pub(super) async fn guest_reschedule_booking(
 
                 // Notify host
                 log_email_result(
-                    crate::email::send_host_booking_confirmed(&smtp_config, &push_details).await,
+                    crate::email::send_host_booking_confirmed(
+                        &smtp_config,
+                        &push_details,
+                        host_notes.as_deref(),
+                    )
+                    .await,
                     "host_booking_confirmed",
                     uid,
                 );
@@ -2643,6 +2698,7 @@ pub(super) async fn host_reschedule_booking(
             // in the language they booked in (#209).
             guest_language: crate::email::stored_booking_language(&state.pool, &bid).await,
             host_timezone: host_tz.name().to_string(),
+            guest_footer: crate::email::guest_footer(&state.pool, &et_id).await,
             ..Default::default()
         };
 
@@ -2929,6 +2985,32 @@ pub(super) async fn claim_booking(
         .into_response();
     }
 
+    // List the claimant as an attendee, marked as added by the claim and as
+    // theirs, in the claim's own transaction: a claim whose row is missing
+    // would let a later attendee email take the claimant for a guest (#223).
+    // The row keeps this address after they change their booking email, and
+    // stays staff after their account is deleted.
+    let listed = sqlx::query(
+        "INSERT INTO booking_attendees (id, booking_id, email, added_by_claim, claimant_user_id) \
+         SELECT ?, ?, COALESCE(booking_email, email), 1, id FROM users WHERE id = ?",
+    )
+    .bind(uuid::Uuid::new_v4().to_string())
+    .bind(&booking_id)
+    .bind(&claimant_user_id)
+    .execute(&mut *tx)
+    .await;
+    match listed {
+        Ok(r) if r.rows_affected() == 1 => {}
+        Ok(_) => {
+            let _ = tx.rollback().await;
+            return internal_error_response("list the claimant", "claimant not found");
+        }
+        Err(e) => {
+            let _ = tx.rollback().await;
+            return internal_error_response("list the claimant", &e);
+        }
+    }
+
     // Mark this token as used
     let _ =
         sqlx::query("UPDATE booking_claim_tokens SET used_at = datetime('now') WHERE token = ?")
@@ -3020,15 +3102,6 @@ pub(super) async fn claim_booking(
     let start_time = extract_time_24h(&start_at);
     let end_time = extract_time_24h(&end_at);
 
-    // Add claimant as a booking attendee
-    let attendee_id = uuid::Uuid::new_v4().to_string();
-    let _ = sqlx::query("INSERT INTO booking_attendees (id, booking_id, email) VALUES (?, ?, ?)")
-        .bind(&attendee_id)
-        .bind(&booking_id)
-        .bind(&claimant_email)
-        .execute(&state.pool)
-        .await;
-
     let claim_host_tz = get_host_tz(&state.pool, &event_type_id).await;
 
     // Build details with claimant as additional attendee for CalDAV push
@@ -3055,6 +3128,8 @@ pub(super) async fn claim_booking(
         additional_attendees: booking_additional_attendees(&state.pool, &uid).await,
         host_timezone: claim_host_tz.name().to_string(),
         sequence: booking_ics_sequence(&state.pool, &uid).await,
+        // The claim confirmation goes to the claimant, not to a guest.
+        guest_footer: None,
         ..Default::default()
     };
     if !details.additional_attendees.contains(&claimant_email) {

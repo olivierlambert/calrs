@@ -99,7 +99,7 @@
     <!-- Bookings per week -->
     <section class="adm-sec" aria-labelledby="adm-weekly-h">
       <div class="adm-sec-h"><h2 id="adm-weekly-h">{{ t("admin-chart-weekly") }}<span class="adm-n">{{ stats.weekly_total }}</span></h2></div>
-      <p class="adm-note">{{ t("admin-chart-weekly-help") }}</p>
+      <p class="adm-note">{{ t("admin-chart-weekly-help") }}{% if figures_age %} {{ t("admin-figures-cached", seconds=figures_age) }}{% endif %}</p>
       <div class="adm-chart" id="adm-weekly">
         <div class="adm-plot">
           <div class="adm-gl" style="bottom: 100%;" aria-hidden="true"><span>{{ stats.weekly_scale }}</span></div>
@@ -322,7 +322,22 @@
 <!-- Users -->
 <section class="adm-sec" aria-labelledby="adm-users-h">
   <div class="adm-sec-h"><h2 id="adm-users-h">{{ t("admin-users") }}<span class="adm-n">{{ user_count }}</span></h2></div>
-  {% if users %}
+  {% if user_count > 0 %}
+  {% if users_server %}
+  {# A large instance: search, chips, sort and pages go through the server,
+     so only one page of rows (and of action menus) is ever rendered. #}
+  <form method="get" action="/dashboard/admin#users" class="adm-toolbar" role="search">
+    <input type="search" name="uq" value="{{ users_list.q }}" maxlength="{{ users_list.search_max }}" class="adm-search" placeholder="{{ t('admin-user-filter') }}" aria-label="{{ t('admin-user-filter') }}" autocomplete="off">
+    {% if users_list.filter != "all" %}<input type="hidden" name="uf" value="{{ users_list.filter }}">{% endif %}
+    {% if users_list.sort %}<input type="hidden" name="us" value="{{ users_list.sort }}"><input type="hidden" name="ud" value="{{ users_list.dir }}">{% endif %}
+    <button type="submit" class="adm-btn adm-btn-sm">{{ t("admin-users-search") }}</button>
+    <div class="adm-chips" role="group" aria-label="{{ t('admin-users-filter-label') }}">
+      {% for key, label, n in [("all", t("admin-filter-all"), stats.users.total), ("admin", t("admin-filter-admins"), stats.users.admins), ("disabled", t("admin-filter-disabled"), stats.users.disabled), ("local", t("admin-provider-local"), stats.users.local), ("oidc", t("admin-provider-oidc"), stats.users.oidc), ("never", t("admin-filter-never"), none)] %}
+      <a class="adm-chip" href="{{ users_list.filter_hrefs[key] }}"{% if users_list.filter == key %} aria-current="true"{% endif %}>{{ label }}{% if n is not none %} <span class="adm-chip-n">{{ n }}</span>{% endif %}</a>
+      {% endfor %}
+    </div>
+  </form>
+  {% else %}
   <div class="adm-toolbar">
     <input type="search" id="user-search" class="adm-search" placeholder="{{ t('admin-user-filter') }}" aria-label="{{ t('admin-user-filter') }}" autocomplete="off">
     <div class="adm-chips" role="group" aria-label="{{ t('admin-users-filter-label') }}">
@@ -334,18 +349,19 @@
       <button type="button" class="adm-chip" data-filter="never" aria-pressed="false">{{ t("admin-filter-never") }}</button>
     </div>
   </div>
+  {% endif %}
   <table class="adm-table adm-users" id="user-table">
       <thead>
         <tr>
-          <th aria-sort="none"><button type="button" class="adm-sort" data-sort="name">{{ t("admin-col-user") }}</button></th>
-          <th class="adm-col-role" aria-sort="none"><button type="button" class="adm-sort" data-sort="role">{{ t("admin-col-role") }}</button></th>
-          <th class="adm-col-provider" aria-sort="none"><button type="button" class="adm-sort" data-sort="provider">{{ t("admin-col-signin") }}</button></th>
-          <th aria-sort="none"><button type="button" class="adm-sort" data-sort="last">{{ t("admin-col-last") }}</button></th>
-          <th class="adm-col-created" aria-sort="none"><button type="button" class="adm-sort" data-sort="created">{{ t("admin-col-created") }}</button></th>
+          {% if users_server %}<th aria-sort="{{ users_list.sort_links.name.aria }}"><a class="adm-sort" href="{{ users_list.sort_links.name.href }}">{{ t("admin-col-user") }}</a></th>{% else %}<th aria-sort="none"><button type="button" class="adm-sort" data-sort="name">{{ t("admin-col-user") }}</button></th>{% endif %}
+          {% if users_server %}<th class="adm-col-role" aria-sort="{{ users_list.sort_links.role.aria }}"><a class="adm-sort" href="{{ users_list.sort_links.role.href }}">{{ t("admin-col-role") }}</a></th>{% else %}<th class="adm-col-role" aria-sort="none"><button type="button" class="adm-sort" data-sort="role">{{ t("admin-col-role") }}</button></th>{% endif %}
+          {% if users_server %}<th class="adm-col-provider" aria-sort="{{ users_list.sort_links.provider.aria }}"><a class="adm-sort" href="{{ users_list.sort_links.provider.href }}">{{ t("admin-col-signin") }}</a></th>{% else %}<th class="adm-col-provider" aria-sort="none"><button type="button" class="adm-sort" data-sort="provider">{{ t("admin-col-signin") }}</button></th>{% endif %}
+          {% if users_server %}<th aria-sort="{{ users_list.sort_links.last.aria }}"><a class="adm-sort" href="{{ users_list.sort_links.last.href }}">{{ t("admin-col-last") }}</a></th>{% else %}<th aria-sort="none"><button type="button" class="adm-sort" data-sort="last">{{ t("admin-col-last") }}</button></th>{% endif %}
+          {% if users_server %}<th class="adm-col-created" aria-sort="{{ users_list.sort_links.created.aria }}"><a class="adm-sort" href="{{ users_list.sort_links.created.href }}">{{ t("admin-col-created") }}</a></th>{% else %}<th class="adm-col-created" aria-sort="none"><button type="button" class="adm-sort" data-sort="created">{{ t("admin-col-created") }}</button></th>{% endif %}
           <th class="adm-num"><span class="sr-only">{{ t("admin-col-actions") }}</span></th>
         </tr>
       </thead>
-      <tbody id="user-list">
+      <tbody id="{{ 'user-list-server' if users_server else 'user-list' }}">
         {% for u in users %}
         <tr class="user-item{% if not u.enabled %} is-disabled{% endif %}" data-name="{{ u.name | lower }}" data-email="{{ u.email | lower }}" data-role="{{ u.role }}" data-provider="{{ u.auth_provider }}" data-enabled="{{ 1 if u.enabled else 0 }}" data-last="{{ u.last_login_at }}" data-created="{{ u.created_at }}">
           <td>
@@ -365,17 +381,17 @@
                 <form method="post" action="/dashboard/admin/impersonate/{{ u.id }}">
                   <button type="submit" class="adm-menu-item">{{ t("admin-impersonate") }}</button>
                 </form>
-                <form method="post" action="/dashboard/admin/users/{{ u.id }}/toggle-role">
+                <form method="post" action="/dashboard/admin/users/{{ u.id }}/toggle-role">{% if users_server %}<input type="hidden" name="back" value="{{ users_list.back }}">{% endif %}
                   <button type="submit" class="adm-menu-item">{% if u.role == "admin" %}{{ t("admin-demote") }}{% else %}{{ t("admin-promote") }}{% endif %}</button>
                 </form>
-                <form method="post" action="/dashboard/admin/users/{{ u.id }}/toggle-enabled">
+                <form method="post" action="/dashboard/admin/users/{{ u.id }}/toggle-enabled">{% if users_server %}<input type="hidden" name="back" value="{{ users_list.back }}">{% endif %}
                   <button type="submit" class="adm-menu-item{% if u.enabled %} adm-menu-danger{% endif %}">{% if u.enabled %}{{ t("admin-disable") }}{% else %}{{ t("admin-enable") }}{% endif %}</button>
                 </form>
                 <details class="adm-confirm">
                   <summary class="adm-menu-item adm-menu-danger">{{ t("admin-delete") }}&hellip;</summary>
                   <div class="adm-confirm-body">
                     <p>{{ t("admin-delete-user-confirm", email=u.email) }}</p>
-                    <form method="post" action="/dashboard/admin/users/{{ u.id }}/delete">
+                    <form method="post" action="/dashboard/admin/users/{{ u.id }}/delete">{% if users_server %}<input type="hidden" name="back" value="{{ users_list.back }}">{% endif %}
                       <button type="submit" class="adm-btn-danger">{{ t("admin-delete-confirm-btn") }}</button>
                     </form>
                   </div>
@@ -388,11 +404,19 @@
         {% endfor %}
       </tbody>
     </table>
+  {% if users_server %}
+  {% if users_matched == 0 %}<div class="adm-empty">{{ t("admin-no-users-match") }}</div>{% endif %}
+  <div class="adm-table-foot">
+    <span class="adm-muted">{{ t('admin-users-shown') | replace('%1', users_matched | string) | replace('%2', user_count | string) }}</span>
+    {% with pager=users_pager %}{% include "partials/pager.html" %}{% endwith %}
+  </div>
+  {% else %}
   <div class="adm-table-foot">
     <span id="user-count" class="adm-muted" aria-live="polite"></span>
     <div id="user-pagination" class="adm-pager"></div>
   </div>
   <div id="user-no-results" class="adm-empty" style="display: none;">{{ t("admin-no-users-match") }}</div>
+  {% endif %}
   {% else %}
   <p class="adm-empty">{{ t("admin-no-users") }}</p>
   {% endif %}
@@ -685,6 +709,61 @@
 
   <p style="color: var(--text-muted); font-size: 0.8rem; margin-top: 1rem;">{{ t("admin-smtp-env-help") | safe }}</p>
   {% endif %}
+</div>
+
+<!-- Guest email footer -->
+<div class="card">
+  <h2>{{ t("admin-guest-footer") }}</h2>
+  <p style="color: var(--text-muted); font-size: 0.85rem; margin-top: -0.5rem; margin-bottom: 1rem;">
+    {{ t("admin-guest-footer-help") }}
+  </p>
+  <form method="post" action="/dashboard/admin/guest-footer">
+    <div class="form-group">
+      <label for="guest_email_footer">{{ t("admin-guest-footer-default") }} <span class="hint">{{ t("team-form-optional") }}</span></label>
+      <div style="border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden;">
+        <div class="md-toolbar" data-target="guest_email_footer" style="display: flex; gap: 0.25rem; padding: 0.375rem 0.5rem; background: var(--surface-hover); border-bottom: 1px solid var(--border);">
+          <button type="button" data-action="bold" title="{{ t('editor-bold-short') }}" style="padding: 0.25rem 0.5rem; background: none; border: 1px solid transparent; border-radius: 3px; cursor: pointer; font-weight: 700; font-size: 0.85rem; color: var(--text); font-family: inherit; line-height: 1;">B</button>
+          <button type="button" data-action="italic" title="{{ t('editor-italic-short') }}" style="padding: 0.25rem 0.5rem; background: none; border: 1px solid transparent; border-radius: 3px; cursor: pointer; font-style: italic; font-size: 0.85rem; color: var(--text); font-family: inherit; line-height: 1;">I</button>
+          <button type="button" data-action="link" title="{{ t('editor-link-short') }}" style="padding: 0.25rem 0.5rem; background: none; border: 1px solid transparent; border-radius: 3px; cursor: pointer; font-size: 0.85rem; color: var(--text); font-family: inherit; line-height: 1;">&#128279;</button>
+          <div style="flex: 1;"></div>
+          <button type="button" class="md-preview-toggle" title="{{ t('editor-toggle-preview') }}" style="padding: 0.25rem 0.5rem; background: none; border: 1px solid transparent; border-radius: 3px; cursor: pointer; font-size: 0.75rem; color: var(--text-muted); font-family: inherit; line-height: 1;">{{ t("editor-preview") }}</button>
+        </div>
+        <textarea id="guest_email_footer" name="guest_email_footer" rows="3" data-max-chars="500" data-md-links="email" placeholder="{{ t('etf-guest-footer-placeholder') }}" style="border: none; border-radius: 0; width: 100%; resize: vertical; padding: 0.5rem 0.75rem; font-family: inherit; font-size: 0.9rem; background: var(--surface); color: var(--text); box-sizing: border-box;">{{ guest_footer_default }}</textarea>
+        <div id="guest_email_footer-preview" style="display: none; padding: 0.5rem 0.75rem; min-height: 4rem; font-size: 0.9rem; color: var(--text); background: var(--surface);"></div>
+      </div>
+      <div style="display: flex; justify-content: space-between; gap: 0.75rem; margin-top: 0.25rem;">
+        <span class="hint" style="font-size: 0.8rem; color: var(--text-muted);">{{ t("admin-guest-footer-default-help") }}</span>
+        <span id="guest_email_footer-count" style="font-size: 0.8rem; color: var(--text-muted); white-space: nowrap;">0 / 500</span>
+      </div>
+    </div>
+    <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.925rem; cursor: pointer;">
+      <input type="checkbox" name="allow_all_users" value="on" {% if guest_footer_allow_all_users %}checked{% endif %} style="width: 1rem; height: 1rem;">
+      {{ t("admin-guest-footer-allow-all") }}
+    </label>
+    <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin: 0.375rem 0 0.75rem;">{{ t("admin-guest-footer-allow-all-help") }}</span>
+    <button type="submit" class="adm-btn adm-btn-primary">{{ t("admin-save-guest-footer") }}</button>
+  </form>
+  <script>
+  (function() {
+    var ta = document.getElementById('guest_email_footer');
+    var out = document.getElementById('guest_email_footer-count');
+    if (!ta || !out) return;
+    // Count characters the way the server does (code points), not UTF-16
+    // units: an emoji is one character, so `maxlength` would stop early.
+    var max = parseInt(ta.getAttribute('data-max-chars'), 10);
+    var tooLong = {{ t('validate-guest-footer-too-long') | tojson }};
+    function update() {
+      var n = Array.from(ta.value.replace(/\r\n?/g, '\n').trim()).length;
+      out.textContent = n + ' / ' + max;
+      out.style.color = n > max ? 'var(--error-text)' : '';
+      ta.setCustomValidity(n > max ? tooLong : '');
+    }
+    ta.addEventListener('input', update);
+    // The toolbar edits the value without an input event.
+    document.querySelector('.md-toolbar[data-target="guest_email_footer"]').addEventListener('click', function() { setTimeout(update, 0); });
+    update();
+  })();
+  </script>
 </div>
 
 <!-- SMS gateway settings -->
@@ -1475,9 +1554,10 @@ document.querySelectorAll('input[type="color"]').forEach(function(picker) {
 .adm-chips { display: flex; flex-wrap: wrap; gap: 0.25rem; }
 .adm-chip { display: inline-flex; align-items: center; gap: 0.35rem; height: 1.75rem; padding: 0 0.55rem; font: inherit; font-size: 12.5px; color: var(--text-secondary); background: none; border: 1px solid transparent; border-radius: 4px; cursor: pointer; transition: color 0.12s, background-color 0.12s; }
 .adm-chip:hover { color: var(--ink); background: var(--hours); }
-.adm-chip[aria-pressed="true"] { color: var(--ink); font-weight: 600; border-color: var(--rule-strong); }
+.adm-chip[aria-pressed="true"], .adm-chip[aria-current="true"] { color: var(--ink); font-weight: 600; border-color: var(--rule-strong); }
+a.adm-chip { text-decoration: none; }
 .adm-chip-n { color: var(--text-muted); font-weight: 400; }
-.adm-sort { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; display: inline-flex; align-items: center; gap: 0.25rem; }
+.adm-sort { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; display: inline-flex; align-items: center; gap: 0.25rem; text-decoration: none; }
 .adm-sort::after { content: ""; width: 0; height: 0; border-left: 3.5px solid transparent; border-right: 3.5px solid transparent; border-top: 4px solid currentColor; opacity: 0.25; }
 .adm-sort:hover { color: var(--ink); }
 th[aria-sort="ascending"] .adm-sort, th[aria-sort="descending"] .adm-sort { color: var(--ink); }

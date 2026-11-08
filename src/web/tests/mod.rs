@@ -10,6 +10,7 @@ mod auth_pages;
 mod availability;
 mod booking;
 mod booking_actions;
+mod booking_notes;
 mod booking_time;
 mod branding;
 mod calendar_week_start;
@@ -21,6 +22,7 @@ mod event_types;
 mod format;
 mod google_copies;
 mod guards;
+mod guest_footer;
 mod hosts;
 mod invites;
 mod organizer;
@@ -31,6 +33,7 @@ mod public_pages;
 mod resources;
 mod security;
 mod sources;
+mod time_off;
 mod writeback_failures;
 
 // --- has_conflict tests ---

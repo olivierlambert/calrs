@@ -116,14 +116,7 @@ pub(crate) async fn host_busy_bookings(
     window_start_iso: &str,
     window_end_iso: &str,
 ) -> Result<Vec<(String, String)>> {
-    let host: Option<String> = sqlx::query_scalar(
-        "SELECT a.user_id FROM event_types et JOIN accounts a ON a.id = et.account_id WHERE et.id = ?",
-    )
-    .bind(et_id)
-    .fetch_optional(pool)
-    .await?
-    .flatten();
-    let Some(host) = host else {
+    let Some(host) = event_type_host(pool, et_id).await? else {
         return Ok(Vec::new());
     };
     let rows = sqlx::query_as(&format!(
@@ -137,11 +130,83 @@ pub(crate) async fn host_busy_bookings(
     .bind(&host)
     .bind(&host)
     .bind(&host)
+    .bind(&host)
     .bind(window_end_iso)
     .bind(window_start_iso)
     .fetch_all(pool)
     .await?;
     Ok(rows)
+}
+
+/// The user who hosts `et_id` on the CLI paths: the owner of its account.
+pub(crate) async fn event_type_host(pool: &SqlitePool, et_id: &str) -> Result<Option<String>> {
+    Ok(sqlx::query_scalar(
+        "SELECT a.user_id FROM event_types et JOIN accounts a ON a.id = et.account_id WHERE et.id = ?",
+    )
+    .bind(et_id)
+    .fetch_optional(pool)
+    .await?
+    .flatten())
+}
+
+/// The users whose time off (#46) gates `et_id` on the CLI paths, the way
+/// the web slot engine resolves them: every eligible member of a
+/// collective team event type (enabled, not excluded by a zero weight),
+/// otherwise the owner. The CLI checks no member's calendar, so time off is
+/// the only per-member check it makes.
+async fn time_off_hosts(pool: &SqlitePool, et_id: &str) -> Result<Option<Vec<String>>> {
+    let row: Option<(Option<String>, String, Option<String>)> = sqlx::query_as(
+        "SELECT et.team_id, et.scheduling_mode, a.user_id FROM event_types et \
+         JOIN accounts a ON a.id = et.account_id WHERE et.id = ?",
+    )
+    .bind(et_id)
+    .fetch_optional(pool)
+    .await?;
+    let Some((team_id, mode, owner)) = row else {
+        return Ok(Some(Vec::new()));
+    };
+    match team_id {
+        Some(team_id) if mode == "collective" => {
+            let members: Vec<String> = sqlx::query_scalar(
+                "SELECT u.id FROM users u JOIN team_members tm ON tm.user_id = u.id \
+                 LEFT JOIN event_type_member_weights etw ON etw.user_id = u.id AND etw.event_type_id = ? \
+                 WHERE tm.team_id = ? AND u.enabled = 1 AND COALESCE(etw.weight, 1) > 0",
+            )
+            .bind(et_id)
+            .bind(&team_id)
+            .fetch_all(pool)
+            .await?;
+            // An empty collective roster offers nothing, as on the web.
+            Ok((!members.is_empty()).then_some(members))
+        }
+        _ => Ok(Some(owner.into_iter().collect())),
+    }
+}
+
+/// Time off (#46) around a window, as busy intervals in `host_tz`, for
+/// every user `et_id` needs (see [`time_off_hosts`]), the way the web slot
+/// engine adds it. A collective event type with nobody eligible is busy
+/// over the whole window. A failed read is an error, not a free host.
+pub(crate) async fn host_time_off(
+    pool: &SqlitePool,
+    et_id: &str,
+    window_start: NaiveDateTime,
+    window_end: NaiveDateTime,
+    host_tz: chrono_tz::Tz,
+) -> Result<Vec<(NaiveDateTime, NaiveDateTime)>> {
+    let Some(users) = time_off_hosts(pool, et_id).await? else {
+        return Ok(vec![(window_start, window_end)]);
+    };
+    let mut busy = Vec::new();
+    for user in users {
+        // The CLI reports a failed read instead of failing closed silently.
+        let off =
+            crate::time_off::try_busy_intervals(pool, &user, window_start, window_end, host_tz)
+                .await
+                .map_err(|e| anyhow::anyhow!("could not read the time off of {user}: {e}"))?;
+        busy.extend(off);
+    }
+    Ok(busy)
 }
 
 /// Fetch non-recurring, busy (non-cancelled, OPAQUE) events for `et_id` whose
@@ -454,6 +519,14 @@ pub async fn run(pool: &SqlitePool, cmd: EventTypeCommands) -> Result<()> {
                         ));
                     }
                 }
+            }
+
+            // The host's time off, as on the web slot pages (#46).
+            for (s, e) in host_time_off(pool, &et_id, now, window_end_dt, host_tz).await? {
+                busy_events.push((
+                    s.format("%Y-%m-%dT%H:%M:%S").to_string(),
+                    e.format("%Y-%m-%dT%H:%M:%S").to_string(),
+                ));
             }
 
             // Required shared resources: same blocking intervals as the web
@@ -984,6 +1057,93 @@ mod tests {
 
     /// The CLI used to count every booking on the instance as busy for every
     /// host. It now follows the web rule: only what makes this host busy.
+    /// A collective team event type needs every eligible member, so any
+    /// member's time off blocks it on the CLI too (#46).
+    #[tokio::test]
+    async fn host_time_off_covers_the_collective_roster() {
+        let pool = setup_db().await;
+        sqlx::raw_sql(
+            "INSERT INTO users (id, email, name, role, auth_provider, username, enabled) VALUES
+                 ('owner', 'owner@x', 'Owner', 'admin', 'local', 'owner', 1),
+                 ('m1', 'm1@x', 'M1', 'user', 'local', 'm1', 1),
+                 ('m2', 'm2@x', 'M2', 'user', 'local', 'm2', 1);
+             INSERT INTO accounts (id, name, email, timezone, user_id) VALUES
+                 ('acc-owner', 'Owner', 'owner@x', 'UTC', 'owner');
+             INSERT INTO teams (id, name, slug, visibility) VALUES ('t', 'T', 't', 'public');
+             INSERT INTO team_members (team_id, user_id, role, source) VALUES
+                 ('t', 'm1', 'member', 'direct'), ('t', 'm2', 'member', 'direct');
+             INSERT INTO event_types (id, account_id, team_id, slug, title, duration_min, scheduling_mode)
+                 VALUES ('et-team', 'acc-owner', 't', 'demo', 'Demo', 30, 'collective');
+             INSERT INTO user_time_off (id, user_id, start_at, end_at, timezone) VALUES
+                 ('off-m1', 'm1', '2030-03-18T09:00:00Z', '2030-03-18T10:00:00Z', 'UTC');",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let at = |h| {
+            NaiveDate::from_ymd_opt(2030, 3, 18)
+                .unwrap()
+                .and_hms_opt(h, 0, 0)
+                .unwrap()
+        };
+        let utc = chrono_tz::Tz::UTC;
+        let busy = || host_time_off(&pool, "et-team", at(0), at(23), utc);
+        assert_eq!(busy().await.unwrap(), vec![(at(9), at(10))]);
+
+        // A member excluded by a zero weight does not count.
+        sqlx::query("INSERT INTO event_type_member_weights (event_type_id, user_id, weight) VALUES ('et-team', 'm1', 0)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(busy().await.unwrap().is_empty());
+
+        // Nobody eligible: nothing can be booked.
+        sqlx::query("UPDATE users SET enabled = 0 WHERE id = 'm2'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(busy().await.unwrap(), vec![(at(0), at(23))]);
+    }
+
+    /// `event-type slots` adds the host's time off (#46), and only theirs.
+    #[tokio::test]
+    async fn host_time_off_counts_only_the_host() {
+        let pool = setup_db().await;
+        sqlx::raw_sql(
+            "INSERT INTO users (id, email, name, role, auth_provider, username, enabled) VALUES
+                 ('host', 'host@x', 'Host', 'admin', 'local', 'host', 1),
+                 ('other', 'other@x', 'Other', 'user', 'local', 'other', 1);
+             INSERT INTO accounts (id, name, email, timezone, user_id) VALUES
+                 ('acc-host', 'Host', 'host@x', 'UTC', 'host'),
+                 ('acc-other', 'Other', 'other@x', 'UTC', 'other');
+             INSERT INTO event_types (id, account_id, slug, title, duration_min) VALUES
+                 ('et-host', 'acc-host', 'mine', 'Mine', 30),
+                 ('et-other', 'acc-other', 'theirs', 'Theirs', 30);
+             INSERT INTO user_time_off (id, user_id, start_at, end_at, timezone) VALUES
+                 ('off-host', 'host', '2030-03-18T09:00:00Z', '2030-03-18T12:00:00Z', 'UTC'),
+                 ('off-other', 'other', '2030-03-18T13:00:00Z', '2030-03-18T15:00:00Z', 'UTC');",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let at = |h| {
+            NaiveDate::from_ymd_opt(2030, 3, 18)
+                .unwrap()
+                .and_hms_opt(h, 0, 0)
+                .unwrap()
+        };
+        let paris = chrono_tz::Europe::Paris;
+        let busy = host_time_off(&pool, "et-host", at(0), at(23), paris)
+            .await
+            .unwrap();
+        // In the host's zone: Paris is UTC+1 in March.
+        assert_eq!(busy, vec![(at(10), at(13))]);
+        assert!(host_time_off(&pool, "missing", at(0), at(23), paris)
+            .await
+            .unwrap()
+            .is_empty());
+    }
+
     #[tokio::test]
     async fn host_busy_bookings_only_counts_the_host() {
         let pool = setup_db().await;
