@@ -1270,7 +1270,7 @@ async fn sync_provider_calendars(
                 }
             }
             Err(e) => {
-                println!("  {} {} — failed: {}", "✗".red(), cal_label, e);
+                println!("  {} {}: failed, {}", "✗".red(), cal_label, e);
                 calendar_failures.push(format!("{cal_label}: {e:#}"));
             }
         }
