@@ -1694,3 +1694,103 @@ async fn host_notes_never_reach_a_webhook() {
     assert!(rows[0].1.contains("Guest wrote this"));
     assert!(!rows[0].1.contains("HOST-ONLY-NOTE"));
 }
+
+#[tokio::test]
+async fn two_passes_send_one_delivery_once() {
+    let pool = setup_test_db().await;
+    let (user_id, _, et_id) = seed_test_data(&pool).await;
+    let (url, got, _) = spawn_receiver(200).await;
+    insert_webhook(&pool, &user_id, None, &url).await;
+    assert_eq!(queue_one(&pool, &et_id).await, 1);
+    let now = Utc::now();
+    let allow = local();
+    let (a, b) = tokio::join!(
+        wh::deliver_due_with(&pool, &[0u8; 32], now, &allow),
+        wh::deliver_due_with(&pool, &[0u8; 32], now, &allow),
+    );
+    assert_eq!(a + b, 1);
+    assert_eq!(got.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn a_delivery_is_leased_once_and_only_to_the_url_it_was_read_with() {
+    let pool = setup_test_db().await;
+    let (user_id, _, et_id) = seed_test_data(&pool).await;
+    let wid = insert_webhook(&pool, &user_id, None, "https://93.184.215.14/a").await;
+    assert_eq!(queue_one(&pool, &et_id).await, 1);
+    let (id, secret_enc): (String, String) = sqlx::query_as(
+        "SELECT d.id, w.secret_enc FROM webhook_deliveries d JOIN webhooks w ON w.id = d.webhook_id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let now = Utc::now();
+    // The URL changed after the row was read: not sent.
+    sqlx::query("UPDATE webhooks SET url = 'https://93.184.215.14/b' WHERE id = ?")
+        .bind(&wid)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert!(!wh::lease(&pool, &id, "https://93.184.215.14/a", &secret_enc, now).await);
+    // The current URL: taken once, then not again.
+    assert!(wh::lease(&pool, &id, "https://93.184.215.14/b", &secret_enc, now).await);
+    assert!(!wh::lease(&pool, &id, "https://93.184.215.14/b", &secret_enc, now).await);
+    // A switched-off webhook is not sent to either.
+    let later = now + Duration::hours(1);
+    sqlx::query("UPDATE webhooks SET enabled = 0 WHERE id = ?")
+        .bind(&wid)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert!(!wh::lease(&pool, &id, "https://93.184.215.14/b", &secret_enc, later).await);
+}
+
+#[tokio::test]
+async fn an_unfilled_reservation_is_filled_with_its_context_later() {
+    let pool = setup_test_db().await;
+    let (user_id, _, et_id) = seed_test_data(&pool).await;
+    // A private address: refused before any network traffic.
+    let wid = insert_webhook(&pool, &user_id, None, "https://10.9.9.9/hook").await;
+    let start = Utc::now() + Duration::days(10);
+    let booking_id =
+        insert_v1_booking(&pool, &et_id, "r@example.com", start, 30, "cancelled", &[]).await;
+    let uid: String = sqlx::query_scalar("SELECT uid FROM bookings WHERE id = ?")
+        .bind(&booking_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    // As left by a fill that kept its context, then hit a database error.
+    let ctx = serde_json::to_string(&Context::cancelled(Actor::Guest, Some("Ill".into()))).unwrap();
+    sqlx::query(
+        "INSERT INTO webhook_deliveries (id, webhook_id, booking_uid, event, payload, state, next_attempt_at, created_at)
+         VALUES ('r1', ?, ?, 'booking.cancelled', ?, 'reserved', '2000-01-01T00:00:00Z', datetime('now', '-5 minutes'))",
+    )
+    .bind(&wid)
+    .bind(&uid)
+    .bind(&ctx)
+    .execute(&pool)
+    .await
+    .unwrap();
+    // A fresh one is left to its own fill.
+    sqlx::query(
+        "INSERT INTO webhook_deliveries (id, webhook_id, booking_uid, event, payload, state, next_attempt_at)
+         VALUES ('r2', ?, ?, 'booking.cancelled', '', 'reserved', '2000-01-01T00:00:00Z')",
+    )
+    .bind(&wid)
+    .bind(&uid)
+    .execute(&pool)
+    .await
+    .unwrap();
+    // The target is refused, so nothing is sent; the fill is what counts.
+    wh::start_pass(&pool, &[0u8; 32], Utc::now(), &[]).await;
+    let rows: Vec<(String, String, String)> =
+        sqlx::query_as("SELECT id, state, payload FROM webhook_deliveries ORDER BY id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(rows[0].1, "pending");
+    let v = json(&rows[0].2);
+    assert_eq!(v["booking"]["reason"], "Ill");
+    assert_eq!(v["booking"]["cancelled_by"], "guest");
+    assert_eq!(rows[1].1, "reserved");
+}

@@ -218,7 +218,7 @@ pub fn subscribed(column: Option<&str>) -> Vec<Event> {
 }
 
 /// Who ended a booking.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, serde::Deserialize)]
 pub enum Actor {
     Guest,
     Host,
@@ -233,8 +233,9 @@ impl Actor {
     }
 }
 
-/// What the event adds to the booking itself.
-#[derive(Clone, Debug, Default)]
+/// What the event adds to the booking itself. Kept with reserved rows (as
+/// JSON in their `payload`) so a fill that failed can be retried with it.
+#[derive(Clone, Debug, Default, Serialize, serde::Deserialize)]
 pub struct Context {
     pub cancelled_by: Option<Actor>,
     /// The cancellation or decline reason, which the guest is shown too.
@@ -242,7 +243,7 @@ pub struct Context {
     /// The times before a reschedule, as stored (`start_at`, `end_at`).
     pub previous: Option<(String, String)>,
     /// The status a reschedule left the booking in (pending or confirmed).
-    pub status: Option<&'static str>,
+    pub status: Option<String>,
 }
 
 impl Context {
@@ -261,10 +262,10 @@ impl Context {
         }
     }
 
-    pub fn rescheduled(old_start: &str, old_end: &str, new_status: &'static str) -> Self {
+    pub fn rescheduled(old_start: &str, old_end: &str, new_status: &str) -> Self {
         Self {
             previous: Some((old_start.to_string(), old_end.to_string())),
-            status: Some(new_status),
+            status: Some(new_status.to_string()),
             ..Self::default()
         }
     }
@@ -389,8 +390,10 @@ fn iso(t: DateTime<Utc>) -> String {
     t.format("%Y-%m-%dT%H:%M:%SZ").to_string()
 }
 
-async fn snapshot(pool: &SqlitePool, booking_key: &str) -> Option<Snapshot> {
-    let row: SnapshotRow = sqlx::query_as(
+/// `Ok(None)` when the booking is gone, `Err` on a database error (the fill
+/// is then retried later).
+async fn snapshot(pool: &SqlitePool, booking_key: &str) -> Result<Option<Snapshot>, sqlx::Error> {
+    let row: Option<SnapshotRow> = sqlx::query_as(
         "SELECT b.uid, b.status,
                 CASE b.time_version WHEN 1 THEN b.start_at ELSE rtrim(b.start_at, 'Z') END AS start_at,
                 CASE b.time_version WHEN 1 THEN b.end_at ELSE rtrim(b.end_at, 'Z') END AS end_at,
@@ -409,9 +412,10 @@ async fn snapshot(pool: &SqlitePool, booking_key: &str) -> Option<Snapshot> {
     )
     .bind(booking_key)
     .fetch_optional(pool)
-    .await
-    .ok()
-    .flatten()?;
+    .await?;
+    let Some(row) = row else {
+        return Ok(None);
+    };
 
     let tz = crate::booking_time::event_timezone(pool, &row.et_id)
         .await
@@ -435,7 +439,7 @@ async fn snapshot(pool: &SqlitePool, booking_key: &str) -> Option<Snapshot> {
         (Some(id), Some(slug), Some(name)) => Some(Team { id, slug, name }),
         _ => None,
     };
-    Some(Snapshot {
+    Ok(Some(Snapshot {
         booking: BookingPayload {
             start: utc_iso(&row.start_at, tz),
             end: utc_iso(&row.end_at, tz),
@@ -469,7 +473,7 @@ async fn snapshot(pool: &SqlitePool, booking_key: &str) -> Option<Snapshot> {
             team,
         },
         tz,
-    })
+    }))
 }
 
 /// The JSON body of one delivery, without its per-attempt `timestamp`.
@@ -486,7 +490,7 @@ fn render(
         end: utc_iso(end, snap.tz),
     });
     booking.cancelled_by = ctx.cancelled_by.map(Actor::as_str);
-    if let Some(status) = event.status().or(ctx.status) {
+    if let Some(status) = event.status().or(ctx.status.as_deref()) {
         booking.status = status.to_string();
     }
     booking.reason = ctx.reason.clone();
@@ -693,14 +697,34 @@ async fn fill_rows(
     if ids.is_empty() {
         return;
     }
-    let Some(snap) = snapshot(pool, booking_key).await else {
-        for id in &ids {
-            let _ = sqlx::query("DELETE FROM webhook_deliveries WHERE id = ?")
-                .bind(id)
-                .execute(pool)
-                .await;
+    // Keep the context with the rows first: if what follows fails, the next
+    // pass retries the fill with it (`retry_unfilled`).
+    let ctx_json = serde_json::to_string(&ctx).unwrap_or_default();
+    for id in &ids {
+        let _ = sqlx::query(
+            "UPDATE webhook_deliveries SET payload = ? WHERE id = ? AND state = 'reserved'",
+        )
+        .bind(&ctx_json)
+        .bind(id)
+        .execute(pool)
+        .await;
+    }
+    let snap = match snapshot(pool, booking_key).await {
+        Ok(Some(snap)) => snap,
+        Ok(None) => {
+            // The booking is gone: nothing to tell.
+            for id in &ids {
+                let _ = sqlx::query("DELETE FROM webhook_deliveries WHERE id = ?")
+                    .bind(id)
+                    .execute(pool)
+                    .await;
+            }
+            return;
         }
-        return;
+        Err(e) => {
+            tracing::warn!(error = %e, booking = %booking_key, "webhook: payload not built, retried on the next pass");
+            return;
+        }
     };
     let now = Utc::now();
     let written = async {
@@ -720,11 +744,46 @@ async fn fill_rows(
     }
     .await;
     if let Err(e) = written {
-        tracing::warn!(error = %e, booking = %snap.booking.uid, "webhook: payloads not written");
+        tracing::warn!(error = %e, booking = %snap.booking.uid, "webhook: payloads not written, retried on the next pass");
         return;
     }
     tracing::debug!(booking = %snap.booking.uid, event = event.name(), endpoints = ids.len(), "webhook deliveries queued");
     KICK.notify_one();
+}
+
+/// Reserved rows not filled within this long are filled by the delivery
+/// task: their handler failed to (a database error) or died.
+const UNFILLED_AFTER_SECS: i64 = 120;
+
+/// Fill the reserved rows whose own fill did not happen, with the context
+/// they carry (an empty one if even that was not written).
+async fn retry_unfilled(pool: &SqlitePool, now: DateTime<Utc>) {
+    let cutoff = (now - chrono::Duration::seconds(UNFILLED_AFTER_SECS))
+        .format("%Y-%m-%d %H:%M:%S")
+        .to_string();
+    let rows: Vec<(String, String, String, String)> = sqlx::query_as(
+        "SELECT id, booking_uid, event, payload FROM webhook_deliveries
+         WHERE state = 'reserved' AND created_at < ? ORDER BY seq",
+    )
+    .bind(cutoff)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
+    let mut groups: Vec<((String, String, String), Vec<String>)> = Vec::new();
+    for (id, uid, event, ctx) in rows {
+        let key = (uid, event, ctx);
+        match groups.iter_mut().find(|(k, _)| *k == key) {
+            Some((_, ids)) => ids.push(id),
+            None => groups.push((key, vec![id])),
+        }
+    }
+    for ((uid, event, ctx), ids) in groups {
+        let Some(event) = Event::from_name(&event) else {
+            continue;
+        };
+        let ctx: Context = serde_json::from_str(&ctx).unwrap_or_default();
+        fill_rows(pool, &uid, event, ids, ctx).await;
+    }
 }
 
 // --- Target checks ---
@@ -1023,9 +1082,40 @@ struct Due {
     webhook_id: String,
     event: String,
     payload: String,
-    attempts: i64,
     url: String,
     secret_enc: String,
+}
+
+/// How long a delivery taken for sending is kept from anyone else: longer
+/// than one request can take.
+const LEASE_SECS: i64 = 300;
+
+/// Take one delivery for sending: still pending and due, and its webhook
+/// still sends to the URL and with the secret it was read with. `false`
+/// when another task took it or the webhook changed meanwhile.
+pub(crate) async fn lease(
+    pool: &SqlitePool,
+    delivery_id: &str,
+    url: &str,
+    secret_enc: &str,
+    now: DateTime<Utc>,
+) -> bool {
+    sqlx::query(&format!(
+        "UPDATE webhook_deliveries SET next_attempt_at = ?1
+         WHERE id = ?2 AND state = 'pending' AND next_attempt_at <= ?3
+           AND webhook_id IN (
+               SELECT w.id FROM webhooks w LEFT JOIN users u ON u.id = w.user_id
+               WHERE {ACTIVE_ENDPOINT} AND w.url = ?4 AND w.secret_enc = ?5)"
+    ))
+    .bind(iso(now + chrono::Duration::seconds(LEASE_SECS)))
+    .bind(delivery_id)
+    .bind(iso(now))
+    .bind(url)
+    .bind(secret_enc)
+    .execute(pool)
+    .await
+    .map(|r| r.rows_affected() == 1)
+    .unwrap_or(false)
 }
 
 async fn deliver_one(
@@ -1055,19 +1145,25 @@ async fn deliver_one(
         tracing::debug!(delivery = %due.id, event = %due.event, "webhook delivered");
         return true;
     }
-    let attempts = due.attempts + 1;
     let error = attempt.error.unwrap_or_default();
+    // Counted in the database, never from the copy read before sending.
+    let attempts: i64 = sqlx::query_scalar(
+        "UPDATE webhook_deliveries SET attempts = attempts + 1, last_error = ? WHERE id = ? RETURNING attempts",
+    )
+    .bind(&error)
+    .bind(&due.id)
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten()
+    .unwrap_or(MAX_ATTEMPTS);
     match next_attempt_at(attempts, now) {
         Some(next) => {
-            let _ = sqlx::query(
-                "UPDATE webhook_deliveries SET attempts = ?, next_attempt_at = ?, last_error = ? WHERE id = ?",
-            )
-            .bind(attempts)
-            .bind(iso(next))
-            .bind(&error)
-            .bind(&due.id)
-            .execute(pool)
-            .await;
+            let _ = sqlx::query("UPDATE webhook_deliveries SET next_attempt_at = ? WHERE id = ?")
+                .bind(iso(next))
+                .bind(&due.id)
+                .execute(pool)
+                .await;
             // The endpoint is failing: its other deliveries wait for the same
             // retry instead of each costing a request (and a timeout) now.
             let _ = sqlx::query(
@@ -1081,14 +1177,10 @@ async fn deliver_one(
             .await;
         }
         None => {
-            let _ = sqlx::query(
-                "UPDATE webhook_deliveries SET state = 'failed', attempts = ?, last_error = ? WHERE id = ?",
-            )
-            .bind(attempts)
-            .bind(&error)
-            .bind(&due.id)
-            .execute(pool)
-            .await;
+            let _ = sqlx::query("UPDATE webhook_deliveries SET state = 'failed' WHERE id = ?")
+                .bind(&due.id)
+                .execute(pool)
+                .await;
             tracing::warn!(delivery = %due.id, webhook = %due.webhook_id, error = %error, "webhook delivery gave up");
         }
     }
@@ -1102,8 +1194,8 @@ async fn deliver_one(
 /// those succeed or run out of attempts.
 async fn due_rows(pool: &SqlitePool, now: DateTime<Utc>, only: Option<&str>) -> Vec<Due> {
     sqlx::query_as(&format!(
-        "SELECT id, webhook_id, event, payload, attempts, url, secret_enc FROM (
-             SELECT d.id, d.webhook_id, d.event, d.payload, d.attempts, w.url, w.secret_enc, d.seq,
+        "SELECT id, webhook_id, event, payload, url, secret_enc FROM (
+             SELECT d.id, d.webhook_id, d.event, d.payload, w.url, w.secret_enc, d.seq,
                     ROW_NUMBER() OVER (PARTITION BY d.webhook_id ORDER BY d.seq) AS rn
              FROM webhook_deliveries d
              JOIN webhooks w ON w.id = d.webhook_id
@@ -1150,34 +1242,45 @@ impl Drop for InFlight {
 }
 
 /// One endpoint's task: its due deliveries in order, until one fails,
-/// nothing is due, or [`ENDPOINT_BUDGET`] is spent.
+/// nothing is due, or [`ENDPOINT_BUDGET`] is spent. Each row is leased
+/// before it is sent ([`lease`]), which also re-checks that the webhook
+/// still sends, to the same URL with the same secret.
 async fn serve_endpoint(
     pool: SqlitePool,
     key: [u8; 32],
     webhook_id: String,
-    mut batch: Vec<Due>,
     now: DateTime<Utc>,
     allowlist: Vec<String>,
 ) -> usize {
     let started = std::time::Instant::now();
     let mut delivered = 0;
-    while !batch.is_empty() {
+    loop {
+        let batch = due_rows(&pool, now, Some(&webhook_id)).await;
+        let mut leased_any = false;
         for d in &batch {
-            if started.elapsed() >= ENDPOINT_BUDGET
-                || !deliver_one(&pool, &key, d, now, &allowlist).await
-            {
+            if started.elapsed() >= ENDPOINT_BUDGET {
+                return delivered;
+            }
+            if !lease(&pool, &d.id, &d.url, &d.secret_enc, now).await {
+                continue;
+            }
+            leased_any = true;
+            if !deliver_one(&pool, &key, d, now, &allowlist).await {
                 return delivered;
             }
             delivered += 1;
         }
-        batch = due_rows(&pool, now, Some(&webhook_id)).await;
+        if !leased_any {
+            return delivered;
+        }
     }
-    delivered
 }
 
 /// Start one task per endpoint with something due and no task running.
 /// Endpoints never wait for each other: a dead or slow one only holds its
-/// own task. The handles may be dropped (the tasks carry on).
+/// own task. The endpoint is claimed before its rows are read, and each
+/// row leased before it is sent, so two passes never send one delivery
+/// twice. The handles may be dropped (the tasks carry on).
 pub(crate) async fn start_pass(
     pool: &SqlitePool,
     key: &[u8; 32],
@@ -1185,22 +1288,26 @@ pub(crate) async fn start_pass(
     allowlist: &[String],
 ) -> Vec<tokio::task::JoinHandle<usize>> {
     drop_inactive_queues(pool).await;
-    let mut by_endpoint: Vec<(String, Vec<Due>)> = Vec::new();
-    for d in due_rows(pool, now, None).await {
-        match by_endpoint.iter_mut().find(|(w, _)| *w == d.webhook_id) {
-            Some((_, list)) => list.push(d),
-            None => by_endpoint.push((d.webhook_id.clone(), vec![d])),
-        }
-    }
+    retry_unfilled(pool, now).await;
+    let endpoints: Vec<String> = sqlx::query_scalar(&format!(
+        "SELECT DISTINCT d.webhook_id FROM webhook_deliveries d
+         JOIN webhooks w ON w.id = d.webhook_id
+         LEFT JOIN users u ON u.id = w.user_id
+         WHERE d.state = 'pending' AND d.next_attempt_at <= ? AND {ACTIVE_ENDPOINT}"
+    ))
+    .bind(iso(now))
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
     let mut handles = Vec::new();
-    for (webhook_id, list) in by_endpoint {
+    for webhook_id in endpoints {
         let Some(guard) = InFlight::claim(&webhook_id) else {
             continue;
         };
         let (pool, key, allowlist) = (pool.clone(), *key, allowlist.to_vec());
         handles.push(tokio::spawn(async move {
             let _guard = guard;
-            serve_endpoint(pool, key, webhook_id, list, now, allowlist).await
+            serve_endpoint(pool, key, webhook_id, now, allowlist).await
         }));
     }
     handles
@@ -1268,6 +1375,8 @@ pub(crate) async fn prune(pool: &SqlitePool, now: DateTime<Utc>) {
 /// queued, and every 30 seconds for the retries. Deliveries queued by the
 /// CLI are picked up by that tick.
 pub async fn run_webhook_loop(pool: SqlitePool, key: [u8; 32]) {
+    // At startup too: a server that was down a while has stale rows.
+    prune(&pool, Utc::now()).await;
     let mut last_prune = std::time::Instant::now();
     loop {
         tokio::select! {
