@@ -835,7 +835,7 @@ async fn multistatus_body(resp: reqwest::Response, what: &str, url: &str) -> Res
 /// arrives rather than after holding all of it: a declared length over the
 /// cap fails before anything is read. Decoded with the charset of the
 /// `Content-Type` (UTF-8 by default), as reqwest's `text()` does.
-async fn read_body(mut resp: reqwest::Response, cap: usize) -> Result<String> {
+pub(crate) async fn read_body(mut resp: reqwest::Response, cap: usize) -> Result<String> {
     let url = resp.url().to_string();
     if let Some(len) = resp.content_length() {
         if len > cap as u64 {

@@ -197,6 +197,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Changed
+
+- **Exchange (EWS) replies are read with the shared XML parser** (#369) - The EWS client read Exchange's SOAP answers with its own string search. It now uses the namespace-aware parser the CalDAV client got in #325, so the prefixes a server or a proxy writes (`s:`, `soap:`, `m:`, `t:`, default namespaces) no longer matter, and entities and CDATA are decoded (an event title written `R&amp;D` now reads `R&D`). SOAP faults are recognised in a 200 as well as a 500, in SOAP 1.1 and 1.2, with Exchange's language-independent code first (`ErrorImpersonateUserDenied: ...`), and every message of a batch is checked, not only the first. A reply calrs cannot read is now an error instead of an empty answer: malformed or truncated XML, an HTML page, a FindItem without its `RootFolder` or `Items`, an item or folder without its id, or a paging flag that is not a boolean. Before, several of these read as a calendar with no events, which shows the host as free. Answers from Exchange 2016 and 2019 read as before. Autodiscover reads its answer with the same parser.
+
 ## [2.0.0-beta.3] - 2026-11-08
 
 The 2.0 features that waited in pull requests land: native Microsoft 365 and Outlook.com calendars through Microsoft Graph (#229, PR #290; thanks to @adeg, who wrote it and offered to maintain the provider), organization-wide Exchange calendars through impersonation (#138), Google out of office (#240), MCP over HTTP with OAuth (#273), a REST API with an OpenAPI reference (#169), booking webhooks (#168), booking questions (#210), host notes (#173), time off (#46), a write calendar per event type (#47) and a guest email footer (#223). Bookings are now checked one after the other under a lock, and an availability check that fails refuses the booking instead of treating the host as free. Twenty-three migrations, and a few changes of behaviour: read the upgrade notes below. **Back up your database before upgrading**, as for any pre-release.

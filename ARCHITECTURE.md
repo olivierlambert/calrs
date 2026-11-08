@@ -70,8 +70,8 @@ Every user-facing string goes through Fluent (`i18n/`).
 | `src/microsoft_oauth.rs` | Microsoft OAuth configuration, account-bound single-use state and PKCE, encrypted tokens, compare-and-swap token refresh (HTTP outside transactions), token-aware Graph provider construction (a Graph 401 refreshes once and retries; a refused refresh token is dropped until reconnect) |
 | `src/caldav/mod.rs` | CalDAV client: discovery, fetch, sync-collection, PUT/DELETE (on Google, PUT/DELETE detour through `google_calendar`) |
 | `src/caldav/multistatus.rs` | Reading WebDAV multistatus answers by namespace: calendar listing, events, sync deltas, principal and home discovery (tests in `src/caldav/multistatus/tests.rs`) |
-| `src/xml.rs` | Bounded, namespace-aware XML tree over `quick-xml`, used by the CalDAV client |
-| `src/ews/` | Exchange Web Services client (SOAP, autodiscover, parsing); `global.rs` holds the admin's global impersonation config, provisioning of managed sources, and the client for a managed source |
+| `src/xml.rs` | Bounded, namespace-aware XML tree over `quick-xml`, used by the CalDAV and EWS clients |
+| `src/ews/` | Exchange Web Services client (SOAP, autodiscover, parsing on `src/xml.rs`, test fixtures in `fixtures.rs`); `global.rs` holds the admin's global impersonation config, provisioning of managed sources, and the client for a managed source |
 | `src/providers/` | `CalendarProvider` trait (`mod.rs`), CalDAV and Graph adapters, password-backed provider dispatch in `src/providers/factory.rs` |
 | `src/sms/` | `SmsProvider` trait, gateway adapters, phone normalisation, message bodies |
 | `src/email/` | Every email calrs sends (see below) |

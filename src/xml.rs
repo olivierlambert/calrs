@@ -42,8 +42,8 @@ pub const MAX_DEPTH: usize = 128;
 /// Most elements [`parse`] accepts in one document. A REPORT takes about
 /// seven per event (a 5000-event calendar about 35 000), so this allows
 /// some 140 000 events. Names and namespaces are shared between elements,
-/// so an element costs about 100 bytes of tree: a hostile document at the
-/// cap costs about 100 MB on top of its body (64 MB at most), text included.
+/// so an element costs about 120 bytes of tree: a hostile document at the
+/// cap costs about 120 MB on top of its body (64 MB at most), text included.
 pub const MAX_ELEMENTS: usize = 1_000_000;
 
 /// Most namespace declarations (`xmlns`, `xmlns:p`) in scope at once.
@@ -52,6 +52,11 @@ pub const MAX_ELEMENTS: usize = 1_000_000;
 /// elements is quadratic. A real multistatus declares fewer than ten.
 pub const MAX_NAMESPACE_BINDINGS: usize = 256;
 
+/// Most attributes [`parse`] keeps in one document. A FindItem answer has
+/// about three per item; the cap bounds the memory a document of nothing
+/// but attributes can cost, as [`MAX_ELEMENTS`] does for elements.
+pub const MAX_ATTRIBUTES: usize = 1_000_000;
+
 /// Distinct names and namespace URIs shared between elements; past this
 /// many, each further element gets its own copy.
 const MAX_INTERNED: usize = 1024;
@@ -59,12 +64,16 @@ const MAX_INTERNED: usize = 1024;
 /// Longest server-controlled name or message quoted in an error.
 const MAX_QUOTED: usize = 64;
 
-/// An element: its namespace, its local name and its children in document
-/// order. Attributes are not kept, since nothing calrs reads needs them.
+/// An element: its namespace, its local name, its unqualified attributes and
+/// its children in document order.
 #[derive(Debug)]
 pub struct Element {
     ns: Option<Arc<str>>,
     name: Arc<str>,
+    /// Attributes written without a prefix (`Id="..."`), by name, values
+    /// decoded like text. Namespace declarations and prefixed attributes
+    /// (`xml:lang`) are not kept: nothing calrs reads needs them (#369).
+    attrs: Box<[(Arc<str>, String)]>,
     children: Vec<Node>,
 }
 
@@ -127,6 +136,14 @@ impl Element {
     /// The first element below this one that is `name` of namespace `ns`.
     pub fn find(&self, ns: &str, name: &str) -> Option<&Element> {
         self.descendants().find(|el| el.is(ns, name))
+    }
+
+    /// The value of the unqualified attribute `name`, decoded.
+    pub fn attr(&self, name: &str) -> Option<&str> {
+        self.attrs
+            .iter()
+            .find(|(key, _)| &**key == name)
+            .map(|(_, value)| value.as_str())
     }
 
     /// Whether the element has any child, element or text.
@@ -209,6 +226,7 @@ struct Limits {
     depth: usize,
     elements: usize,
     bindings: usize,
+    attributes: usize,
 }
 
 const LIMITS: Limits = Limits {
@@ -216,6 +234,7 @@ const LIMITS: Limits = Limits {
     depth: MAX_DEPTH,
     elements: MAX_ELEMENTS,
     bindings: MAX_NAMESPACE_BINDINGS,
+    attributes: MAX_ATTRIBUTES,
 };
 
 /// `text` cut to [`MAX_QUOTED`] characters, for an error message: names and
@@ -321,6 +340,39 @@ fn decode_reference(name: &str) -> Option<char> {
     }
 }
 
+/// Longest reference name [`decode_text`] looks at, so a value full of `&`
+/// and no `;` stays linear. Every reference it decodes is far shorter.
+const MAX_REFERENCE: usize = 32;
+
+/// `raw` with its references decoded the way [`parse`] decodes them in
+/// text: the predefined entities and character references, anything else
+/// kept as written.
+fn decode_text(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len());
+    let mut rest = raw;
+    while let Some(amp) = rest.find('&') {
+        out.push_str(&rest[..amp]);
+        let after = &rest[amp + 1..];
+        let window = &after.as_bytes()[..after.len().min(MAX_REFERENCE + 1)];
+        let decoded = window
+            .iter()
+            .position(|&b| b == b';')
+            .and_then(|semi| Some((semi, decode_reference(&after[..semi])?)));
+        match decoded {
+            Some((semi, c)) => {
+                out.push(c);
+                rest = &after[semi + 1..];
+            }
+            None => {
+                out.push('&');
+                rest = after;
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
 fn utf8(bytes: &[u8]) -> Result<&str> {
     std::str::from_utf8(bytes).map_err(|e| anyhow!("XML name is not UTF-8: {e}"))
 }
@@ -335,6 +387,7 @@ struct Builder<'l> {
     root: Option<Element>,
     text: String,
     elements: usize,
+    attributes: usize,
     interned: std::collections::HashSet<Arc<str>>,
 }
 
@@ -348,6 +401,7 @@ impl<'l> Builder<'l> {
             root: None,
             text: String::new(),
             elements: 0,
+            attributes: 0,
             interned: std::collections::HashSet::new(),
         }
     }
@@ -379,16 +433,29 @@ impl<'l> Builder<'l> {
 
     fn open(&mut self, ns: Option<Arc<str>>, start: &BytesStart<'_>) -> Result<()> {
         let name = utf8(start.local_name().into_inner())?;
-        // The namespace declarations this element brings into scope.
-        let declarations = start
-            .attributes()
-            .with_checks(false)
-            .filter_map(|attr| attr.ok())
-            .filter(|attr| {
-                let key = attr.key.into_inner();
-                key == b"xmlns" || key.starts_with(b"xmlns:")
-            })
-            .count();
+        // The namespace declarations this element brings into scope, and
+        // the unqualified attributes it keeps.
+        let mut declarations = 0;
+        let mut attrs = Vec::new();
+        for attr in start.attributes().with_checks(false) {
+            let attr =
+                attr.map_err(|e| anyhow!("malformed XML attribute: {}", quoted(&e.to_string())))?;
+            let key = attr.key.into_inner();
+            if key == b"xmlns" || key.starts_with(b"xmlns:") {
+                declarations += 1;
+            } else if !key.contains(&b':') {
+                self.attributes += 1;
+                if self.attributes > self.limits.attributes {
+                    bail!(
+                        "XML document has more than {} attributes",
+                        self.limits.attributes
+                    );
+                }
+                let value = std::str::from_utf8(&attr.value)
+                    .map_err(|e| anyhow!("XML attribute is not UTF-8: {e}"))?;
+                attrs.push((self.intern(utf8(key)?), decode_text(value)));
+            }
+        }
         self.bindings += declarations;
         if self.bindings > self.limits.bindings {
             bail!(
@@ -411,6 +478,7 @@ impl<'l> Builder<'l> {
         self.stack.push(Element {
             ns,
             name,
+            attrs: attrs.into_boxed_slice(),
             children: Vec::new(),
         });
         self.declarations.push(declarations);
@@ -546,6 +614,40 @@ mod tests {
     }
 
     #[test]
+    fn unqualified_attributes_are_kept_and_decoded() {
+        let doc = root(
+            r#"<t:ItemId xmlns:t="urn:t" Id="AA+/=" ChangeKey='a&amp;b &#x41; &bogus; & c' xml:lang="fr" t:Other="x"/>"#,
+        );
+        assert_eq!(doc.attr("Id"), Some("AA+/="));
+        assert_eq!(doc.attr("ChangeKey"), Some("a&b A &bogus; & c"));
+        // Prefixed attributes and namespace declarations are not kept.
+        assert_eq!(doc.attr("lang"), None);
+        assert_eq!(doc.attr("Other"), None);
+        assert_eq!(doc.attr("t"), None);
+        assert_eq!(doc.attr("xmlns:t"), None);
+        assert_eq!(doc.attr("Missing"), None);
+        assert_eq!(root("<a/>").attr("Id"), None);
+    }
+
+    #[test]
+    fn attribute_decoding_stays_linear() {
+        let value = "&".repeat(200_000);
+        let doc = root(&format!(
+            "<a v=\"{value}\" w=\"&#x41;&{long};\"/>",
+            long = "x".repeat(40)
+        ));
+        assert_eq!(doc.attr("v").unwrap().len(), 200_000);
+        assert_eq!(doc.attr("w"), Some(&*format!("A&{};", "x".repeat(40))));
+    }
+
+    #[test]
+    fn malformed_attributes_are_errors() {
+        for xml in ["<a Id=x/>", "<a Id/>", "<a Id=\"1\" =\"2\"/>"] {
+            assert!(parse(xml).is_err(), "{xml:?} should be refused");
+        }
+    }
+
+    #[test]
     fn whitespace_only_text_is_dropped_and_mixed_text_kept() {
         let doc = root("<a>\n  <b> x </b>\n  <c/>\n</a>");
         assert_eq!(doc.children.len(), 2);
@@ -633,6 +735,7 @@ mod tests {
             depth: 8,
             elements: 10,
             bindings: 4,
+            attributes: 3,
         };
         // The root and nine children fit; one more does not.
         let fits = format!("<r>{}</r>", "<a/>".repeat(9));
@@ -640,6 +743,14 @@ mod tests {
         let many = format!("<r>{}</r>", "<a/>".repeat(10));
         let err = parse_with(&many, &limits).unwrap_err().to_string();
         assert!(err.contains("more than 10 elements"), "{err}");
+        // Attributes are capped across the document; namespace
+        // declarations do not count.
+        let attrs = r#"<r xmlns:p="urn:p" a="1" p:z="2"><a b="2"/><a c="3"/></r>"#;
+        assert!(parse_with(attrs, &limits).unwrap().is_some());
+        let err = parse_with(r#"<r a="1"><a b="2"/><a c="3" d="4"/></r>"#, &limits)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("more than 3 attributes"), "{err}");
         let big = format!("<r>{}</r>", "x".repeat(1000));
         let err = parse_with(&big, &limits).unwrap_err().to_string();
         assert!(err.contains("too large"), "{err}");
@@ -674,6 +785,7 @@ mod tests {
             depth: 8,
             elements: 100,
             bindings: 4,
+            attributes: 3,
         };
         let siblings = r#"<a xmlns:x="urn:1" xmlns:y="urn:2"><b xmlns:z="urn:3" xmlns="urn:4"/><c xmlns:w="urn:5" xmlns:v="urn:6"/></a>"#;
         assert!(parse_with(siblings, &limits).unwrap().is_some());
