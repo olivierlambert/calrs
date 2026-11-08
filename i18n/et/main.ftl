@@ -227,6 +227,20 @@ landing-duration-aria =
         [one] { $minutes } minut
        *[other] { $minutes } minutit
     }
+landing-duration-hm = { $hours } h { $minutes }
+landing-duration-aria-h =
+    { $hours ->
+        [one] { $hours } tund
+       *[other] { $hours } tundi
+    }
+landing-duration-aria-hm =
+    { $hours ->
+        [one] { $hours } tund
+       *[other] { $hours } tundi
+    } { $minutes ->
+        [one] { $minutes } minut
+       *[other] { $minutes } minutit
+    }
 landing-next-free = Järgmine: %1
 landing-with-one-of = ühega neist
 landing-with-everyone = kõigiga

@@ -227,6 +227,20 @@ landing-duration-aria =
         [one] { $minutes } minuut
        *[other] { $minutes } minuten
     }
+landing-duration-hm = { $hours } u { $minutes }
+landing-duration-aria-h =
+    { $hours ->
+        [one] { $hours } uur
+       *[other] { $hours } uur
+    }
+landing-duration-aria-hm =
+    { $hours ->
+        [one] { $hours } uur
+       *[other] { $hours } uur
+    } { $minutes ->
+        [one] { $minutes } minuut
+       *[other] { $minutes } minuten
+    }
 landing-next-free = Volgende: %1
 landing-with-one-of = met een van
 landing-with-everyone = met iedereen

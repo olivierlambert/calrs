@@ -227,6 +227,20 @@ landing-duration-aria =
         [one] { $minutes } minuto
        *[other] { $minutes } minutos
     }
+landing-duration-hm = { $hours } h { $minutes }
+landing-duration-aria-h =
+    { $hours ->
+        [one] { $hours } hora
+       *[other] { $hours } horas
+    }
+landing-duration-aria-hm =
+    { $hours ->
+        [one] { $hours } hora
+       *[other] { $hours } horas
+    } { $minutes ->
+        [one] { $minutes } minuto
+       *[other] { $minutes } minutos
+    }
 landing-next-free = Próximo: %1
 landing-with-one-of = com um de
 landing-with-everyone = com todos

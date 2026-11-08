@@ -2,6 +2,7 @@
 {% block title %}{{ team_name }}, calrs{% endblock %}
 {% block head %}{% include "partials/landing_head.html" %}{% endblock %}
 {% block content %}
+{% import "partials/landing_hue.html" as dial %}
 {% set invite_q = ("?invite=" ~ (invite_token | urlencode)) if (invite_token is defined and invite_token) else "" %}
 <section class="lp-top">
   <div class="lp-logo">{% if company_link %}<a href="{{ company_link }}" target="_blank" rel="noopener noreferrer">{% endif %}<img src="/logo" alt="" onerror="this.closest('.lp-logo').style.display='none'">{% if company_link %}</a>{% endif %}</div>
@@ -41,7 +42,7 @@
 
 <ul class="lp-list">
   {% for et in event_types %}
-  <li class="lp-row" data-et="{{ et.slug }}" data-next="/team/{{ team_slug }}/{{ et.slug }}/next-free{{ invite_q }}">
+  <li class="lp-row" style="--eh: {{ dial.hue(et.duration_min) }}" data-next="/team/{{ team_slug }}/{{ et.slug }}/next-free{{ invite_q }}">
     {% with d = et.duration_min %}{% include "partials/landing_dial.html" %}{% endwith %}
     <div class="lp-main">
       <a href="/team/{{ team_slug }}/{{ et.slug }}{{ invite_q }}" data-calrs-sync class="lp-et-title">{{ et.title }}</a>

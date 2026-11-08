@@ -371,3 +371,67 @@ async fn team_page_shows_each_type_roster_and_first_names() {
     let page = body_string(app.oneshot(get("/team/horizon-team")).await.unwrap()).await;
     assert!(page.contains("with everyone"));
 }
+
+/// A meeting's length is drawn as clock dials, one per hour (at most three),
+/// the last one filled in proportion, with the exact length written under
+/// them and spoken in words.
+#[test]
+fn landing_dials_draw_one_dial_per_hour() {
+    let mut env = minijinja::Environment::new();
+    env.set_undefined_behavior(minijinja::UndefinedBehavior::Lenient);
+    env.set_loader(minijinja::path_loader("templates"));
+    crate::i18n::register(&mut env);
+    let render = |minutes: i32| {
+        let html = env
+            .get_template("profile.html")
+            .unwrap()
+            .render(context! {
+                host_name => "Alice",
+                username => "alice",
+                event_types => vec![context! { slug => "m", title => "M", duration_min => minutes }],
+                lang => "en",
+            })
+            .unwrap();
+        let dur = html
+            .split(r#"<span class="lp-dur""#)
+            .nth(1)
+            .unwrap()
+            .to_string();
+        let dur = dur
+            .split(r#"<div class="lp-main">"#)
+            .next()
+            .unwrap()
+            .to_string();
+        let dashes: Vec<String> = dur
+            .split(r#"stroke-dasharray=""#)
+            .skip(1)
+            .map(|s| s.split(' ').next().unwrap().to_string())
+            .collect();
+        (dur, dashes)
+    };
+
+    let (dur, dashes) = render(15);
+    assert!(dur.contains("lp-dials-1") && dur.contains(r#"aria-label="15 minutes""#));
+    assert_eq!(dashes, ["25.0"]);
+    assert!(dur.contains(">15 min</span>"));
+
+    let (dur, dashes) = render(60);
+    assert!(dur.contains(r#"aria-label="1 hour""#) && dur.contains(">1 h</span>"));
+    assert_eq!(dashes, ["100"]);
+
+    let (dur, dashes) = render(90);
+    assert!(dur.contains("lp-dials-2") && dur.contains(r#"aria-label="1 hour 30 minutes""#));
+    assert_eq!(dashes, ["100", "50.0"]);
+    assert!(dur.contains(">1 h 30</span>"));
+
+    let (_, dashes) = render(135);
+    assert_eq!(dashes, ["100", "100", "25.0"]);
+
+    // From three hours on, three full dials and the label says the rest.
+    let (dur, dashes) = render(240);
+    assert!(dur.contains("lp-dials-3") && dur.contains(">4 h</span>"));
+    assert_eq!(dashes, ["100", "100", "100"]);
+    let (dur, dashes) = render(195);
+    assert!(dur.contains(r#"aria-label="3 hours 15 minutes""#));
+    assert_eq!(dashes.len(), 3);
+}

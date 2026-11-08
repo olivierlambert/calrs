@@ -7,8 +7,10 @@
     themes follow. Archivo is the dashboard's face; the booking pages keep
     Inter, and the two never meet on one page.
 
-    Temporary: ?look=c (remembered in localStorage "calrs_look", cleared
-    with ?look=none) adds the coming week as seven small day markers. -#}
+    Temporary, for the owner to compare: ?look=c (remembered in
+    localStorage "calrs_look", cleared with ?look=none) adds the coming
+    week as seven small day markers; ?dial=icon ("calrs_dial", back with
+    ?dial=stack) shows a clock icon instead of the dials. -#}
 <script>
 (function() {
   var v = null;
@@ -21,6 +23,15 @@
     if (v === null) v = localStorage.getItem('calrs_look') || '';
   } catch (e) { v = v || ''; }
   if (v.indexOf('c') >= 0) document.documentElement.classList.add('look-c');
+  // ?dial=icon (or ?dial=stack): the duration as a clock icon instead of
+  // the dials, remembered in localStorage "calrs_dial".
+  var dial = null;
+  try {
+    var dq = new URLSearchParams(location.search).get('dial');
+    if (dq !== null) { dial = dq; localStorage.setItem('calrs_dial', dq); }
+    if (dial === null) dial = localStorage.getItem('calrs_dial') || '';
+  } catch (e) { dial = dial || ''; }
+  if (dial === 'icon') document.documentElement.classList.add('dial-icon');
 })();
 </script>
 <style>
@@ -51,13 +62,14 @@
     --band: color-mix(in srgb, var(--accent) 7%, var(--bg));
     --face-mix: 26%;
   }
-  /* A meeting's hue (--eh, set on its row), mixed into the theme: the
-     dial's face, its ring, the filled wedge. Declared on the row itself,
-     since a custom property resolves where it is declared. */
-  [data-et] {
-    --dial-face: color-mix(in srgb, hsl(var(--eh, 220) 70% 50%) 9%, var(--surface));
-    --dial-ring: color-mix(in srgb, hsl(var(--eh, 220) 55% 45%) 38%, var(--surface));
-    --dial-fill: color-mix(in srgb, hsl(var(--eh, 220) 72% 44%) 78%, var(--surface));
+  /* The colour of a meeting's length (--eh, set on its row from a fixed
+     cool-to-warm scale, see landing_dial.html), mixed into the theme: the
+     dial's tint, its outline and ticks, its hand. Declared on the row
+     itself, since a custom property resolves where it is declared. */
+  .lp-row {
+    --dial-tint: color-mix(in srgb, hsl(var(--eh, 220) 60% 55%) 26%, var(--surface));
+    --dial-line: color-mix(in srgb, hsl(var(--eh, 220) 55% 40%) 72%, var(--text));
+    --dial-hand: hsl(var(--eh, 220) 60% 40%);
   }
   html.dark {
     --lp-tint: color-mix(in srgb, var(--text) 6%, var(--bg));
@@ -66,10 +78,10 @@
     --band: color-mix(in srgb, var(--accent) 12%, var(--bg));
     --face-mix: 38%;
   }
-  html.dark [data-et] {
-    --dial-face: color-mix(in srgb, hsl(var(--eh, 220) 70% 55%) 14%, var(--surface));
-    --dial-ring: color-mix(in srgb, hsl(var(--eh, 220) 60% 60%) 45%, var(--surface));
-    --dial-fill: color-mix(in srgb, hsl(var(--eh, 220) 75% 62%) 85%, var(--surface));
+  html.dark .lp-row {
+    --dial-tint: color-mix(in srgb, hsl(var(--eh, 220) 55% 60%) 38%, var(--surface));
+    --dial-line: color-mix(in srgb, hsl(var(--eh, 220) 55% 70%) 70%, var(--text));
+    --dial-hand: hsl(var(--eh, 220) 65% 72%);
   }
 
   body {
@@ -143,7 +155,7 @@
   .lp-row {
     position: relative;
     display: grid;
-    grid-template-columns: 4.5rem minmax(0, 1fr) auto;
+    grid-template-columns: 5rem minmax(0, 1fr) auto;
     gap: 0 1.25rem;
     align-items: start;
     padding: 1rem 0.75rem;
@@ -152,15 +164,22 @@
   }
   .lp-row:hover, .lp-row:focus-within { background: var(--lp-tint); }
 
-  /* The length of a meeting as a clock dial: a thin ring, a wedge filled
-     in proportion (a quarter for 15 minutes, a full disc for an hour) and,
-     past an hour, an outer arc for the rest, up to two hours. */
+  /* The length of a meeting as clock dials, one per hour (see
+     landing_dial.html), with the exact length written under them. */
   .lp-dur { display: flex; flex-direction: column; align-items: center; gap: 0.3rem; }
-  .lp-dial { display: block; width: 52px; height: 52px; overflow: visible; }
-  .lp-dial-face { fill: var(--dial-face); stroke: var(--dial-ring); stroke-width: 1.25; }
-  .lp-dial-wedge { fill: none; stroke: var(--dial-fill); stroke-width: 17; }
-  .lp-dial-over { fill: none; stroke: var(--dial-fill); stroke-width: 2.5; }
-  .lp-dial-rim { fill: none; stroke: var(--dial-ring); stroke-width: 1.25; }
+  .lp-dials { display: flex; gap: 4px; align-items: center; height: 36px; }
+  .lp-dial { display: block; width: 36px; height: 36px; }
+  .lp-dials-2 .lp-dial { width: 30px; height: 30px; }
+  .lp-dials-3 .lp-dial { width: 24px; height: 24px; }
+  .lp-dial-face { fill: var(--surface); }
+  .lp-dial-sector { fill: none; stroke: var(--dial-tint); stroke-width: 88; }
+  .lp-dial-rim { fill: none; stroke: var(--dial-line); stroke-width: 16; }
+  .lp-dial-ticks { fill: none; stroke: var(--dial-line); stroke-width: 12; stroke-linecap: round; }
+  .lp-dial-hand { stroke: var(--dial-hand); stroke-width: 14; stroke-linecap: round; }
+  .lp-dial-pin { fill: var(--dial-hand); }
+  .lp-dur-icon { display: none; color: var(--dial-hand); line-height: 0; }
+  html.dial-icon .lp-dials { display: none; }
+  html.dial-icon .lp-dur-icon { display: block; }
   .lp-dur-label { font-size: 0.85rem; font-weight: 600; line-height: 1.2; color: var(--text); white-space: nowrap; text-align: center; }
 
   .lp-main { min-width: 0; padding-top: 0.35rem; }
@@ -195,7 +214,7 @@
   html.look-c .lp-days:not([hidden]) { display: flex; gap: 3px; }
   .lp-day { display: flex; flex-direction: column; align-items: center; gap: 2px; width: 14px; font-size: 0.625rem; line-height: 1; color: var(--text-muted); }
   .lp-day i { display: block; width: 10px; height: 10px; box-shadow: inset 0 0 0 1px var(--lp-rule-top); }
-  .lp-day.is-free i { background: var(--dial-fill); box-shadow: none; }
+  .lp-day.is-free i { background: var(--dial-hand); box-shadow: none; }
 
   /* Temporary look switcher, for choosing a direction. */
   .lp-look { position: fixed; left: 0.75rem; bottom: 0.75rem; z-index: 20; display: flex; gap: 0.25rem; align-items: center; padding: 0.3rem 0.4rem; font-size: 0.75rem; color: var(--text-muted); background: var(--surface); border: 1px solid var(--border); border-radius: 6px; }
@@ -210,7 +229,7 @@
     .lp-card > .lp-more { grid-column: 1 / -1; }
     .lp-face { width: 72px; height: 72px; font-size: 1.35rem; }
     .lp-name { font-size: 2rem; }
-    .lp-row { grid-template-columns: 4rem minmax(0, 1fr); gap: 0 1rem; min-height: 44px; }
+    .lp-row { grid-template-columns: 5rem minmax(0, 1fr); gap: 0 0.85rem; min-height: 44px; }
     .lp-dur { grid-row: span 2; }
     .lp-side { grid-column: 2; align-items: flex-start; padding-top: 0.4rem; }
   }

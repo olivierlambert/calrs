@@ -2,6 +2,7 @@
 {% block title %}{{ host_name }}, calrs{% endblock %}
 {% block head %}{% include "partials/landing_head.html" %}{% endblock %}
 {% block content %}
+{% import "partials/landing_hue.html" as dial %}
 <section class="lp-top">
   <div class="lp-logo">{% if company_link %}<a href="{{ company_link }}" target="_blank" rel="noopener noreferrer">{% endif %}<img src="/logo" alt="" onerror="this.closest('.lp-logo').style.display='none'">{% if company_link %}</a>{% endif %}</div>
   <header class="lp-card">
@@ -22,7 +23,7 @@
 
 <ul class="lp-list">
   {% for et in event_types %}
-  <li class="lp-row" data-et="{{ et.slug }}" data-next="/u/{{ username }}/{{ et.slug }}/next-free">
+  <li class="lp-row" style="--eh: {{ dial.hue(et.duration_min) }}" data-next="/u/{{ username }}/{{ et.slug }}/next-free">
     {% with d = et.duration_min %}{% include "partials/landing_dial.html" %}{% endwith %}
     <div class="lp-main">
       <a href="/u/{{ username }}/{{ et.slug }}" data-calrs-sync class="lp-et-title">{{ et.title }}</a>
