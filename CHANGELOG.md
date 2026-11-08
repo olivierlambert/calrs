@@ -188,6 +188,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Security
+
+- **A new account can no longer take over an existing one** - When a user was created (registration, single sign-on auto-registration or `calrs user create`), calrs gave them any scheduling account stored under the same email address, even one that already belonged to another user. The address stored on an account is the one it was created with and does not follow later changes, for instance when someone's address changes at the identity provider, so registering an address its former owner no longer used could take over that owner's event types, bookings and calendars. A new user now only adopts an account that has no user yet (as left by very old single-user installs), and otherwise gets an account of their own.
+
 ## [2.0.0-beta.2] - 2026-11-07
 
 Second pre-release of 2.0. Its main change is for contributors: **migrations are now named by UTC timestamp** (#333), so the 2.0 features waiting in pull requests (Microsoft Graph, MCP over HTTP, Google out of office, EWS impersonation) can rebase without fighting over migration numbers, and land in the next betas. For users: **a security fix for Markdown links** on the public pages (#346) and in the dashboard preview, embeds that can fix the time format and the timezone (#347), and `--password-stdin` for scripted CLI setups (#345). No new migration. **Back up your database before upgrading**, as for any pre-release.

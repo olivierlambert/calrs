@@ -467,8 +467,8 @@ pub async fn generate_username(pool: &SqlitePool, email: &str) -> Result<String>
 /// claim admin. When `force_admin` is true the user is admin regardless
 /// (used by `calrs user create --admin`); otherwise the user is admin only
 /// if no other users exist. Returns the role the database assigned.
-pub(crate) async fn create_local_user(
-    pool: &SqlitePool,
+pub(crate) async fn create_local_user<'e, E: sqlx::SqliteExecutor<'e>>(
+    executor: E,
     user_id: &str,
     email: &str,
     name: &str,
@@ -492,12 +492,77 @@ pub(crate) async fn create_local_user(
     .bind(password_hash)
     .bind(force_admin)
     .bind(username)
-    .fetch_all(pool)
+    .fetch_all(executor)
     .await
     .context("failed to insert user")?
     .into_iter()
     .next()
     .context("user insert returned no role")
+}
+
+/// Give a user that was just created its scheduling account, and return the
+/// account id. A legacy single-tenant account with no user yet and the same
+/// address (compared trimmed and case-insensitively) is adopted; otherwise a
+/// new account is created. An account that already belongs to someone is
+/// never handed over, whatever its stored address: `accounts.email` is the
+/// address the account was created with and is not kept in step with
+/// `users.email`, so a match says nothing about who owns the address today.
+/// Nothing reads it besides this function, the startup adoption of orphaned
+/// accounts and `calrs config export`.
+/// Run it in the transaction that inserted the user.
+pub(crate) async fn attach_account(
+    conn: &mut sqlx::SqliteConnection,
+    user_id: &str,
+    name: &str,
+    email: &str,
+) -> Result<String> {
+    let legacy: Option<String> = sqlx::query_scalar(
+        "SELECT id FROM accounts
+         WHERE user_id IS NULL AND lower(trim(email)) = lower(trim(?))
+         ORDER BY created_at, id LIMIT 1",
+    )
+    .bind(email)
+    .fetch_optional(&mut *conn)
+    .await?;
+    if let Some(account_id) = legacy {
+        let adopted = sqlx::query(
+            "UPDATE accounts SET user_id = ?, name = ? WHERE id = ? AND user_id IS NULL",
+        )
+        .bind(user_id)
+        .bind(name)
+        .bind(&account_id)
+        .execute(&mut *conn)
+        .await?;
+        if adopted.rows_affected() == 1 {
+            tracing::info!(user_id = %user_id, account_id = %account_id, "adopted unowned account");
+            return Ok(account_id);
+        }
+    }
+    // `accounts.email` is unique. An owned account still holding this address
+    // has a stale copy (its owner's address changed since): give it its
+    // owner's current one, which no other user can hold, so the new account
+    // can take the address without touching anything else of the old one.
+    sqlx::query(
+        "UPDATE accounts
+         SET email = (SELECT u.email FROM users u WHERE u.id = accounts.user_id),
+             updated_at = datetime('now')
+         WHERE email = ? AND user_id IS NOT NULL AND user_id != ?",
+    )
+    .bind(email)
+    .bind(user_id)
+    .execute(&mut *conn)
+    .await?;
+    let account_id = uuid::Uuid::new_v4().to_string();
+    sqlx::query(
+        "INSERT INTO accounts (id, name, email, timezone, user_id) VALUES (?, ?, ?, 'UTC', ?)",
+    )
+    .bind(&account_id)
+    .bind(name)
+    .bind(email)
+    .bind(user_id)
+    .execute(&mut *conn)
+    .await?;
+    Ok(account_id)
 }
 
 // --- Axum extractors ---
@@ -894,47 +959,29 @@ async fn register_handler(
         Err(_) => return render_register_error(&state, lang, "auth-error-internal", &auth_config),
     };
 
-    if create_local_user(
-        &state.pool,
-        &user_id,
-        &form.email,
-        &form.name,
-        &password_hash,
-        &username,
-        false,
-    )
-    .await
-    .is_err()
-    {
-        return render_register_error(&state, lang, "auth-error-create-failed", &auth_config);
-    }
-
-    // Link to existing account or create a new one
-    let existing_account: Option<(String,)> =
-        sqlx::query_as("SELECT id FROM accounts WHERE email = ?")
-            .bind(&form.email)
-            .fetch_optional(&state.pool)
-            .await
-            .unwrap_or(None);
-
-    if let Some((account_id,)) = existing_account {
-        let _ = sqlx::query("UPDATE accounts SET user_id = ?, name = ? WHERE id = ?")
-            .bind(&user_id)
-            .bind(&form.name)
-            .bind(&account_id)
-            .execute(&state.pool)
-            .await;
-    } else {
-        let account_id = uuid::Uuid::new_v4().to_string();
-        let _ = sqlx::query(
-            "INSERT INTO accounts (id, name, email, timezone, user_id) VALUES (?, ?, ?, 'UTC', ?)",
+    // The user and its account are created together: a user left without an
+    // account cannot schedule anything, and the account is chosen inside the
+    // same write lock that inserts the user.
+    let created = async {
+        let mut tx = state.pool.begin().await?;
+        create_local_user(
+            &mut *tx,
+            &user_id,
+            &form.email,
+            &form.name,
+            &password_hash,
+            &username,
+            false,
         )
-        .bind(&account_id)
-        .bind(&form.name)
-        .bind(&form.email)
-        .bind(&user_id)
-        .execute(&state.pool)
-        .await;
+        .await?;
+        attach_account(&mut tx, &user_id, &form.name, &form.email).await?;
+        tx.commit().await?;
+        anyhow::Ok(())
+    }
+    .await;
+    if let Err(e) = created {
+        tracing::warn!(error = %e, "registration failed");
+        return render_register_error(&state, lang, "auth-error-create-failed", &auth_config);
     }
 
     // Required MFA enrollment must complete before a normal session is issued.
@@ -1568,6 +1615,7 @@ async fn find_or_create_oidc_user(
 
     // Compute the role inside the INSERT so "first user gets admin" is
     // atomic with the row creation; see create_local_user for the rationale.
+    let mut tx = pool.begin().await?;
     sqlx::query(
         "INSERT INTO users (id, email, name, timezone, role, auth_provider, oidc_subject, username)
          VALUES (?, ?, ?, 'UTC',
@@ -1579,35 +1627,10 @@ async fn find_or_create_oidc_user(
     .bind(name)
     .bind(subject)
     .bind(&username)
-    .execute(pool)
+    .execute(&mut *tx)
     .await?;
-
-    // Link to existing account or create a new one
-    let existing_account: Option<(String,)> =
-        sqlx::query_as("SELECT id FROM accounts WHERE email = ?")
-            .bind(email)
-            .fetch_optional(pool)
-            .await?;
-
-    if let Some((account_id,)) = existing_account {
-        sqlx::query("UPDATE accounts SET user_id = ?, name = ? WHERE id = ?")
-            .bind(&user_id)
-            .bind(name)
-            .bind(&account_id)
-            .execute(pool)
-            .await?;
-    } else {
-        let account_id = uuid::Uuid::new_v4().to_string();
-        sqlx::query(
-            "INSERT INTO accounts (id, name, email, timezone, user_id) VALUES (?, ?, ?, 'UTC', ?)",
-        )
-        .bind(&account_id)
-        .bind(name)
-        .bind(email)
-        .bind(&user_id)
-        .execute(pool)
-        .await?;
-    }
+    attach_account(&mut tx, &user_id, name, email).await?;
+    tx.commit().await?;
 
     Ok(user_id)
 }
@@ -3399,6 +3422,123 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(role, "user");
+    }
+
+    // --- Account linking never takes over an owned account ---
+
+    async fn account_of(pool: &SqlitePool, user_id: &str) -> String {
+        sqlx::query_scalar("SELECT id FROM accounts WHERE user_id = ?")
+            .bind(user_id)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn oidc_auto_register_with_a_former_address_creates_a_separate_account() {
+        let pool = setup_db().await;
+        let cfg = auth_config_with_oidc(&pool, true).await;
+        let victim = find_or_create_oidc_user(&pool, "victim-sub", "old@co.com", true, "V", &cfg)
+            .await
+            .unwrap();
+        let victim_account = account_of(&pool, &victim).await;
+        let et_id = uuid::Uuid::new_v4().to_string();
+        sqlx::query(
+            "INSERT INTO event_types (id, account_id, slug, title, duration_min) \
+             VALUES (?, ?, 'intro', 'Intro', 30)",
+        )
+        .bind(&et_id)
+        .bind(&victim_account)
+        .execute(&pool)
+        .await
+        .unwrap();
+        // The address changes at the identity provider; the next login
+        // follows it on users.email only.
+        let again = find_or_create_oidc_user(&pool, "victim-sub", "new@co.com", true, "V", &cfg)
+            .await
+            .unwrap();
+        assert_eq!(again, victim);
+
+        let newcomer =
+            find_or_create_oidc_user(&pool, "other-sub", "old@co.com", true, "Newcomer", &cfg)
+                .await
+                .unwrap();
+        assert_ne!(newcomer, victim);
+        assert_ne!(account_of(&pool, &newcomer).await, victim_account);
+        assert_eq!(account_of(&pool, &victim).await, victim_account);
+        let emails: Vec<(String, String)> =
+            sqlx::query_as("SELECT user_id, email FROM accounts ORDER BY email")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            emails,
+            vec![
+                (victim.clone(), "new@co.com".to_string()),
+                (newcomer.clone(), "old@co.com".to_string()),
+            ]
+        );
+        let et_account: String =
+            sqlx::query_scalar("SELECT account_id FROM event_types WHERE id = ?")
+                .bind(&et_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(et_account, victim_account);
+    }
+
+    #[tokio::test]
+    async fn oidc_auto_register_adopts_a_legacy_account_without_a_user() {
+        let pool = setup_db().await;
+        let cfg = auth_config_with_oidc(&pool, true).await;
+        let legacy = uuid::Uuid::new_v4().to_string();
+        sqlx::query(
+            "INSERT INTO accounts (id, name, email, timezone) VALUES (?, 'L', 'Legacy@Co.com', 'UTC')",
+        )
+        .bind(&legacy)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let user = find_or_create_oidc_user(&pool, "sub", "legacy@co.com", true, "L", &cfg)
+            .await
+            .unwrap();
+        assert_eq!(account_of(&pool, &user).await, legacy);
+    }
+
+    #[tokio::test]
+    async fn attach_account_skips_owned_accounts_and_matches_case_insensitively() {
+        let pool = setup_db().await;
+        let (owner, owned) = insert_user_with_account(&pool, "a@co.com", "A", "user").await;
+        let orphan = uuid::Uuid::new_v4().to_string();
+        sqlx::query(
+            "INSERT INTO accounts (id, name, email, timezone) VALUES (?, 'O', ' B@Co.com ', 'UTC')",
+        )
+        .bind(&orphan)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // An owned account with the same address is left alone.
+        let first = insert_user(&pool, "x@co.com", "X", "user").await;
+        let mut conn = pool.acquire().await.unwrap();
+        let created = attach_account(&mut conn, &first, "X", "A@co.com")
+            .await
+            .unwrap();
+        assert_ne!(created, owned);
+        assert_eq!(account_of(&pool, &owner).await, owned);
+
+        // An unowned one is adopted, once.
+        let second = insert_user(&pool, "y@co.com", "Y", "user").await;
+        let adopted = attach_account(&mut conn, &second, "Y", "b@co.com")
+            .await
+            .unwrap();
+        assert_eq!(adopted, orphan);
+        let third = insert_user(&pool, "z@co.com", "Z", "user").await;
+        let fresh = attach_account(&mut conn, &third, "Z", "b@co.com")
+            .await
+            .unwrap();
+        assert_ne!(fresh, orphan);
+        assert_eq!(account_of(&pool, &second).await, orphan);
     }
 
     // --- delete_user ---
