@@ -227,6 +227,13 @@ async fn stats_count_only_the_meetings_the_user_hosts() {
         &[(&me, "member"), (&other, "member")],
     )
     .await;
+    // Its unassigned booking below is a collective one: an unassigned
+    // round-robin booking is no member's (#173).
+    sqlx::query("UPDATE event_types SET scheduling_mode = 'collective' WHERE id = ?")
+        .bind(&team_et)
+        .execute(&pool)
+        .await
+        .unwrap();
     // A team event type created under my own account: a round-robin
     // booking assigned to the other member is theirs, not mine.
     let my_team_et = insert_personal_et(&pool, &me, "my-rr").await;

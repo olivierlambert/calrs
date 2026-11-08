@@ -164,7 +164,7 @@ The check applies to **guest-side actions only**. Hosts and admins can still can
 
 ## Host notes
 
-Each booking can carry **host notes**: free text for the people running the meeting (what was said on a call, what to prepare), kept apart from the notes the guest typed when booking. Open them with **Add a note** (or **Edit note**) on a row of the bookings page or of the overview, at `/dashboard/bookings/{id}/notes`. The page shows the booking, the guest's own notes, and who last edited the host notes and when. Notes are at most 5000 characters; saving an empty field removes them.
+Each booking can carry **host notes**: free text for the people running the meeting (what was said on a call, what to prepare), kept apart from the notes the guest typed when booking. Open them from the booking's title on the bookings page or the overview, at `/dashboard/bookings/{id}/notes`. Once a booking has notes, its row shows them with an **Edit note** button (the overview's agenda shows a quiet "Host note" marker instead). The page shows the booking, the guest's own notes, and who last edited the host notes and when. Notes are at most 5000 characters; saving an empty field removes them.
 
 Who can read and edit them:
 
@@ -173,10 +173,11 @@ Who can read and edit them:
 | Owner of the event type (its creator, for a team event type) | Yes | Sees the booking on their bookings page and approves, cancels or reschedules it |
 | Member a round-robin booking is assigned to | Yes | Runs the meeting |
 | Every member of a collective booking | Yes, except members excluded from the event type | They all attend |
+| Members of a round-robin team, when the booking has no assigned member (deleted account, old booking) | No, only the owner | It was never theirs |
 | Watcher who claimed the booking | Yes | Took the meeting over |
 | Other members of a round-robin team, team admins who are none of the above, watchers only offered the booking, instance admins | No | Nothing else in calrs shows them that booking |
 
-Anyone else gets a 404, also when saving. When two hosts edit at the same time, the second save is refused with the first one's text shown, so nothing is overwritten silently.
+Access follows the team as it is now: a member who leaves the team loses access to its collective bookings. Anyone else gets the dashboard's "Not found" page, also when saving, whether or not the booking exists. When two hosts edit at the same time, the second save is refused with the first one's text shown (or "(cleared)"), so nothing is overwritten silently. An admin impersonating a host is recorded as the author: "Last edited by Admin (admin, as Host)".
 
 Host notes are shown on host surfaces only: the notes page, the bookings page, the overview, and the host emails sent once they exist (host reminder, approval reminder, "booking confirmed", cancellation and reschedule request). They are **never** shown to the guest: not on the confirmation page or the cancel and reschedule pages, not in guest emails or SMS, not in an `.ics` file, a webhook or an embed. They are not written into the calendar event either, since calendar servers send that event to its attendees and it is often shared.
 

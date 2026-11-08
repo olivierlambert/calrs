@@ -36,7 +36,9 @@ const RULER_TO_HOUR: i64 = 20;
 
 /// Scope predicate, see the module documentation. Alias `b`. Binds the user
 /// id four times. A team member excluded from the event type (weight 0, as
-/// `hosts.rs` reads it) is not one of its hosts.
+/// `hosts.rs` reads it) is not one of its hosts, and an unassigned booking is
+/// every member's only on a collective event type: a round-robin booking that
+/// lost its assigned member (deleted user, legacy row) is the owner's alone.
 ///
 /// The rule is the one of `user_busy_bookings`, written so that every branch
 /// of the OR reads an index of `bookings` (assigned user, event type,
@@ -51,7 +53,7 @@ const HOST_SCOPE: &str = "(b.assigned_user_id = ?
           WHERE oa.user_id = ?
           UNION ALL
           SELECT tt.id FROM event_types tt JOIN team_members tm ON tm.team_id = tt.team_id
-          WHERE tm.user_id = ?
+          WHERE tm.user_id = ? AND tt.scheduling_mode = 'collective'
             AND NOT EXISTS (SELECT 1 FROM event_type_member_weights etw
                 WHERE etw.event_type_id = tt.id AND etw.user_id = tm.user_id AND etw.weight <= 0)))
     OR b.claimed_by_user_id = ?)";

@@ -5,8 +5,14 @@
 -- no note. Edited in place, so a reschedule (which updates the row) keeps it,
 -- and a cancellation (a status change) does too.
 ALTER TABLE bookings ADD COLUMN host_notes TEXT;
--- When the note was last saved (UTC, `YYYY-MM-DD HH:MM:SS.SSS`) and by whom, so
--- the hosts of a shared booking can tell who wrote it, and a save made from
--- a stale page does not silently overwrite a newer one.
+-- Bumped by every save. A save names the version it was loaded with and is
+-- refused when it changed, so a save made from a stale page does not
+-- silently overwrite what another host wrote meanwhile.
+ALTER TABLE bookings ADD COLUMN host_notes_version INTEGER NOT NULL DEFAULT 0;
+-- When the note was last saved (UTC, `YYYY-MM-DD HH:MM:SS`) and by whom, so
+-- the hosts of a shared booking can tell who wrote it. A save made by an
+-- admin impersonating a host records the admin in `updated_by` and the host
+-- in `updated_as` (NULL otherwise).
 ALTER TABLE bookings ADD COLUMN host_notes_updated_at TEXT;
 ALTER TABLE bookings ADD COLUMN host_notes_updated_by TEXT REFERENCES users(id) ON DELETE SET NULL;
+ALTER TABLE bookings ADD COLUMN host_notes_updated_as TEXT REFERENCES users(id) ON DELETE SET NULL;

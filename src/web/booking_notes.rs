@@ -8,9 +8,11 @@
 //!   event type, its creator): they see the booking on their bookings page and
 //!   approve, cancel or reschedule it;
 //! - the member a round-robin booking is assigned to: they run the meeting;
-//! - every member of a collective booking (no assigned member) except those
-//!   excluded from the event type (weight 0, as `hosts.rs` reads it): they all
-//!   attend;
+//! - every member of a collective booking (a collective event type, no
+//!   assigned member) except those excluded from the event type (weight 0, as
+//!   `hosts.rs` reads it): they all attend. A round-robin booking that lost its
+//!   assigned member (the user was deleted, or a legacy row) opens to no team
+//!   member, only to the owner;
 //! - the watcher who claimed the booking: they take it over.
 //!
 //! These are the hosts the overview lists the booking for (`HOST_SCOPE` in
@@ -19,7 +21,13 @@
 //! other members, and no page shows them those bookings), not the other
 //! members of a round-robin team, not a watcher who was only offered the
 //! booking, and not an instance admin as such (impersonation shows them what
-//! the user sees, nothing more).
+//! the user sees, nothing more; a save they make records them as its author).
+//!
+//! Access follows the team as it is now, not as it was when the meeting was
+//! booked: a member who left the team loses access to its collective
+//! bookings, one who joined gains it, and an assignee or claimant keeps it
+//! whatever the team. The owner and the assigned member are read from the
+//! booking and its event type at each request too.
 //!
 //! Notes reach host surfaces only: this page, the bookings page and the
 //! overview, and the host emails sent once they exist (see
@@ -38,7 +46,8 @@ pub(super) const HOST_NOTES_MAX_CHARS: usize = 5000;
 /// account). Binds the user id four times.
 const NOTE_HOSTS: &str = "(a.user_id = ?
     OR b.assigned_user_id = ?
-    OR (b.assigned_user_id IS NULL AND et.team_id IS NOT NULL AND EXISTS (
+    OR (b.assigned_user_id IS NULL AND et.team_id IS NOT NULL
+        AND et.scheduling_mode = 'collective' AND EXISTS (
           SELECT 1 FROM team_members tm
           WHERE tm.team_id = et.team_id AND tm.user_id = ?
             AND NOT EXISTS (SELECT 1 FROM event_type_member_weights etw
@@ -59,11 +68,14 @@ pub(super) struct NoteBooking {
     pub stored_tz: String,
     pub guest_tz: String,
     pub host_notes: Option<String>,
-    /// `host_notes_updated_at`, empty when the notes were never saved: the
-    /// version a save is made against.
+    /// `host_notes_version`: the version a save is made against.
+    pub version: i64,
+    /// `host_notes_updated_at`, empty when the notes were never saved.
     pub updated_at: String,
     /// Who saved them last, `None` when nobody did or the user is gone.
     pub updated_by: Option<String>,
+    /// The host an admin was impersonating when they saved them last.
+    pub updated_as: Option<String>,
 }
 
 /// The booking `booking_id` when `user_id` may read and edit its host notes,
@@ -80,12 +92,14 @@ pub(super) async fn note_booking(
                 CASE b.time_version WHEN 1 THEN b.end_at ELSE rtrim(b.end_at, 'Z') END,
                 COALESCE(NULLIF(et.timezone, ''), u.timezone, 'UTC'),
                 COALESCE(NULLIF(b.guest_timezone, ''), 'UTC'),
-                b.host_notes, COALESCE(b.host_notes_updated_at, ''), eu.name
+                b.host_notes, b.host_notes_version, COALESCE(b.host_notes_updated_at, ''),
+                eu.name, ea.name
          FROM bookings b
          JOIN event_types et ON et.id = b.event_type_id
          LEFT JOIN accounts a ON a.id = et.account_id
          LEFT JOIN users u ON u.id = a.user_id
          LEFT JOIN users eu ON eu.id = b.host_notes_updated_by
+         LEFT JOIN users ea ON ea.id = b.host_notes_updated_as
          WHERE b.id = ? AND {NOTE_HOSTS}"
     );
     #[allow(clippy::type_complexity)]
@@ -101,7 +115,9 @@ pub(super) async fn note_booking(
         String,
         String,
         Option<String>,
+        i64,
         String,
+        Option<String>,
         Option<String>,
     )> = sqlx::query_as(&sql)
         .bind(booking_id)
@@ -124,8 +140,10 @@ pub(super) async fn note_booking(
             stored_tz,
             guest_tz,
             host_notes,
+            version,
             updated_at,
             updated_by,
+            updated_as,
         )| NoteBooking {
             id,
             status,
@@ -138,8 +156,10 @@ pub(super) async fn note_booking(
             stored_tz,
             guest_tz,
             host_notes,
+            version,
             updated_at,
             updated_by,
+            updated_as,
         },
     ))
 }
@@ -173,25 +193,22 @@ pub(super) struct NotesForm {
     _csrf: Option<String>,
     #[serde(default)]
     host_notes: String,
-    /// `host_notes_updated_at` as the page showed it.
+    /// `host_notes_version` as the page showed it.
     #[serde(default)]
-    base: String,
+    version: String,
     back: Option<String>,
 }
 
 /// What the form shows besides the booking.
 struct NotesView<'a> {
     text: &'a str,
-    base: &'a str,
+    version: i64,
     back: Option<&'a str>,
     saved: bool,
     error: Option<String>,
-    /// The version saved meanwhile by someone else, after a refused save.
-    conflict: Option<&'a str>,
-}
-
-fn not_found() -> Response {
-    (axum::http::StatusCode::NOT_FOUND, "").into_response()
+    /// After a refused save: the version saved meanwhile by someone else,
+    /// `None` inside when they cleared the notes.
+    conflict: Option<Option<&'a str>>,
 }
 
 /// "Last edited by Alice, 7 Nov 14:30" in the viewer's zone, empty when the
@@ -200,7 +217,7 @@ fn last_edit_label(booking: &NoteBooking, viewer_tz: Tz, lang: &str) -> String {
     if booking.host_notes.is_none() {
         return String::new();
     }
-    let Ok(at) = NaiveDateTime::parse_from_str(&booking.updated_at, "%Y-%m-%d %H:%M:%S%.f") else {
+    let Some(at) = crate::booking_time::naive(&booking.updated_at) else {
         return String::new();
     };
     let local = viewer_tz.from_utc_datetime(&at).naive_local();
@@ -211,12 +228,17 @@ fn last_edit_label(booking: &NoteBooking, viewer_tz: Tz, lang: &str) -> String {
     );
     let mut args = fluent_bundle::FluentArgs::new();
     args.set("when", when);
-    match &booking.updated_by {
-        Some(name) => {
+    match (&booking.updated_by, &booking.updated_as) {
+        (Some(name), Some(host)) => {
+            args.set("name", name.clone());
+            args.set("host", host.clone());
+            crate::i18n::translate(lang, "host-notes-last-edit-as", Some(&args))
+        }
+        (Some(name), None) => {
             args.set("name", name.clone());
             crate::i18n::translate(lang, "host-notes-last-edit", Some(&args))
         }
-        None => crate::i18n::translate(lang, "host-notes-last-edit-anon", Some(&args)),
+        (None, _) => crate::i18n::translate(lang, "host-notes-last-edit-anon", Some(&args)),
     }
 }
 
@@ -263,13 +285,13 @@ fn render_notes_page(
             status_mark => status_mark,
             status_label => crate::i18n::translate(lang, status_key, None),
             host_notes => view.text,
-            base => view.base,
+            version => view.version,
             max_chars => HOST_NOTES_MAX_CHARS,
             last_edit => last_edit_label(booking, viewer_tz, lang),
             saved => view.saved,
             error => view.error.unwrap_or_default(),
             conflict_active => view.conflict.is_some(),
-            conflict => view.conflict.unwrap_or(""),
+            conflict => view.conflict.flatten().unwrap_or(""),
             back => back,
             back_url => back_url,
             back_label => crate::i18n::translate(lang, back_key, None),
@@ -288,13 +310,13 @@ pub(super) async fn booking_notes_page(
 ) -> Response {
     let booking = match note_booking(&state.pool, &booking_id, &auth_user.user.id).await {
         Ok(Some(b)) => b,
-        Ok(None) => return not_found(),
+        Ok(None) => return dashboard_not_found(&state, &auth_user),
         Err(e) => return internal_error_response("load booking notes", &e),
     };
     let text = booking.host_notes.clone().unwrap_or_default();
     let view = NotesView {
         text: &text,
-        base: &booking.updated_at,
+        version: booking.version,
         back: query.back.as_deref(),
         saved: query.saved.is_some(),
         error: None,
@@ -319,18 +341,20 @@ pub(super) async fn save_booking_notes(
     let user_id = &auth_user.user.id;
     let booking = match note_booking(&state.pool, &booking_id, user_id).await {
         Ok(Some(b)) => b,
-        Ok(None) => return not_found(),
+        Ok(None) => return dashboard_not_found(&state, &auth_user),
         Err(e) => return internal_error_response("load booking notes", &e),
     };
     let (back, _, _) = back_target(form.back.as_deref());
     let notes = normalize_host_notes(&form.host_notes);
+    // A missing or garbled version can match no row: refused as stale.
+    let version = form.version.trim().parse::<i64>().unwrap_or(-1);
 
     if notes.as_deref().map_or(0, |n| n.chars().count()) > HOST_NOTES_MAX_CHARS {
         let mut args = fluent_bundle::FluentArgs::new();
         args.set("max", HOST_NOTES_MAX_CHARS);
         let view = NotesView {
             text: &form.host_notes,
-            base: &form.base,
+            version,
             back: Some(back),
             saved: false,
             error: Some(crate::i18n::translate(
@@ -351,30 +375,43 @@ pub(super) async fn save_booking_notes(
         return Redirect::to(&saved_url).into_response();
     }
 
+    // An admin impersonating a host is recorded as the author, the host as
+    // whom they acted beside it.
+    let (author, acting_as) = match &auth_user.impersonation {
+        Some(info) => (info.admin_id.as_str(), Some(user_id.as_str())),
+        None => (user_id.as_str(), None),
+    };
     // Guarded on the version the page was loaded with, so a save from a
     // stale page cannot silently replace what another host wrote meanwhile.
     let changed = sqlx::query(
-        "UPDATE bookings SET host_notes = ?,
-                host_notes_updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now'),
-                host_notes_updated_by = ?
-         WHERE id = ? AND COALESCE(host_notes_updated_at, '') = ?",
+        "UPDATE bookings SET host_notes = ?, host_notes_version = host_notes_version + 1,
+                host_notes_updated_at = datetime('now'),
+                host_notes_updated_by = ?, host_notes_updated_as = ?
+         WHERE id = ? AND host_notes_version = ?",
     )
     .bind(&notes)
-    .bind(user_id)
+    .bind(author)
+    .bind(acting_as)
     .bind(&booking.id)
-    .bind(&form.base)
+    .bind(version)
     .execute(&state.pool)
     .await;
     match changed {
         Ok(r) if r.rows_affected() == 1 => {
-            tracing::info!(booking_id = %booking.id, user_id = %user_id, cleared = notes.is_none(), "host notes saved");
+            tracing::info!(booking_id = %booking.id, user_id = %author, acting_as = ?acting_as, cleared = notes.is_none(), "host notes saved");
             Redirect::to(&saved_url).into_response()
         }
         Ok(_) => {
-            let current = booking.host_notes.clone().unwrap_or_default();
+            // Read the row again: the version and the text shown must be the
+            // ones that refused this save, not those read before it.
+            let current = match note_booking(&state.pool, &booking_id, user_id).await {
+                Ok(Some(b)) => b,
+                Ok(None) => return dashboard_not_found(&state, &auth_user),
+                Err(e) => return internal_error_response("load booking notes", &e),
+            };
             let view = NotesView {
                 text: &form.host_notes,
-                base: &booking.updated_at,
+                version: current.version,
                 back: Some(back),
                 saved: false,
                 error: Some(crate::i18n::translate(
@@ -382,9 +419,9 @@ pub(super) async fn save_booking_notes(
                     "host-notes-conflict",
                     None,
                 )),
-                conflict: Some(&current),
+                conflict: Some(current.host_notes.as_deref()),
             };
-            render_notes_page(&state, &auth_user, &booking, view)
+            render_notes_page(&state, &auth_user, &current, view)
         }
         Err(e) => internal_error_response("save booking notes", &e),
     }

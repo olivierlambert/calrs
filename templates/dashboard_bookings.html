@@ -12,8 +12,13 @@
   {% if b.notes %}<div class="booking-notes" tabindex="0"><strong>{{ t("confirmed-detail-notes") }}</strong> {{ b.notes }}</div>{% endif %}
   {% if b.host_notes %}<div class="booking-notes host-notes" tabindex="0"><strong>{{ t("bookings-host-notes") }}</strong> {{ b.host_notes }}</div>{% endif %}
 {%- endmacro %}
+{#- The title opens the booking's host notes page (#173); the button only
+    appears once a note exists, so rows without one keep their two actions. #}
 {% macro notes_link(b, cls="") -%}
-  <a href="/dashboard/bookings/{{ b.id }}/notes?back=bookings" class="ui-btn ui-btn--sm ui-btn--ghost{{ cls }}">{% if b.host_notes %}{{ t("host-notes-edit") }}{% else %}{{ t("host-notes-add") }}{% endif %}</a>
+  {% if b.host_notes %}<a href="/dashboard/bookings/{{ b.id }}/notes?back=bookings" class="ui-btn ui-btn--sm ui-btn--ghost{{ cls }}">{{ t("host-notes-edit") }}</a>{% endif %}
+{%- endmacro %}
+{% macro title_link(b) -%}
+  <a class="tt-link" href="/dashboard/bookings/{{ b.id }}/notes?back=bookings">{{ b.event_title }}<span class="sr-only">, {{ t("host-notes-title") }}</span></a>
 {%- endmacro %}
 {% macro dated_time(b) -%}
   {% if b.when %}<time class="tt-time" datetime="{{ b.when.iso }}" title="{{ b.when.long_date }}">{{ b.when.rel_day }} {{ b.when.start }}<small>{{ b.when.until }}</small></time>
@@ -65,7 +70,7 @@
     {{ dated_time(b) }}
     <i class="g p" role="img" aria-label="{{ t('overview-ruler-pending') }}"></i>
     <div class="tt-main booking-info">
-      <div class="tt-title">{{ b.event_title }}</div>
+      <div class="tt-title">{{ title_link(b) }}</div>
       {{ who(b) }}
       {{ extra_lines(b) }}
     </div>
@@ -120,7 +125,7 @@
       <i class="g c" role="img" aria-label="{{ t('overview-ruler-booked') }}"></i>
       <div class="tt-main booking-info">
         <div class="tt-title">
-          {{ b.event_title }}
+          {{ title_link(b) }}
           {% if b.awaiting_reschedule is defined and b.awaiting_reschedule %}<span class="badge badge-warning">{{ t("bookings-badge-awaiting-reschedule") }}</span>{% endif %}
           {% if b.writeback_error %}<span class="badge badge-error" title="{{ b.writeback_error }}">{{ t("bookings-badge-writeback-failed") }}</span>{% endif %}
         </div>

@@ -41,11 +41,11 @@
   <div class="notice notice--error" role="alert" style="margin-top: 1rem;">{{ ic.icon("alert") }}<span>{{ error }}</span></div>
   {% endif %}
   {% if conflict_active %}
-  <div class="booking-notes host-notes-conflict" tabindex="0" style="max-height: none;"><strong>{{ t("host-notes-current") }}</strong> {{ conflict }}</div>
+  <div class="booking-notes host-notes-conflict" tabindex="0" style="max-height: none;"><strong>{{ t("host-notes-current") }}</strong> {% if conflict %}{{ conflict }}{% else %}{{ t("host-notes-cleared") }}{% endif %}</div>
   {% endif %}
 
   <form method="post" action="/dashboard/bookings/{{ booking_id }}/notes" class="host-notes-form" style="margin-top: 1rem;">
-    <input type="hidden" name="base" value="{{ base }}">
+    <input type="hidden" name="version" value="{{ version }}">
     <input type="hidden" name="back" value="{{ back }}">
     <div class="form-group">
       <label for="host_notes" class="sr-only">{{ t("host-notes-title") }}</label>

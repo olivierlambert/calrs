@@ -69,7 +69,10 @@ pub(super) fn render_html_email_in(
                <td style=\"padding:8px 12px;color:#6b7280;font-size:13px;white-space:nowrap;vertical-align:top;\">{}</td>\
                <td style=\"padding:8px 12px;color:#111827;font-size:14px;background:{bg};\">{}</td>\
              </tr>",
-            h(&row.label), h(&row.value),
+            h(&row.label),
+            // Escaped first, so the only markup a value brings is the line
+            // breaks of a multi-line note (the guest's, the hosts', #173).
+            h(&row.value).replace("\r\n", "\n").replace('\n', "<br>"),
         ));
     }
 

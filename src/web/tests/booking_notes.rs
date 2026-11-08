@@ -35,12 +35,19 @@ async fn future_booking(pool: &SqlitePool, et_id: &str) -> (String, String, Stri
     (id, cancel, resched)
 }
 
-fn notes_body(csrf: &str, notes: &str, base: &str) -> String {
+fn notes_body(csrf: &str, notes: &str, version: i64) -> String {
     format!(
-        "_csrf={csrf}&host_notes={}&base={}&back=bookings",
+        "_csrf={csrf}&host_notes={}&version={version}&back=bookings",
         urlencoding::encode(notes),
-        urlencoding::encode(base)
     )
+}
+
+async fn stored_version(pool: &SqlitePool, booking_id: &str) -> i64 {
+    sqlx::query_scalar("SELECT host_notes_version FROM bookings WHERE id = ?")
+        .bind(booking_id)
+        .fetch_one(pool)
+        .await
+        .unwrap()
 }
 
 async fn owner_id(pool: &SqlitePool) -> String {
@@ -73,7 +80,7 @@ async fn owner_reads_saves_and_clears_host_notes() {
             &uri,
             &session,
             csrf,
-            &notes_body(csrf, &format!("  {SECRET}\r\nline two  "), ""),
+            &notes_body(csrf, &format!("  {SECRET}\r\nline two  "), 0),
         ))
         .await
         .unwrap();
@@ -115,18 +122,14 @@ async fn owner_reads_saves_and_clears_host_notes() {
     assert!(body.contains("Edit note"));
 
     // Saving an empty field clears them.
-    let base: String =
-        sqlx::query_scalar("SELECT host_notes_updated_at FROM bookings WHERE id = ?")
-            .bind(&id)
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+    let base = stored_version(&pool, &id).await;
+    assert_eq!(base, 1, "one save so far");
     let response = app
         .oneshot(post_form(
             &uri,
             &session,
             csrf,
-            &notes_body(csrf, "   ", &base),
+            &notes_body(csrf, "   ", base),
         ))
         .await
         .unwrap();
@@ -143,7 +146,7 @@ async fn saving_host_notes_needs_the_csrf_token() {
             &format!("/dashboard/bookings/{id}/notes"),
             &session,
             "cookie-token",
-            &notes_body("other-token", SECRET, ""),
+            &notes_body("other-token", SECRET, 0),
         ))
         .await
         .unwrap();
@@ -186,7 +189,7 @@ async fn a_stranger_can_neither_read_nor_write_host_notes() {
             &uri,
             &stranger,
             csrf,
-            &notes_body(csrf, "overwritten", ""),
+            &notes_body(csrf, "overwritten", 0),
         ))
         .await
         .unwrap();
@@ -213,7 +216,7 @@ async fn too_long_host_notes_are_refused_and_kept_in_the_field() {
             &format!("/dashboard/bookings/{id}/notes"),
             &session,
             csrf,
-            &notes_body(csrf, &long, ""),
+            &notes_body(csrf, &long, 0),
         ))
         .await
         .unwrap();
@@ -230,7 +233,7 @@ async fn too_long_host_notes_are_refused_and_kept_in_the_field() {
             &format!("/dashboard/bookings/{id}/notes"),
             &session,
             csrf,
-            &notes_body(csrf, &fits, ""),
+            &notes_body(csrf, &fits, 0),
         ))
         .await
         .unwrap();
@@ -250,19 +253,19 @@ async fn a_save_from_a_stale_page_does_not_overwrite_a_newer_one() {
             &uri,
             &session,
             csrf,
-            &notes_body(csrf, "first", ""),
+            &notes_body(csrf, "first", 0),
         ))
         .await
         .unwrap();
     assert!(first.status().is_redirection());
 
-    // Loaded before the first save: its base is still "".
+    // Loaded before the first save: its version is still 0.
     let response = app
         .oneshot(post_form(
             &uri,
             &session,
             csrf,
-            &notes_body(csrf, "second", ""),
+            &notes_body(csrf, "second", 0),
         ))
         .await
         .unwrap();
@@ -281,6 +284,178 @@ async fn a_save_from_a_stale_page_does_not_overwrite_a_newer_one() {
         stored_host_notes(&pool, &id).await.as_deref(),
         Some("first")
     );
+    assert!(
+        body.contains(r#"name="version" value="1""#),
+        "the refusal hands out the current version"
+    );
+}
+
+/// The other host cleared the notes: the refusal says so rather than show
+/// an empty "saved version", and its version is the one read after the
+/// refused save.
+#[tokio::test]
+async fn a_stale_save_after_the_notes_were_cleared_says_so() {
+    let (app, pool, session, et_id) = setup_test_app().await;
+    let (id, _, _) = future_booking(&pool, &et_id).await;
+    let uri = format!("/dashboard/bookings/{id}/notes");
+    let csrf = "csrf-173-cleared";
+    for (text, version) in [("first", 0), ("", 1)] {
+        let response = app
+            .clone()
+            .oneshot(post_form(
+                &uri,
+                &session,
+                csrf,
+                &notes_body(csrf, text, version),
+            ))
+            .await
+            .unwrap();
+        assert!(response.status().is_redirection());
+    }
+    assert_eq!(stored_host_notes(&pool, &id).await, None);
+
+    let response = app
+        .oneshot(post_form(
+            &uri,
+            &session,
+            csrf,
+            &notes_body(csrf, "mine", 0),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = body_string(response).await;
+    assert!(body.contains("(cleared)"), "{body}");
+    assert!(body.contains(r#"name="version" value="2""#), "{body}");
+    assert_eq!(stored_host_notes(&pool, &id).await, None);
+}
+
+/// A missing or garbled version is refused as stale, never applied.
+#[tokio::test]
+async fn a_save_without_a_version_is_refused() {
+    let (app, pool, session, et_id) = setup_test_app().await;
+    let (id, _, _) = future_booking(&pool, &et_id).await;
+    let csrf = "csrf-173-noversion";
+    let response = app
+        .oneshot(post_form(
+            &format!("/dashboard/bookings/{id}/notes"),
+            &session,
+            csrf,
+            &format!("_csrf={csrf}&host_notes=x&version=abc"),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    assert_eq!(stored_host_notes(&pool, &id).await, None);
+}
+
+/// An admin impersonating the owner is recorded as the author, with the
+/// owner as whom they acted.
+#[tokio::test]
+async fn a_save_made_while_impersonating_records_the_admin() {
+    let (app, pool, _, et_id) = setup_test_app().await;
+    let (id, _, _) = future_booking(&pool, &et_id).await;
+    let owner = owner_id(&pool).await;
+    let (admin, admin_session) =
+        insert_test_user_with_session(&pool, "Root Admin", "root@test.com", "root").await;
+    sqlx::query("UPDATE users SET role = 'admin' WHERE id = ?")
+        .bind(&admin)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let csrf = "csrf-173-imp";
+    let cookie = format!(
+        "__Host-calrs_session={admin_session}; __Host-calrs_csrf={csrf}; __Host-calrs_impersonate={owner}"
+    );
+    let uri = format!("/dashboard/bookings/{id}/notes");
+    let request = axum::http::Request::builder()
+        .method("POST")
+        .uri(&uri)
+        .header("cookie", &cookie)
+        .header("content-type", "application/x-www-form-urlencoded")
+        .body(Body::from(notes_body(csrf, SECRET, 0)))
+        .unwrap();
+    let response = app.clone().oneshot(request).await.unwrap();
+    assert!(response.status().is_redirection());
+    let (by, as_user): (Option<String>, Option<String>) = sqlx::query_as(
+        "SELECT host_notes_updated_by, host_notes_updated_as FROM bookings WHERE id = ?",
+    )
+    .bind(&id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(by, Some(admin));
+    assert_eq!(as_user, Some(owner));
+
+    let request = axum::http::Request::builder()
+        .uri(&uri)
+        .header("cookie", &cookie)
+        .body(Body::empty())
+        .unwrap();
+    let body = body_string(app.oneshot(request).await.unwrap()).await;
+    assert!(
+        body.contains("Last edited by Root Admin (admin, as Test User)"),
+        "{body}"
+    );
+}
+
+/// The 404 is the dashboard's page, the same for a booking that does not
+/// exist and for one that is not the user's.
+#[tokio::test]
+async fn the_notes_404_is_the_dashboard_page_whatever_the_reason() {
+    let (app, pool, _, et_id) = setup_test_app().await;
+    let (id, _, _) = future_booking(&pool, &et_id).await;
+    let (_, stranger) = insert_test_user_with_session(&pool, "Eve", "eve@test.com", "eve").await;
+    let mut bodies = Vec::new();
+    for uri in [
+        format!("/dashboard/bookings/{id}/notes"),
+        "/dashboard/bookings/does-not-exist/notes".to_string(),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(get_authed(&uri, &stranger))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 404, "{uri}");
+        let body = body_string(response).await;
+        assert!(body.contains("Not found"), "{body}");
+        assert!(
+            body.contains("dashboard-layout") || body.contains("sidebar"),
+            "{body}"
+        );
+        bodies.push(body);
+    }
+    assert_eq!(bodies[0], bodies[1], "nothing tells the two apart");
+}
+
+/// Rows without a note keep their actions: no note button, the title opens
+/// the notes page. The note button appears once a note exists.
+#[tokio::test]
+async fn rows_offer_the_note_button_only_when_there_is_a_note() {
+    let (app, pool, session, et_id) = setup_test_app().await;
+    let (id, _, _) = future_booking(&pool, &et_id).await;
+    let body = body_string(
+        app.clone()
+            .oneshot(get_authed("/dashboard/bookings", &session))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(!body.contains("Edit note"), "no note yet");
+    assert!(
+        body.contains(&format!(
+            r#"<a class="tt-link" href="/dashboard/bookings/{id}/notes?back=bookings">"#
+        )),
+        "{body}"
+    );
+    set_host_notes(&pool, &id, SECRET).await;
+    let body = body_string(
+        app.oneshot(get_authed("/dashboard/bookings", &session))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(body.contains("Edit note"));
 }
 
 /// Who may read and edit, per the module documentation of `booking_notes`.
@@ -327,14 +502,27 @@ async fn host_notes_access_follows_who_hosts_the_booking() {
         .execute(&pool)
         .await
         .unwrap();
+    // The same team's collective event type, also the owner's.
+    let collective_et = uuid::Uuid::new_v4().to_string();
     sqlx::query(
-        "INSERT INTO event_type_member_weights (event_type_id, user_id, weight) VALUES (?, ?, 0)",
+        "INSERT INTO event_types (id, account_id, team_id, slug, title, duration_min, buffer_before, buffer_after, min_notice_min, enabled, scheduling_mode) \
+         SELECT ?, account_id, team_id, 'all-hands', 'All hands', 30, 0, 0, 0, 1, 'collective' FROM event_types WHERE id = ?",
     )
+    .bind(&collective_et)
     .bind(&team_et)
-    .bind(&excluded)
     .execute(&pool)
     .await
     .unwrap();
+    for et in [&team_et, &collective_et] {
+        sqlx::query(
+            "INSERT INTO event_type_member_weights (event_type_id, user_id, weight) VALUES (?, ?, 0)",
+        )
+        .bind(et)
+        .bind(&excluded)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
 
     let round_robin = insert_v1_booking(
         &pool,
@@ -348,9 +536,21 @@ async fn host_notes_access_follows_who_hosts_the_booking() {
     .await;
     let collective = insert_v1_booking(
         &pool,
-        &team_et,
+        &collective_et,
         "g@t.com",
         start + Duration::hours(2),
+        30,
+        "confirmed",
+        &[],
+    )
+    .await;
+    // A round-robin booking whose assigned member is gone (ON DELETE SET
+    // NULL), or a legacy row: unassigned, but not collective.
+    let orphaned = insert_v1_booking(
+        &pool,
+        &team_et,
+        "g@t.com",
+        start + Duration::hours(4),
         30,
         "confirmed",
         &[],
@@ -422,6 +622,12 @@ async fn host_notes_access_follows_who_hosts_the_booking() {
         assert!(!may(&round_robin, user).await);
     }
 
+    // Unassigned round robin: the owner only, never the whole team.
+    assert!(may(&orphaned, &owner).await);
+    for user in [&assignee, &peer, &team_admin, &excluded, &watcher] {
+        assert!(!may(&orphaned, user).await);
+    }
+
     // Collective: every member who hosts it, and its claimant; not an
     // excluded member, not a watcher without the claim.
     for user in [&owner, &assignee, &peer, &team_admin, &claimant] {
@@ -476,7 +682,8 @@ async fn the_overview_links_every_host_to_the_notes() {
         body.contains(&format!("/dashboard/bookings/{id}/notes?back=overview")),
         "{body}"
     );
-    assert!(body.contains("Edit note"));
+    assert!(body.contains("Host note"), "the agenda marks the note");
+    assert!(!body.contains("Edit note"), "no button on agenda rows");
 
     let response = app
         .oneshot(get_authed(
@@ -717,4 +924,77 @@ fn guest_facing_code_never_reads_host_notes() {
             "templates/{template} shows the host notes"
         );
     }
+}
+
+/// An unassigned round-robin booking (its member was deleted, or a legacy
+/// row) is listed on the overview of the owner only, not of every member.
+#[tokio::test]
+async fn the_overview_leaves_an_unassigned_round_robin_booking_to_its_owner() {
+    let (app, pool, session, _) = setup_test_app().await;
+    let (peer, peer_session) =
+        insert_test_user_with_session(&pool, "Peer", "peer@test.com", "peer").await;
+    let owner = owner_id(&pool).await;
+    let (_, team_et) = insert_team_with_et(
+        &pool,
+        "t173b",
+        "rr",
+        &[(&owner, "admin"), (&peer, "member")],
+    )
+    .await;
+    let owner_account: String = sqlx::query_scalar("SELECT id FROM accounts WHERE user_id = ?")
+        .bind(&owner)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE event_types SET account_id = ? WHERE id = ?")
+        .bind(&owner_account)
+        .bind(&team_et)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let id = insert_v1_booking(
+        &pool,
+        &team_et,
+        "g@t.com",
+        Utc::now() + Duration::hours(3),
+        30,
+        "confirmed",
+        &[],
+    )
+    .await;
+    let link = format!("/dashboard/bookings/{id}/notes?back=overview");
+
+    let body = body_string(
+        app.clone()
+            .oneshot(get_authed("/dashboard", &peer_session))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(!body.contains(&link), "not the peer's booking");
+    let body = body_string(
+        app.clone()
+            .oneshot(get_authed("/dashboard", &session))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(body.contains(&link), "still the owner's");
+
+    // Collective, the same booking is every member's.
+    sqlx::query("UPDATE event_types SET scheduling_mode = 'collective' WHERE id = ?")
+        .bind(&team_et)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let body = body_string(
+        app.oneshot(get_authed("/dashboard", &peer_session))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(
+        body.contains(&link),
+        "a collective booking is the peer's too"
+    );
 }

@@ -2175,3 +2175,27 @@ fn watcher_and_claim_emails_use_the_recipient_timezone() {
         offer.plain
     );
 }
+
+/// #173: host notes keep their line breaks in the HTML part (escaped
+/// first), and the plain part stays as written.
+#[test]
+fn host_notes_keep_their_line_breaks_in_html_emails() {
+    let notes = "Call <the CFO>\nthen send the quote";
+    for mail in [
+        compose_host_reminder(&host_in(None), Some(notes)),
+        compose_host_booking_confirmed(&host_in(None), Some(notes)),
+    ] {
+        assert!(
+            mail.html
+                .contains("Call &lt;the CFO&gt;<br>then send the quote"),
+            "{}",
+            mail.html
+        );
+        assert!(mail.plain.contains(notes), "{}", mail.plain);
+        assert!(!mail.plain.contains("<br>"));
+        assert!(mail.plain.contains("Host notes:"));
+    }
+    assert!(!compose_host_reminder(&host_in(None), None)
+        .plain
+        .contains("Host notes:"));
+}

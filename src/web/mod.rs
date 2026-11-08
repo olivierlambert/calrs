@@ -1058,6 +1058,26 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
 }
 
 /// Helper: create impersonation template context values (active, target_name, admin_name).
+/// The dashboard's 404 page, with the sidebar, in the user's language. The
+/// same answer for a page that does not exist and one the user may not see,
+/// so it never tells the two apart.
+pub(crate) fn dashboard_not_found(state: &AppState, auth_user: &crate::auth::AuthUser) -> Response {
+    let body = match state.templates.get_template("dashboard_not_found.html") {
+        Ok(tmpl) => {
+            let (impersonating, impersonating_name, _) = impersonation_ctx(auth_user);
+            tmpl.render(context! {
+                sidebar => sidebar_context(auth_user, ""),
+                lang => auth_user.lang,
+                impersonating => impersonating,
+                impersonating_name => impersonating_name,
+            })
+            .unwrap_or_else(|e| internal_error_body("template render", &e))
+        }
+        Err(e) => internal_error_body("template render", &e),
+    };
+    (axum::http::StatusCode::NOT_FOUND, Html(body)).into_response()
+}
+
 fn impersonation_ctx(auth_user: &crate::auth::AuthUser) -> (bool, String, String) {
     match &auth_user.impersonation {
         Some(info) => (true, info.target_name.clone(), info.admin_name.clone()),
