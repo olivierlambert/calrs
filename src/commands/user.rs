@@ -68,6 +68,12 @@ pub enum UserCommands {
         /// User email (any letter case)
         email: String,
     },
+    /// Manage a user's time off: periods they take no bookings, on every
+    /// event type they host
+    TimeOff {
+        #[command(subcommand)]
+        command: crate::commands::time_off::TimeOffCommands,
+    },
     /// Permanently delete a user and all data uniquely owned by them
     Delete {
         /// User email
@@ -114,6 +120,9 @@ pub async fn run(
     cmd: UserCommands,
 ) -> Result<()> {
     match cmd {
+        UserCommands::TimeOff { command } => {
+            crate::commands::time_off::run(pool, command).await?;
+        }
         UserCommands::ResetMfa { email } => {
             crate::mfa::reset(pool, &email).await?;
             println!("MFA reset for {email}; all sessions revoked.");
@@ -141,8 +150,9 @@ pub async fn run(
             let user_id = Uuid::new_v4().to_string();
             let username = auth::generate_username(pool, &email).await?;
 
+            let mut tx = pool.begin().await?;
             let role = auth::create_local_user(
-                pool,
+                &mut *tx,
                 &user_id,
                 &email,
                 &name,
@@ -151,34 +161,8 @@ pub async fn run(
                 admin,
             )
             .await?;
-
-            // Link to existing account (e.g. from old `calrs init`) or create a new one
-            let existing_account: Option<(String,)> =
-                sqlx::query_as("SELECT id FROM accounts WHERE email = ?")
-                    .bind(&email)
-                    .fetch_optional(pool)
-                    .await?;
-
-            if let Some((account_id,)) = existing_account {
-                // Link the existing account to this user
-                sqlx::query("UPDATE accounts SET user_id = ?, name = ? WHERE id = ?")
-                    .bind(&user_id)
-                    .bind(&name)
-                    .bind(&account_id)
-                    .execute(pool)
-                    .await?;
-            } else {
-                let account_id = Uuid::new_v4().to_string();
-                sqlx::query(
-                    "INSERT INTO accounts (id, name, email, timezone, user_id) VALUES (?, ?, ?, 'UTC', ?)",
-                )
-                .bind(&account_id)
-                .bind(&name)
-                .bind(&email)
-                .bind(&user_id)
-                .execute(pool)
-                .await?;
-            }
+            auth::create_user_account(&mut tx, &user_id, &name, &email).await?;
+            tx.commit().await?;
 
             println!(
                 "{} User created: {} <{}> (role: {})",

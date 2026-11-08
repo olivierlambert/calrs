@@ -299,12 +299,27 @@ async fn sync_caldav_calendars(
                         )
                         .await;
 
-                        // Store new sync-token and ctag
+                        // Store the new sync-token and ctag. A truncated
+                        // answer (a 507, RFC 6578 section 3.6) keeps the
+                        // old ctag, so the next sync does not skip the
+                        // calendar as unchanged, and stores the token, which
+                        // marks where the server stopped: the next delta
+                        // continues from there instead of reading the same
+                        // first page again.
+                        let ctag = if result.truncated {
+                            tracing::info!(
+                                calendar = %cal_label,
+                                "sync-collection truncated by the server, continuing next sync"
+                            );
+                            &stored_ctag
+                        } else {
+                            &cal_info.ctag
+                        };
                         update_calendar_sync_state(
                             pool,
                             &cal_id,
                             generation,
-                            &cal_info.ctag,
+                            ctag,
                             &result.new_sync_token,
                         )
                         .await;
@@ -1455,10 +1470,11 @@ async fn cancel_orphaned_booking(
         Option<String>,
         Option<String>,
         Option<String>,
+        String,
     )> = sqlx::query_as(
         "SELECT b.id, b.guest_name, b.guest_email, COALESCE(b.guest_timezone, 'UTC'), CASE b.time_version WHEN 1 THEN b.start_at ELSE rtrim(b.start_at, 'Z') END AS start_at, CASE b.time_version WHEN 1 THEN b.end_at ELSE rtrim(b.end_at, 'Z') END AS end_at, b.uid,
                 et.title, u.name, COALESCE(u.booking_email, u.email), b.caldav_calendar_href, u.timezone,
-                u.language
+                u.language, u.id
          FROM bookings b
          JOIN event_types et ON et.id = b.event_type_id
          JOIN accounts a ON a.id = et.account_id
@@ -1493,6 +1509,7 @@ async fn cancel_orphaned_booking(
         caldav_calendar_href,
         host_timezone,
         host_language,
+        host_user_id,
     ) = booking;
     let host_language = crate::email::supported_language(host_language);
 
@@ -1638,7 +1655,12 @@ async fn cancel_orphaned_booking(
         );
     }
     let _ = crate::email::send_guest_attendee_cancellations(&smtp_config, &details).await;
-    if let Err(e) = crate::email::send_host_cancellation(&smtp_config, &host_details).await {
+    let host_notes =
+        crate::web::host_notes_for_reader(pool, &host_details.uid, Some(&host_user_id)).await;
+    if let Err(e) =
+        crate::email::send_host_cancellation(&smtp_config, &host_details, host_notes.as_deref())
+            .await
+    {
         tracing::warn!(
             error = format!("{e:#}"),
             "failed to send external cancellation email to host"
@@ -2925,6 +2947,9 @@ mod tests {
                          END:VEVENT\r\nEND:VCALENDAR\r\n</cal:calendar-data>\
                          </d:prop></d:propstat></d:response><d:sync-token>s1</d:sync-token>",
                     ),
+                    // An empty calendar is an empty multistatus: an empty
+                    // 404 is an error since #325.
+                    ("REPORT", "/cals/colleague") => ms("<d:sync-token>c1</d:sync-token>"),
                     _ => return (StatusCode::NOT_FOUND, String::new()),
                 };
                 (StatusCode::MULTI_STATUS, body)
@@ -2948,6 +2973,252 @@ mod tests {
         .fetch_one(pool)
         .await
         .unwrap()
+    }
+
+    /// A CalDAV server with one calendar, `/cals/mine/`, holding one event.
+    /// Once `broken` holds an answer, every REPORT gets it (status, content
+    /// type, body) and the listing advertises a new ctag, as a server whose
+    /// calendar changed but whose REPORTs fail would.
+    #[allow(clippy::type_complexity)]
+    async fn spawn_breakable_dav() -> (
+        String,
+        Arc<std::sync::Mutex<Option<(u16, &'static str, &'static str)>>>,
+    ) {
+        use axum::http::{header, Method, StatusCode, Uri};
+        let broken: Arc<std::sync::Mutex<Option<(u16, &'static str, &'static str)>>> =
+            Arc::default();
+        let state = broken.clone();
+        let app = axum::Router::new().fallback(move |method: Method, uri: Uri| {
+            let failure = *state.lock().unwrap();
+            async move {
+                let ms = |inner: &str| {
+                    format!(
+                        "<?xml version=\"1.0\"?><d:multistatus xmlns:d=\"DAV:\" \
+                         xmlns:cal=\"urn:ietf:params:xml:ns:caldav\" \
+                         xmlns:cs=\"http://calendarserver.org/ns/\">{inner}</d:multistatus>"
+                    )
+                };
+                let ctag = if failure.is_some() { "m2" } else { "m1" };
+                let reply = |status: u16, content_type: &'static str, body: String| {
+                    (
+                        StatusCode::from_u16(status).unwrap(),
+                        [(header::CONTENT_TYPE, content_type)],
+                        body,
+                    )
+                };
+                match (method.as_str(), uri.path().trim_end_matches('/')) {
+                    ("PROPFIND", "/dav") => reply(207, "application/xml", ms(
+                        "<d:response><d:href>/dav/</d:href><d:propstat><d:prop>\
+                         <d:current-user-principal><d:href>/p/</d:href></d:current-user-principal>\
+                         </d:prop></d:propstat></d:response>",
+                    )),
+                    ("PROPFIND", "/p") => reply(207, "application/xml", ms(
+                        "<d:response><d:href>/p/</d:href><d:propstat><d:prop>\
+                         <cal:calendar-home-set><d:href>/cals/</d:href></cal:calendar-home-set>\
+                         </d:prop></d:propstat></d:response>",
+                    )),
+                    ("PROPFIND", "/cals") => reply(207, "application/xml", ms(&format!(
+                        "<d:response><d:href>/cals/mine/</d:href><d:propstat><d:prop>\
+                         <d:displayname>Mine</d:displayname>\
+                         <d:resourcetype><d:collection/><cal:calendar/></d:resourcetype>\
+                         <cs:getctag>{ctag}</cs:getctag></d:prop></d:propstat></d:response>"
+                    ))),
+                    ("REPORT", "/cals/mine") => match failure {
+                        Some((status, content_type, body)) => {
+                            reply(status, content_type, body.to_string())
+                        }
+                        None => reply(207, "application/xml", ms(
+                            "<d:response><d:href>/cals/mine/e1.ics</d:href><d:propstat><d:prop>\
+                             <cal:calendar-data>BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:e1\r\n\
+                             DTSTART:20300101T100000Z\r\nDTEND:20300101T110000Z\r\nSUMMARY:Mine\r\n\
+                             END:VEVENT\r\nEND:VCALENDAR\r\n</cal:calendar-data>\
+                             </d:prop></d:propstat></d:response><d:sync-token>s1</d:sync-token>",
+                        )),
+                    },
+                    _ => reply(404, "text/plain", String::new()),
+                }
+            }
+        });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+        (format!("http://127.0.0.1:{port}/dav/"), broken)
+    }
+
+    /// #325: a failing REPORT (an empty 500, an HTML 503, a 403, or a 200
+    /// with no multistatus) fails the calendar's sync. The cached events stay
+    /// and the new ctag is not stored, so the next sync fetches again
+    /// instead of reading the calendar as unchanged.
+    #[tokio::test]
+    async fn caldav_sync_keeps_cache_and_ctag_when_a_report_fails() {
+        let pool = setup_test_db().await;
+        let (source_id, _) = seed_fixtures(&pool).await;
+        let key = [0u8; 32];
+        let (base, broken) = spawn_breakable_dav().await;
+        let client = CaldavClient::new(&base, "user", "pw");
+
+        sync_source(&pool, &key, &client, &source_id).await.unwrap();
+        assert_eq!(
+            calendar_event_count(&pool, &source_id, "/cals/mine/").await,
+            1
+        );
+
+        for failure in [
+            (500, "text/plain", ""),
+            (
+                503,
+                "text/html",
+                "<html><body><h1>Service Unavailable</h1></body></html>",
+            ),
+            (403, "application/xml", ""),
+            (200, "text/html", ""),
+        ] {
+            *broken.lock().unwrap() = Some(failure);
+            let err = sync_source(&pool, &key, &client, &source_id)
+                .await
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains("Mine"), "{failure:?}: {err}");
+            assert_eq!(
+                calendar_event_count(&pool, &source_id, "/cals/mine/").await,
+                1,
+                "{failure:?}"
+            );
+            let ctag: Option<String> = sqlx::query_scalar(
+                "SELECT ctag FROM calendars WHERE source_id = ? AND href = '/cals/mine/'",
+            )
+            .bind(&source_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            assert_eq!(ctag.as_deref(), Some("m1"), "{failure:?}");
+        }
+    }
+
+    /// A CalDAV server whose one calendar advertises `ctag`, and whose
+    /// sync-collection answers depend on the token sent: from `s1` it
+    /// reports one change and truncates (a 507, RFC 6578 section 3.6) at
+    /// `s2`; from `s2` it reports the rest and ends at `s3`.
+    async fn spawn_truncating_dav() -> (String, Arc<std::sync::Mutex<&'static str>>) {
+        use axum::http::{Method, StatusCode, Uri};
+        let ctag: Arc<std::sync::Mutex<&'static str>> = Arc::new(std::sync::Mutex::new("m1"));
+        let state = ctag.clone();
+        let app = axum::Router::new().fallback(move |method: Method, uri: Uri, body: String| {
+            let ctag = *state.lock().unwrap();
+            async move {
+                let ms = |inner: &str| {
+                    format!(
+                        "<?xml version=\"1.0\"?><d:multistatus xmlns:d=\"DAV:\" \
+                         xmlns:cal=\"urn:ietf:params:xml:ns:caldav\" \
+                         xmlns:cs=\"http://calendarserver.org/ns/\">{inner}</d:multistatus>"
+                    )
+                };
+                let event = |uid: &str| {
+                    format!(
+                        "<d:response><d:href>/cals/mine/{uid}.ics</d:href><d:propstat><d:prop>\
+                         <cal:calendar-data>BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:{uid}\r\n\
+                         DTSTART:20300101T100000Z\r\nDTEND:20300101T110000Z\r\nSUMMARY:{uid}\r\n\
+                         END:VEVENT\r\nEND:VCALENDAR\r\n</cal:calendar-data>\
+                         </d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>"
+                    )
+                };
+                let reply = match (method.as_str(), uri.path().trim_end_matches('/')) {
+                    ("PROPFIND", "/dav") => {
+                        ms("<d:response><d:href>/dav/</d:href><d:propstat><d:prop>\
+                         <d:current-user-principal><d:href>/p/</d:href></d:current-user-principal>\
+                         </d:prop></d:propstat></d:response>")
+                    }
+                    ("PROPFIND", "/p") => {
+                        ms("<d:response><d:href>/p/</d:href><d:propstat><d:prop>\
+                         <cal:calendar-home-set><d:href>/cals/</d:href></cal:calendar-home-set>\
+                         </d:prop></d:propstat></d:response>")
+                    }
+                    ("PROPFIND", "/cals") => ms(&format!(
+                        "<d:response><d:href>/cals/mine/</d:href><d:propstat><d:prop>\
+                         <d:displayname>Mine</d:displayname>\
+                         <d:resourcetype><d:collection/><cal:calendar/></d:resourcetype>\
+                         <cs:getctag>{ctag}</cs:getctag></d:prop></d:propstat></d:response>"
+                    )),
+                    ("REPORT", "/cals/mine") if body.contains("sync-collection") => {
+                        if body.contains("<d:sync-token>s1</d:sync-token>") {
+                            ms(&format!(
+                                "{}<d:response><d:href>/cals/mine/</d:href>\
+                                 <d:status>HTTP/1.1 507 Insufficient Storage</d:status>\
+                                 </d:response><d:sync-token>s2</d:sync-token>",
+                                event("e2")
+                            ))
+                        } else if body.contains("<d:sync-token>s2</d:sync-token>") {
+                            ms(&format!("{}<d:sync-token>s3</d:sync-token>", event("e3")))
+                        } else {
+                            ms("<d:sync-token>s1</d:sync-token>")
+                        }
+                    }
+                    ("REPORT", "/cals/mine") => ms(&event("e1")),
+                    _ => return (StatusCode::NOT_FOUND, String::new()),
+                };
+                (StatusCode::MULTI_STATUS, reply)
+            }
+        });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+        (format!("http://127.0.0.1:{port}/dav/"), ctag)
+    }
+
+    /// #325: a truncated sync-collection keeps the old ctag (so the next
+    /// sync is not skipped as unchanged) and stores the server's token (so
+    /// it continues where the server stopped).
+    #[tokio::test]
+    async fn caldav_sync_continues_after_a_truncated_delta() {
+        let pool = setup_test_db().await;
+        let (source_id, _) = seed_fixtures(&pool).await;
+        let key = [0u8; 32];
+        let (base, ctag) = spawn_truncating_dav().await;
+        let client = CaldavClient::new(&base, "user", "pw");
+        let state = |pool: SqlitePool, source_id: String| async move {
+            sqlx::query_as::<_, (Option<String>, Option<String>)>(
+                "SELECT ctag, sync_token FROM calendars WHERE source_id = ? AND href = '/cals/mine/'",
+            )
+            .bind(&source_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        };
+
+        // Full sync: e1, ctag m1, the initial token s1.
+        sync_source(&pool, &key, &client, &source_id).await.unwrap();
+        assert_eq!(
+            state(pool.clone(), source_id.clone()).await,
+            (Some("m1".into()), Some("s1".into()))
+        );
+
+        // The calendar changed: the delta from s1 is truncated at s2.
+        *ctag.lock().unwrap() = "m2";
+        sync_source(&pool, &key, &client, &source_id).await.unwrap();
+        assert_eq!(
+            calendar_event_count(&pool, &source_id, "/cals/mine/").await,
+            2
+        );
+        assert_eq!(
+            state(pool.clone(), source_id.clone()).await,
+            (Some("m1".into()), Some("s2".into())),
+            "a truncated delta must not store the new ctag"
+        );
+
+        // The next sync is not skipped, continues from s2, and completes.
+        sync_source(&pool, &key, &client, &source_id).await.unwrap();
+        assert_eq!(
+            calendar_event_count(&pool, &source_id, "/cals/mine/").await,
+            3
+        );
+        assert_eq!(
+            state(pool.clone(), source_id.clone()).await,
+            (Some("m2".into()), Some("s3".into()))
+        );
     }
 
     #[tokio::test]

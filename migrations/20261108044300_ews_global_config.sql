@@ -1,6 +1,6 @@
 -- Global EWS impersonation: admin-configured central Exchange server with a
 -- service account holding the ApplicationImpersonation role. Per-user sources
--- are then auto-provisioned (see 20261108014501_caldav_sources_managed.sql) and the SOAP
+-- are then auto-provisioned (see 20261108044301_caldav_sources_managed.sql) and the SOAP
 -- layer injects t:ExchangeImpersonation on every request.
 
 ALTER TABLE auth_config ADD COLUMN ews_global_enabled INTEGER NOT NULL DEFAULT 0;

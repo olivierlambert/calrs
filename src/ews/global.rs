@@ -351,7 +351,7 @@ pub async fn provision_managed_ews_source_for_user(
     let holder_lock;
     let _holder_guard;
     if let Some((holder_source, holder_user, holder_email, holder_verified)) = holder {
-        if !(idp_verified && !holder_verified) {
+        if !idp_verified || holder_verified {
             return conflict(pool, user_id).await;
         }
         holder_lock = mailbox_lock(&holder_source);
@@ -690,7 +690,7 @@ pub async fn retarget_managed_sources(
         let _holder_guard;
         let mut tx = pool.begin().await?;
         if let Some((holder_id, holder_email, holder_verified)) = &holder {
-            if !(verified && !holder_verified) {
+            if !verified || *holder_verified {
                 tx.rollback().await?;
                 tracing::warn!(source_id = %id, "managed EWS source removed: its new mailbox is already another user's");
                 delete_source(pool, &id).await?;

@@ -507,6 +507,29 @@ bookings-back = Zurück
 bookings-empty = Noch keine anstehenden Buchungen.<br>Teile deine { $link }, damit andere Zeit mit dir buchen können.
 bookings-empty-link-label = Terminart-Links
 bookings-search-placeholder = Gäste, E-Mails oder Termine suchen
+bookings-recent = Letzte 30 Tage
+
+# Host notes on a booking (templates/booking_notes.html, bookings page, overview, host emails)
+
+host-notes-title = Notizen der Gastgeber
+host-notes-hint = Sichtbar für die Gastgeber dieser Buchung, ein Teammitglied, das sie übernommen hat, und einen Admin, der als einer ihrer Gastgeber handelt. Dem Gast werden sie nie angezeigt, und sie landen nie in der Einladung oder im Kalendertermin.
+host-notes-placeholder = Zum Beispiel: was in einem Telefonat gesagt wurde, was vorzubereiten ist.
+host-notes-save = Notizen speichern
+host-notes-saved = Notizen gespeichert.
+host-notes-too-long = Notizen der Gastgeber dürfen höchstens { $max } Zeichen lang sein.
+host-notes-conflict = Diese Notizen wurden geändert, nachdem diese Seite geöffnet wurde. Die gespeicherte Fassung steht unten; erneutes Speichern ersetzt sie durch den Text im Feld.
+host-notes-current = Gespeicherte Fassung:
+host-notes-last-edit = Zuletzt bearbeitet von { $name }, { $when }
+host-notes-last-edit-anon = Zuletzt bearbeitet am { $when }
+host-notes-edit = Notiz bearbeiten
+host-notes-marker = Notiz der Gastgeber
+host-notes-cleared = (gelöscht)
+host-notes-last-edit-as = Zuletzt bearbeitet von { $name } (Admin, als { $host }), { $when }
+dash-not-found-title = Nicht gefunden
+dash-not-found-body = Diese Seite existiert nicht, oder dieses Konto hat keinen Zugriff darauf.
+host-notes-from-guest = Vom Gast:
+bookings-host-notes = Notizen der Gastgeber:
+email-detail-host-notes = Notizen der Gastgeber:
 
 # Dashboard teams listing (templates/dashboard_teams.html)
 
@@ -1974,6 +1997,45 @@ admin-ews-trust-help = Diese aktiven Konten in den erlaubten Domains haben eine 
 admin-ews-trust-confirm = Bestätigen
 admin-ews-trust-more = { $shown } von { $total } angezeigt.
 admin-ews-http-warning = Der Endpunkt verwendet http://: Das Passwort des Dienstkontos wird unverschlüsselt gesendet. Verwende besser https://.
+# Time off (templates/time_off.html, src/web/time_off.rs, troubleshoot view)
+
+nav-time-off = Abwesenheit
+time-off-page-title = Abwesenheit
+time-off-heading = Abwesenheit
+time-off-subtitle = Zeiträume, in denen du keine Buchungen annimmst. Alle Terminarten, die du anbietest, persönliche wie die deiner Teams, richten sich danach. Gäste sehen nur, dass diese Zeiten nicht verfügbar sind.
+time-off-upcoming = Geplant
+time-off-empty = Keine Abwesenheit geplant.
+time-off-kept-notice = Termine, die in einem Zeitraum bereits gebucht sind, bleiben bestehen: Eine Abwesenheit sagt nichts ab. Sage sie bei Bedarf unter Buchungen ab oder verschiebe sie.
+time-off-pending-notice = Anfragen, die in einem Zeitraum auf deine Bestätigung warten, lassen sich nicht mehr annehmen: Lehne sie ab oder lösche zuerst die Abwesenheit.
+time-off-in-progress = Läuft gerade
+time-off-entered-in = Eingegeben in { $timezone }
+time-off-delete = Löschen
+time-off-delete-confirm = Diese Abwesenheit löschen? Der Zeitraum wird wieder buchbar.
+time-off-add-heading = Abwesenheit hinzufügen
+time-off-from = Von
+time-off-to = Bis
+time-off-time-optional = Uhrzeit (optional)
+time-off-times-help = Lass die Uhrzeiten leer, um ganze Tage zu sperren, beide Daten eingeschlossen. Die Uhrzeiten gelten in deiner Zeitzone, { $timezone }.
+time-off-label = Notiz (optional)
+time-off-label-help = Nur du siehst sie, hier und unter Diagnose. Gäste und Teammitglieder sehen sie nie.
+time-off-add-submit = Abwesenheit hinzufügen
+time-off-added = Abwesenheit hinzugefügt.
+time-off-deleted = Abwesenheit gelöscht.
+time-off-range = { $start } bis { $end }
+time-off-at = { $date }, { $time }
+time-off-same-day = { $date }, { $start } bis { $end }
+time-off-from-time = { $date }, ab { $time }
+time-off-until-time = { $date }, bis { $time }
+time-off-impersonating = Du siehst diese Seite als { $name }. Die Abwesenheiten sind für dich hier nur lesbar, die Notizen sind ausgeblendet.
+time-off-error-date = Gib die Daten als JJJJ-MM-TT und die Uhrzeiten als HH:MM ein.
+time-off-error-order = Das Ende muss nach dem Beginn liegen.
+time-off-error-too-long = Ein Zeitraum darf höchstens ein Jahr lang sein.
+time-off-error-past = Dieser Zeitraum ist bereits vorbei.
+time-off-error-label = Die Notiz darf höchstens 200 Zeichen lang sein.
+time-off-error-too-many = Du hast bereits 100 Zeiträume geplant. Lösche einige, bevor du weitere hinzufügst.
+time-off-hint = Um Daten für alle Terminarten auf einmal zu sperren, nutze { $link }.
+troubleshoot-label-time-off = Abwesenheit
+troubleshoot-legend-time-off = Abwesenheit
 
 directory-all-favorites = Alle Favoriten
 pager-label = Seiten

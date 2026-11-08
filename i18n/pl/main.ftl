@@ -551,6 +551,29 @@ bookings-back = Wstecz
 bookings-empty = Nie ma jeszcze nadchodzących rezerwacji.<br>Udostępnij swoje { $link }, aby inni mogli rezerwować czas u ciebie.
 bookings-empty-link-label = linki do typów wydarzeń
 bookings-search-placeholder = Szukaj gości, e-maili lub spotkań
+bookings-recent = Ostatnie 30 dni
+
+# Host notes on a booking (templates/booking_notes.html, bookings page, overview, host emails)
+
+host-notes-title = Notatki organizatorów
+host-notes-hint = Widzą je organizatorzy tej rezerwacji, członek zespołu, który ją przejął, oraz administrator działający jako jeden z jej organizatorów. Nigdy nie są pokazywane gościowi ani dodawane do zaproszenia czy wydarzenia w kalendarzu.
+host-notes-placeholder = Na przykład: co padło podczas rozmowy, co trzeba przygotować.
+host-notes-save = Zapisz notatki
+host-notes-saved = Notatki zapisane.
+host-notes-too-long = Notatki organizatorów mogą mieć najwyżej { $max } znaków.
+host-notes-conflict = Te notatki zmieniono po otwarciu tej strony. Zapisana wersja jest pokazana poniżej; ponowne zapisanie zastąpi ją tekstem z pola.
+host-notes-current = Zapisana wersja:
+host-notes-last-edit = Ostatnia zmiana: { $name }, { $when }
+host-notes-last-edit-anon = Ostatnia zmiana: { $when }
+host-notes-edit = Edytuj notatkę
+host-notes-marker = Notatka organizatorów
+host-notes-cleared = (usunięte)
+host-notes-last-edit-as = Ostatnia zmiana: { $name } (administrator, jako { $host }), { $when }
+dash-not-found-title = Nie znaleziono
+dash-not-found-body = Ta strona nie istnieje albo to konto nie ma do niej dostępu.
+host-notes-from-guest = Od gościa:
+bookings-host-notes = Notatki organizatorów:
+email-detail-host-notes = Notatki organizatorów:
 
 # Dashboard teams listing (templates/dashboard_teams.html)
 
@@ -2045,6 +2068,45 @@ admin-ews-trust-help = Te aktywne konta w dozwolonych domenach mają adres, za k
 admin-ews-trust-confirm = Potwierdź
 admin-ews-trust-more = Wyświetlono { $shown } z { $total }.
 admin-ews-http-warning = Punkt końcowy używa http://: hasło konta usługi jest wysyłane bez szyfrowania. Lepiej użyj https://.
+# Time off (templates/time_off.html, src/web/time_off.rs, troubleshoot view)
+
+nav-time-off = Nieobecności
+time-off-page-title = Nieobecności
+time-off-heading = Nieobecności
+time-off-subtitle = Okresy, w których nie przyjmujesz rezerwacji. Stosują się do nich wszystkie typy wydarzeń, które prowadzisz, osobiste i zespołowe. Goście widzą tylko, że te terminy są niedostępne.
+time-off-upcoming = Zaplanowane
+time-off-empty = Brak zaplanowanych nieobecności.
+time-off-kept-notice = Rezerwacje już dokonane w danym okresie pozostają: dodanie nieobecności niczego nie odwołuje. W razie potrzeby odwołaj je lub przełóż w Rezerwacjach.
+time-off-pending-notice = Prośby czekające na twoje zatwierdzenie w danym okresie nie mogą już zostać zatwierdzone: odrzuć je albo najpierw usuń nieobecność.
+time-off-in-progress = Trwa
+time-off-entered-in = Wprowadzono w strefie { $timezone }
+time-off-delete = Usuń
+time-off-delete-confirm = Usunąć tę nieobecność? Jej terminy znów będzie można rezerwować.
+time-off-add-heading = Dodaj nieobecność
+time-off-from = Od
+time-off-to = Do
+time-off-time-optional = Godzina (opcjonalnie)
+time-off-times-help = Zostaw godziny puste, aby zablokować całe dni, łącznie z obiema datami. Godziny są w twojej strefie czasowej, { $timezone }.
+time-off-label = Notatka (opcjonalnie)
+time-off-label-help = Widzisz ją tylko ty, tutaj i w Diagnostyce. Goście i członkowie zespołu nigdy jej nie widzą.
+time-off-add-submit = Dodaj nieobecność
+time-off-added = Nieobecność dodana.
+time-off-deleted = Nieobecność usunięta.
+time-off-range = Od { $start } do { $end }
+time-off-at = { $date }, { $time }
+time-off-same-day = { $date }, od { $start } do { $end }
+time-off-from-time = { $date }, od { $time }
+time-off-until-time = { $date }, do { $time }
+time-off-impersonating = Oglądasz tę stronę jako { $name }. Nieobecności są tu dla ciebie tylko do odczytu, a notatki są ukryte.
+time-off-error-date = Wpisz daty jako RRRR-MM-DD, a godziny jako GG:MM.
+time-off-error-order = Koniec musi być po początku.
+time-off-error-too-long = Okres może trwać najwyżej rok.
+time-off-error-past = Ten okres już się zakończył.
+time-off-error-label = Notatka może mieć najwyżej 200 znaków.
+time-off-error-too-many = Masz już zaplanowanych 100 okresów. Usuń część, zanim dodasz kolejne.
+time-off-hint = Aby zablokować daty we wszystkich typach wydarzeń naraz, użyj strony { $link }.
+troubleshoot-label-time-off = Nieobecność
+troubleshoot-legend-time-off = Nieobecność
 
 directory-all-favorites = Wszystkie ulubione
 pager-label = Strony

@@ -4,7 +4,7 @@
 -- and create duplicates.
 --
 -- No database that shipped has managed rows yet (the column arrives in
--- 20261108014501 with default 0), and 20261108014504_ews_email_trust removes
+-- 20261108044301 with default 0), and 20261108044304_ews_email_trust removes
 -- every managed row anyway, since no account is trusted before it. So rather
 -- than merging duplicates, any managed EWS row a development database holds
 -- goes now, so the unique index below can always be built. Their calendars,

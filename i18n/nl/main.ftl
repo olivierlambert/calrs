@@ -508,6 +508,29 @@ bookings-back = Terug
 bookings-empty = Nog geen komende boekingen.<br>Deel je { $link } zodat mensen een afspraak met je kunnen boeken.
 bookings-empty-link-label = links naar afspraaktypes
 bookings-search-placeholder = Zoek gasten, e-mails of afspraken
+bookings-recent = Afgelopen 30 dagen
+
+# Host notes on a booking (templates/booking_notes.html, bookings page, overview, host emails)
+
+host-notes-title = Notities van de organisatoren
+host-notes-hint = Zichtbaar voor de organisatoren van deze boeking, een teamlid dat de boeking heeft overgenomen en een beheerder die optreedt als een van de organisatoren. Ze worden nooit aan de gast getoond en nooit aan de uitnodiging of het agenda-item toegevoegd.
+host-notes-placeholder = Bijvoorbeeld: wat er in een gesprek is gezegd, wat er voorbereid moet worden.
+host-notes-save = Notities opslaan
+host-notes-saved = Notities opgeslagen.
+host-notes-too-long = Notities van de organisatoren mogen maximaal { $max } tekens lang zijn.
+host-notes-conflict = Deze notities zijn gewijzigd nadat deze pagina werd geopend. De opgeslagen versie staat hieronder; opnieuw opslaan vervangt die door de tekst in het veld.
+host-notes-current = Opgeslagen versie:
+host-notes-last-edit = Laatst bewerkt door { $name }, { $when }
+host-notes-last-edit-anon = Laatst bewerkt op { $when }
+host-notes-edit = Notitie bewerken
+host-notes-marker = Notitie van de organisatoren
+host-notes-cleared = (gewist)
+host-notes-last-edit-as = Laatst bewerkt door { $name } (beheerder, als { $host }), { $when }
+dash-not-found-title = Niet gevonden
+dash-not-found-body = Deze pagina bestaat niet, of dit account heeft er geen toegang toe.
+host-notes-from-guest = Van de gast:
+bookings-host-notes = Notities van de organisatoren:
+email-detail-host-notes = Notities van de organisatoren:
 
 # Dashboard teams listing (templates/dashboard_teams.html)
 
@@ -1976,6 +1999,45 @@ admin-ews-trust-help = Deze actieve accounts in de toegestane domeinen hebben ee
 admin-ews-trust-confirm = Bevestigen
 admin-ews-trust-more = { $shown } van { $total } getoond.
 admin-ews-http-warning = Het endpoint gebruikt http://: het wachtwoord van het serviceaccount wordt onversleuteld verzonden. Gebruik bij voorkeur https://.
+# Time off (templates/time_off.html, src/web/time_off.rs, troubleshoot view)
+
+nav-time-off = Afwezigheid
+time-off-page-title = Afwezigheid
+time-off-heading = Afwezigheid
+time-off-subtitle = Periodes waarin je geen boekingen aanneemt. Alle afspraaktypes die je aanbiedt volgen ze, persoonlijk en van je teams. Gasten zien alleen dat die tijden niet beschikbaar zijn.
+time-off-upcoming = Gepland
+time-off-empty = Geen afwezigheid gepland.
+time-off-kept-notice = Boekingen die al in een periode vallen blijven staan: afwezigheid toevoegen annuleert niets. Annuleer of verzet ze zo nodig via Boekingen.
+time-off-pending-notice = Aanvragen die binnen een periode op je goedkeuring wachten, kun je niet meer goedkeuren: wijs ze af of verwijder eerst de afwezigheid.
+time-off-in-progress = Bezig
+time-off-entered-in = Ingevoerd in { $timezone }
+time-off-delete = Verwijderen
+time-off-delete-confirm = Deze afwezigheid verwijderen? De tijden worden weer boekbaar.
+time-off-add-heading = Afwezigheid toevoegen
+time-off-from = Van
+time-off-to = Tot en met
+time-off-time-optional = Tijd (optioneel)
+time-off-times-help = Laat de tijden leeg om hele dagen te blokkeren, beide datums inbegrepen. De tijden zijn in je tijdzone, { $timezone }.
+time-off-label = Notitie (optioneel)
+time-off-label-help = Alleen jij ziet die, hier en bij Probleemoplossing. Gasten en teamgenoten zien die nooit.
+time-off-add-submit = Afwezigheid toevoegen
+time-off-added = Afwezigheid toegevoegd.
+time-off-deleted = Afwezigheid verwijderd.
+time-off-range = { $start } tot { $end }
+time-off-at = { $date } om { $time }
+time-off-same-day = { $date }, { $start } tot { $end }
+time-off-from-time = { $date }, vanaf { $time }
+time-off-until-time = { $date }, tot { $time }
+time-off-impersonating = Je bekijkt deze pagina als { $name }. Afwezigheid is hier alleen-lezen voor jou en de notities zijn verborgen.
+time-off-error-date = Voer de datums in als JJJJ-MM-DD en de tijden als UU:MM.
+time-off-error-order = Het einde moet na het begin liggen.
+time-off-error-too-long = Een periode mag hoogstens een jaar duren.
+time-off-error-past = Deze periode is al voorbij.
+time-off-error-label = De notitie mag hoogstens 200 tekens lang zijn.
+time-off-error-too-many = Je hebt al 100 periodes gepland. Verwijder er een paar voordat je nieuwe toevoegt.
+time-off-hint = Gebruik { $link } om datums voor alle afspraaktypes tegelijk te blokkeren.
+troubleshoot-label-time-off = Afwezigheid
+troubleshoot-legend-time-off = Afwezigheid
 
 directory-all-favorites = Alle favorieten
 pager-label = Pagina’s

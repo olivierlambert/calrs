@@ -97,6 +97,12 @@ async fn apply_migrations(pool: &SqlitePool, migrations: &[(&str, &str)]) -> Res
 
 /// For each account without a linked user, create a user (admin, local provider,
 /// no password — must be set via `calrs user create` or web registration) and link it.
+/// An orphan whose address belongs to a user is linked to that user only when
+/// the user has no account yet (a user created before its account). A user who
+/// already has one did not create this account: it was orphaned by a user
+/// removed outside calrs, and its address may since have gone to someone else,
+/// so it stays unlinked and is reported for the operator. So does an orphan
+/// whose address matches a user's only up to case or surrounding spaces.
 async fn migrate_orphaned_accounts(pool: &SqlitePool) -> Result<()> {
     let orphans: Vec<(String, String, String, String)> =
         sqlx::query_as("SELECT id, name, email, timezone FROM accounts WHERE user_id IS NULL")
@@ -111,8 +117,37 @@ async fn migrate_orphaned_accounts(pool: &SqlitePool) -> Result<()> {
             .await?;
 
         let user_id = if let Some((uid,)) = existing {
+            let has_account: bool =
+                sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM accounts WHERE user_id = ?)")
+                    .bind(&uid)
+                    .fetch_one(pool)
+                    .await?;
+            if has_account {
+                tracing::warn!(
+                    account_id = %account_id,
+                    "account has no user and its address belongs to a user with an account of their own; left unlinked, review it"
+                );
+                continue;
+            }
             uid
         } else {
+            // A user whose address differs only in case or spacing is most
+            // likely the same person, or the one who now holds it: a new
+            // passwordless user under the orphan's spelling would let a
+            // sign-in with that spelling reach the account. Leave it.
+            let near_match: bool = sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM users WHERE lower(trim(email)) = lower(trim(?)))",
+            )
+            .bind(&email)
+            .fetch_one(pool)
+            .await?;
+            if near_match {
+                tracing::warn!(
+                    account_id = %account_id,
+                    "account has no user and its address matches a user's only up to case or spaces; left unlinked, review it"
+                );
+                continue;
+            }
             let uid = uuid::Uuid::new_v4().to_string();
             // First user (or only pre-existing account) gets admin
             let has_users: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users")
@@ -860,9 +895,9 @@ mod tests {
         assert_eq!(total as usize, LEGACY_MIGRATIONS.len() + 2);
     }
 
-    /// 20261108014503_managed_ews_unique builds its unique index even on a
+    /// 20261108044303_managed_ews_unique builds its unique index even on a
     /// development database holding duplicate managed Exchange sources: they
-    /// go first (20261108014504_ews_email_trust removes managed rows anyway),
+    /// go first (20261108044304_ews_email_trust removes managed rows anyway),
     /// and an ordinary source is left alone.
     #[tokio::test]
     async fn managed_ews_unique_index_builds_over_duplicates() {
@@ -871,7 +906,7 @@ mod tests {
         sqlx::raw_sql(
             "DROP INDEX idx_caldav_sources_managed_ews_unique;
              DROP INDEX idx_caldav_sources_managed_ews_mailbox;
-             DELETE FROM _migrations WHERE name = '20261108014503_managed_ews_unique';
+             DELETE FROM _migrations WHERE name = '20261108044303_managed_ews_unique';
              INSERT INTO users (id, email, name, role, auth_provider, username, enabled)
                  VALUES ('u1', 'h@example.com', 'Host', 'admin', 'local', 'host', 1);
              INSERT INTO accounts (id, name, email, timezone, user_id)
@@ -1245,6 +1280,87 @@ mod tests {
             linked.is_some(),
             "Orphaned account should be linked to a user"
         );
+    }
+
+    async fn insert_orphan(pool: &SqlitePool, email: &str) -> String {
+        let id = uuid::Uuid::new_v4().to_string();
+        sqlx::query(
+            "INSERT INTO accounts (id, name, email, timezone, user_id) VALUES (?, 'O', ?, 'UTC', NULL)",
+        )
+        .bind(&id)
+        .bind(email)
+        .execute(pool)
+        .await
+        .unwrap();
+        id
+    }
+
+    async fn insert_plain_user(pool: &SqlitePool, email: &str) -> String {
+        let id = uuid::Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO users (id, email, name) VALUES (?, ?, 'U')")
+            .bind(&id)
+            .bind(email)
+            .execute(pool)
+            .await
+            .unwrap();
+        id
+    }
+
+    async fn owner_of(pool: &SqlitePool, account_id: &str) -> Option<String> {
+        sqlx::query_scalar("SELECT user_id FROM accounts WHERE id = ?")
+            .bind(account_id)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn orphaned_account_goes_to_a_matching_user_without_an_account() {
+        let pool = memory_pool().await;
+        migrate(&pool).await.unwrap();
+        let user = insert_plain_user(&pool, "cli@test.com").await;
+        let orphan = insert_orphan(&pool, "cli@test.com").await;
+        migrate(&pool).await.unwrap();
+        assert_eq!(owner_of(&pool, &orphan).await, Some(user));
+    }
+
+    #[tokio::test]
+    async fn orphaned_account_is_not_given_to_a_user_who_has_an_account() {
+        let pool = memory_pool().await;
+        migrate(&pool).await.unwrap();
+        let user = insert_plain_user(&pool, "taken@test.com").await;
+        sqlx::query(
+            "INSERT INTO accounts (id, name, email, timezone, user_id) VALUES (?, 'U', 'own@test.com', 'UTC', ?)",
+        )
+        .bind(uuid::Uuid::new_v4().to_string())
+        .bind(&user)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let orphan = insert_orphan(&pool, "taken@test.com").await;
+        migrate(&pool).await.unwrap();
+        assert_eq!(owner_of(&pool, &orphan).await, None);
+        let accounts: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM accounts WHERE user_id = ?")
+            .bind(&user)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(accounts, 1);
+    }
+
+    #[tokio::test]
+    async fn orphaned_account_is_not_given_a_user_when_a_spelling_variant_exists() {
+        let pool = memory_pool().await;
+        migrate(&pool).await.unwrap();
+        insert_plain_user(&pool, "case@test.com").await;
+        let orphan = insert_orphan(&pool, " Case@Test.com").await;
+        migrate(&pool).await.unwrap();
+        assert_eq!(owner_of(&pool, &orphan).await, None);
+        let users: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(users, 1, "no passwordless user under the orphan's spelling");
     }
 
     #[tokio::test]

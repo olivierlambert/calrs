@@ -3,6 +3,7 @@ mod admin_stats;
 mod availability;
 mod booking;
 mod booking_actions;
+mod booking_notes;
 mod branding;
 mod calendar_push;
 pub mod captcha;
@@ -21,6 +22,7 @@ mod pending;
 mod public_pages;
 mod sources;
 mod teams;
+mod time_off;
 mod week_start;
 pub(crate) mod writeback;
 
@@ -56,6 +58,8 @@ pub(crate) use availability::expand_recurring_into_busy;
 use availability::*;
 use booking::*;
 use booking_actions::*;
+pub(crate) use booking_notes::host_notes_for_reader;
+use booking_notes::*;
 use branding::*;
 pub(crate) use calendar_push::resource_delete_booking;
 use calendar_push::*;
@@ -79,6 +83,7 @@ use pending::*;
 use public_pages::*;
 use sources::*;
 use teams::*;
+use time_off::*;
 
 /// Simple per-IP rate limiter for login attempts.
 /// Tracks (attempt_count, window_start) per IP.
@@ -718,6 +723,10 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
         .route("/dashboard/bookings/{id}/cancel", post(cancel_booking))
         .route("/dashboard/bookings/{id}/confirm", post(confirm_booking))
         .route(
+            "/dashboard/bookings/{id}/notes",
+            get(booking_notes_page).post(save_booking_notes),
+        )
+        .route(
             "/dashboard/event-types/new",
             get(new_event_type_form).post(create_event_type),
         )
@@ -827,6 +836,9 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
         .route("/team-avatar/{team_id}", get(serve_team_avatar))
         // Troubleshoot
         .route("/dashboard/troubleshoot", get(troubleshoot))
+        // Time off (#46)
+        .route("/dashboard/time-off", get(time_off_page).post(add_time_off))
+        .route("/dashboard/time-off/{id}/delete", post(delete_time_off))
         // Admin routes
         .route("/dashboard/admin", get(admin_dashboard))
         .route(
@@ -1084,6 +1096,26 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
 }
 
 /// Helper: create impersonation template context values (active, target_name, admin_name).
+/// The dashboard's 404 page, with the sidebar, in the user's language. The
+/// same answer for a page that does not exist and one the user may not see,
+/// so it never tells the two apart.
+pub(crate) fn dashboard_not_found(state: &AppState, auth_user: &crate::auth::AuthUser) -> Response {
+    let body = match state.templates.get_template("dashboard_not_found.html") {
+        Ok(tmpl) => {
+            let (impersonating, impersonating_name, _) = impersonation_ctx(auth_user);
+            tmpl.render(context! {
+                sidebar => sidebar_context(auth_user, ""),
+                lang => auth_user.lang,
+                impersonating => impersonating,
+                impersonating_name => impersonating_name,
+            })
+            .unwrap_or_else(|e| internal_error_body("template render", &e))
+        }
+        Err(e) => internal_error_body("template render", &e),
+    };
+    (axum::http::StatusCode::NOT_FOUND, Html(body)).into_response()
+}
+
 fn impersonation_ctx(auth_user: &crate::auth::AuthUser) -> (bool, String, String) {
     match &auth_user.impersonation {
         Some(info) => (true, info.target_name.clone(), info.admin_name.clone()),
