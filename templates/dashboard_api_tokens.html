@@ -1,0 +1,106 @@
+{% extends "dashboard_base.html" %}
+{% block title %}{{ t("api-tokens-page-title") }}, calrs{% endblock %}
+{% block dashboard_content %}
+<style>
+  .app-item { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 0.75rem 1rem; padding: 0.9rem 0; border-bottom: 1px solid var(--rule); }
+  .app-details { flex: 1 1 18rem; min-width: 0; overflow-wrap: anywhere; }
+  .app-details strong { font-size: 15px; }
+  .app-scopes { margin: 0.35rem 0 0; padding-left: 1.1rem; font-size: 13px; color: var(--text-secondary); line-height: 1.6; }
+  .app-meta { margin-top: 0.3rem; color: var(--text-muted); font-size: 12.5px; line-height: 1.6; }
+  .app-actions form { margin: 0; }
+  .token-secret { display: block; margin-top: 0.5rem; padding: 0.6rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); font-size: 14px; overflow-wrap: anywhere; user-select: all; }
+  .token-scopes { border: 0; margin: 0 0 1rem; padding: 0; }
+  .token-scopes label { display: flex; align-items: center; gap: 0.5rem; font-size: 0.925rem; margin-top: 0.4rem; cursor: pointer; }
+  @media (max-width: 600px) {
+    .app-actions, .app-actions .ui-btn { width: 100%; min-height: 44px; }
+  }
+</style>
+<header class="page-header">
+  <div class="page-header-text">
+    <h1 class="page-title">{{ t("api-tokens-heading") }}</h1>
+    <p class="page-subtitle">{{ t("api-tokens-subtitle") }}</p>
+  </div>
+  <div class="page-actions">
+    <a href="/dashboard/settings" class="ui-btn">{{ t("mfa-back") }}</a>
+  </div>
+</header>
+
+{% if created %}
+  <div class="notice notice--success success" role="status">
+    <span>{{ t("api-tokens-created") }}</span>
+    <code class="token-secret">{{ created }}</code>
+  </div>
+{% endif %}
+{% if revoked %}
+  <div class="notice notice--success success" data-flash="success">{{ t("api-tokens-revoked") }}</div>
+{% endif %}
+{% if error %}
+  <div class="notice notice--error error" role="alert"><span>{{ error }}</span></div>
+{% endif %}
+
+{% if allowed and not impersonating %}
+<section class="sec">
+  <div class="sec-h"><h2>{{ t("api-tokens-new") }}</h2></div>
+  <form method="post" action="/dashboard/settings/api-tokens">
+    <div class="form-group">
+      <label for="token-name">{{ t("api-tokens-name") }}</label>
+      <input id="token-name" type="text" name="name" required maxlength="100" autocomplete="off" placeholder="{{ t('api-tokens-name-hint') }}">
+    </div>
+    <fieldset class="token-scopes">
+      <legend>{{ t("api-tokens-scopes") }}</legend>
+      <label><input type="checkbox" name="scope_event_types" value="on" checked> {{ t("oauth-events") }}</label>
+      <label><input type="checkbox" name="scope_slots" value="on" checked> {{ t("oauth-slots") }}</label>
+      <label><input type="checkbox" name="scope_bookings_read" value="on" checked> {{ t("oauth-bookings-read") }}</label>
+      <label><input type="checkbox" name="scope_bookings_write" value="on"> {{ t("oauth-bookings-write") }}</label>
+    </fieldset>
+    <div class="form-group">
+      <label for="token-expiry">{{ t("api-tokens-expiry") }}</label>
+      <select id="token-expiry" name="expires_days">
+        <option value="7">{{ t("api-tokens-expiry-7") }}</option>
+        <option value="30" selected>{{ t("api-tokens-expiry-30") }}</option>
+        <option value="90">{{ t("api-tokens-expiry-90") }}</option>
+        <option value="365">{{ t("api-tokens-expiry-365") }}</option>
+        <option value="0">{{ t("api-tokens-expiry-never") }}</option>
+      </select>
+    </div>
+    <button type="submit" class="ui-btn ui-btn--primary">{{ t("api-tokens-create") }}</button>
+  </form>
+</section>
+{% elif not allowed %}
+  <p class="empty-line">{{ t("api-tokens-not-allowed") }}</p>
+{% endif %}
+
+<section class="sec">
+  <div class="sec-h"><h2>{{ t("api-tokens-heading") }}{% if tokens %}<span class="num">{{ tokens | length }}</span>{% endif %}</h2></div>
+  {% if tokens %}
+    {% for k in tokens %}
+    <div class="app-item">
+      <div class="app-details">
+        <strong>{{ k.name }}</strong>
+        <div class="app-meta"><code>{{ k.hint }}…</code></div>
+        <ul class="app-scopes">
+          {% if k.events %}<li>{{ t("oauth-events") }}</li>{% endif %}
+          {% if k.slots %}<li>{{ t("oauth-slots") }}</li>{% endif %}
+          {% if k.bookings_read %}<li>{{ t("oauth-bookings-read") }}</li>{% endif %}
+          {% if k.bookings_write %}<li>{{ t("oauth-bookings-write") }}</li>{% endif %}
+        </ul>
+        <div class="app-meta">
+          {{ t("api-tokens-created-on", date=k.created) }}<br>
+          {% if k.expires %}{{ t("api-tokens-expires-on", date=k.expires) }}{% else %}{{ t("api-tokens-never-expires") }}{% endif %}<br>
+          {% if k.last_used %}{{ t("apps-last-used", date=k.last_used) }}{% else %}{{ t("apps-never-used") }}{% endif %}
+        </div>
+      </div>
+      {% if not impersonating %}
+      <div class="app-actions">
+        <button type="button" class="ui-btn ui-btn--sm ui-btn--danger" data-confirm="{{ t('api-tokens-revoke-confirm', name=k.name) }}" data-confirm-form="revoke-token-{{ loop.index }}">{{ t("apps-revoke") }}</button>
+        <form method="post" action="/dashboard/settings/api-tokens/{{ k.id }}/revoke" id="revoke-token-{{ loop.index }}" style="display: none;"></form>
+      </div>
+      {% endif %}
+    </div>
+    {% endfor %}
+  {% else %}
+    <p class="empty-line">{{ t("api-tokens-empty") }}</p>
+  {% endif %}
+  <p class="app-meta">{{ t("api-tokens-docs") }}</p>
+</section>
+{% endblock %}

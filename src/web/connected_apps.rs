@@ -1,5 +1,6 @@
-//! Connected apps: the OAuth grants (MCP clients) a user approved, listed in
-//! Profile & Settings with a revoke button, plus the admin's "revoke all".
+//! Connected apps: the OAuth grants (MCP and REST API clients) a user
+//! approved, listed in Profile & Settings with a revoke button, plus the
+//! admin's "revoke all", which also deletes the user's API tokens.
 use super::*;
 
 pub(super) fn router() -> Router<Arc<AppState>> {
@@ -66,6 +67,9 @@ async fn apps_page(
                 events => has(crate::oauth::SCOPES[0]),
                 blocks => has(crate::oauth::SCOPES[1]),
                 invites => has(crate::oauth::SCOPES[2]),
+                slots => has(crate::oauth::API_SCOPES[1]),
+                bookings_read => has(crate::oauth::API_SCOPES[2]),
+                bookings_write => has(crate::oauth::API_SCOPES[3]),
                 approved => grant_day(created, tz, lang),
                 last_used => used.map(|t| grant_day(t, tz, lang)),
             }
@@ -135,7 +139,8 @@ async fn admin_revoke_apps(
     }
     let result = async {
         let mut tx = state.pool.begin().await?;
-        let removed = crate::oauth::delete_grants(&mut tx, &user_id, None).await?;
+        let removed = crate::oauth::delete_grants(&mut tx, &user_id, None).await?
+            + crate::oauth::delete_api_tokens(&mut tx, &user_id, None).await?;
         tx.commit().await?;
         Ok::<_, sqlx::Error>(removed)
     }
