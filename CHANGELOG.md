@@ -195,7 +195,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Security
 
-- The private-address check used for CalDAV sources and resource feeds now treats an IPv4-mapped IPv6 address (`::ffff:10.0.0.1`) as the IPv4 address it reaches.
+- **The private-address check missed most IPv6 private ranges** (SSRF). It only matched `fc00::/16` and `fd00::/16`, so a unique local address such as `fd12:3456::1` passed as public, and only `fe80::/16` of the link-local range. It now covers `fc00::/7`, `fe80::/10`, site-local `fec0::/10`, IPv6 multicast, IPv4 multicast, broadcast and `240.0.0.0/4`, `0.0.0.0/8` and `198.18.0.0/15`, and judges IPv4-mapped (`::ffff:a.b.c.d`), IPv4-compatible (`::a.b.c.d`), NAT64 (`64:ff9b::/96`) and 6to4 (`2002::/16`) addresses by the IPv4 address they carry (`64:ff9b:1::/48` is always private). CalDAV sources, resource feeds and booking webhooks on such addresses now need the host on the private-host allowlist (`CALRS_ALLOW_PRIVATE_HOSTS` or Admin panel, System).
 
 ## [2.0.0-beta.2] - 2026-11-07
 
