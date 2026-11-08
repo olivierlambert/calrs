@@ -404,6 +404,7 @@ dependencies = [
  "clap",
  "colored",
  "directories",
+ "encoding_rs",
  "fluent-bundle",
  "hex",
  "hmac 0.12.1",

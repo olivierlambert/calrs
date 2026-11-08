@@ -213,18 +213,8 @@ impl CaldavClient {
             .send()
             .await?;
 
-        let status = resp.status();
-        tracing::debug!(url = %url, status = %status, "PROPFIND response received");
-
-        if !status.is_success() && status.as_u16() != 207 {
-            // Surface the response body. Servers like Google embed the actual reason
-            // (insufficient scope, API not enabled, etc.) in the body, not the status line.
-            let body = resp.text().await.unwrap_or_default();
-            let snippet: String = body.chars().take(500).collect();
-            bail!("PROPFIND {} returned {}: {}", url, status, snippet);
-        }
-
-        Ok(resp.text().await?)
+        tracing::debug!(url = %url, status = %resp.status(), "PROPFIND response received");
+        multistatus_body(resp, "PROPFIND", url).await
     }
 
     /// Check if the server supports CalDAV.
@@ -364,7 +354,7 @@ impl CaldavClient {
 
         let status = resp.status();
         if !status.is_success() && status.as_u16() != 201 && status.as_u16() != 204 {
-            let body = resp.text().await.unwrap_or_default();
+            let body = body_snippet(resp).await;
             bail!("PUT {} returned {} — {}", url, status, body);
         }
 
@@ -415,7 +405,7 @@ impl CaldavClient {
             if s.as_u16() == 207 {
                 // The outer 207 only says the server answered. Whether the
                 // event is there is the resource's own status inside the body.
-                let xml = resp.text().await?;
+                let xml = read_body(resp, crate::xml::MAX_INPUT_BYTES).await?;
                 return match propfind_resource_exists(&xml) {
                     Some(exists) => Ok(exists),
                     None => bail!(
@@ -452,7 +442,7 @@ impl CaldavClient {
 
         let status = resp.status();
         if !status.is_success() && status.as_u16() != 204 && status.as_u16() != 404 {
-            let body = resp.text().await.unwrap_or_default();
+            let body = body_snippet(resp).await;
             bail!("DELETE {} returned {} — {}", url, status, body);
         }
 
@@ -476,7 +466,7 @@ impl CaldavClient {
             .send()
             .await?;
 
-        let text = resp.text().await?;
+        let text = multistatus_body(resp, "REPORT", &url).await?;
         parse_event_responses(&text)
             .with_context(|| format!("Could not read the calendar REPORT response from {url}"))
     }
@@ -522,11 +512,7 @@ impl CaldavClient {
         if status.as_u16() == 403 || status.as_u16() == 412 || status.as_u16() == 405 {
             bail!("sync-token invalid or not supported (HTTP {})", status);
         }
-        if !status.is_success() && status.as_u16() != 207 {
-            bail!("sync-collection REPORT returned {}", status);
-        }
-
-        let text = resp.text().await?;
+        let text = multistatus_body(resp, "sync-collection REPORT", &url).await?;
         parse_sync_response(&text)
             .with_context(|| format!("Could not read the sync-collection response from {url}"))
     }
@@ -571,17 +557,94 @@ impl CaldavClient {
             .send()
             .await?;
 
-        let status = resp.status();
-        let text = resp.text().await?;
-
-        // If the server doesn't support time-range, fall back to full fetch
-        if !status.is_success() {
+        // A server that rejects the time-range filter answers with an error
+        // status: fall back to the unfiltered fetch, which checks its own.
+        if !resp.status().is_success() {
             return self.fetch_events(calendar_href).await;
         }
 
+        let text = multistatus_body(resp, "REPORT", &url).await?;
         parse_event_responses(&text)
             .with_context(|| format!("Could not read the calendar REPORT response from {url}"))
     }
+}
+
+/// The body of an answer that must be a multistatus: a PROPFIND, or a
+/// REPORT whose result the sync stores or acts on. Only 207 Multi-Status is
+/// accepted, and 200 OK, which some servers send with the same multistatus
+/// body (the parse then requires one). Any other status is an error, so an
+/// error page, or an empty 5xx body, can never read as an empty calendar.
+async fn multistatus_body(resp: reqwest::Response, what: &str, url: &str) -> Result<String> {
+    let status = resp.status();
+    if status.as_u16() != 207 && status != reqwest::StatusCode::OK {
+        // Surface the response body. Servers like Google embed the actual
+        // reason (insufficient scope, API not enabled, etc.) in the body,
+        // not the status line.
+        let snippet = body_snippet(resp).await;
+        if snippet.is_empty() {
+            bail!("{what} {url} returned {status}");
+        }
+        bail!("{what} {url} returned {status}: {snippet}");
+    }
+    read_body(resp, crate::xml::MAX_INPUT_BYTES).await
+}
+
+/// Read a response body as text, refusing one over `cap` bytes as it
+/// arrives rather than after holding all of it: a declared length over the
+/// cap fails before anything is read. Decoded with the charset of the
+/// `Content-Type` (UTF-8 by default), as reqwest's `text()` does.
+async fn read_body(mut resp: reqwest::Response, cap: usize) -> Result<String> {
+    let url = resp.url().to_string();
+    if let Some(len) = resp.content_length() {
+        if len > cap as u64 {
+            bail!("response from {url} is {len} bytes, more than the {cap} calrs reads");
+        }
+    }
+    let encoding = response_encoding(resp.headers());
+    let mut body = Vec::new();
+    while let Some(chunk) = resp.chunk().await? {
+        if body.len() + chunk.len() > cap {
+            bail!("response from {url} is more than the {cap} bytes calrs reads");
+        }
+        body.extend_from_slice(&chunk);
+    }
+    let (text, _, _) = encoding.decode(&body);
+    Ok(text.into_owned())
+}
+
+/// The start of an error response's body, for the error message: at most
+/// 4 KiB is read, and 500 characters kept.
+async fn body_snippet(resp: reqwest::Response) -> String {
+    const READ: usize = 4096;
+    let mut resp = resp;
+    let encoding = response_encoding(resp.headers());
+    let mut body = Vec::new();
+    while body.len() < READ {
+        match resp.chunk().await {
+            Ok(Some(chunk)) => body.extend_from_slice(&chunk),
+            _ => break,
+        }
+    }
+    body.truncate(READ);
+    let (text, _, _) = encoding.decode(&body);
+    text.trim().chars().take(500).collect()
+}
+
+/// The encoding named by a `Content-Type` charset parameter, else UTF-8.
+fn response_encoding(headers: &reqwest::header::HeaderMap) -> &'static encoding_rs::Encoding {
+    headers
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| {
+            value.split(';').skip(1).find_map(|param| {
+                let (name, label) = param.split_once('=')?;
+                name.trim()
+                    .eq_ignore_ascii_case("charset")
+                    .then(|| label.trim().trim_matches('"'))
+            })
+        })
+        .and_then(|label| encoding_rs::Encoding::for_label(label.as_bytes()))
+        .unwrap_or(encoding_rs::UTF_8)
 }
 
 #[derive(Debug, Clone)]
@@ -656,6 +719,244 @@ const REPORT_CALENDAR_DATA: &str = r#"<?xml version="1.0" encoding="utf-8"?>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // --- HTTP status and body checks (#325) ---
+
+    /// One response carrying everything the four sync calls read: a calendar
+    /// resourcetype for the listing, calendar data for the REPORTs, and a
+    /// sync token.
+    const MULTISTATUS: &str = r#"<d:multistatus xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav"><d:response><d:href>/dav/cal/e.ics</d:href><d:propstat><d:prop><d:resourcetype><c:calendar/></d:resourcetype><c:calendar-data>BEGIN:VCALENDAR</c:calendar-data></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response><d:sync-token>t2</d:sync-token></d:multistatus>"#;
+
+    /// A server answering every request with what `reply` returns for its
+    /// method and body: (status, content type, body).
+    async fn serve<F>(reply: F) -> String
+    where
+        F: Fn(&str, &str) -> (u16, &'static str, Vec<u8>) + Clone + Send + Sync + 'static,
+    {
+        use axum::http::{header, Method, StatusCode};
+        let app = axum::Router::new().fallback(move |method: Method, body: String| {
+            let reply = reply.clone();
+            async move {
+                let (status, content_type, bytes) = reply(method.as_str(), &body);
+                (
+                    StatusCode::from_u16(status).unwrap(),
+                    [(header::CONTENT_TYPE, content_type)],
+                    bytes,
+                )
+            }
+        });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+        format!("http://127.0.0.1:{port}/dav/")
+    }
+
+    /// A server answering one request with a chunked 207 (no length known
+    /// up front), with the extra `headers` lines.
+    async fn serve_chunked(headers: &'static str, chunks: Vec<Vec<u8>>) -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = [0u8; 4096];
+            let _ = socket.read(&mut request).await;
+            let mut out = format!(
+                "HTTP/1.1 207 Multi-Status\r\n{headers}Transfer-Encoding: chunked\r\nConnection: close\r\n\r\n"
+            )
+            .into_bytes();
+            for chunk in chunks {
+                out.extend(format!("{:x}\r\n", chunk.len()).bytes());
+                out.extend(chunk);
+                out.extend(b"\r\n");
+            }
+            out.extend(b"0\r\n\r\n");
+            let _ = socket.write_all(&out).await;
+        });
+        format!("http://127.0.0.1:{port}/")
+    }
+
+    async fn get(url: &str) -> reqwest::Response {
+        reqwest::Client::new().get(url).send().await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn error_statuses_fail_every_call_the_sync_acts_on() {
+        let cases: [(u16, &'static str, &'static str); 3] = [
+            (500, "text/plain", ""),
+            (
+                503,
+                "text/html",
+                "<html><body><h1>503 Service Unavailable</h1><p>Back soon</p></body></html>",
+            ),
+            (403, "application/xml", ""),
+        ];
+        for (status, content_type, body) in cases {
+            let base = serve(move |_, _| (status, content_type, body.as_bytes().to_vec())).await;
+            let client = CaldavClient::new(&base, "u", "p");
+            let code = status.to_string();
+            let errors = [
+                client.list_calendars("/dav/").await.map(|_| ()),
+                client.fetch_events("/dav/cal/").await.map(|_| ()),
+                client
+                    .fetch_events_since("/dav/cal/", "20260101T000000Z")
+                    .await
+                    .map(|_| ()),
+                client
+                    .sync_collection("/dav/cal/", Some("t1"))
+                    .await
+                    .map(|_| ()),
+                client.sync_collection("/dav/cal/", None).await.map(|_| ()),
+                client.discover_principal().await.map(|_| ()),
+            ];
+            for (n, result) in errors.into_iter().enumerate() {
+                let err = format!("{:#}", result.unwrap_err());
+                assert!(err.contains(&code), "call {n} on {status}: {err}");
+            }
+        }
+        // The error page's own text is surfaced, as Google puts the reason
+        // there.
+        let base = serve(|_, _| (503, "text/html", b"<p>quota exceeded</p>".to_vec())).await;
+        let err = CaldavClient::new(&base, "u", "p")
+            .fetch_events("/dav/cal/")
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("quota exceeded"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn multistatus_answers_are_read_under_207_and_200() {
+        for status in [207, 200] {
+            let base =
+                serve(move |_, _| (status, "application/xml", MULTISTATUS.as_bytes().to_vec()))
+                    .await;
+            let client = CaldavClient::new(&base, "u", "p");
+            assert_eq!(client.list_calendars("/dav/").await.unwrap().len(), 1);
+            assert_eq!(client.fetch_events("/dav/cal/").await.unwrap().len(), 1);
+            let since = client
+                .fetch_events_since("/dav/cal/", "20260101T000000Z")
+                .await
+                .unwrap();
+            assert_eq!(since[0].ical_data, "BEGIN:VCALENDAR");
+            let delta = client
+                .sync_collection("/dav/cal/", Some("t1"))
+                .await
+                .unwrap();
+            assert_eq!(delta.new_sync_token.as_deref(), Some("t2"));
+        }
+    }
+
+    #[tokio::test]
+    async fn empty_or_unexpected_success_answers_are_errors() {
+        for (status, body) in [
+            (207, ""),
+            (200, ""),
+            (200, "<html><body/></html>"),
+            (204, ""),
+        ] {
+            let base =
+                serve(move |_, _| (status, "application/xml", body.as_bytes().to_vec())).await;
+            let client = CaldavClient::new(&base, "u", "p");
+            assert!(
+                client.fetch_events("/dav/cal/").await.is_err(),
+                "{status} {body:?}"
+            );
+            assert!(client.list_calendars("/dav/").await.is_err());
+            assert!(client
+                .sync_collection("/dav/cal/", Some("t"))
+                .await
+                .is_err());
+        }
+    }
+
+    #[tokio::test]
+    async fn a_rejected_time_range_still_falls_back_to_the_full_fetch() {
+        let base = serve(|method, body| {
+            if method == "REPORT" && body.contains("time-range") {
+                (400, "text/plain", b"time-range not supported".to_vec())
+            } else {
+                (207, "application/xml", MULTISTATUS.as_bytes().to_vec())
+            }
+        })
+        .await;
+        let client = CaldavClient::new(&base, "u", "p");
+        let events = client
+            .fetch_events_since("/dav/cal/", "20260101T000000Z")
+            .await
+            .unwrap();
+        assert_eq!(events.len(), 1);
+
+        // The fallback checks its own status.
+        let base = serve(|method, body| {
+            if method == "REPORT" && body.contains("time-range") {
+                (400, "text/plain", Vec::new())
+            } else {
+                (500, "text/plain", Vec::new())
+            }
+        })
+        .await;
+        let err = CaldavClient::new(&base, "u", "p")
+            .fetch_events_since("/dav/cal/", "20260101T000000Z")
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("500"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn a_rejected_sync_token_still_reads_as_unsupported() {
+        for status in [403, 405, 412] {
+            let base = serve(move |_, _| (status, "application/xml", Vec::new())).await;
+            let err = CaldavClient::new(&base, "u", "p")
+                .sync_collection("/dav/cal/", Some("old"))
+                .await
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains("sync-token invalid or not supported"), "{err}");
+        }
+    }
+
+    #[tokio::test]
+    async fn bodies_over_the_cap_are_refused_as_they_arrive() {
+        // A declared length over the cap fails before the body is read.
+        let base = serve(|_, _| (207, "application/xml", vec![b'x'; 2000])).await;
+        let err = read_body(get(&base).await, 1000)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("2000 bytes"), "{err}");
+        assert_eq!(read_body(get(&base).await, 2000).await.unwrap().len(), 2000);
+
+        // Without a length (chunked), reading stops once past the cap.
+        let chunks = vec![vec![b'x'; 600]; 3];
+        let url = serve_chunked("", chunks.clone()).await;
+        let err = read_body(get(&url).await, 1000)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("more than the 1000 bytes"), "{err}");
+        let url = serve_chunked("", chunks).await;
+        assert_eq!(read_body(get(&url).await, 1800).await.unwrap().len(), 1800);
+    }
+
+    #[tokio::test]
+    async fn bodies_are_decoded_with_their_charset() {
+        let url = serve_chunked(
+            "Content-Type: application/xml; charset=\"ISO-8859-1\"\r\n",
+            vec![b"caf\xe9".to_vec()],
+        )
+        .await;
+        assert_eq!(read_body(get(&url).await, 100).await.unwrap(), "café");
+        let url = serve_chunked(
+            "Content-Type: application/xml\r\n",
+            vec!["café".as_bytes().to_vec()],
+        )
+        .await;
+        assert_eq!(read_body(get(&url).await, 100).await.unwrap(), "café");
+    }
 
     // --- resolve_url ---
 

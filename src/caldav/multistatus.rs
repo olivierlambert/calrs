@@ -14,9 +14,10 @@
 //! wrong would cost data: a propstat with no status, or a `<prop>` directly
 //! under `<response>`, still counts; a name under a prefix that was never
 //! declared matches on its local name (see `xml::Element::is`); but
-//! malformed markup, or a body that is not a multistatus at all (an HTML
-//! error page), is an error rather than "no events", since an empty event
-//! list would let the sync delete the cached calendar.
+//! malformed markup, an empty body, or a body that is not a multistatus at
+//! all (an HTML error page), is an error rather than "no events": the sync
+//! would otherwise store the calendar's new ctag and sync token without
+//! having read anything, and miss the changes until the next full resync.
 
 use anyhow::{bail, Result};
 
@@ -28,35 +29,33 @@ const CALDAV: &str = "urn:ietf:params:xml:ns:caldav";
 const CALENDARSERVER: &str = "http://calendarserver.org/ns/";
 const APPLE_ICAL: &str = "http://apple.com/ns/ical/";
 
-/// A parsed multistatus body. An empty body holds no responses, as a
-/// server answering an empty calendar with nothing at all is common enough.
-struct Multistatus(Option<Element>);
+/// A parsed multistatus body. Even an empty calendar is answered with a
+/// `<multistatus/>`, so an empty body is an error like any other that is
+/// not one.
+struct Multistatus(Element);
 
 impl Multistatus {
     fn parse(body: &str) -> Result<Self> {
-        let root = xml::parse(body)?;
-        if let Some(root) = &root {
-            if !root.is(DAV, "multistatus") {
-                bail!(
-                    "expected a WebDAV multistatus, got a <{}> document",
-                    root.local_name()
-                );
-            }
+        let Some(root) = xml::parse(body)? else {
+            bail!("empty response, expected a WebDAV multistatus");
+        };
+        if !root.is(DAV, "multistatus") {
+            bail!(
+                "expected a WebDAV multistatus, got a <{}> document",
+                root.local_name()
+            );
         }
         Ok(Self(root))
     }
 
     fn responses(&self) -> impl Iterator<Item = Response<'_>> {
-        self.0
-            .iter()
-            .flat_map(|root| root.children(DAV, "response"))
-            .map(Response)
+        self.0.children(DAV, "response").map(Response)
     }
 
     /// A direct child of `<multistatus>`, such as a sync-collection's
     /// `<sync-token>`.
     fn child(&self, ns: &str, name: &str) -> Option<&Element> {
-        self.0.as_ref()?.child(ns, name)
+        self.0.child(ns, name)
     }
 }
 

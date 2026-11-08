@@ -331,14 +331,31 @@ fn a_calendar_without_href_is_skipped() {
 // --- Malformed and unexpected bodies ---
 
 #[test]
-fn empty_bodies_hold_no_responses() {
-    assert!(cals("").is_empty());
-    assert!(events("  \r\n").is_empty());
+fn an_empty_multistatus_holds_no_responses() {
     assert!(cals("<d:multistatus></d:multistatus>").is_empty());
     assert!(cals("<d:multistatus xmlns:d=\"DAV:\"/>").is_empty());
-    let empty = sync("");
+    let empty = sync("<multistatus xmlns=\"DAV:\"/>");
     assert!(empty.changed.is_empty() && empty.deleted_hrefs.is_empty());
     assert_eq!(empty.new_sync_token, None);
+}
+
+#[test]
+fn an_empty_body_is_an_error() {
+    // Read as "no events", it would let the sync store the calendar's new
+    // ctag without having read anything.
+    for body in [
+        "",
+        "  \r\n",
+        "<?xml version=\"1.0\"?>",
+        "Internal Server Error",
+    ] {
+        let err = parse_event_responses(body).unwrap_err().to_string();
+        assert!(err.contains("empty response"), "{body:?}: {err}");
+        assert!(parse_sync_response(body).is_err());
+        assert!(parse_calendar_list(body).is_err());
+        assert!(calendar_home_set(body).is_err());
+        assert_eq!(propfind_resource_exists(body), None);
+    }
 }
 
 #[test]
@@ -418,7 +435,6 @@ fn principal_missing_or_unauthenticated_is_none() {
     assert_eq!(principal(unauthenticated), None);
     let not_found = r#"<d:multistatus xmlns:d="DAV:"><d:response><d:href>/</d:href><d:propstat><d:prop><d:current-user-principal/></d:prop><d:status>HTTP/1.1 404 Not Found</d:status></d:propstat></d:response></d:multistatus>"#;
     assert_eq!(principal(not_found), None);
-    assert_eq!(principal(""), None);
     // A calendar-home-set in another namespace is not CalDAV's.
     let wrong_ns = r#"<d:multistatus xmlns:d="DAV:"><d:response><d:href>/p/</d:href><d:propstat><d:prop><x:calendar-home-set xmlns:x="urn:other"><d:href>/nope/</d:href></x:calendar-home-set></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response></d:multistatus>"#;
     assert_eq!(home(wrong_ns), None);

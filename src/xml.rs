@@ -25,9 +25,11 @@ use quick_xml::events::Event;
 use quick_xml::name::ResolveResult;
 use quick_xml::NsReader;
 
-/// Largest document [`parse`] accepts. A full REPORT of a calendar with tens
-/// of thousands of events stays well under it.
-pub const MAX_INPUT_BYTES: usize = 256 * 1024 * 1024;
+/// Largest document [`parse`] accepts, and the most the CalDAV client reads
+/// of a response body. A REPORT of a calendar with tens of thousands of
+/// events fits; the tree of a document this size already costs several
+/// times the input in memory, which matters on a small VPS.
+pub const MAX_INPUT_BYTES: usize = 64 * 1024 * 1024;
 
 /// Deepest element nesting [`parse`] accepts. A multistatus is about eight
 /// levels deep; the cap also keeps dropping the tree off a deep stack.
