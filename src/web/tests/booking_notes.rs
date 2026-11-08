@@ -71,7 +71,18 @@ async fn owner_reads_saves_and_clears_host_notes() {
     assert_eq!(response.status(), 200);
     let body = body_string(response).await;
     assert!(body.contains(r#"name="host_notes""#), "{body}");
-    assert!(body.contains("Only the hosts of this booking"));
+    assert!(
+        body.contains("a team member who claimed it"),
+        "the hint names every reader"
+    );
+    assert!(
+        !body.contains("maxlength"),
+        "no UTF-16 limit in the browser"
+    );
+    assert!(
+        body.contains(r#"data-max="5000""#),
+        "a counter counts like the server"
+    );
 
     let csrf = "csrf-173-save";
     let response = app
@@ -997,4 +1008,301 @@ async fn the_overview_leaves_an_unassigned_round_robin_booking_to_its_owner() {
         body.contains(&link),
         "a collective booking is the peer's too"
     );
+}
+
+/// A user added as a collective member of the fixture's team event type,
+/// which is made collective. Returns (team event type id, member id).
+async fn collective_team_with_member(pool: &SqlitePool, email: &str) -> (String, String) {
+    let (team_id, et_id) = seed_team_event_type(pool).await;
+    sqlx::query("UPDATE event_types SET scheduling_mode = 'collective' WHERE id = ?")
+        .bind(&et_id)
+        .execute(pool)
+        .await
+        .unwrap();
+    let member = insert_role_user(pool, email, "user").await;
+    sqlx::query("INSERT INTO team_members (team_id, user_id, role, source) VALUES (?, ?, 'member', 'direct')")
+        .bind(&team_id)
+        .bind(&member)
+        .execute(pool)
+        .await
+        .unwrap();
+    (et_id, member)
+}
+
+/// The per-recipient lookup follows the access rule, not the address an
+/// email goes to, and a failed lookup reads as "no notes".
+#[tokio::test]
+async fn host_notes_for_a_recipient_follow_the_access_rule() {
+    let (_app, pool, _, _) = setup_test_app().await;
+    let (et_id, member) = collective_team_with_member(&pool, "member@test.com").await;
+    let id = insert_v1_booking(
+        &pool,
+        &et_id,
+        "g@t.com",
+        Utc::now() + Duration::days(2),
+        30,
+        "confirmed",
+        &[],
+    )
+    .await;
+    set_host_notes(&pool, &id, SECRET).await;
+    let uid = format!("uid-{id}");
+
+    assert_eq!(
+        host_notes_for_reader(&pool, &uid, Some(&member))
+            .await
+            .as_deref(),
+        Some(SECRET)
+    );
+    assert_eq!(
+        host_notes_for_reader(&pool, &uid, Some(&owner_id(&pool).await))
+            .await
+            .as_deref(),
+        Some(SECRET)
+    );
+    assert_eq!(
+        host_notes_for_reader(&pool, &uid, None).await,
+        None,
+        "unknown recipient"
+    );
+    sqlx::query("DELETE FROM team_members WHERE user_id = ?")
+        .bind(&member)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        host_notes_for_reader(&pool, &uid, Some(&member)).await,
+        None,
+        "left the team"
+    );
+
+    pool.close().await;
+    assert_eq!(
+        host_notes_for_reader(&pool, &uid, Some(&member)).await,
+        None,
+        "lookup failed"
+    );
+}
+
+/// Approving a collective booking emails the stored organizer. Once that
+/// member has left the team, the email still goes (the calendar names them)
+/// but without the notes.
+#[tokio::test]
+async fn an_organizer_who_left_the_team_gets_no_host_notes() {
+    let _env = crate::test_support::ENV_LOCK.lock().await;
+    let (app, pool, session, _) = setup_test_app().await;
+    let (port, mails) = spawn_capturing_mta().await;
+    use_capturing_mta(&pool, port).await;
+    let (et_id, organizer) = collective_team_with_member(&pool, "organizer@test.com").await;
+    let mut ids = Vec::new();
+    for hours in [50, 80] {
+        let id = insert_v1_booking(
+            &pool,
+            &et_id,
+            "guest@test.com",
+            Utc::now() + Duration::hours(hours),
+            30,
+            "pending",
+            &[
+                ("organizer_user_id", Some(organizer.clone())),
+                ("organizer_name", Some("Org".to_string())),
+                ("organizer_email", Some("organizer@test.com".to_string())),
+            ],
+        )
+        .await;
+        set_host_notes(&pool, &id, SECRET).await;
+        ids.push(id);
+    }
+    let approve = |id: String| {
+        let app = app.clone();
+        let session = session.clone();
+        async move {
+            let csrf = "csrf-173-org";
+            let response = app
+                .oneshot(post_form(
+                    &format!("/dashboard/bookings/{id}/confirm"),
+                    &session,
+                    csrf,
+                    &format!("_csrf={csrf}"),
+                ))
+                .await
+                .unwrap();
+            assert!(response.status().is_redirection());
+        }
+    };
+
+    // Still a member: the notes are theirs to read.
+    approve(ids[0].clone()).await;
+    let mail = settled_mails_to(&mails, "organizer@test.com").await;
+    assert!(mail.iter().any(|m| m.contains(SECRET)), "{mail:?}");
+    mails.lock().unwrap().clear();
+
+    sqlx::query("DELETE FROM team_members WHERE user_id = ?")
+        .bind(&organizer)
+        .execute(&pool)
+        .await
+        .unwrap();
+    approve(ids[1].clone()).await;
+    let mail = settled_mails_to(&mails, "organizer@test.com").await;
+    assert!(!mail.is_empty(), "the organizer is still emailed");
+    assert!(
+        mail.iter().all(|m| !m.contains("HOST-ONLY-173")),
+        "{mail:?}"
+    );
+}
+
+/// The write checks access itself: a member who lost access after the page
+/// was read writes nothing, even with the right version.
+#[tokio::test]
+async fn the_write_rechecks_access() {
+    let (_app, pool, _, _) = setup_test_app().await;
+    let (et_id, member) = collective_team_with_member(&pool, "late@test.com").await;
+    let id = insert_v1_booking(
+        &pool,
+        &et_id,
+        "g@t.com",
+        Utc::now() + Duration::days(2),
+        30,
+        "confirmed",
+        &[],
+    )
+    .await;
+    assert!(
+        write_host_notes(&pool, &id, Some("mine"), 0, &member, &member, None)
+            .await
+            .unwrap()
+    );
+    sqlx::query("DELETE FROM team_members WHERE user_id = ?")
+        .bind(&member)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert!(
+        !write_host_notes(&pool, &id, Some("late"), 1, &member, &member, None)
+            .await
+            .unwrap()
+    );
+    assert_eq!(stored_host_notes(&pool, &id).await.as_deref(), Some("mine"));
+}
+
+/// Past bookings stay reachable for post-call notes: the "Last 30 days"
+/// section lists the meetings due over that time, held or cancelled, for
+/// every host of them, each with its title link. A future cancellation
+/// stays off the page.
+#[tokio::test]
+async fn recent_bookings_lead_to_their_notes() {
+    let (app, pool, session, et_id) = setup_test_app().await;
+    let past = insert_v1_booking(
+        &pool,
+        &et_id,
+        "past@test.com",
+        Utc::now() - Duration::days(2),
+        30,
+        "confirmed",
+        &[],
+    )
+    .await;
+    let cancelled = insert_v1_booking(
+        &pool,
+        &et_id,
+        "gone@test.com",
+        Utc::now() - Duration::days(5),
+        30,
+        "cancelled",
+        &[],
+    )
+    .await;
+    let old = insert_v1_booking(
+        &pool,
+        &et_id,
+        "old@test.com",
+        Utc::now() - Duration::days(40),
+        30,
+        "confirmed",
+        &[],
+    )
+    .await;
+    insert_v1_booking(
+        &pool,
+        &et_id,
+        "later@test.com",
+        Utc::now() + Duration::days(5),
+        30,
+        "cancelled",
+        &[],
+    )
+    .await;
+    set_host_notes(&pool, &past, SECRET).await;
+
+    let body = body_string(
+        app.clone()
+            .oneshot(get_authed("/dashboard/bookings", &session))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(body.contains("Last 30 days"), "{body}");
+    for id in [&past, &cancelled] {
+        assert!(
+            body.contains(&format!("/dashboard/bookings/{id}/notes?back=bookings")),
+            "{id}"
+        );
+    }
+    assert!(
+        !body.contains(&format!("/dashboard/bookings/{old}/notes")),
+        "older than 30 days"
+    );
+    assert!(
+        !body.contains("later@test.com"),
+        "a future cancellation stays off"
+    );
+    assert!(body.contains(SECRET), "the past booking's notes show");
+    assert!(body.contains("Cancelled"));
+
+    // An assigned member, whose bookings page lists none of the owner's
+    // bookings, reaches their own past booking there.
+    let (alice, alice_session) =
+        insert_test_user_with_session(&pool, "Alice", "alice@test.com", "alice").await;
+    let owner = owner_id(&pool).await;
+    let (_, team_et) = insert_team_with_et(
+        &pool,
+        "t173r",
+        "rr",
+        &[(&owner, "admin"), (&alice, "member")],
+    )
+    .await;
+    let hers = insert_v1_booking(
+        &pool,
+        &team_et,
+        "g@t.com",
+        Utc::now() - Duration::days(1),
+        30,
+        "confirmed",
+        &[("assigned_user_id", Some(alice.clone()))],
+    )
+    .await;
+    let body = body_string(
+        app.clone()
+            .oneshot(get_authed("/dashboard/bookings", &alice_session))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(
+        body.contains(&format!("/dashboard/bookings/{hers}/notes")),
+        "{body}"
+    );
+    assert!(
+        !body.contains(&format!("/dashboard/bookings/{past}/notes")),
+        "not the owner's"
+    );
+
+    let (_, stranger) = insert_test_user_with_session(&pool, "Eve", "eve@test.com", "eve").await;
+    let body = body_string(
+        app.oneshot(get_authed("/dashboard/bookings", &stranger))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(!body.contains("Last 30 days"), "nothing hosted, no section");
 }

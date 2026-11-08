@@ -48,7 +48,7 @@
     <h1 class="page-title">{{ t("bookings-page-title") }}</h1>
     <p class="page-subtitle">{{ t("bookings-summary", upcoming=bookings | length, pending=pending_bookings | length, tz=sidebar.user_timezone) }}</p>
   </div>
-  {% if bookings or pending_bookings or claimable_bookings %}
+  {% if bookings or pending_bookings or claimable_bookings or recent_bookings %}
   <div class="page-actions ui-search">
     {{ ic.icon("search", 15) }}
     <input type="search" data-search data-filter placeholder="{{ t('bookings-search-placeholder') }}" aria-label="{{ t('bookings-search-placeholder') }}">
@@ -154,4 +154,27 @@
   <p class="empty-line">{{ t("bookings-empty", link='<a href="/dashboard/event-types">' ~ (t("bookings-empty-link-label") | escape) ~ '</a>') | safe }}</p>
   {% endif %}
 </section>
+{% if recent_bookings %}
+<section class="sec" aria-labelledby="bk-recent">
+  <div class="sec-h"><h2 id="bk-recent">{{ t("bookings-recent") }}<span class="num">{{ recent_bookings | length }}</span></h2></div>
+  <ol class="ledger" data-filter-list>
+  {% for b in recent_bookings %}
+  <li class="tt-row" data-filter-text="{{ b.event_title }} {{ b.guest_name }} {{ b.guest_email }}">
+    {{ dated_time(b) }}
+    <i class="g {{ b.status_mark }}" role="img" aria-label="{% if b.status_label %}{{ b.status_label }}{% else %}{{ t('overview-ruler-booked') }}{% endif %}"></i>
+    <div class="tt-main booking-info">
+      <div class="tt-title">{{ title_link(b) }}</div>
+      {{ who(b) }}
+      {{ extra_lines(b) }}
+    </div>
+    <div class="tt-acts booking-actions">
+      {% if b.status_label %}<span class="tt-due">{{ b.status_label }}</span>{% endif %}
+      {{ notes_link(b) }}
+    </div>
+  </li>
+  {% endfor %}
+  <li class="ui-filter-empty" data-filter-empty hidden>{{ t("dash-no-matches") }}</li>
+  </ol>
+</section>
+{% endif %}
 {% endblock %}

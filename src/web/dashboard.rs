@@ -640,6 +640,53 @@ pub(super) async fn dashboard_bookings(
         .await
         .unwrap_or_default();
 
+    // Recent: the bookings the user hosts that were due in the last 30 days,
+    // held, cancelled or declined (by meeting time: a future cancellation
+    // stays off the page, as before), so a host can write
+    // or reread their notes after the call (#173). Scoped by the host-notes
+    // rule rather than the owner rule of the sections above, since that is
+    // what the rows lead to: an assigned member reaches their past bookings
+    // here too.
+    let recent_sql = format!(
+        "SELECT b.id, b.guest_name, b.guest_email,
+                CASE b.time_version WHEN 1 THEN b.start_at ELSE rtrim(b.start_at, 'Z') END,
+                CASE b.time_version WHEN 1 THEN b.end_at ELSE rtrim(b.end_at, 'Z') END,
+                et.title, COALESCE(NULLIF(et.timezone, ''), u.timezone, 'UTC'),
+                COALESCE(NULLIF(b.guest_timezone, ''), 'UTC'), b.status,
+                COALESCE(b.notes, ''), b.host_notes
+         FROM bookings b
+         JOIN event_types et ON et.id = b.event_type_id
+         LEFT JOIN accounts a ON a.id = et.account_id
+         LEFT JOIN users u ON u.id = a.user_id
+         WHERE b.start_at >= date('now', '-30 days')
+           AND datetime(b.start_at) < datetime('now')
+           AND b.status IN ('confirmed', 'cancelled', 'declined')
+           AND {NOTE_HOSTS}
+         ORDER BY b.start_at DESC
+         LIMIT 30"
+    );
+    #[allow(clippy::type_complexity)]
+    let recent_bookings: Vec<(
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+        Option<String>,
+    )> = sqlx::query_as(&recent_sql)
+        .bind(&user.id)
+        .bind(&user.id)
+        .bind(&user.id)
+        .bind(&user.id)
+        .fetch_all(&state.pool)
+        .await
+        .unwrap_or_default();
+
     let tmpl = match state.templates.get_template("dashboard_bookings.html") {
         Ok(t) => t,
         Err(e) => return internal_error_html("template render", &e),
@@ -755,6 +802,30 @@ pub(super) async fn dashboard_bookings(
         )
         .collect();
 
+    let recent_ctx: Vec<minijinja::Value> = recent_bookings
+        .iter()
+        .map(
+            |(id, name, email, start, end, title, stored_tz, guest_tz, status, notes, host_notes)| {
+                let ended = status == "cancelled" || status == "declined";
+                context! {
+                    id => id,
+                    guest_name => name,
+                    guest_email => email,
+                    when => dashboard_when(start, end, stored_tz, host_tz, guest_tz, auth_user.lang),
+                    event_title => title,
+                    notes => notes.trim(),
+                    host_notes => host_notes.as_deref().unwrap_or(""),
+                    status_mark => if ended { "x" } else { "c" },
+                    status_label => match status.as_str() {
+                        "cancelled" => crate::i18n::translate(auth_user.lang, "admin-st-cancelled", None),
+                        "declined" => crate::i18n::translate(auth_user.lang, "admin-st-declined", None),
+                        _ => String::new(),
+                    },
+                }
+            },
+        )
+        .collect();
+
     let (impersonating, impersonating_name, _) = impersonation_ctx(&auth_user);
 
     Html(
@@ -762,6 +833,7 @@ pub(super) async fn dashboard_bookings(
             sidebar => sidebar_context(&auth_user, "bookings"),
             lang => auth_user.lang,
             error_message => error_message,
+            recent_bookings => recent_ctx,
             pending_bookings => pending_ctx,
             claimable_bookings => claimable_ctx,
             bookings => bookings_ctx,
@@ -1534,7 +1606,8 @@ pub(super) async fn cancel_booking(
     {
         let details = details.clone();
         let guest_details = guest_details.clone();
-        let host_notes = crate::email::booking_host_notes(&state.pool, &details.uid).await;
+        // The host copy goes to the user cancelling (#173).
+        let host_notes = host_notes_for_reader(&state.pool, &details.uid, Some(&user.id)).await;
         spawn_emails(async move {
             log_email_result(
                 crate::email::send_guest_attendee_cancellations(&smtp_config, &guest_details).await,
@@ -1783,17 +1856,19 @@ pub(super) async fn confirm_booking(
     // Google CalDAV. See `booking_host_identity`.
     // The host email goes to the booking's host, who is not always the
     // approver, so it is written in that host's own saved language.
-    let (host_name, host_email, host_language) = booking_host_identity(&state.pool, &uid)
-        .await
-        .unwrap_or_else(|| {
-            (
-                user.name.clone(),
-                user.booking_email
-                    .clone()
-                    .unwrap_or_else(|| user.email.clone()),
-                crate::email::supported_language(user.language.clone()),
-            )
-        });
+    let (host_name, host_email, host_language, host_reader) =
+        booking_host_identity_with_id(&state.pool, &uid)
+            .await
+            .unwrap_or_else(|| {
+                (
+                    user.name.clone(),
+                    user.booking_email
+                        .clone()
+                        .unwrap_or_else(|| user.email.clone()),
+                    crate::email::supported_language(user.language.clone()),
+                    Some(user.id.clone()),
+                )
+            });
 
     let (guest_notes, guest_phone_shown) = booking_guest_input(&state.pool, &uid).await;
     let details = crate::email::BookingDetails {
@@ -1880,7 +1955,10 @@ pub(super) async fn confirm_booking(
         });
         let (cancel_notice_min, reschedule_notice_min) =
             fetch_event_type_notice_minutes(&state.pool, &et_id).await;
-        let host_notes = crate::email::booking_host_notes(&state.pool, &details.uid).await;
+        // To the identity the calendar names, if that user may still read
+        // them (#173).
+        let host_notes =
+            host_notes_for_reader(&state.pool, &details.uid, host_reader.as_deref()).await;
         spawn_emails(async move {
             send_approval_guest_emails(
                 &smtp_config,

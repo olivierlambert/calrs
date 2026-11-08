@@ -332,8 +332,11 @@ pub(super) async fn approve_booking_by_token(
     // token used to stamp the event type owner even for a booking assigned to
     // another member, which later made Google CalDAV 403 the reschedule PUT.
     // See `booking_host_identity`.
-    let (host_name, host_email, host_language) = match booking_host_identity(&state.pool, &uid)
-        .await
+    let (host_name, host_email, host_language, host_reader) = match booking_host_identity_with_id(
+        &state.pool,
+        &uid,
+    )
+    .await
     {
         Some(identity) => identity,
         None => {
@@ -342,9 +345,10 @@ pub(super) async fn approve_booking_by_token(
                 user_id = %user_id,
                 "could not resolve the booking's host identity; falling back to the event type owner"
             );
-            host_contact(&state.pool, &user_id)
-                .await
-                .unwrap_or((host_name, String::new(), None))
+            match host_contact(&state.pool, &user_id).await {
+                Some((name, email, language)) => (name, email, language, Some(user_id.clone())),
+                None => (host_name, String::new(), None, None),
+            }
         }
     };
 
@@ -433,7 +437,10 @@ pub(super) async fn approve_booking_by_token(
         let (cancel_notice_min, reschedule_notice_min) =
             fetch_event_type_notice_minutes(&state.pool, &event_type_id).await;
         let details = details.clone();
-        let host_notes = crate::email::booking_host_notes(&state.pool, &details.uid).await;
+        // The host email goes to the identity the calendar names; the notes
+        // only if that user may still read them (#173).
+        let host_notes =
+            host_notes_for_reader(&state.pool, &details.uid, host_reader.as_deref()).await;
         spawn_emails(async move {
             send_approval_guest_emails(
                 &smtp_config,
@@ -1248,21 +1255,27 @@ pub(super) async fn guest_cancel_booking(
         // the host they booked with (assigned member, or the stored roster
         // and ICS organizer for a collective booking, #161), which is also
         // its sender and Reply-To (#221).
+        // Each notice carries the host notes its recipient may read (#173);
+        // the fallback notice has no known recipient, so none.
         let mut host_notices = Vec::new();
         if let Some(owner) = &host_user_id {
-            for (name, email, language) in
+            for (host_id, name, email, language) in
                 pending_host_recipients(&state.pool, &details.uid, owner).await
             {
-                host_notices.push(crate::email::CancellationDetails {
-                    host_name: name,
-                    host_email: email,
-                    host_language: language,
-                    ..details.clone()
-                });
+                let notes = host_notes_for_reader(&state.pool, &details.uid, Some(&host_id)).await;
+                host_notices.push((
+                    crate::email::CancellationDetails {
+                        host_name: name,
+                        host_email: email,
+                        host_language: language,
+                        ..details.clone()
+                    },
+                    notes,
+                ));
             }
         }
         if host_notices.is_empty() {
-            host_notices.push(details.clone());
+            host_notices.push((details.clone(), None));
         }
         let guest_details = match booking_host_identity(&state.pool, &details.uid).await {
             Some((host_name, host_email, _)) => crate::email::CancellationDetails {
@@ -1272,7 +1285,6 @@ pub(super) async fn guest_cancel_booking(
             },
             None => details.clone(),
         };
-        let host_notes = crate::email::booking_host_notes(&state.pool, &details.uid).await;
         spawn_emails(async move {
             log_email_result(
                 crate::email::send_guest_cancellation(&smtp_config, &guest_details).await,
@@ -1284,7 +1296,7 @@ pub(super) async fn guest_cancel_booking(
                 "attendee_cancellation",
                 &details.uid,
             );
-            for host_details in &host_notices {
+            for (host_details, host_notes) in &host_notices {
                 log_email_result(
                     crate::email::send_host_cancellation(
                         &smtp_config,
@@ -2106,8 +2118,11 @@ pub(super) async fn guest_reschedule_booking(
     // reschedule never reaches the calendar. See `booking_host_identity`.
     // Each side reads the emails below in their own language: the host in
     // their saved one, the guest in the one stored with the booking (#209).
-    let (host_name, host_email, host_language) = match booking_host_identity(&state.pool, &uid)
-        .await
+    let (host_name, host_email, host_language, host_reader) = match booking_host_identity_with_id(
+        &state.pool,
+        &uid,
+    )
+    .await
     {
         Some(identity) => identity,
         None => {
@@ -2116,11 +2131,12 @@ pub(super) async fn guest_reschedule_booking(
                 user_id = %host_user_id,
                 "could not resolve the booking's host identity; falling back to the event type owner"
             );
-            host_contact(&state.pool, &host_user_id).await.unwrap_or((
-                host_name,
-                String::new(),
-                None,
-            ))
+            match host_contact(&state.pool, &host_user_id).await {
+                Some((name, email, language)) => {
+                    (name, email, language, Some(host_user_id.clone()))
+                }
+                None => (host_name, String::new(), None, None),
+            }
         }
     };
     let booking_language = Some(lang.to_string());
@@ -2234,7 +2250,7 @@ pub(super) async fn guest_reschedule_booking(
                 ..Default::default()
             };
             let new_confirm_token = new_confirm_token.clone();
-            let host_notes = crate::email::booking_host_notes(&state.pool, &uid).await;
+            let host_notes = host_notes_for_reader(&state.pool, &uid, host_reader.as_deref()).await;
             spawn_emails(async move {
                 let uid = reschedule_details.uid.as_str();
                 log_email_result(
@@ -2346,7 +2362,8 @@ pub(super) async fn guest_reschedule_booking(
                 ..Default::default()
             };
             let host_notes =
-                crate::email::booking_host_notes(&state.pool, &reschedule_details.uid).await;
+                host_notes_for_reader(&state.pool, &reschedule_details.uid, host_reader.as_deref())
+                    .await;
             spawn_emails(async move {
                 let uid = reschedule_details.uid.as_str();
                 // Notify guest with confirmation + ICS

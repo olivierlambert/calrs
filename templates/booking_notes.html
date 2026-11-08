@@ -49,8 +49,11 @@
     <input type="hidden" name="back" value="{{ back }}">
     <div class="form-group">
       <label for="host_notes" class="sr-only">{{ t("host-notes-title") }}</label>
-      <textarea id="host_notes" name="host_notes" rows="8" maxlength="{{ max_chars }}" placeholder="{{ t('host-notes-placeholder') }}">{{ host_notes }}</textarea>
-      {% if last_edit %}<p class="host-notes-meta">{{ last_edit }}</p>{% endif %}
+      <textarea id="host_notes" name="host_notes" rows="8" aria-describedby="host_notes_count" placeholder="{{ t('host-notes-placeholder') }}">{{ host_notes }}</textarea>
+      {#- No maxlength: browsers count UTF-16 units, the server counts characters
+          (an emoji is one). The counter counts like the server, which stays the
+          guard. #}
+      <p class="host-notes-meta"><span id="host_notes_count" data-max="{{ max_chars }}"></span>{% if last_edit %} {{ last_edit }}{% endif %}</p>
     </div>
     <div class="host-notes-actions">
       <button type="submit" class="ui-btn ui-btn--primary">{{ t("host-notes-save") }}</button>
@@ -58,4 +61,20 @@
     </div>
   </form>
 </section>
+<script>
+(function () {
+  var area = document.getElementById('host_notes');
+  var out = document.getElementById('host_notes_count');
+  if (!area || !out) return;
+  var max = parseInt(out.getAttribute('data-max'), 10);
+  function update() {
+    // Code points, as the server counts once it has trimmed the text.
+    var n = Array.from(area.value.replace(/\r\n/g, '\n').trim()).length;
+    out.textContent = n + ' / ' + max + '.';
+    out.style.color = n > max ? 'var(--error-text)' : '';
+  }
+  area.addEventListener('input', update);
+  update();
+})();
+</script>
 {% endblock %}

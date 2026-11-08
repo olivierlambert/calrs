@@ -110,27 +110,6 @@ pub async fn stored_booking_language(pool: &SqlitePool, booking_id: &str) -> Opt
         .and_then(supported_language)
 }
 
-/// The host notes of the booking with iCal `uid` (#173), for the host
-/// emails that carry them (`send_host_reminder`, `send_host_booking_confirmed`,
-/// `send_host_approval_reminder`, `send_host_cancellation`,
-/// `send_host_reschedule_request`). `None` when there are none.
-///
-/// Read separately on purpose and passed to those senders as their own
-/// argument: `BookingDetails` and `CancellationDetails` also feed the guest's
-/// emails, the ICS files, the calendar write-back and the SMS, none of which
-/// may ever show them.
-pub async fn booking_host_notes(pool: &SqlitePool, uid: &str) -> Option<String> {
-    sqlx::query_scalar::<_, Option<String>>("SELECT host_notes FROM bookings WHERE uid = ?")
-        .bind(uid)
-        .fetch_optional(pool)
-        .await
-        .ok()
-        .flatten()
-        .flatten()
-        .map(|n| n.trim().to_string())
-        .filter(|n| !n.is_empty())
-}
-
 #[derive(Clone, Default)]
 pub struct BookingDetails {
     /// Exact UTC endpoints for new bookings; legacy records use wall-clock fields.

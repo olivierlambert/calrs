@@ -508,11 +508,12 @@ bookings-back = Back
 bookings-empty = No upcoming bookings yet.<br>Share your { $link } so people can book time with you.
 bookings-empty-link-label = event type links
 bookings-search-placeholder = Search guests, emails or meetings
+bookings-recent = Last 30 days
 
 # Host notes on a booking (templates/booking_notes.html, bookings page, overview, host emails)
 
 host-notes-title = Host notes
-host-notes-hint = Only the hosts of this booking see these notes. They are never shown to the guest, and never added to the invite or the calendar event.
+host-notes-hint = Seen by the hosts of this booking, a team member who claimed it, and an admin while acting as one of its hosts. Never shown to the guest, and never added to the invite or the calendar event.
 host-notes-placeholder = For example: what was said on a call, what to prepare.
 host-notes-save = Save notes
 host-notes-saved = Notes saved.

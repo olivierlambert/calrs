@@ -507,11 +507,12 @@ bookings-back = Voltar
 bookings-empty = Ainda não há agendamentos futuros.<br>Compartilhe seus { $link } para que outras pessoas possam agendar com você.
 bookings-empty-link-label = links de tipos de evento
 bookings-search-placeholder = Buscar convidados, e-mails ou reuniões
+bookings-recent = Últimos 30 dias
 
 # Host notes on a booking (templates/booking_notes.html, bookings page, overview, host emails)
 
 host-notes-title = Notas dos anfitriões
-host-notes-hint = Só os anfitriões deste agendamento veem estas notas. Elas nunca são mostradas ao convidado nem adicionadas ao convite ou ao evento da agenda.
+host-notes-hint = Visíveis para os anfitriões deste agendamento, para um membro da equipe que o assumiu e para um administrador agindo como um dos anfitriões. Nunca são mostradas ao convidado nem adicionadas ao convite ou ao evento da agenda.
 host-notes-placeholder = Por exemplo: o que foi dito numa ligação, o que preparar.
 host-notes-save = Salvar notas
 host-notes-saved = Notas salvas.

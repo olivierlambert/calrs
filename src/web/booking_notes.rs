@@ -30,8 +30,8 @@
 //! booking and its event type at each request too.
 //!
 //! Notes reach host surfaces only: this page, the bookings page and the
-//! overview, and the host emails sent once they exist (see
-//! `crate::email::booking_host_notes`). They are never shown to the guest,
+//! overview, and the host emails sent once they exist, each recipient checked
+//! against the same rule (`host_notes_for_reader`). They are never shown to the guest,
 //! written into an invite, an ICS file or the calendar write-back (the event
 //! on the host's calendar is sent to its attendees by scheduling servers and
 //! is often shared), an SMS or a webhook.
@@ -44,7 +44,7 @@ pub(super) const HOST_NOTES_MAX_CHARS: usize = 5000;
 /// Whether user `?` hosts booking `b` as described in the module
 /// documentation. Aliases `b`, `et` and `a` (LEFT JOIN of the event type's
 /// account). Binds the user id four times.
-const NOTE_HOSTS: &str = "(a.user_id = ?
+pub(super) const NOTE_HOSTS: &str = "(a.user_id = ?
     OR b.assigned_user_id = ?
     OR (b.assigned_user_id IS NULL AND et.team_id IS NOT NULL
         AND et.scheduling_mode = 'collective' AND EXISTS (
@@ -54,6 +54,61 @@ const NOTE_HOSTS: &str = "(a.user_id = ?
                 WHERE etw.event_type_id = et.id AND etw.user_id = tm.user_id
                   AND etw.weight <= 0)))
     OR b.claimed_by_user_id = ?)";
+
+/// The host notes of the booking with iCal `uid`, for a host email to the
+/// user `reader`: `None` when there are none, when `reader` is unknown (an
+/// organizer snapshot whose user is gone) or may not read them under the rule
+/// above. The organizer an email is addressed to is the one the calendar
+/// event names, which may have left the team since; the note follows who may
+/// read it now, not the calendar.
+///
+/// Read apart from `BookingDetails` and `CancellationDetails` on purpose and
+/// passed to the host senders as their own argument: those structs also feed
+/// the guest's emails, the ICS files, the calendar write-back and the SMS.
+///
+/// A failed lookup is logged at warn with the booking and the email goes out
+/// without the note: the email (an approval, a cancellation, a reminder) is
+/// worth more than the note, and a reminder sent twice is worse than one
+/// without it.
+pub(crate) async fn host_notes_for_reader(
+    pool: &SqlitePool,
+    uid: &str,
+    reader: Option<&str>,
+) -> Option<String> {
+    let reader = reader?;
+    match try_host_notes_for_reader(pool, uid, reader).await {
+        Ok(notes) => notes,
+        Err(e) => {
+            tracing::warn!(booking = %uid, user_id = %reader, error = %e, "host notes lookup failed; host email sent without them");
+            None
+        }
+    }
+}
+
+async fn try_host_notes_for_reader(
+    pool: &SqlitePool,
+    uid: &str,
+    reader: &str,
+) -> Result<Option<String>, sqlx::Error> {
+    let sql = format!(
+        "SELECT b.host_notes FROM bookings b
+         JOIN event_types et ON et.id = b.event_type_id
+         LEFT JOIN accounts a ON a.id = et.account_id
+         WHERE b.uid = ? AND {NOTE_HOSTS}"
+    );
+    let notes: Option<Option<String>> = sqlx::query_scalar(&sql)
+        .bind(uid)
+        .bind(reader)
+        .bind(reader)
+        .bind(reader)
+        .bind(reader)
+        .fetch_optional(pool)
+        .await?;
+    Ok(notes
+        .flatten()
+        .map(|n| n.trim().to_string())
+        .filter(|n| !n.is_empty()))
+}
 
 /// A booking as its notes page shows it.
 pub(super) struct NoteBooking {
@@ -301,6 +356,45 @@ fn render_notes_page(
     .into_response()
 }
 
+/// Store `notes` on the booking when its version is still `version` and
+/// `reader` may still edit them, both checked in the write itself: a host who
+/// lost access after the page was read (left the team, was unassigned) cannot
+/// write. `author` is who is recorded, `acting_as` the host an admin was
+/// impersonating. `Ok(false)` when nothing was written.
+pub(super) async fn write_host_notes(
+    pool: &SqlitePool,
+    booking_id: &str,
+    notes: Option<&str>,
+    version: i64,
+    reader: &str,
+    author: &str,
+    acting_as: Option<&str>,
+) -> Result<bool, sqlx::Error> {
+    let sql = format!(
+        "UPDATE bookings SET host_notes = ?, host_notes_version = host_notes_version + 1,
+                host_notes_updated_at = datetime('now'),
+                host_notes_updated_by = ?, host_notes_updated_as = ?
+         WHERE id = ? AND host_notes_version = ? AND EXISTS (
+             SELECT 1 FROM bookings b
+             JOIN event_types et ON et.id = b.event_type_id
+             LEFT JOIN accounts a ON a.id = et.account_id
+             WHERE b.id = bookings.id AND {NOTE_HOSTS})"
+    );
+    let result = sqlx::query(&sql)
+        .bind(notes)
+        .bind(author)
+        .bind(acting_as)
+        .bind(booking_id)
+        .bind(version)
+        .bind(reader)
+        .bind(reader)
+        .bind(reader)
+        .bind(reader)
+        .execute(pool)
+        .await?;
+    Ok(result.rows_affected() == 1)
+}
+
 /// `GET /dashboard/bookings/{id}/notes`.
 pub(super) async fn booking_notes_page(
     State(state): State<Arc<AppState>>,
@@ -383,27 +477,25 @@ pub(super) async fn save_booking_notes(
     };
     // Guarded on the version the page was loaded with, so a save from a
     // stale page cannot silently replace what another host wrote meanwhile.
-    let changed = sqlx::query(
-        "UPDATE bookings SET host_notes = ?, host_notes_version = host_notes_version + 1,
-                host_notes_updated_at = datetime('now'),
-                host_notes_updated_by = ?, host_notes_updated_as = ?
-         WHERE id = ? AND host_notes_version = ?",
+    let changed = write_host_notes(
+        &state.pool,
+        &booking.id,
+        notes.as_deref(),
+        version,
+        user_id,
+        author,
+        acting_as,
     )
-    .bind(&notes)
-    .bind(author)
-    .bind(acting_as)
-    .bind(&booking.id)
-    .bind(version)
-    .execute(&state.pool)
     .await;
     match changed {
-        Ok(r) if r.rows_affected() == 1 => {
+        Ok(true) => {
             tracing::info!(booking_id = %booking.id, user_id = %author, acting_as = ?acting_as, cleared = notes.is_none(), "host notes saved");
             Redirect::to(&saved_url).into_response()
         }
-        Ok(_) => {
+        Ok(false) => {
             // Read the row again: the version and the text shown must be the
-            // ones that refused this save, not those read before it.
+            // ones that refused this save, not those read before it. Access
+            // lost meanwhile answers like any other refusal of access.
             let current = match note_booking(&state.pool, &booking_id, user_id).await {
                 Ok(Some(b)) => b,
                 Ok(None) => return dashboard_not_found(&state, &auth_user),

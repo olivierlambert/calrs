@@ -507,11 +507,12 @@ bookings-back = Tagasi
 bookings-empty = Tulevasi broneeringuid veel pole.<br>Jaga oma { $link }, et teised saaksid sinuga aja broneerida.
 bookings-empty-link-label = sündmuse tüüpide linke
 bookings-search-placeholder = Otsi külalisi, e-posti või kohtumisi
+bookings-recent = Viimased 30 päeva
 
 # Host notes on a booking (templates/booking_notes.html, bookings page, overview, host emails)
 
 host-notes-title = Korraldajate märkmed
-host-notes-hint = Neid märkmeid näevad ainult selle broneeringu korraldajad. Neid ei näidata kunagi külalisele ega lisata kutsesse ega kalendrisündmusesse.
+host-notes-hint = Neid näevad selle broneeringu korraldajad, meeskonnaliige, kes selle üle võttis, ja administraator, kui ta tegutseb ühe korraldajana. Neid ei näidata kunagi külalisele ega lisata kutsesse ega kalendrisündmusesse.
 host-notes-placeholder = Näiteks: mida kõnes räägiti, mida ette valmistada.
 host-notes-save = Salvesta märkmed
 host-notes-saved = Märkmed salvestatud.

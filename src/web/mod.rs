@@ -55,6 +55,7 @@ pub(crate) use availability::expand_recurring_into_busy;
 use availability::*;
 use booking::*;
 use booking_actions::*;
+pub(crate) use booking_notes::host_notes_for_reader;
 use booking_notes::*;
 use branding::*;
 pub(crate) use calendar_push::resource_delete_booking;

@@ -31,6 +31,20 @@ pub(crate) async fn booking_host_identity(
     pool: &SqlitePool,
     booking_uid: &str,
 ) -> Option<(String, String, Option<String>)> {
+    booking_host_identity_with_id(pool, booking_uid)
+        .await
+        .map(|(name, email, language, _)| (name, email, language))
+}
+
+/// `booking_host_identity` plus the user id behind the address, `None` when
+/// the stored organizer's user is gone. A host email addressed to that
+/// identity decides with it whether its recipient may read the booking's
+/// host notes (#173): the organizer snapshot is kept for the calendar, but a
+/// member who has left the team since must not be sent the notes.
+pub(crate) async fn booking_host_identity_with_id(
+    pool: &SqlitePool,
+    booking_uid: &str,
+) -> Option<(String, String, Option<String>, Option<String>)> {
     // accounts.user_id is nullable (ON DELETE SET NULL, and team event types
     // hang off a placeholder account), hence Option.
     #[allow(clippy::type_complexity)]
@@ -74,7 +88,7 @@ pub(crate) async fn booking_host_identity(
             Some(id) => crate::email::user_language(pool, id).await,
             None => None,
         };
-        return Some((name, email, language));
+        return Some((name, email, language, organizer_user_id));
     }
 
     // Collective bookings stay unassigned and carry the whole roster. Same
@@ -83,8 +97,8 @@ pub(crate) async fn booking_host_identity(
     // as the roster has not changed since.
     if assigned.is_none() && mode == "collective" {
         if let Some(team_id) = &team_id {
-            let members: Vec<(String, String, Option<String>)> = sqlx::query_as(
-                "SELECT u.name, COALESCE(u.booking_email, u.email), u.language FROM users u
+            let members: Vec<(String, String, Option<String>, String)> = sqlx::query_as(
+                "SELECT u.name, COALESCE(u.booking_email, u.email), u.language, u.id FROM users u
                  JOIN team_members tm ON tm.user_id = u.id
                  LEFT JOIN event_type_member_weights etw
                    ON etw.user_id = u.id AND etw.event_type_id = ?
@@ -96,22 +110,26 @@ pub(crate) async fn booking_host_identity(
             .fetch_all(pool)
             .await
             .unwrap_or_default();
-            if let Some((_, first_email, first_language)) = members.first() {
+            if let Some((_, first_email, first_language, first_id)) = members.first() {
                 let joined = members
                     .iter()
-                    .map(|(name, _, _)| name.as_str())
+                    .map(|(name, _, _, _)| name.as_str())
                     .collect::<Vec<_>>()
                     .join(" & ");
                 return Some((
                     joined,
                     first_email.clone(),
                     crate::email::supported_language(first_language.clone()),
+                    Some(first_id.clone()),
                 ));
             }
         }
     }
 
-    host_contact(pool, &assigned.or(owner_id)?).await
+    let host = assigned.or(owner_id)?;
+    host_contact(pool, &host)
+        .await
+        .map(|(name, email, language)| (name, email, language, Some(host)))
 }
 
 /// Name, booking address and normalised saved language of one user: the

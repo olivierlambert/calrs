@@ -508,11 +508,12 @@ bookings-back = Terug
 bookings-empty = Nog geen komende boekingen.<br>Deel je { $link } zodat mensen een afspraak met je kunnen boeken.
 bookings-empty-link-label = links naar afspraaktypes
 bookings-search-placeholder = Zoek gasten, e-mails of afspraken
+bookings-recent = Afgelopen 30 dagen
 
 # Host notes on a booking (templates/booking_notes.html, bookings page, overview, host emails)
 
 host-notes-title = Notities van de organisatoren
-host-notes-hint = Alleen de organisatoren van deze boeking zien deze notities. Ze worden nooit aan de gast getoond en nooit aan de uitnodiging of het agenda-item toegevoegd.
+host-notes-hint = Zichtbaar voor de organisatoren van deze boeking, een teamlid dat de boeking heeft overgenomen en een beheerder die optreedt als een van de organisatoren. Ze worden nooit aan de gast getoond en nooit aan de uitnodiging of het agenda-item toegevoegd.
 host-notes-placeholder = Bijvoorbeeld: wat er in een gesprek is gezegd, wat er voorbereid moet worden.
 host-notes-save = Notities opslaan
 host-notes-saved = Notities opgeslagen.
