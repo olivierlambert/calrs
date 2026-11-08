@@ -1212,10 +1212,11 @@ async fn cancel_orphaned_booking(
         Option<String>,
         Option<String>,
         Option<String>,
+        String,
     )> = sqlx::query_as(
         "SELECT b.id, b.guest_name, b.guest_email, COALESCE(b.guest_timezone, 'UTC'), CASE b.time_version WHEN 1 THEN b.start_at ELSE rtrim(b.start_at, 'Z') END AS start_at, CASE b.time_version WHEN 1 THEN b.end_at ELSE rtrim(b.end_at, 'Z') END AS end_at, b.uid,
                 et.title, u.name, COALESCE(u.booking_email, u.email), b.caldav_calendar_href, u.timezone,
-                u.language
+                u.language, u.id
          FROM bookings b
          JOIN event_types et ON et.id = b.event_type_id
          JOIN accounts a ON a.id = et.account_id
@@ -1250,6 +1251,7 @@ async fn cancel_orphaned_booking(
         caldav_calendar_href,
         host_timezone,
         host_language,
+        host_user_id,
     ) = booking;
     let host_language = crate::email::supported_language(host_language);
 
@@ -1395,7 +1397,12 @@ async fn cancel_orphaned_booking(
         );
     }
     let _ = crate::email::send_guest_attendee_cancellations(&smtp_config, &details).await;
-    if let Err(e) = crate::email::send_host_cancellation(&smtp_config, &host_details).await {
+    let host_notes =
+        crate::web::host_notes_for_reader(pool, &host_details.uid, Some(&host_user_id)).await;
+    if let Err(e) =
+        crate::email::send_host_cancellation(&smtp_config, &host_details, host_notes.as_deref())
+            .await
+    {
         tracing::warn!(
             error = format!("{e:#}"),
             "failed to send external cancellation email to host"

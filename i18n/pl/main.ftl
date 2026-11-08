@@ -551,6 +551,29 @@ bookings-back = Wstecz
 bookings-empty = Nie ma jeszcze nadchodzących rezerwacji.<br>Udostępnij swoje { $link }, aby inni mogli rezerwować czas u ciebie.
 bookings-empty-link-label = linki do typów wydarzeń
 bookings-search-placeholder = Szukaj gości, e-maili lub spotkań
+bookings-recent = Ostatnie 30 dni
+
+# Host notes on a booking (templates/booking_notes.html, bookings page, overview, host emails)
+
+host-notes-title = Notatki organizatorów
+host-notes-hint = Widzą je organizatorzy tej rezerwacji, członek zespołu, który ją przejął, oraz administrator działający jako jeden z jej organizatorów. Nigdy nie są pokazywane gościowi ani dodawane do zaproszenia czy wydarzenia w kalendarzu.
+host-notes-placeholder = Na przykład: co padło podczas rozmowy, co trzeba przygotować.
+host-notes-save = Zapisz notatki
+host-notes-saved = Notatki zapisane.
+host-notes-too-long = Notatki organizatorów mogą mieć najwyżej { $max } znaków.
+host-notes-conflict = Te notatki zmieniono po otwarciu tej strony. Zapisana wersja jest pokazana poniżej; ponowne zapisanie zastąpi ją tekstem z pola.
+host-notes-current = Zapisana wersja:
+host-notes-last-edit = Ostatnia zmiana: { $name }, { $when }
+host-notes-last-edit-anon = Ostatnia zmiana: { $when }
+host-notes-edit = Edytuj notatkę
+host-notes-marker = Notatka organizatorów
+host-notes-cleared = (usunięte)
+host-notes-last-edit-as = Ostatnia zmiana: { $name } (administrator, jako { $host }), { $when }
+dash-not-found-title = Nie znaleziono
+dash-not-found-body = Ta strona nie istnieje albo to konto nie ma do niej dostępu.
+host-notes-from-guest = Od gościa:
+bookings-host-notes = Notatki organizatorów:
+email-detail-host-notes = Notatki organizatorów:
 
 # Dashboard teams listing (templates/dashboard_teams.html)
 

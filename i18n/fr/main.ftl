@@ -507,6 +507,29 @@ bookings-back = Retour
 bookings-empty = Aucune réservation à venir pour le moment.<br>Partagez vos { $link } pour que l'on puisse réserver avec vous.
 bookings-empty-link-label = liens de types d'événement
 bookings-search-placeholder = Rechercher un invité, un e-mail ou un rendez-vous
+bookings-recent = 30 derniers jours
+
+# Host notes on a booking (templates/booking_notes.html, bookings page, overview, host emails)
+
+host-notes-title = Notes des hôtes
+host-notes-hint = Visibles par les hôtes de cette réservation, par un membre d'équipe qui l'a prise en charge et par un administrateur qui agit en tant que l'un de ses hôtes. Jamais montrées à l'invité, ni ajoutées à l'invitation ou à l'événement du calendrier.
+host-notes-placeholder = Par exemple : ce qui a été dit lors d'un appel, ce qu'il faut préparer.
+host-notes-save = Enregistrer les notes
+host-notes-saved = Notes enregistrées.
+host-notes-too-long = Les notes des hôtes ne peuvent pas dépasser { $max } caractères.
+host-notes-conflict = Ces notes ont été modifiées après l'ouverture de cette page. La version enregistrée figure ci-dessous ; enregistrer à nouveau la remplace par le texte du champ.
+host-notes-current = Version enregistrée :
+host-notes-last-edit = Dernière modification par { $name }, { $when }
+host-notes-last-edit-anon = Dernière modification : { $when }
+host-notes-edit = Modifier la note
+host-notes-marker = Note des hôtes
+host-notes-cleared = (effacées)
+host-notes-last-edit-as = Dernière modification par { $name } (administrateur, en tant que { $host }), { $when }
+dash-not-found-title = Page introuvable
+dash-not-found-body = Cette page n'existe pas, ou ce compte n'y a pas accès.
+host-notes-from-guest = De l'invité :
+bookings-host-notes = Notes des hôtes :
+email-detail-host-notes = Notes des hôtes :
 
 # Dashboard teams listing (templates/dashboard_teams.html)
 
