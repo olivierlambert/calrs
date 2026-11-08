@@ -108,8 +108,9 @@ pub async fn run(pool: &SqlitePool, data_dir: &Path, cmd: UserCommands) -> Resul
             let user_id = Uuid::new_v4().to_string();
             let username = auth::generate_username(pool, &email).await?;
 
+            let mut tx = pool.begin().await?;
             let role = auth::create_local_user(
-                pool,
+                &mut *tx,
                 &user_id,
                 &email,
                 &name,
@@ -118,34 +119,8 @@ pub async fn run(pool: &SqlitePool, data_dir: &Path, cmd: UserCommands) -> Resul
                 admin,
             )
             .await?;
-
-            // Link to existing account (e.g. from old `calrs init`) or create a new one
-            let existing_account: Option<(String,)> =
-                sqlx::query_as("SELECT id FROM accounts WHERE email = ?")
-                    .bind(&email)
-                    .fetch_optional(pool)
-                    .await?;
-
-            if let Some((account_id,)) = existing_account {
-                // Link the existing account to this user
-                sqlx::query("UPDATE accounts SET user_id = ?, name = ? WHERE id = ?")
-                    .bind(&user_id)
-                    .bind(&name)
-                    .bind(&account_id)
-                    .execute(pool)
-                    .await?;
-            } else {
-                let account_id = Uuid::new_v4().to_string();
-                sqlx::query(
-                    "INSERT INTO accounts (id, name, email, timezone, user_id) VALUES (?, ?, ?, 'UTC', ?)",
-                )
-                .bind(&account_id)
-                .bind(&name)
-                .bind(&email)
-                .bind(&user_id)
-                .execute(pool)
-                .await?;
-            }
+            auth::create_user_account(&mut tx, &user_id, &name, &email).await?;
+            tx.commit().await?;
 
             println!(
                 "{} User created: {} <{}> (role: {})",

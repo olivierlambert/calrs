@@ -203,6 +203,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 - **Overview of team members** - A round-robin booking with no assigned member (the member's account was deleted, or an old row) was listed on the overview of every member of the team, as if it were collective. It is now listed for the event type's owner only; collective bookings are unchanged.
 
+### Security
+
+- **New users always get a scheduling account of their own** - Under certain conditions, a new user (registration, single sign-on auto-registration or `calrs user create`) could be attached to an existing user's scheduling account, with its event types, bookings and calendars. A new user now always gets a new account. At startup, an account left without a user is only linked to a user with the same address who has no account yet, and gets no new user when its address matches an existing user's except for letter case or spaces; otherwise it stays unlinked and a warning names it in the log for the administrator to review. A single sign-on login that changes a user's address now also updates the copy kept on their account. Registration also stores the email address without surrounding spaces.
+
 ## [2.0.0-beta.2] - 2026-11-07
 
 Second pre-release of 2.0. Its main change is for contributors: **migrations are now named by UTC timestamp** (#333), so the 2.0 features waiting in pull requests (Microsoft Graph, MCP over HTTP, Google out of office, EWS impersonation) can rebase without fighting over migration numbers, and land in the next betas. For users: **a security fix for Markdown links** on the public pages (#346) and in the dashboard preview, embeds that can fix the time format and the timezone (#347), and `--password-stdin` for scripted CLI setups (#345). No new migration. **Back up your database before upgrading**, as for any pre-release.
