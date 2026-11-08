@@ -34,8 +34,11 @@ Every user-facing string goes through Fluent (`i18n/`).
 
  background loop, every 60 s (run_reminder_loop in web/notify.rs)
    session cleanup, pending sweep (web/pending.rs), reminders,
-   write-back retries (web/writeback.rs), sync of the stalest source
-   (commands/sync.rs)
+   write-back retries (web/writeback.rs)
+
+ background sync, every 60 s (commands/sync_scheduler.rs)
+   due sources (commands/sync.rs, daily full resyncs first, then the
+   stalest), a few at once, one per server
 
  webhook task (run_webhook_loop in web/webhooks.rs)
    delivers queued booking webhooks when woken and every 30 s
@@ -57,7 +60,7 @@ Every user-facing string goes through Fluent (`i18n/`).
 | `src/settings.rs` | Runtime settings (base URL, private-host policy): env overrides DB |
 | `src/i18n.rs` | Fluent loader, language detection, the `t()` template global, i18n guard tests |
 | `src/booking_time.rs` | How booking times are stored (legacy wall clock vs UTC instant) |
-| `src/rrule.rs` | RRULE expansion for recurring events |
+| `src/rrule.rs` | RRULE expansion for recurring events; `occurrences_in` is the one expansion every busy reader shares |
 | `src/utils.rs` | iCal helpers (`split_vevents`, `parse_content_line`, `extract_vevent_field`, `extract_vevent_tzid`, datetime and timezone parsing) |
 | `src/tzid.rs` | Resolving an event's TZID to an IANA zone: by name (IANA, Windows, vendor prefix, display name), else by matching the resource's `VTIMEZONE`, else a display name's fixed offset (`event_timezone` at sync, `resolve_or_offset` when reading stored events) |
 | `src/windows_zones.rs` | Windows timezone names (`Eastern Standard Time`) mapped to IANA ids, from CLDR's `windowsZones.xml` |
@@ -208,8 +211,11 @@ Call sites use `crate::email::name` whatever file `name` lives in.
   Graph retains the booking UID in an extended property and updates the same
   remote event when rescheduled. It does not send Graph attendee invitations:
   calrs owns the email lifecycle.
-  Sync lives in `src/commands/sync.rs` (`sync_if_stale` on page loads) and
-  `src/commands/sync_health.rs` (failure tracking).
+  Sync lives in `src/commands/sync.rs` (`sync_if_stale` on page loads,
+  `due_background_sources` for the background sync),
+  `src/commands/sync_scheduler.rs` (the background sync task: quota,
+  concurrency, one sync per server) and `src/commands/sync_health.rs`
+  (failure tracking).
   Snapshot providers reconcile a full snapshot, each through its own path.
   EWS goes through `sync_ews_source` (busy-only storage for managed
   sources, a folder removed only after two listings miss it, #362).

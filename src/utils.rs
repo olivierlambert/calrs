@@ -529,6 +529,18 @@ pub fn extract_vevent_end(vevent: &str, zone: Option<Tz>) -> Option<String> {
     Some(end)
 }
 
+/// A positive RFC 5545 duration (`PT1H30M`, `P1D`) as elapsed time, days
+/// counted as 24 hours. None when malformed.
+pub fn ical_duration(value: &str) -> Option<chrono::Duration> {
+    let d = parse_ical_duration(value)?;
+    chrono::Duration::try_seconds(
+        i64::try_from(d.days)
+            .ok()?
+            .checked_mul(86_400)?
+            .checked_add(d.seconds)?,
+    )
+}
+
 /// Parse a positive RFC 5545 duration.
 ///
 /// Weeks must appear alone. Days may be followed by a time component.

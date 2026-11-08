@@ -856,3 +856,37 @@ async fn booking_form_post_assigns_round_robin_resource() {
         "the booking must record the free round-robin resource"
     );
 }
+
+#[tokio::test]
+async fn a_resource_series_started_years_ago_blocks_the_window() {
+    // #376: a weekly feed reservation since 2019 still blocks this week.
+    let pool = setup_test_db().await;
+    let resource = insert_resource(&pool, "Lab").await;
+    sqlx::query(
+        "INSERT INTO resource_events (id, resource_id, uid, start_at, end_at, all_day, rrule, raw_ical) \
+             VALUES (?, ?, 'weekly-lab', '20190107T130000', '20190107T150000', 0, 'FREQ=WEEKLY;BYDAY=MO,TH', ?)",
+    )
+    .bind(uuid::Uuid::new_v4().to_string())
+    .bind(&resource)
+    .bind("BEGIN:VEVENT\r\nDTSTART:20190107T130000\r\nEXDATE:20261112T130000\r\nEND:VEVENT\r\n")
+    .execute(&pool)
+    .await
+    .unwrap();
+    let busy = crate::resources::busy_for_resource(
+        &pool,
+        &resource,
+        dt(2026, 11, 9, 0, 0),
+        dt(2026, 11, 15, 23, 59),
+        Tz::UTC,
+        None,
+    )
+    .await;
+    assert!(
+        has_conflict(&busy, dt(2026, 11, 9, 14, 0), dt(2026, 11, 9, 14, 30)),
+        "{busy:?}"
+    );
+    assert!(
+        !has_conflict(&busy, dt(2026, 11, 12, 14, 0), dt(2026, 11, 12, 14, 30)),
+        "the cancelled Thursday is free: {busy:?}"
+    );
+}

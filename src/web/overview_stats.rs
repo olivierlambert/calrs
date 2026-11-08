@@ -5,8 +5,9 @@
 //! Every booking here is one the signed-in user takes part in, using the
 //! same rule as the slot engine (`user_busy_bookings` in `booking_time.rs`)
 //! minus its status filter: a booking assigned to them, an unassigned
-//! booking on an event type they own, an unassigned collective booking on a
-//! team they belong to, plus a booking they claimed as a watcher. A
+//! booking on a non-collective event type they own, an unassigned collective
+//! booking on a team they belong to and are not excluded from, plus a
+//! booking they claimed as a watcher. A
 //! round-robin booking assigned to another member does not count for the
 //! event type's creator.
 //!
@@ -36,11 +37,14 @@ const RULER_TO_HOUR: i64 = 20;
 
 /// Scope predicate, see the module documentation. Alias `b`. Binds the user
 /// id four times. A team member excluded from the event type (weight 0, as
-/// `hosts.rs` reads it) is not one of its hosts, and an unassigned booking is
-/// every member's only on a collective event type: a round-robin booking that
-/// lost its assigned member (deleted user, legacy row) is the owner's alone.
+/// `hosts.rs` reads it) is not one of its hosts. An unassigned collective
+/// booking is its roster's (members not excluded), its owner included only
+/// when on that roster, as in `user_busy_bookings` (#375). One difference on
+/// purpose: an unassigned round-robin booking (deleted member, legacy row) is
+/// the owner's alone here, while busy time blocks every member for it, the
+/// safe direction for availability.
 ///
-/// The rule is the one of `user_busy_bookings`, written so that every branch
+/// The rule is otherwise the one of `user_busy_bookings`, written so that every branch
 /// of the OR reads an index of `bookings` (assigned user, event type,
 /// claimant) and SQLite unions them: the plain form tests `a.user_id` and
 /// the team membership on the joined event type, which no index of
@@ -51,6 +55,7 @@ const HOST_SCOPE: &str = "(b.assigned_user_id = ?
     OR (+b.assigned_user_id IS NULL AND b.event_type_id IN (
           SELECT ot.id FROM event_types ot JOIN accounts oa ON oa.id = ot.account_id
           WHERE oa.user_id = ?
+            AND NOT (ot.team_id IS NOT NULL AND ot.scheduling_mode = 'collective')
           UNION ALL
           SELECT tt.id FROM event_types tt JOIN team_members tm ON tm.team_id = tt.team_id
           WHERE tm.user_id = ? AND tt.scheduling_mode = 'collective'
@@ -718,7 +723,7 @@ pub(super) async fn fetch_calendar_busy(
     );
     let single: Vec<(String, String, Option<String>)> = sqlx::query_as(&format!(
         "SELECT e.start_at, e.end_at, e.timezone {scope}
-           AND (e.rrule IS NULL OR e.rrule = '')
+           AND (e.rrule IS NULL OR e.rrule = '') AND e.rdate = 0
            AND e.start_at <= ? AND e.end_at >= ?"
     ))
     .bind(user_id)
@@ -741,8 +746,8 @@ pub(super) async fn fetch_calendar_busy(
         .collect();
     let recurring: Vec<(String, String, String, Option<String>, Option<String>)> =
         sqlx::query_as(&format!(
-            "SELECT e.start_at, e.end_at, e.rrule, e.raw_ical, e.timezone {scope}
-               AND e.rrule IS NOT NULL AND e.rrule != '' AND e.start_at <= ?"
+            "SELECT e.start_at, e.end_at, COALESCE(e.rrule, ''), e.raw_ical, e.timezone {scope}
+               AND ((e.rrule IS NOT NULL AND e.rrule != '') OR e.rdate = 1) AND e.start_at <= ?"
         ))
         .bind(user_id)
         .bind(user_id)

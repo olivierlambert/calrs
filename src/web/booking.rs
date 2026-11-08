@@ -21,6 +21,110 @@ pub(super) async fn meeting_provider_labels(state: &AppState) -> (String, String
     (jitsi, webhook)
 }
 
+/// Spend one use of the invite `token` on event type `et_id`, inside the
+/// booking's own transaction (#373). The check and the count are one guarded
+/// `UPDATE`: it only matches while the invite has a use left and has not
+/// expired, so two submissions on a single-use invite cannot both take it,
+/// and a booking that is refused or rolled back afterwards gives its use
+/// back. `Ok(false)` means the invite had nothing left to give: the booking
+/// must be refused. `now` is the UTC time in the `expires_at` format, the
+/// same comparison the early check makes.
+pub(super) async fn consume_invite(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    token: &str,
+    et_id: &str,
+    now: &str,
+) -> Result<bool, sqlx::Error> {
+    let result = sqlx::query(
+        "UPDATE booking_invites SET used_count = used_count + 1
+         WHERE token = ? AND event_type_id = ? AND used_count < max_uses
+           AND (expires_at IS NULL OR expires_at >= ?)",
+    )
+    .bind(token)
+    .bind(et_id)
+    .bind(now)
+    .execute(&mut **tx)
+    .await?;
+    Ok(result.rows_affected() == 1)
+}
+
+/// The invite token a form booking on a private or internal event type
+/// spends, `None` when it spends none (public event type, or a manager
+/// booking through the API).
+fn invite_to_consume<'a>(visibility: &str, access: &BookingAccess<'a>) -> Option<&'a str> {
+    if visibility != "private" && visibility != "internal" {
+        return None;
+    }
+    match access {
+        BookingAccess::Form {
+            invite_token: Some(token),
+            ..
+        } => Some(*token),
+        _ => None,
+    }
+}
+
+/// [`consume_invite`] for a booking handler: on a refusal or a failed write
+/// the transaction is rolled back and the refusal returned.
+async fn spend_invite(
+    tx: sqlx::Transaction<'static, sqlx::Sqlite>,
+    token: Option<&str>,
+    et_id: &str,
+) -> Result<sqlx::Transaction<'static, sqlx::Sqlite>, BookingRefusal> {
+    let Some(token) = token else {
+        return Ok(tx);
+    };
+    let mut tx = tx;
+    let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
+    let refusal = match consume_invite(&mut tx, token, et_id, &now).await {
+        Ok(true) => return Ok(tx),
+        Ok(false) => match invite_refusal(&mut tx, token, et_id, &now).await {
+            Ok(key) => BookingRefusal::Plain(key),
+            Err(e) => BookingRefusal::Internal("invite use", e.to_string()),
+        },
+        Err(e) => BookingRefusal::Internal("invite use", e.to_string()),
+    };
+    let _ = tx.rollback().await;
+    Err(refusal)
+}
+
+/// Why [`consume_invite`] found nothing to spend, read in the same
+/// transaction: the invite is gone (deleted since the early check), has
+/// expired meanwhile, or has no use left.
+pub(super) async fn invite_refusal(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    token: &str,
+    et_id: &str,
+    now: &str,
+) -> Result<&'static str, sqlx::Error> {
+    let expires_at: Option<Option<String>> = sqlx::query_scalar(
+        "SELECT expires_at FROM booking_invites WHERE token = ? AND event_type_id = ?",
+    )
+    .bind(token)
+    .bind(et_id)
+    .fetch_optional(&mut **tx)
+    .await?;
+    Ok(match expires_at {
+        None => "error-invite-invalid",
+        Some(Some(exp)) if exp.as_str() < now => "error-invite-expired",
+        Some(_) => "error-invite-used",
+    })
+}
+
+/// Tokens that passed a booking's early invite check, one entry per pass, so
+/// a test can tell that every concurrent submission has read the invite
+/// before it lets the first one book (#373).
+#[cfg(test)]
+pub(super) static INVITE_CHECKS_PASSED: std::sync::Mutex<Vec<String>> =
+    std::sync::Mutex::new(Vec::new());
+
+#[cfg(test)]
+fn note_invite_check_passed(token: &str) {
+    if let Ok(mut passed) = INVITE_CHECKS_PASSED.lock() {
+        passed.push(token.to_string());
+    }
+}
+
 /// Pick the location URL to expose on a freshly-created booking.
 ///
 /// When the event type uses an auto provider (`jitsi_auto`, `webhook_auto`,
@@ -228,7 +332,8 @@ impl<'a> GuestRequest<'a> {
 pub(super) enum BookingAccess<'a> {
     /// A guest on the booking form: internal and private event types need a
     /// valid invite, a public event type of a private team the team's token
-    /// unless `viewer` is a member or an admin. A used invite is counted.
+    /// unless `viewer` is a member or an admin. A used invite is counted, in
+    /// the booking's own transaction (`consume_invite`).
     Form {
         invite_token: Option<&'a str>,
         viewer: Option<&'a crate::models::User>,
@@ -522,6 +627,8 @@ pub(super) async fn book_team(
                     if used_count >= max_uses {
                         return Err(BookingRefusal::Plain("error-invite-used"));
                     }
+                    #[cfg(test)]
+                    note_invite_check_passed(token);
                 }
             }
         } else if team_visibility == "private" {
@@ -862,6 +969,9 @@ pub(super) async fn book_team(
             return Err(BookingRefusal::Internal("database query", e.to_string()));
         }
     }
+    // The invite's use is spent in this transaction (#373): a booking that
+    // fails below gives it back, and one with no use left is refused here.
+    let mut tx = spend_invite(tx, invite_to_consume(&visibility, &access), &et_id).await?;
 
     // Insert additional attendees
     for attendee_email in &additional_attendees {
@@ -897,21 +1007,6 @@ pub(super) async fn book_team(
     drop(booking_guard);
 
     tracing::info!(booking_id = %id, event_type = %slug, guest = %guest.email, "booking created");
-
-    // Increment invite used_count if this was an invite-based booking
-    if visibility == "private" || visibility == "internal" {
-        if let BookingAccess::Form {
-            invite_token: Some(token),
-            ..
-        } = access
-        {
-            let _ = sqlx::query("UPDATE booking_invites SET used_count = used_count + 1 WHERE token = ? AND event_type_id = ?")
-                .bind(token)
-                .bind(&et_id)
-                .execute(&state.pool)
-                .await;
-        }
-    }
 
     // Build BookingDetails once. CalDAV push, watcher notifications, and email
     // sends all need it, and CalDAV push must run independently of SMTP.
@@ -1925,6 +2020,8 @@ pub(super) async fn book_personal(
                     if used_count >= max_uses {
                         return Err(BookingRefusal::Plain("error-invite-used"));
                     }
+                    #[cfg(test)]
+                    note_invite_check_passed(token);
                 }
             }
         }
@@ -2153,6 +2250,9 @@ pub(super) async fn book_personal(
             return Err(BookingRefusal::Internal("database query", e.to_string()));
         }
     }
+    // The invite's use is spent in this transaction (#373): a booking that
+    // fails below gives it back, and one with no use left is refused here.
+    let mut tx = spend_invite(tx, invite_to_consume(&visibility, &access), &et_id).await?;
 
     // Insert additional attendees
     for attendee_email in &additional_attendees {
@@ -2188,21 +2288,6 @@ pub(super) async fn book_personal(
     drop(booking_guard);
 
     tracing::info!(booking_id = %id, event_type = %slug, guest = %guest.email, "booking created");
-
-    // Increment invite used_count if this was an invite-based booking
-    if visibility == "private" || visibility == "internal" {
-        if let BookingAccess::Form {
-            invite_token: Some(token),
-            ..
-        } = access
-        {
-            let _ = sqlx::query("UPDATE booking_invites SET used_count = used_count + 1 WHERE token = ? AND event_type_id = ?")
-                .bind(token)
-                .bind(&et_id)
-                .execute(&state.pool)
-                .await;
-        }
-    }
 
     // Build BookingDetails once. CalDAV push and email send both need it,
     // and CalDAV push must run independently of whether SMTP is configured.
