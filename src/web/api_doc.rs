@@ -36,7 +36,7 @@ Each operation names the scope it needs. By default only administrators may use 
 
 ## Conventions
 
-- Request bodies are `application/json` (415 otherwise) of at most 16 KiB (413). Unknown fields and unknown query parameters are refused (400).
+- Request bodies are `application/json` (415 otherwise) of at most 16 KiB, 512 KiB for `POST /bookings`, which can carry long answers (413). Unknown fields and unknown query parameters are refused (400).
 - Times are RFC 3339; answers give them in UTC.
 - Every answer carries `Cache-Control: no-store`.
 - Lists are paged: pass `next_cursor` back as `cursor` until it is null. A page can be short, even empty, and still have a next cursor.

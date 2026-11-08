@@ -17,6 +17,10 @@ use utoipa::ToSchema;
 pub(super) const PAT_PREFIX: &str = "calrs_pat_";
 /// Request bodies are small JSON objects.
 const BODY_LIMIT: usize = 16 * 1024;
+/// `POST /bookings` can carry the answers to booking questions (#210): up
+/// to 20 questions of 5000 characters each plus the notes, at up to four
+/// bytes a character, fits in this.
+const BOOKING_BODY_LIMIT: usize = 512 * 1024;
 /// Page size of the lists.
 const PAGE: usize = 100;
 /// Longest slot window, in days.
@@ -32,7 +36,12 @@ pub(super) fn router() -> Router<Arc<AppState>> {
         .route("/event-types", get(list_event_types))
         .route("/event-types/{id}", get(get_event_type))
         .route("/event-types/{id}/slots", get(event_type_slots))
-        .route("/bookings", get(list_bookings).post(create_booking))
+        .route(
+            "/bookings",
+            get(list_bookings)
+                .post(create_booking)
+                .layer(DefaultBodyLimit::max(BOOKING_BODY_LIMIT)),
+        )
         .route("/bookings/{id}", get(get_booking))
         .route("/bookings/{id}/cancel", post(cancel_booking_api))
         .route(
@@ -422,14 +431,15 @@ fn query_params(query: QueryParams, allowed: &[&str]) -> Result<HashMap<String, 
 
 type BodyBytes = Result<Bytes, axum::extract::rejection::BytesRejection>;
 
-/// The raw body, or the JSON error for one over `BODY_LIMIT`.
-fn body_bytes(body: BodyBytes) -> Result<Bytes, ApiError> {
+/// The raw body, or the JSON error for one over `limit` (the route's
+/// `DefaultBodyLimit`).
+fn body_bytes(body: BodyBytes, limit: usize) -> Result<Bytes, ApiError> {
     body.map_err(|rejection| {
         if rejection.status() == StatusCode::PAYLOAD_TOO_LARGE {
             ApiError::new(
                 StatusCode::PAYLOAD_TOO_LARGE,
                 ErrorCode::PayloadTooLarge,
-                format!("The body is limited to {BODY_LIMIT} bytes."),
+                format!("The body is limited to {limit} bytes."),
             )
         } else {
             ApiError::bad(ErrorCode::InvalidRequest, "Unreadable body.")
@@ -617,6 +627,69 @@ pub(super) struct EventTypeDetail {
     max_additional_guests: i32,
     #[schema(schema_with = phone_mode_schema)]
     phone: String,
+    /// The booking questions its booking page asks, in form order, for the
+    /// `answers` of `POST /bookings`. Null when you do not manage it.
+    #[schema(required = true)]
+    questions: Option<Vec<EventTypeQuestion>>,
+}
+
+/// One of an event type's booking questions (#210).
+#[derive(Serialize, ToSchema)]
+pub(super) struct EventTypeQuestion {
+    /// Stable key: the answer goes under it in `answers`, and booking
+    /// answers carry it. It survives a rename of the question.
+    key: String,
+    #[schema(schema_with = answer_kind_schema)]
+    kind: String,
+    /// The question, as the host wrote it.
+    label: String,
+    /// The hint shown under it.
+    #[schema(required = true)]
+    help: Option<String>,
+    /// A booking must answer it; a required `checkbox` must be ticked.
+    required: bool,
+    /// The choices of a `single_choice` or `multiple_choice`, in order;
+    /// empty for other kinds. Answer with their `id`.
+    options: Vec<EventTypeQuestionOption>,
+    /// A consent checkbox (a policy, a recording).
+    consent: bool,
+    /// The policy a consent checkbox links to.
+    #[schema(required = true)]
+    link_url: Option<String>,
+    /// Whether the answer is written into the hosts' calendar event.
+    in_calendar: bool,
+}
+
+/// A choice of a booking question.
+#[derive(Serialize, ToSchema)]
+pub(super) struct EventTypeQuestionOption {
+    /// Stable id: it survives a rename of the option.
+    id: String,
+    label: String,
+}
+
+fn api_questions(questions: Vec<super::questions::Question>) -> Vec<EventTypeQuestion> {
+    questions
+        .into_iter()
+        .map(|q| EventTypeQuestion {
+            key: q.key,
+            kind: q.kind.as_str().to_string(),
+            label: q.label,
+            help: q.help_text,
+            required: q.required,
+            options: q
+                .options
+                .into_iter()
+                .map(|o| EventTypeQuestionOption {
+                    id: o.id,
+                    label: o.label,
+                })
+                .collect(),
+            consent: q.consent,
+            link_url: q.link_url,
+            in_calendar: q.in_calendar,
+        })
+        .collect()
 }
 
 #[derive(Serialize, ToSchema)]
@@ -774,7 +847,7 @@ pub(super) struct Booking {
     guest: BookingGuest,
     /// The guest's answers to the event type's booking questions, in form
     /// order. Empty when it asks none, and for a booking made through the
-    /// API, which asks none.
+    /// API without `answers`.
     answers: Vec<QuestionAnswer>,
     /// Email addresses of the additional attendees.
     attendees: Vec<String>,
@@ -969,6 +1042,14 @@ pub(super) async fn get_event_type(
         phone_mode,
     ) = row;
     let timezone = get_host_tz(&state.pool, &id).await;
+    // Only a manager can book it, so only a manager needs its questions.
+    let questions = if manages {
+        Some(api_questions(
+            super::questions::load(&state.pool, &id).await?,
+        ))
+    } else {
+        None
+    };
     let event_type = EventTypeDetail {
         id,
         slug,
@@ -984,6 +1065,7 @@ pub(super) async fn get_event_type(
         timezone: timezone.name().to_string(),
         max_additional_guests: max_guests,
         phone: phone_mode,
+        questions,
     };
     Ok(ok(StatusCode::OK, to_json(&EventTypeAnswer { event_type })))
 }
@@ -1526,6 +1608,47 @@ pub(super) struct CreateBooking {
     /// English. `de` becomes `de-formal` when the instance addresses German
     /// speakers formally.
     language: Option<String>,
+    #[schema(schema_with = create_answers_schema)]
+    answers: Option<serde_json::Map<String, Value>>,
+}
+
+/// The `answers` of `CreateBooking`: a map from question key to a string,
+/// an array of strings or a boolean. The three never overlap, so `oneOf`.
+fn create_answers_schema() -> utoipa::openapi::Object {
+    use utoipa::openapi::schema::{ArrayBuilder, OneOfBuilder, Schema, SchemaType};
+    use utoipa::openapi::{ObjectBuilder, Type};
+    let of = |t: Type, description: &str| {
+        ObjectBuilder::new()
+            .schema_type(SchemaType::new(t))
+            .description(Some(description))
+    };
+    let value = OneOfBuilder::new()
+        .item(of(
+            Type::String,
+            "A `short_text` (at most 500 characters) or `long_text` (at most 5000) answer, or the option id of a `single_choice`. An empty string leaves the question unanswered.",
+        ))
+        .item(
+            ArrayBuilder::new()
+                .items(ObjectBuilder::new().schema_type(SchemaType::new(Type::String)))
+                .description(Some(
+                    "The option ids of a `multiple_choice`. An empty array leaves it unanswered.",
+                )),
+        )
+        .item(of(Type::Boolean, "A `checkbox`: ticked or not."))
+        .build();
+    ObjectBuilder::new()
+        .schema_type(SchemaType::new(Type::Object))
+        .additional_properties(Some(Schema::OneOf(value)))
+        .description(Some(
+            "The guest's answers to the event type's booking questions, keyed by the question's `key` (`GET /event-types/{id}` lists the questions and their option ids). When sent, every `required` question must be answered, a required checkbox with `true`; an optional checkbox left out is stored as not ticked; an unknown key, an option the question does not offer, an answer of the wrong type or over its length is refused. The answers are stored as the guest would have read them, and shown in the hosts' emails and calendar event, the guest's confirmation email and booking webhooks, as for a booking from the booking page. When left out, no question is asked and the booking carries no answers. `notes` is kept either way, whatever the event type's notes setting.",
+        ))
+        .examples([json!({
+            "licence_plate": "AB-123-CD",
+            "where_are_the_tyres": "o2",
+            "topics": ["o1", "o3"],
+            "i_agree_to_the_privacy_policy": true
+        })])
+        .build()
 }
 
 /// Book for a guest
@@ -1551,7 +1674,7 @@ pub(super) struct CreateBooking {
     responses(
         (status = 201, description = "Booked: confirmed, or a pending request when the event type requires approval.", body = WriteAnswer,
             headers(("Idempotency-Replayed" = String, description = "`true` when this is the kept answer of an earlier request with the same key."))),
-        (status = 400, description = "`invalid_request`: a missing or invalid field (name, email, notes, language, attendees). `invalid_json`: not a JSON object of the documented fields. `invalid_start`: not an RFC 3339 instant on a whole minute. `invalid_timezone`. `invalid_phone`: missing when the event type requires one, or unreadable. `invalid_attendees`: over the event type's limit, or not email addresses. `invalid_idempotency_key`."),
+        (status = 400, description = "`invalid_request`: a missing or invalid field (name, email, notes, language, attendees, answers; an answer's refusal names the question's key). `invalid_json`: not a JSON object of the documented fields. `invalid_start`: not an RFC 3339 instant on a whole minute. `invalid_timezone`. `invalid_phone`: missing when the event type requires one, or unreadable. `invalid_attendees`: over the event type's limit, or not email addresses. `invalid_idempotency_key`."),
         (status = 403, description = "`forbidden`: an internal event type listed read-only; only its owner or a team admin can book it for a guest."),
         (status = 404, description = "`not_found`: no such event type, a disabled one, or one you cannot see; also on a replay once you may no longer book it."),
         (status = 409, description = "`slot_unavailable`: the time is not, or no longer, offered. `limit_reached`: a booking frequency limit. `idempotency_in_progress`: the first request with this key still runs."),
@@ -1569,7 +1692,7 @@ pub(super) async fn create_booking(
 ) -> ApiResult {
     let caller = authenticate(&state, &headers, "bookings:write").await?;
     heavy_limit(&state, &caller).await?;
-    let body = body_bytes(body)?;
+    let body = body_bytes(body, BOOKING_BODY_LIMIT)?;
     let request: CreateBooking = json_body(&headers, &body, false)?;
     let key = idempotency_key(&headers)?;
     let Some(key) = key else {
@@ -1669,6 +1792,17 @@ async fn create_booking_inner(
     if let Err(key) = validate_booking_input(&request.name, &request.email, &request.notes) {
         return Err(ApiError::bad(ErrorCode::InvalidRequest, en(key)));
     }
+    // The answers to the booking questions (#210), read by the booking
+    // form's own rules before anything is reserved. Left out, no question
+    // is asked, as before the API could send answers.
+    let answers = match &request.answers {
+        Some(answers) => {
+            let form = super::questions::booking_form(&state.pool, &request.event_type_id).await?;
+            super::questions::parse_api_answers(&form, answers)
+                .map_err(|message| ApiError::bad(ErrorCode::InvalidRequest, message))?
+        }
+        None => Vec::new(),
+    };
     let lang = match request.language.as_deref() {
         Some(code) => crate::i18n::supported_code(code)
             .ok_or_else(|| ApiError::bad(ErrorCode::InvalidRequest, "Unsupported language."))?,
@@ -1739,8 +1873,7 @@ async fn create_booking_inner(
         additional_guests: &additional_guests,
         date: &date,
         time: &time,
-        // A manager booking for a guest: no booking questions (#210).
-        fields: None,
+        posted: super::questions::Posted::Api(&answers),
     };
     let resolve_tz = move |_: Tz| guest_tz;
     let team: Option<Option<String>> =
@@ -1820,8 +1953,7 @@ async fn create_booking_inner(
         .bind(&booked.id)
         .fetch_one(&state.pool)
         .await?;
-    // A manager's booking asks no booking questions (#210).
-    let booking = booking_json(row, false, Vec::new());
+    let booking = booking_json(row, false, api_answers(booked.answers));
     Ok((StatusCode::CREATED, to_json(&BookingAnswer { booking })))
 }
 
@@ -1981,7 +2113,7 @@ pub(super) async fn cancel_booking_api(
     let caller = authenticate(&state, &headers, "bookings:write").await?;
     let id = path_id(path)?;
     heavy_limit(&state, &caller).await?;
-    let body = body_bytes(body)?;
+    let body = body_bytes(body, BODY_LIMIT)?;
     let request: CancelBody = json_body(&headers, &body, true)?;
     if request.reason.as_ref().is_some_and(|r| r.len() > 5000) {
         return Err(ApiError::bad(
@@ -2040,7 +2172,7 @@ pub(super) async fn request_reschedule_api(
     let caller = authenticate(&state, &headers, "bookings:write").await?;
     let id = path_id(path)?;
     heavy_limit(&state, &caller).await?;
-    let body = body_bytes(body)?;
+    let body = body_bytes(body, BODY_LIMIT)?;
     let request: RescheduleBody = json_body(&headers, &body, true)?;
     match host_request_reschedule(&state, &caller.user, &id, request.resend).await {
         HostReschedule::Requested => {

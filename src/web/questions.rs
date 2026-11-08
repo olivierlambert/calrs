@@ -335,117 +335,143 @@ pub(crate) fn parse_submission(
     let answered_at = now_utc();
     let mut answers = Vec::new();
     for q in &form.questions {
-        let posted = fields.get(&field_name(&q.id)).map(String::as_str);
-        let (value, value_ids): (String, Vec<String>) = match q.kind {
-            Kind::ShortText | Kind::LongText => {
-                let multiline = q.kind == Kind::LongText;
-                let max = if multiline {
-                    MAX_LONG_ANSWER
-                } else {
-                    MAX_SHORT_ANSWER
-                };
-                let text = clean_text(posted.unwrap_or(""), multiline);
-                if text.chars().count() > max {
-                    return Err(Refusal::TooLong(q.label.clone()));
-                }
-                if text.is_empty() {
-                    if q.required {
-                        return Err(Refusal::Required(q.label.clone()));
-                    }
-                    continue;
-                }
-                (text, Vec::new())
-            }
-            Kind::SingleChoice => {
-                let chosen = posted.map(str::trim).unwrap_or("");
-                if chosen.is_empty() {
-                    if q.required {
-                        return Err(Refusal::Required(q.label.clone()));
-                    }
-                    continue;
-                }
-                let Some(option) = q.options.iter().find(|o| o.id == chosen) else {
-                    return Err(Refusal::UnknownOption(q.label.clone()));
-                };
-                (option.label.clone(), vec![option.id.clone()])
-            }
-            Kind::MultipleChoice => {
-                let prefix = format!("{}__", field_name(&q.id));
-                for (name, value) in fields {
-                    if let Some(option_id) = name.strip_prefix(&prefix) {
-                        if !value.is_empty() && !q.options.iter().any(|o| o.id == option_id) {
-                            return Err(Refusal::UnknownOption(q.label.clone()));
-                        }
-                    }
-                }
-                let chosen: Vec<&QuestionOption> = q
-                    .options
-                    .iter()
-                    .filter(|o| {
-                        fields
-                            .get(&option_field_name(&q.id, &o.id))
-                            .is_some_and(|v| !v.is_empty())
-                    })
-                    .collect();
-                if chosen.is_empty() {
-                    if q.required {
-                        return Err(Refusal::Required(q.label.clone()));
-                    }
-                    continue;
-                }
-                (
-                    chosen
-                        .iter()
-                        .map(|o| o.label.as_str())
-                        .collect::<Vec<_>>()
-                        .join(", "),
-                    chosen.iter().map(|o| o.id.clone()).collect(),
-                )
-            }
-            Kind::Checkbox => {
-                let checked = posted.is_some_and(|v| !v.is_empty());
-                if q.required && !checked {
-                    return Err(Refusal::Required(q.label.clone()));
-                }
-                // An unticked box is an answer too: "did not agree".
-                (if checked { "yes" } else { "no" }.to_string(), Vec::new())
-            }
-        };
-        answers.push(NewAnswer {
-            question_id: q.id.clone(),
-            answer: BookingAnswer {
-                key: q.key.clone(),
-                kind: q.kind.as_str().to_string(),
-                label: q.label.clone(),
-                value,
-                option_ids: value_ids,
-                consent: q.consent,
-                link_url: q.link_url.clone(),
-                in_calendar: q.in_calendar,
-                answered_at: answered_at.clone(),
-            },
-        });
+        if let Some(answer) = parse_answer(q, fields, &answered_at)? {
+            answers.push(answer);
+        }
     }
     Ok(Submission { notes, answers })
 }
 
+/// Reads one question's answer out of the posted `fields`: `None` when an
+/// optional question was left unanswered (a checkbox always answers).
+fn parse_answer(
+    q: &Question,
+    fields: &HashMap<String, String>,
+    answered_at: &str,
+) -> Result<Option<NewAnswer>, Refusal> {
+    let posted = fields.get(&field_name(&q.id)).map(String::as_str);
+    let (value, value_ids): (String, Vec<String>) = match q.kind {
+        Kind::ShortText | Kind::LongText => {
+            let multiline = q.kind == Kind::LongText;
+            let max = if multiline {
+                MAX_LONG_ANSWER
+            } else {
+                MAX_SHORT_ANSWER
+            };
+            let text = clean_text(posted.unwrap_or(""), multiline);
+            if text.chars().count() > max {
+                return Err(Refusal::TooLong(q.label.clone()));
+            }
+            if text.is_empty() {
+                if q.required {
+                    return Err(Refusal::Required(q.label.clone()));
+                }
+                return Ok(None);
+            }
+            (text, Vec::new())
+        }
+        Kind::SingleChoice => {
+            let chosen = posted.map(str::trim).unwrap_or("");
+            if chosen.is_empty() {
+                if q.required {
+                    return Err(Refusal::Required(q.label.clone()));
+                }
+                return Ok(None);
+            }
+            let Some(option) = q.options.iter().find(|o| o.id == chosen) else {
+                return Err(Refusal::UnknownOption(q.label.clone()));
+            };
+            (option.label.clone(), vec![option.id.clone()])
+        }
+        Kind::MultipleChoice => {
+            let prefix = format!("{}__", field_name(&q.id));
+            for (name, value) in fields {
+                if let Some(option_id) = name.strip_prefix(&prefix) {
+                    if !value.is_empty() && !q.options.iter().any(|o| o.id == option_id) {
+                        return Err(Refusal::UnknownOption(q.label.clone()));
+                    }
+                }
+            }
+            let chosen: Vec<&QuestionOption> = q
+                .options
+                .iter()
+                .filter(|o| {
+                    fields
+                        .get(&option_field_name(&q.id, &o.id))
+                        .is_some_and(|v| !v.is_empty())
+                })
+                .collect();
+            if chosen.is_empty() {
+                if q.required {
+                    return Err(Refusal::Required(q.label.clone()));
+                }
+                return Ok(None);
+            }
+            (
+                chosen
+                    .iter()
+                    .map(|o| o.label.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                chosen.iter().map(|o| o.id.clone()).collect(),
+            )
+        }
+        Kind::Checkbox => {
+            let checked = posted.is_some_and(|v| !v.is_empty());
+            if q.required && !checked {
+                return Err(Refusal::Required(q.label.clone()));
+            }
+            // An unticked box is an answer too: "did not agree".
+            (if checked { "yes" } else { "no" }.to_string(), Vec::new())
+        }
+    };
+    Ok(Some(NewAnswer {
+        question_id: q.id.clone(),
+        answer: BookingAnswer {
+            key: q.key.clone(),
+            kind: q.kind.as_str().to_string(),
+            label: q.label.clone(),
+            value,
+            option_ids: value_ids,
+            consent: q.consent,
+            link_url: q.link_url.clone(),
+            in_calendar: q.in_calendar,
+            answered_at: answered_at.to_string(),
+        },
+    }))
+}
+
+/// What a booking path hands `read_submission`.
+#[derive(Clone, Copy)]
+pub(super) enum Posted<'a> {
+    /// The booking form's fields, `q_<id>` and `q_<id>__<option id>`, read
+    /// against the event type's current form.
+    Form(&'a HashMap<String, String>),
+    /// A manager booking for a guest through the REST API: the answers its
+    /// `answers` object carried, already read by `parse_api_answers` (none
+    /// when it sent no `answers`). The notes are kept as given, whatever
+    /// the event type's `notes_mode`, as they were before #210.
+    Api(&'a [NewAnswer]),
+}
+
 /// The one call every booking path makes: loads the event type's form,
 /// reads the posted notes and answers against it, and returns the refusal
-/// to show when they do not pass. `fields` is `None` for a manager booking
-/// through the API, which asks no questions (the host is booking, as with
-/// `calrs booking create`): the notes are kept as given, no answer is stored.
+/// to show when they do not pass.
 pub(super) async fn read_submission(
     pool: &SqlitePool,
     event_type_id: &str,
     notes: &Option<String>,
-    fields: Option<&HashMap<String, String>>,
+    posted: Posted<'_>,
     lang: &str,
 ) -> Result<Submission, BookingRefusal> {
-    let Some(fields) = fields else {
-        return Ok(Submission {
-            notes: notes.clone(),
-            answers: Vec::new(),
-        });
+    let fields = match posted {
+        Posted::Form(fields) => fields,
+        Posted::Api(answers) => {
+            return Ok(Submission {
+                notes: notes.clone(),
+                answers: answers.to_vec(),
+            })
+        }
     };
     let form = booking_form(pool, event_type_id)
         .await
@@ -456,6 +482,92 @@ pub(super) async fn read_submission(
             refusal.message(lang),
         )
     })
+}
+
+/// Reads the `answers` object of a `POST /api/v1/bookings` (#169, #210),
+/// keyed by question key: a string for a text question, an option id for a
+/// single choice, an array of option ids for a multiple choice, a boolean
+/// for a checkbox. Each value becomes the field the booking form would post
+/// and goes through `parse_answer`, so the API takes exactly what the form
+/// takes. Every required question must be answered, a required checkbox
+/// with `true`; an optional checkbox left out is stored as not ticked, as on
+/// the form. The refusal is an English message naming the key, like the
+/// API's other errors.
+pub(crate) fn parse_api_answers(
+    form: &BookingForm,
+    answers: &serde_json::Map<String, serde_json::Value>,
+) -> Result<Vec<NewAnswer>, String> {
+    use serde_json::Value;
+    let mut fields = HashMap::new();
+    for (key, value) in answers {
+        let Some(q) = form.questions.iter().find(|q| q.key == *key) else {
+            // No stored key is longer, so a longer one is not echoed back.
+            return Err(if key.chars().count() <= MAX_KEY {
+                format!("Unknown question {key}.")
+            } else {
+                "Unknown question key.".to_string()
+            });
+        };
+        match (q.kind, value) {
+            (Kind::ShortText | Kind::LongText | Kind::SingleChoice, Value::String(text)) => {
+                fields.insert(field_name(&q.id), text.clone());
+            }
+            (Kind::MultipleChoice, Value::Array(items)) => {
+                for item in items {
+                    let Value::String(option_id) = item else {
+                        return Err(format!(
+                            "The answer to {key} must be an array of option ids."
+                        ));
+                    };
+                    fields.insert(option_field_name(&q.id, option_id), "on".to_string());
+                }
+            }
+            (Kind::Checkbox, Value::Bool(ticked)) => {
+                if *ticked {
+                    fields.insert(field_name(&q.id), "on".to_string());
+                }
+            }
+            (kind, _) => {
+                let expected = match kind {
+                    Kind::ShortText | Kind::LongText => "a string",
+                    Kind::SingleChoice => "an option id",
+                    Kind::MultipleChoice => "an array of option ids",
+                    Kind::Checkbox => "true or false",
+                };
+                return Err(format!("The answer to {key} must be {expected}."));
+            }
+        }
+    }
+    let answered_at = now_utc();
+    let mut parsed = Vec::new();
+    for q in &form.questions {
+        match parse_answer(q, &fields, &answered_at) {
+            Ok(Some(answer)) => parsed.push(answer),
+            Ok(None) => {}
+            Err(refusal) => {
+                let key = &q.key;
+                return Err(match refusal {
+                    Refusal::Required(_) if q.kind == Kind::Checkbox => {
+                        format!("Question {key} is required: its answer must be true.")
+                    }
+                    Refusal::Required(_) => format!("Question {key} is required."),
+                    Refusal::TooLong(_) => {
+                        let max = if q.kind == Kind::LongText {
+                            MAX_LONG_ANSWER
+                        } else {
+                            MAX_SHORT_ANSWER
+                        };
+                        format!("The answer to {key} is over {max} characters.")
+                    }
+                    Refusal::UnknownOption(_) => {
+                        format!("The answer to {key} names an option the question does not offer.")
+                    }
+                    Refusal::NotesRequired => "Invalid answers.".to_string(),
+                });
+            }
+        }
+    }
+    Ok(parsed)
 }
 
 /// Stores a booking's answers, inside the booking's own transaction so a

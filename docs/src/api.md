@@ -139,8 +139,9 @@ slot computation makes of it (no event titles, no calendar names).
 ## Conventions
 
 - JSON only. Request bodies need `Content-Type: application/json` (415
-  otherwise) and are limited to 16 KiB (413). Unknown fields and unknown
-  query parameters are refused (400).
+  otherwise) and are limited to 16 KiB, 512 KiB for `POST /bookings`, which
+  can carry long answers (413). Unknown fields and unknown query parameters
+  are refused (400).
 - Times are RFC 3339. calrs answers in UTC (`2026-11-10T08:00:00Z`).
 - Every answer carries `Cache-Control: no-store`.
 - Lists are paged with an opaque cursor: pass `next_cursor` back as `cursor`
@@ -212,7 +213,20 @@ Query: `cursor` (optional).
     "visibility": "public", "team_id": null, "manageable": true,
     "requires_confirmation": false, "location_type": "link",
     "timezone": "Europe/Paris", "scheduling_mode": null,
-    "max_additional_guests": 2, "phone": "off"
+    "max_additional_guests": 2, "phone": "off",
+    "questions": [
+      {"key": "company", "kind": "short_text", "label": "Company",
+       "help": null, "required": true, "options": [], "consent": false,
+       "link_url": null, "in_calendar": true},
+      {"key": "topics", "kind": "multiple_choice", "label": "Topics",
+       "help": null, "required": false,
+       "options": [{"id": "o1", "label": "Tax"}, {"id": "o2", "label": "Accounting"}],
+       "consent": false, "link_url": null, "in_calendar": true},
+      {"key": "privacy", "kind": "checkbox",
+       "label": "I agree to the privacy policy", "help": null,
+       "required": true, "options": [], "consent": true,
+       "link_url": "https://example.com/privacy", "in_calendar": false}
+    ]
   }
 }
 ```
@@ -220,7 +234,10 @@ Query: `cursor` (optional).
 `scheduling_mode` is `round_robin` or `collective` for a team event type.
 `phone` says whether a booking asks for the guest's phone number (`off`,
 `optional`, `required`). The location's value (a meeting link, an address)
-is not returned here.
+is not returned here. `questions` are the event type's
+[booking questions](booking-questions.md), in form order, with the `key`
+and option `id`s that `POST /bookings` takes in `answers`; null when you do
+not manage the event type (only a manager can book it).
 
 ### `GET /api/v1/event-types/{id}/slots`
 
@@ -316,7 +333,12 @@ Books an event type you manage for a guest.
   "notes": "About the renewal",
   "phone": "+33 6 12 34 56 78",
   "attendees": ["paul@example.com"],
-  "language": "fr"
+  "language": "fr",
+  "answers": {
+    "company": "Martin SARL",
+    "topics": ["o1", "o2"],
+    "privacy": true
+  }
 }
 ```
 
@@ -332,11 +354,24 @@ Books an event type you manage for a guest.
   `de` becomes `de-formal`, as on the booking page.
 - No invite is needed for internal or private event types: you manage them.
   None is used up either.
-- The event type's [booking questions](booking-questions.md) are not asked:
-  you are booking for the guest, as with `calrs booking create`. `notes` is
-  stored as given whatever the notes field setting, and the booking has no
-  answers. Known limit of this version: the API cannot send answers, even for
-  required questions.
+- `answers` carries the guest's answers to the event type's
+  [booking questions](booking-questions.md), keyed by question `key`: a
+  string for `short_text` (at most 500 characters) and `long_text` (at most
+  5000), the option `id` for `single_choice`, an array of option `id`s for
+  `multiple_choice`, `true` or `false` for `checkbox`. They are read by the
+  booking page's own rules and stored the same way, as the guest would have
+  read the questions, so the hosts' emails and calendar event (where the
+  question allows it), the guest's confirmation email and the webhooks show
+  them as for a booking from the page. When `answers` is sent, every
+  required question must be answered and a required checkbox (a consent)
+  must be `true`; an optional checkbox left out is stored as not ticked. An
+  unknown key, an option the question does not offer, an answer of the wrong
+  type or over its length answers 400 `invalid_request`, naming the key.
+- Without `answers`, no question is asked, even required ones: you are
+  booking for the guest, as with `calrs booking create`, and the booking has
+  no answers. This is how integrations written before answers keep working.
+- `notes` is stored as given either way, whatever the event type's notes
+  field setting.
 
 The booking goes through the booking page's own code: the same validation, a
 re-check of the time against the slot engine and of the shared resources
@@ -366,7 +401,8 @@ them afterwards (the webhooks of the event type still report it).
 
 **`Idempotency-Key`**: send a key (1 to 255 visible ASCII characters) to make
 retries safe. The first answer with that key is kept 24 hours, per user, and
-replayed for a retry with the same body (with `Idempotency-Replayed: true`);
+replayed for a retry with the same body, `answers` included (with
+`Idempotency-Replayed: true`);
 the same key with another body answers 422 `idempotency_key_reused`, and a
 retry while the first request still runs 409 `idempotency_in_progress`.
 Server errors are not kept, so the request can be retried with the key.

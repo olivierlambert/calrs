@@ -88,5 +88,7 @@ are written in each reader's language.
 
 A rescheduled booking keeps its answers; the guest is not asked again.
 Invite links ask the same questions. Bookings created with
-`calrs booking create` or through the REST API ask none: the host is the one
-booking.
+`calrs booking create` ask none: the host is the one booking. A booking
+through the REST API asks none either, unless it sends `answers`, keyed by
+question key; then they are checked like the form's, required questions
+included, and stored the same way (see [REST API](api.md)).
