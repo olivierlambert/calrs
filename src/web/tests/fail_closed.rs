@@ -5,6 +5,7 @@
 //! module's helpers.
 
 use super::booking::{app_for_route, booking_count, BookRoute, ALL_BOOK_ROUTES};
+use super::booking_actions::seed_round_robin_reschedule;
 use super::*;
 
 /// Make every read of `table` fail, the way a starved pool or a broken
@@ -99,13 +100,63 @@ async fn other_unreadable_availability_refuses_the_booking() {
     }
 }
 
-/// Slot grids stay lenient: the page still renders with the calendar gone.
+/// Slot grids stay lenient: the personal, team and reschedule pages still
+/// render with the calendar gone.
 #[tokio::test]
-async fn an_unreadable_calendar_leaves_the_slot_page_up() {
+async fn an_unreadable_calendar_leaves_the_slot_pages_up() {
     let (app, pool, _, _) = setup_test_app().await;
+    seed_team_event_type(&pool).await;
+    let (_, resched_tok, _) = seed_round_robin_reschedule(&pool).await;
     break_table(&pool, "events").await;
-    let response = app.oneshot(get("/u/testuser/test-meeting")).await.unwrap();
-    assert_eq!(response.status(), 200);
+    for uri in [
+        "/u/testuser/test-meeting".to_string(),
+        "/team/horizon-team/team-sync".to_string(),
+        format!("/booking/reschedule/{resched_tok}"),
+    ] {
+        let response = app.clone().oneshot(get(&uri)).await.unwrap();
+        assert_eq!(response.status(), 200, "{uri}");
+    }
+}
+
+/// A reschedule issues a new token, so the booking is found by its uid.
+async fn start_at_of(pool: &SqlitePool, uid: &str) -> String {
+    sqlx::query_scalar("SELECT start_at FROM bookings WHERE uid = ?")
+        .bind(uid)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+/// The team reschedule checks the assigned member strictly too.
+#[tokio::test]
+async fn an_unreadable_calendar_refuses_a_team_reschedule() {
+    let (app, pool, _, _) = setup_test_app().await;
+    let (_alice, resched_tok, target) = seed_round_robin_reschedule(&pool).await;
+    let before = start_at_of(&pool, "uid-r166").await;
+    break_table(&pool, "events").await;
+
+    let csrf = "csrf-team-reschedule-fail-closed";
+    let body = format!(
+        "_csrf={csrf}&date={}&time=11%3A00&tz=UTC",
+        target.format("%Y-%m-%d")
+    );
+    let uri = format!("/booking/reschedule/{resched_tok}");
+    let reschedule = || app.clone().oneshot(post_form_unauthed(&uri, csrf, &body));
+    assert_eq!(reschedule().await.unwrap().status(), 500);
+    assert_eq!(
+        start_at_of(&pool, "uid-r166").await,
+        before,
+        "the booking must not move"
+    );
+
+    // Control: 11:00 is free for the assigned member once the calendar reads.
+    restore_table(&pool, "events").await;
+    assert_eq!(reschedule().await.unwrap().status(), 200);
+    let after = start_at_of(&pool, "uid-r166").await;
+    assert!(
+        after.starts_with(&target.format("%Y-%m-%dT11:00:00").to_string()),
+        "the control reschedule must move it, got {after}"
+    );
 }
 
 #[tokio::test]
@@ -167,46 +218,50 @@ async fn an_unreadable_calendar_refuses_a_guest_reschedule() {
 #[tokio::test]
 async fn an_unreadable_calendar_refuses_both_approvals() {
     let (app, pool, session, et_id) = setup_test_app().await;
-    let pending = insert_v1_booking(
-        &pool,
-        &et_id,
-        "pending@test.com",
-        Utc::now() + Duration::days(3),
-        30,
-        "pending",
-        &[],
-    )
-    .await;
-    break_table(&pool, "events").await;
-
-    let csrf = "csrf-approve-fail-closed";
-    let dashboard = app
-        .clone()
-        .oneshot(post_form(
-            &format!("/dashboard/bookings/{pending}/confirm"),
+    let mut pending = Vec::new();
+    for days in [3, 4] {
+        pending.push(
+            insert_v1_booking(
+                &pool,
+                &et_id,
+                "pending@test.com",
+                Utc::now() + Duration::days(days),
+                30,
+                "pending",
+                &[],
+            )
+            .await,
+        );
+    }
+    let (by_dashboard, by_token) = (&pending[0], &pending[1]);
+    let dashboard_approval = || {
+        let csrf = "csrf-approve-fail-closed";
+        app.clone().oneshot(post_form(
+            &format!("/dashboard/bookings/{by_dashboard}/confirm"),
             &session,
             csrf,
             &format!("_csrf={csrf}"),
         ))
-        .await
-        .unwrap();
-    assert_eq!(dashboard.status(), 500);
-    assert_eq!(booking_status(&pool, &pending).await, "pending");
+    };
+    let token_approval = || {
+        app.clone()
+            .oneshot(post_bare(&format!("/booking/approve/confirm-{by_token}")))
+    };
+    break_table(&pool, "events").await;
 
-    let token = app
-        .clone()
-        .oneshot(post_bare(&format!("/booking/approve/confirm-{pending}")))
-        .await
-        .unwrap();
-    assert_eq!(token.status(), 500);
-    assert_eq!(booking_status(&pool, &pending).await, "pending");
+    assert_eq!(dashboard_approval().await.unwrap().status(), 500);
+    assert_eq!(booking_status(&pool, by_dashboard).await, "pending");
+    assert_eq!(token_approval().await.unwrap().status(), 500);
+    assert_eq!(booking_status(&pool, by_token).await, "pending");
 
-    // Control: the approval goes through once the calendar reads.
+    // Control: both approvals go through once the calendar reads.
     restore_table(&pool, "events").await;
-    let token = app
-        .oneshot(post_bare(&format!("/booking/approve/confirm-{pending}")))
+    assert!(dashboard_approval()
         .await
-        .unwrap();
-    assert_eq!(token.status(), 200);
-    assert_eq!(booking_status(&pool, &pending).await, "confirmed");
+        .unwrap()
+        .status()
+        .is_redirection());
+    assert_eq!(booking_status(&pool, by_dashboard).await, "confirmed");
+    assert_eq!(token_approval().await.unwrap().status(), 200);
+    assert_eq!(booking_status(&pool, by_token).await, "confirmed");
 }
