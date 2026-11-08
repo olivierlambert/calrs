@@ -1381,6 +1381,8 @@ admin-sms-test-checked = Identifiants acceptés.
 admin-sms-test-error = La passerelle SMS a refusé la requête.
 admin-sms-captcha-warning = Le formulaire de réservation est public et le numéro du destinataire vient de l'invité : sans captcha, les SMS forment un relais ouvert que quelqu'un peut vous facturer. Configurez le captcha ci-dessus et restreignez les pays de destination dans les réglages de votre passerelle.
 admin-sms-sent-today = Envoyés aujourd'hui :
+admin-sms-segments-today = Segments facturés aujourd'hui :
+admin-sms-unknown-today = Sans réponse de la passerelle, comptés dans la limite :
 admin-sms-of-cap = sur { $cap }
 admin-sms-config-error = Erreur de configuration SMS :
 admin-sms-gateway = Passerelle :
@@ -1393,8 +1395,8 @@ admin-sms-docs = Documentation de l'API { $provider }
 admin-sms-country = Indicatif pays par défaut
 admin-sms-country-hint = (utilisé quand un invité saisit un numéro local)
 admin-sms-daily-cap = Limite quotidienne
-admin-sms-daily-cap-hint = (messages par jour pour toute l'instance, 0 pour aucune limite)
-admin-sms-daily-cap-help = Au-delà de la limite, calrs cesse d'envoyer des SMS et continue les e-mails : une réservation n'échoue jamais parce que le budget SMS est épuisé.
+admin-sms-daily-cap-hint = (segments SMS facturés par jour UTC pour toute l'instance, 0 pour aucune limite)
+admin-sms-daily-cap-help = Un message de 160 caractères au plus compte pour un segment, ou 70 s'il contient un caractère hors de l'alphabet GSM ; un message plus long est facturé un segment par tranche de 153 caractères (67), et les messages de test comptent aussi. Au-delà de la limite, calrs cesse d'envoyer des SMS et continue les e-mails : une réservation n'échoue jamais parce que le budget SMS est épuisé.
 admin-save-sms = Enregistrer les paramètres SMS
 admin-send-test-sms = Envoyer un message de test à
 admin-send-test-sms-hint-check = (laissez vide pour vérifier seulement les identifiants)
@@ -1935,6 +1937,8 @@ admin-sms-check-accepted = Identifiants acceptés par la passerelle.
 admin-sms-bad-number = Ce numéro de téléphone n'est pas utilisable.
 admin-sms-test-body = Message de test calrs. Votre passerelle SMS fonctionne.
 admin-sms-test-accepted = Message de test accepté par la passerelle.
+admin-sms-test-over-cap = La limite quotidienne de SMS est atteinte : le message de test n'a pas été envoyé. Les messages de test comptent dans la limite comme les autres.
+admin-sms-test-ledger-failed = L'utilisation des SMS n'a pas pu être enregistrée : le message de test n'a pas été envoyé.
 
 ## Local multi-factor authentication
 

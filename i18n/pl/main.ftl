@@ -1463,6 +1463,8 @@ admin-sms-test-checked = Dane logowania zaakceptowane.
 admin-sms-test-error = Bramka SMS odrzuciła żądanie.
 admin-sms-captcha-warning = Formularz rezerwacji jest publiczny, a numer odbiorcy podaje gość, więc SMS bez captchy to otwarty przekaźnik, za który ktoś inny może obciążyć twój rachunek. Skonfiguruj captchę powyżej i ogranicz kraje docelowe w ustawieniach swojej bramki.
 admin-sms-sent-today = Wysłane dzisiaj:
+admin-sms-segments-today = Rozliczone segmenty dzisiaj:
+admin-sms-unknown-today = Bez odpowiedzi bramki, wliczone do limitu:
 admin-sms-of-cap = z { $cap }
 admin-sms-config-error = Błąd konfiguracji SMS:
 admin-sms-gateway = Bramka:
@@ -1475,8 +1477,8 @@ admin-sms-docs = Dokumentacja API { $provider }
 admin-sms-country = Domyślny numer kierunkowy kraju
 admin-sms-country-hint = (używany, gdy goście podają numer lokalny)
 admin-sms-daily-cap = Dzienny limit
-admin-sms-daily-cap-hint = (wiadomości dziennie dla całej instancji, 0 oznacza brak limitu)
-admin-sms-daily-cap-help = Po przekroczeniu limitu calrs przestaje wysyłać SMS-y i nadal wysyła e-maile, więc żadna rezerwacja nie zawiedzie z powodu wyczerpanego budżetu na SMS-y.
+admin-sms-daily-cap-hint = (rozliczane segmenty SMS na dobę UTC dla całej instancji, 0 oznacza brak limitu)
+admin-sms-daily-cap-help = Wiadomość do 160 znaków to jeden segment, albo do 70, jeśli zawiera znak spoza alfabetu GSM; dłuższa jest rozliczana jako jeden segment na każde 153 znaki (67), a wiadomości testowe też się liczą. Po przekroczeniu limitu calrs przestaje wysyłać SMS-y i nadal wysyła e-maile, więc żadna rezerwacja nie zawiedzie z powodu wyczerpanego budżetu na SMS-y.
 admin-save-sms = Zapisz ustawienia SMS
 admin-send-test-sms = Wyślij wiadomość testową na
 admin-send-test-sms-hint-check = (zostaw puste, aby tylko sprawdzić dane logowania)
@@ -2026,6 +2028,8 @@ admin-sms-check-accepted = Bramka zaakceptowała dane uwierzytelniające.
 admin-sms-bad-number = Ten numer telefonu nie nadaje się do użycia.
 admin-sms-test-body = Wiadomość testowa calrs. Twoja bramka SMS działa.
 admin-sms-test-accepted = Bramka przyjęła wiadomość testową.
+admin-sms-test-over-cap = Osiągnięto dzienny limit SMS-ów, więc wiadomość testowa nie została wysłana. Wiadomości testowe liczą się do dziennego limitu jak wszystkie inne.
+admin-sms-test-ledger-failed = Nie udało się zapisać zużycia SMS-ów, więc wiadomość testowa nie została wysłana.
 
 ## Local multi-factor authentication
 
