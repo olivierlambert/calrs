@@ -21,6 +21,7 @@
 //! was written. A stray `&` that starts no reference is kept as text, as the
 //! hand-written extractor this replaces did.
 
+use std::borrow::Cow;
 use std::sync::Arc;
 
 use anyhow::{anyhow, bail, Result};
@@ -136,19 +137,34 @@ impl Element {
     /// The element's own text: its text children joined, CDATA unwrapped
     /// and references decoded. Text inside child elements is not included.
     pub fn text(&self) -> String {
-        let mut out = String::new();
-        for node in &self.children {
-            if let Node::Text(text) = node {
-                out.push_str(text);
+        self.text_ref().into_owned()
+    }
+
+    /// [`Element::text`], borrowed when the element holds a single text
+    /// node (always, unless child elements split it), so reading a value
+    /// need not copy it.
+    pub fn text_ref(&self) -> Cow<'_, str> {
+        let mut texts = self.children.iter().filter_map(|node| match node {
+            Node::Text(text) => Some(text.as_str()),
+            Node::Element(_) => None,
+        });
+        let Some(first) = texts.next() else {
+            return Cow::Borrowed("");
+        };
+        match texts.next() {
+            None => Cow::Borrowed(first),
+            Some(second) => {
+                let mut out = format!("{first}{second}");
+                out.extend(texts);
+                Cow::Owned(out)
             }
         }
-        out
     }
 
     /// [`Element::text`] with surrounding whitespace trimmed, or `None` when
     /// nothing is left.
     pub fn trimmed_text(&self) -> Option<String> {
-        let text = self.text();
+        let text = self.text_ref();
         let trimmed = text.trim();
         (!trimmed.is_empty()).then(|| trimmed.to_string())
     }
@@ -540,6 +556,16 @@ mod tests {
         );
         assert_eq!(doc.child("", "c").unwrap().trimmed_text(), None);
         assert!(!doc.child("", "c").unwrap().has_children());
+    }
+
+    #[test]
+    fn text_is_borrowed_unless_split() {
+        let doc = root("<a><b>one</b><c>x<d/>y</c><e/></a>");
+        let kids: Vec<_> = doc.elements().collect();
+        assert!(matches!(kids[0].text_ref(), Cow::Borrowed("one")));
+        assert_eq!(kids[1].text_ref(), "xy");
+        assert!(matches!(kids[1].text_ref(), Cow::Owned(_)));
+        assert!(matches!(kids[2].text_ref(), Cow::Borrowed("")));
     }
 
     #[test]

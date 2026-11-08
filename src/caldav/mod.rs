@@ -279,7 +279,8 @@ impl CaldavClient {
             "PROPFIND principal response received"
         );
 
-        let principal = current_user_principal(&text)
+        let (principal, text) = parse_blocking(text, current_user_principal).await;
+        let principal = principal
             .inspect_err(
                 |_| tracing::debug!(response_body = %text, "unreadable principal response"),
             )
@@ -303,7 +304,8 @@ impl CaldavClient {
             "PROPFIND calendar-home response received"
         );
 
-        let home = calendar_home_set(&text)
+        let (home, text) = parse_blocking(text, calendar_home_set).await;
+        let home = home
             .inspect_err(
                 |_| tracing::debug!(response_body = %text, "unreadable calendar-home-set response"),
             )
@@ -321,7 +323,8 @@ impl CaldavClient {
     pub async fn list_calendars(&self, home_url: &str) -> Result<Vec<CalendarInfo>> {
         let url = self.resolve_url(home_url);
         let text = self.propfind(&url, "1", PROPFIND_CALENDARS).await?;
-        let calendars = parse_calendar_list(&text)
+        let (calendars, text) = parse_blocking(text, parse_calendar_list).await;
+        let calendars = calendars
             .inspect_err(
                 |_| tracing::debug!(response_body = %text, "unreadable calendar list response"),
             )
@@ -406,7 +409,9 @@ impl CaldavClient {
                 // The outer 207 only says the server answered. Whether the
                 // event is there is the resource's own status inside the body.
                 let xml = read_body(resp, crate::xml::MAX_INPUT_BYTES).await?;
-                return match propfind_resource_exists(&xml) {
+                let (exists, _) =
+                    parse_blocking(xml, |xml| Ok(propfind_resource_exists(xml))).await;
+                return match exists.ok().flatten() {
                     Some(exists) => Ok(exists),
                     None => bail!(
                         "PROPFIND {} returned a multistatus without a usable status",
@@ -467,7 +472,9 @@ impl CaldavClient {
             .await?;
 
         let text = multistatus_body(resp, "REPORT", &url).await?;
-        parse_event_responses(&text)
+        parse_blocking(text, parse_event_responses)
+            .await
+            .0
             .with_context(|| format!("Could not read the calendar REPORT response from {url}"))
     }
 
@@ -513,7 +520,9 @@ impl CaldavClient {
             bail!("sync-token invalid or not supported (HTTP {})", status);
         }
         let text = multistatus_body(resp, "sync-collection REPORT", &url).await?;
-        parse_sync_response(&text)
+        parse_blocking(text, parse_sync_response)
+            .await
+            .0
             .with_context(|| format!("Could not read the sync-collection response from {url}"))
     }
 
@@ -564,7 +573,9 @@ impl CaldavClient {
         }
 
         let text = multistatus_body(resp, "REPORT", &url).await?;
-        parse_event_responses(&text)
+        parse_blocking(text, parse_event_responses)
+            .await
+            .0
             .with_context(|| format!("Could not read the calendar REPORT response from {url}"))
     }
 }
@@ -608,8 +619,36 @@ async fn read_body(mut resp: reqwest::Response, cap: usize) -> Result<String> {
         }
         body.extend_from_slice(&chunk);
     }
+    if encoding == encoding_rs::UTF_8 {
+        // The usual case: valid UTF-8 becomes the string without a copy.
+        match String::from_utf8(body) {
+            Ok(text) => return Ok(text),
+            Err(invalid) => body = invalid.into_bytes(),
+        }
+    }
     let (text, _, _) = encoding.decode(&body);
     Ok(text.into_owned())
+}
+
+/// Run a parse on the blocking pool: a large document takes real CPU, and
+/// the same runtime serves the booking pages. The text comes back with the
+/// result, for the callers that log it.
+async fn parse_blocking<T, F>(text: String, parse: F) -> (Result<T>, String)
+where
+    T: Send + 'static,
+    F: FnOnce(&str) -> Result<T> + Send + 'static,
+{
+    let task = tokio::task::spawn_blocking(move || {
+        let parsed = parse(&text);
+        (parsed, text)
+    });
+    match task.await {
+        Ok(done) => done,
+        Err(e) => (
+            Err(anyhow::anyhow!("CalDAV response parser failed: {e}")),
+            String::new(),
+        ),
+    }
 }
 
 /// The start of an error response's body, for the error message: at most
@@ -940,6 +979,18 @@ mod tests {
         assert!(err.contains("more than the 1000 bytes"), "{err}");
         let url = serve_chunked("", chunks).await;
         assert_eq!(read_body(get(&url).await, 1800).await.unwrap().len(), 1800);
+    }
+
+    #[tokio::test]
+    async fn parses_run_on_the_blocking_pool_and_hand_the_text_back() {
+        let caller = std::thread::current().id();
+        let (parser, text) =
+            parse_blocking("<x/>".to_string(), |_| Ok(std::thread::current().id())).await;
+        assert_ne!(parser.unwrap(), caller, "parsed on the async thread");
+        assert_eq!(text, "<x/>");
+        let (failed, text) = parse_blocking("bad".to_string(), parse_event_responses).await;
+        assert!(failed.is_err());
+        assert_eq!(text, "bad");
     }
 
     #[tokio::test]

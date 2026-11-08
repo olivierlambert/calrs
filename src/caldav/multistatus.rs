@@ -117,10 +117,15 @@ impl<'a> Response<'a> {
     /// The event's iCalendar data, line endings normalised to CRLF. Read by
     /// local name in any namespace, see [`caldav_local_name`].
     fn calendar_data(self) -> Option<String> {
+        // One copy per event: the text is borrowed from the tree, trimmed,
+        // and only the normalised result is owned.
         self.props()
             .filter(|prop| caldav_local_name(prop, "calendar-data"))
-            .find_map(Element::trimmed_text)
-            .map(|ics| crate::utils::normalize_line_endings(&ics).into_owned())
+            .find_map(|prop| {
+                let text = prop.text_ref();
+                let ics = text.trim();
+                (!ics.is_empty()).then(|| crate::utils::normalize_line_endings(ics).into_owned())
+            })
     }
 
     /// The href inside a property such as `<current-user-principal>`.
