@@ -254,6 +254,18 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
                 }
             }
 
+            // Time off (#46) of the host, or of every collective member, as
+            // the web booking check counts it.
+            // A read failure is reported as such ("could not read the time
+            // off"), never as a free host.
+            let time_off = crate::commands::event_type::host_time_off(
+                pool, &et_id, buf_start, buf_end, host_tz,
+            )
+            .await?;
+            if time_off.iter().any(|(s, e)| *s < buf_end && *e > buf_start) {
+                bail!("A host has time off at that time");
+            }
+
             // Required shared resources: same check and lock discipline as
             // the web booking handlers, so a CLI booking cannot double-book
             // a resource and records its round-robin assignment.
@@ -1084,6 +1096,46 @@ mod tests {
             .await
             .expect_err("the host's own event still blocks");
         assert!(err.to_string().contains("Conflict"), "{err}");
+    }
+
+    /// The host's time off (#46) refuses a CLI booking, as on the web.
+    #[tokio::test]
+    async fn create_refuses_the_hosts_time_off() {
+        let pool = setup_db().await;
+        let (user_id, _account, _et_id) = seed_event_type(&pool).await;
+        sqlx::query(
+            "INSERT INTO user_time_off (id, user_id, start_at, end_at, timezone) \
+             VALUES ('off', ?, '2030-03-18T10:00:00Z', '2030-03-18T11:00:00Z', 'UTC')",
+        )
+        .bind(&user_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let err = run(&pool, &[0u8; 32], create_at("10:00", "off@test.com"))
+            .await
+            .expect_err("the host is off at 10:00");
+        assert!(err.to_string().contains("time off"), "{err}");
+        run(&pool, &[0u8; 32], create_at("11:00", "on@test.com"))
+            .await
+            .expect("the host is back at 11:00");
+    }
+
+    /// A time off table that cannot be read refuses the booking and says so.
+    #[tokio::test]
+    async fn create_reports_an_unreadable_time_off() {
+        let pool = setup_db().await;
+        seed_event_type(&pool).await;
+        sqlx::query("ALTER TABLE user_time_off RENAME TO user_time_off_gone")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let err = run(&pool, &[0u8; 32], create_at("10:00", "x@test.com"))
+            .await
+            .expect_err("unknown time off is not a free host");
+        assert!(
+            err.to_string().contains("could not read the time off"),
+            "{err}"
+        );
     }
 
     /// The CLI used to ignore the bookable date range: a fair limited to a

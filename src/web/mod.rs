@@ -20,6 +20,7 @@ mod pending;
 mod public_pages;
 mod sources;
 mod teams;
+mod time_off;
 mod week_start;
 pub(crate) mod writeback;
 
@@ -78,6 +79,7 @@ use pending::*;
 use public_pages::*;
 use sources::*;
 use teams::*;
+use time_off::*;
 
 /// Simple per-IP rate limiter for login attempts.
 /// Tracks (attempt_count, window_start) per IP.
@@ -820,6 +822,9 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
         .route("/team-avatar/{team_id}", get(serve_team_avatar))
         // Troubleshoot
         .route("/dashboard/troubleshoot", get(troubleshoot))
+        // Time off (#46)
+        .route("/dashboard/time-off", get(time_off_page).post(add_time_off))
+        .route("/dashboard/time-off/{id}/delete", post(delete_time_off))
         // Admin routes
         .route("/dashboard/admin", get(admin_dashboard))
         .route(

@@ -86,6 +86,17 @@ fn safe_interpolated_sentences_escape_their_values() {
             context! { lang => "en", sidebar => context! {}, event_type_title => XSS_PAYLOAD_HTML },
         ),
         (
+            "time_off.html",
+            context! {
+                lang => "en", sidebar => context! {}, timezone => XSS_PAYLOAD_HTML,
+                form_label => XSS_PAYLOAD_HTML,
+                periods => vec![context! {
+                    id => "p1", range => "x", in_progress => false,
+                    label => XSS_PAYLOAD_HTML, other_timezone => XSS_PAYLOAD_HTML,
+                }],
+            },
+        ),
+        (
             "troubleshoot.html",
             context! { lang => "en", sidebar => context! {}, et_title => XSS_PAYLOAD_HTML },
         ),
@@ -226,6 +237,7 @@ fn every_host_render_site_passes_lang() {
         "team_settings.html",
         "troubleshoot.html",
         "overrides.html",
+        "time_off.html",
         "auth/login.html",
         "auth/register.html",
     ];
