@@ -1966,6 +1966,7 @@ admin-ews-trust-no-mailbox = nessuna (l'indirizzo non indica alcuna casella di p
 admin-ews-notice-selections-reset = La casella di posta letta da alcune fonti gestite è cambiata, quindi i loro calendari vengono riscoperti. Tipi di evento con la selezione dei calendari reimpostata: { $count } (elencati nel log del server).
 admin-ews-notice-reconfirm = La sostituzione del dominio ora associa alcuni indirizzi confermati a un'altra casella di posta. Indirizzi da confermare di nuovo: { $count } (vedi l'elenco sotto).
 admin-ews-row-taken-over = Rilevata da { $user } il { $when }
+admin-ews-notice-trust-changed = Nulla confermato: l'indirizzo di questo account, o la casella di posta che apre, è cambiato da quando la pagina è stata mostrata. Ricontrolla l'elenco.
 sources-managed-user-untrusted = Questa fonte è gestita dall'amministratore, ma l'indirizzo dell'account non è ancora confermato, quindi non viene sincronizzata.
 sources-managed-user-suspended = Questa fonte è gestita dall'amministratore, ma l'account è disattivato, quindi non viene sincronizzata.
 admin-ews-save = Salva impostazioni EWS

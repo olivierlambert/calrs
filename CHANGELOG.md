@@ -207,6 +207,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
   - An admin can remove one user's managed source from the status table.
   - An EWS calendar folder is only dropped after two listings in a row miss it, never on an empty or malformed answer (an HTTP 500 or a proxy's sign-in page now fails the sync); this also protects users' own EWS sources.
   - With an identity provider that does not send `email_verified` (ADFS, Entra ID by default), an admin's confirmation of an unchanged address survives SSO logins.
+  - A confirmation covers exactly the address and mailbox the admin saw, and is refused if either changed since.
   - A new domain override that re-maps an admin-confirmed address asks for a new confirmation; only a new server, not a rewritten URL, resets the managed sources, and the card counts the event types that lost a calendar selection.
 
   Thanks @huntervcx. See "EWS Impersonation (Exchange)" in the docs.

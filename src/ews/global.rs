@@ -536,14 +536,14 @@ pub async fn remove_untrusted_managed_sources(pool: &SqlitePool) -> Result<u64> 
 /// the mailbox it opened then. It shows up again in the list of addresses to
 /// confirm, with its new mailbox. Returns how many addresses that was.
 pub async fn untrust_remapped(
-    pool: &SqlitePool,
+    conn: &mut sqlx::SqliteConnection,
     old: Option<&DomainOverride>,
     new: Option<&DomainOverride>,
 ) -> Result<u64> {
     let users: Vec<(String, String)> = sqlx::query_as(
         "SELECT id, email FROM users WHERE email_trusted = 1 AND email_verified_by_idp = 0",
     )
-    .fetch_all(pool)
+    .fetch_all(&mut *conn)
     .await?;
     let mut count = 0;
     for (id, email) in users {
@@ -554,7 +554,7 @@ pub async fn untrust_remapped(
             "UPDATE users SET email_trusted = 0, updated_at = datetime('now') WHERE id = ?",
         )
         .bind(&id)
-        .execute(pool)
+        .execute(&mut *conn)
         .await?;
         tracing::warn!(user_id = %id, "address to confirm again: the domain override now maps it to another mailbox");
         count += 1;
@@ -589,17 +589,21 @@ pub async fn provision_managed_ews_source_for_all_users(
 
 /// Mark a user's address as trusted: an admin confirmed that the person owns
 /// it. Returns `false` when there is no such user.
-pub async fn trust_email(pool: &SqlitePool, user_id: &str) -> Result<bool> {
-    Ok(
-        sqlx::query(
-            "UPDATE users SET email_trusted = 1, updated_at = datetime('now') WHERE id = ?",
-        )
-        .bind(user_id)
-        .execute(pool)
-        .await?
-        .rows_affected()
-            == 1,
+///
+/// Only while the user's address is still exactly `email`, the one the
+/// admin saw: `false` when it changed meanwhile (or there is no such user),
+/// so a confirmation never covers an address nobody looked at.
+pub async fn trust_email(pool: &SqlitePool, user_id: &str, email: &str) -> Result<bool> {
+    Ok(sqlx::query(
+        "UPDATE users SET email_trusted = 1, updated_at = datetime('now') \
+         WHERE id = ? AND email = ?",
     )
+    .bind(user_id)
+    .bind(email)
+    .execute(pool)
+    .await?
+    .rows_affected()
+        == 1)
 }
 
 /// After an OIDC login, which has just set `users.email_trusted` from the
@@ -666,7 +670,7 @@ pub async fn retarget_managed_sources(
     .fetch_all(pool)
     .await?;
     let mut lost = 0;
-    for (id, email, current, verified) in rows {
+    for (id, email, current, verified) in move_order(rows, domain_override) {
         let lock = mailbox_lock(&id);
         let _guard = lock.lock().await;
         let Some(mailbox) = mailbox_for(&email, domain_override) else {
@@ -731,6 +735,45 @@ pub async fn retarget_managed_sources(
         }
     }
     Ok(lost)
+}
+
+/// The order [`retarget_managed_sources`] moves sources in: a source that
+/// moves onto a mailbox another source is about to leave waits until that
+/// one has moved, so a mailbox freed in the same pass is not mistaken for a
+/// conflict. Otherwise the given order (verified owners, then oldest) holds;
+/// a cycle (two sources swapping mailboxes) falls back to it.
+fn move_order(
+    rows: Vec<(String, String, String, bool)>,
+    domain_override: Option<&DomainOverride>,
+) -> Vec<(String, String, String, bool)> {
+    let target = |email: &str| mailbox_for(email, domain_override);
+    let mut pending: Vec<_> = rows
+        .into_iter()
+        .map(|r| {
+            let t = target(&r.1);
+            (r, t)
+        })
+        .collect();
+    let mut out = Vec::with_capacity(pending.len());
+    while !pending.is_empty() {
+        let leaving =
+            |mailbox: &str,
+             me: &str,
+             pending: &[((String, String, String, bool), Option<String>)]| {
+                pending.iter().any(|((id, _, current, _), t)| {
+                    id != me && current == mailbox && t.as_deref() != Some(current.as_str())
+                })
+            };
+        let next = pending
+            .iter()
+            .position(|((id, _, current, _), t)| match t {
+                Some(t) if t != current => !leaving(t, id, &pending),
+                _ => true,
+            })
+            .unwrap_or(0);
+        out.push(pending.remove(next).0);
+    }
+    out
 }
 
 /// Delete one source row; the caller holds its [`mailbox_lock`].
@@ -1025,8 +1068,15 @@ mod tests {
         );
         assert_eq!(managed_mailbox(&pool, &user_id).await, None);
 
+        // A confirmation of an address other than the stored one (here
+        // another letter case) confirms nothing.
+        assert!(!trust_email(&pool, &user_id, "CEO@example.com")
+            .await
+            .unwrap());
         // Trusted, then no longer: the source goes.
-        trust_email(&pool, &user_id).await.unwrap();
+        assert!(trust_email(&pool, &user_id, "ceo@example.com")
+            .await
+            .unwrap());
         provision_managed_ews_source_for_user(&pool, &cfg, &user_id)
             .await
             .unwrap();
@@ -1176,6 +1226,41 @@ mod tests {
             Some("ceo@corp.com")
         );
         assert_eq!(normalize_domain("\u{212A}orp.com"), Err(()));
+    }
+
+    /// A source moving onto a mailbox another source leaves in the same pass
+    /// waits for that one, whatever the given order; a swap keeps it.
+    #[test]
+    fn retarget_moves_the_leaving_source_first() {
+        let o = DomainOverride::new(Some("old.example"), Some("new.example"));
+        let row = |id: &str, email: &str, current: &str| {
+            (
+                id.to_string(),
+                email.to_string(),
+                current.to_string(),
+                false,
+            )
+        };
+        // A moves onto ann@new.example, which B reads now and leaves for
+        // carl@other.example: B goes first.
+        let rows = vec![
+            row("a", "ann@old.example", "bob@new.example"),
+            row("b", "carl@other.example", "ann@new.example"),
+        ];
+        let ids: Vec<String> = move_order(rows, o.as_ref())
+            .into_iter()
+            .map(|r| r.0)
+            .collect();
+        assert_eq!(ids, ["b", "a"]);
+        let swap = vec![
+            row("a", "x@new.example", "y@new.example"),
+            row("b", "y@new.example", "x@new.example"),
+        ];
+        let ids: Vec<String> = move_order(swap, o.as_ref())
+            .into_iter()
+            .map(|r| r.0)
+            .collect();
+        assert_eq!(ids, ["a", "b"]);
     }
 
     #[test]

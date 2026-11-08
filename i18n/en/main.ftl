@@ -1968,6 +1968,7 @@ admin-ews-trust-no-mailbox = none (the address names no mailbox)
 admin-ews-notice-selections-reset = The mailbox some managed sources read changed, so their calendars are rediscovered. Event types whose calendar selection was reset: { $count } (listed in the server log).
 admin-ews-notice-reconfirm = The domain override now maps some confirmed addresses to another mailbox. Addresses to confirm again: { $count } (see the list below).
 admin-ews-row-taken-over = Taken over from { $user } on { $when }
+admin-ews-notice-trust-changed = Nothing confirmed: this account's address, or the mailbox it opens, changed since the page was shown. Review the list again.
 sources-managed-user-untrusted = This source is admin-managed, but the account's address is not confirmed yet, so it is not synced.
 sources-managed-user-suspended = This source is admin-managed, but the account is disabled, so it is not synced.
 admin-ews-save = Save EWS settings

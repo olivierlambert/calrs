@@ -1966,6 +1966,7 @@ admin-ews-trust-no-mailbox = ninguno (la dirección no corresponde a ningún buz
 admin-ews-notice-selections-reset = El buzón que leen algunas fuentes gestionadas cambió, así que sus calendarios se vuelven a descubrir. Tipos de evento cuya selección de calendarios se restableció: { $count } (listados en el registro del servidor).
 admin-ews-notice-reconfirm = La sustitución de dominio asigna ahora algunas direcciones confirmadas a otro buzón. Direcciones que confirmar de nuevo: { $count } (ver la lista de abajo).
 admin-ews-row-taken-over = Tomado de { $user } el { $when }
+admin-ews-notice-trust-changed = No se confirmó nada: la dirección de esta cuenta, o el buzón que abre, cambió desde que se mostró la página. Revisa la lista de nuevo.
 sources-managed-user-untrusted = Esta fuente la gestiona el administrador, pero la dirección de la cuenta aún no está confirmada, así que no se sincroniza.
 sources-managed-user-suspended = Esta fuente la gestiona el administrador, pero la cuenta está desactivada, así que no se sincroniza.
 admin-ews-save = Guardar ajustes de EWS

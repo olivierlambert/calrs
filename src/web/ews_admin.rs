@@ -18,6 +18,7 @@ const NOTICES: &[&str] = &[
     "https-required",
     "password-cleared",
     "source-removed",
+    "trust-changed",
 ];
 
 /// How many unconfirmed addresses the card lists at most.
@@ -393,8 +394,17 @@ pub(super) async fn admin_update_ews_global(
     // An empty password field keeps the stored one, unless the endpoint or
     // the account changed (`password_cleared`): then it is dropped, the
     // config is incomplete and the feature idles until it is typed again.
-    let write = sqlx::query(
-        "UPDATE auth_config SET ews_global_enabled = ?, ews_global_url = ?, \
+    // The new override and the trust it withdraws from addresses it
+    // re-maps are one transaction: never one without the other.
+    let old_override =
+        ews_global::DomainOverride::new(previous_from.as_deref(), previous_domain.as_deref());
+    let new_override =
+        ews_global::DomainOverride::new(from_domain.as_deref(), imp_domain.as_deref());
+    let mut reconfirm: u64 = 0;
+    let saved: anyhow::Result<()> = async {
+        let mut tx = state.pool.begin().await?;
+        sqlx::query(
+            "UPDATE auth_config SET ews_global_enabled = ?, ews_global_url = ?, \
              ews_service_username = ?, \
              ews_service_password_enc = CASE WHEN ? THEN NULL \
                  ELSE COALESCE(?, ews_service_password_enc) END, \
@@ -402,43 +412,43 @@ pub(super) async fn admin_update_ews_global(
              ews_impersonation_domain = ?, ews_impersonation_from_domain = ?, \
              updated_at = datetime('now') \
          WHERE id = 'singleton'",
-    )
-    .bind(enabled as i64)
-    .bind(&url)
-    .bind(&username)
-    .bind(password_cleared)
-    .bind(&encrypted)
-    .bind(lock as i64)
-    .bind(auto_provision as i64)
-    .bind(&imp_domain)
-    .bind(&from_domain)
-    .execute(&state.pool)
+        )
+        .bind(enabled as i64)
+        .bind(&url)
+        .bind(&username)
+        .bind(password_cleared)
+        .bind(&encrypted)
+        .bind(lock as i64)
+        .bind(auto_provision as i64)
+        .bind(&imp_domain)
+        .bind(&from_domain)
+        .execute(&mut *tx)
+        .await?;
+        if override_moved {
+            // An admin confirmed an address for the mailbox it opened then:
+            // one that now maps elsewhere needs a new confirmation.
+            reconfirm =
+                ews_global::untrust_remapped(&mut tx, old_override.as_ref(), new_override.as_ref())
+                    .await?;
+        }
+        tx.commit().await?;
+        Ok(())
+    }
     .await;
-    if let Err(e) = write {
-        // No cache reload, no provisioning, no success redirect: the admin
-        // must not believe a config was saved when it was not.
+    if let Err(e) = saved {
+        // No retargeting, cache reload, provisioning or success redirect:
+        // the admin must not believe a config was saved when it was not.
         return internal_error_response("save global EWS config", &e);
     }
 
     // Event types that lost a calendar selection because their source now
-    // reads another mailbox, and addresses an admin must confirm again.
+    // reads another mailbox.
     let mut lost: u64 = 0;
-    let mut reconfirm: u64 = 0;
     if override_moved {
-        // An admin confirmed an address for the mailbox it opened then: one
-        // that now maps elsewhere needs a new confirmation. Then each source
-        // moves to the mailbox its user's address maps to (or goes, when
-        // that mailbox is another user's) and forgets what it cached.
-        let old =
-            ews_global::DomainOverride::new(previous_from.as_deref(), previous_domain.as_deref());
-        let new = ews_global::DomainOverride::new(from_domain.as_deref(), imp_domain.as_deref());
-        match ews_global::untrust_remapped(&state.pool, old.as_ref(), new.as_ref()).await {
-            Ok(n) => reconfirm = n,
-            Err(e) => {
-                tracing::warn!(error = %e, "could not check confirmed addresses against the new domain override")
-            }
-        }
-        match ews_global::retarget_managed_sources(&state.pool, new.as_ref()).await {
+        // Each source moves to the mailbox its user's address maps to (or
+        // goes, when that mailbox is another user's) and forgets what it
+        // cached.
+        match ews_global::retarget_managed_sources(&state.pool, new_override.as_ref()).await {
             Ok(n) => lost += n,
             Err(e) => {
                 tracing::warn!(error = %e, "could not retarget the managed sources after the domain override changed")
@@ -520,6 +530,10 @@ pub(super) async fn admin_update_ews_global(
 pub(super) struct AdminEwsTrustForm {
     _csrf: Option<String>,
     user_id: String,
+    /// The address and the mailbox the admin saw (empty: none).
+    email: String,
+    #[serde(default)]
+    mailbox: String,
 }
 
 /// The admin confirms that a user owns their address: from now on calrs may
@@ -534,9 +548,28 @@ pub(super) async fn admin_trust_email(
     if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
         return resp;
     }
-    match ews_global::trust_email(&state.pool, &form.user_id).await {
+    // The confirmation covers the address and the mailbox the admin saw:
+    // if the domain override now maps it elsewhere, or the address itself
+    // changed (an SSO login), they must look again.
+    let overrides: Option<(Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT ews_impersonation_from_domain, ews_impersonation_domain \
+         FROM auth_config WHERE id = 'singleton'",
+    )
+    .fetch_optional(&state.pool)
+    .await
+    .unwrap_or(None);
+    let (from, to) = overrides.unwrap_or((None, None));
+    let current = ews_global::mailbox_for(
+        &form.email,
+        ews_global::DomainOverride::new(from.as_deref(), to.as_deref()).as_ref(),
+    )
+    .unwrap_or_default();
+    if current != form.mailbox {
+        return redirect_with("trust-changed");
+    }
+    match ews_global::trust_email(&state.pool, &form.user_id, &form.email).await {
         Ok(true) => {}
-        Ok(false) => return Redirect::to("/dashboard/admin#ews-global").into_response(),
+        Ok(false) => return redirect_with("trust-changed"),
         Err(e) => return internal_error_response("trust user email", &e),
     }
     tracing::info!(admin = %admin.user.email, user_id = %form.user_id, "admin: email address confirmed");

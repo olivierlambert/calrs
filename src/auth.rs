@@ -1631,8 +1631,11 @@ async fn find_or_create_oidc_user_with_claim(
     {
         // Update email in case it changed on the IdP; only update name if
         // currently empty. Whether calrs trusts the address (and so may open
-        // its Exchange mailbox) follows this login's `email_verified` claim;
-        // without one, an unchanged address keeps the trust it had.
+        // its Exchange mailbox): `email_verified: true` trusts it and records
+        // the IdP's verification; `false` drops both; an absent claim keeps
+        // both as they were when the new address equals the stored one
+        // ignoring ASCII letter case (SQLite `lower()`), and drops both when
+        // the address changed.
         let mut tx = pool.begin().await?;
         sqlx::query(
             "UPDATE users SET name = CASE WHEN name IS NULL OR name = '' THEN ?1 ELSE name END, \

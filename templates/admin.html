@@ -605,6 +605,8 @@
   <p class="adm-error-text" style="font-size: 0.875rem;">{{ t("admin-ews-notice-https-required") }}</p>
   {% elif ews_notice == "password-cleared" %}
   <p class="adm-error-text" style="font-size: 0.875rem;">{{ t("admin-ews-notice-password-cleared") }}</p>
+  {% elif ews_notice == "trust-changed" %}
+  <p class="adm-error-text" style="font-size: 0.875rem;">{{ t("admin-ews-notice-trust-changed") }}</p>
   {% elif ews_notice == "source-removed" %}
   <p style="color: var(--success); font-size: 0.875rem;">{{ t("admin-ews-notice-source-removed") }}</p>
   {% elif ews_notice == "removed" %}
@@ -743,6 +745,8 @@
             <td style="text-align: right;">
               <form method="post" action="/dashboard/admin/ews/trust" style="display: inline;">
                 <input type="hidden" name="user_id" value="{{ u.id }}">
+                <input type="hidden" name="email" value="{{ u.email }}">
+                <input type="hidden" name="mailbox" value="{{ u.mailbox or '' }}">
                 <button type="submit" class="adm-btn">{{ t("admin-ews-trust-confirm") }}</button>
               </form>
             </td>

@@ -1966,6 +1966,7 @@ admin-ews-trust-no-mailbox = aucune (l'adresse ne désigne aucune boîte aux let
 admin-ews-notice-selections-reset = La boîte aux lettres lue par certaines sources gérées a changé, leurs calendriers sont donc redécouverts. Types d'événement dont la sélection de calendriers a été réinitialisée : { $count } (liste dans le journal du serveur).
 admin-ews-notice-reconfirm = Le remplacement de domaine associe désormais certaines adresses confirmées à une autre boîte aux lettres. Adresses à confirmer de nouveau : { $count } (voir la liste ci-dessous).
 admin-ews-row-taken-over = Reprise de { $user } le { $when }
+admin-ews-notice-trust-changed = Rien n'a été confirmé : l'adresse de ce compte, ou la boîte aux lettres qu'elle ouvre, a changé depuis l'affichage de la page. Vérifiez de nouveau la liste.
 sources-managed-user-untrusted = Cette source est gérée par l'administrateur, mais l'adresse du compte n'est pas encore confirmée : elle n'est donc pas synchronisée.
 sources-managed-user-suspended = Cette source est gérée par l'administrateur, mais le compte est désactivé : elle n'est donc pas synchronisée.
 admin-ews-save = Enregistrer les paramètres EWS

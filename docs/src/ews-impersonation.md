@@ -129,7 +129,11 @@ only admin-confirmed (that account's managed source is removed and the event
 logged). An address that does not have exactly one `@`, or that holds a
 non-ASCII character (Exchange 2019 has no SMTPUTF8), names no mailbox and is
 never provisioned. The list of addresses to confirm shows the mailbox each
-confirmation would open. When a new domain override changes the mailbox an
+confirmation would open, and a confirmation covers exactly that address and
+mailbox: if either changed since the page was shown (an SSO login brought a
+new address, the override changed), nothing is confirmed and the card asks to
+review the list again. `calrs user trust-email` confirms the stored address it
+prints. When a new domain override changes the mailbox an
 admin-confirmed address maps to, that address must be confirmed again (an
 address the identity provider verified keeps its trust); the card says how
 many.
@@ -190,13 +194,15 @@ mailbox-domain override that maps the address elsewhere, or an endpoint on
 another server), that source is reset: Exchange folder ids belong to one
 mailbox, so the calendars and cached events of the old one are dropped and its
 write calendar is cleared. Writing the same endpoint differently (another path
-case on the same server) resets nothing. Event types that had selected one of
+case on the same server) resets nothing. A user's own EWS source pointed at
+another account or server is reset the same way when it is saved. Event types that had selected one of
 those calendars lose that selection: each is named in the server log, and the
 card says how many. The next sync discovers the new mailbox, and each host
 picks a write calendar again (the sources page asks for one).
 
-A calendar folder the server stops listing is only dropped once it is missing
-from **two listings in a row**, and never on a listing that is empty or that
+Calendar folders are listed page by page, so a mailbox with many folders is
+read whole. A calendar folder the server stops listing is only dropped once it
+is missing from **two listings in a row**, and never on a listing that is empty or that
 is not a proper EWS answer (an error page, a proxy's sign-in page), which
 fails the sync instead. Dropping it removes its cached events and the event
 types' selection of it. This applies to users' own EWS sources too.

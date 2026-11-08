@@ -1966,6 +1966,7 @@ admin-ews-trust-no-mailbox = keins (die Adresse bezeichnet kein Postfach)
 admin-ews-notice-selections-reset = Das Postfach einiger verwalteter Quellen hat sich geändert, ihre Kalender werden daher neu erkannt. Ereignistypen mit zurückgesetzter Kalenderauswahl: { $count } (im Serverprotokoll aufgeführt).
 admin-ews-notice-reconfirm = Die Domain-Ersetzung ordnet einige bestätigte Adressen jetzt einem anderen Postfach zu. Erneut zu bestätigende Adressen: { $count } (siehe Liste unten).
 admin-ews-row-taken-over = Übernommen von { $user } am { $when }
+admin-ews-notice-trust-changed = Nichts bestätigt: Die Adresse dieses Kontos oder das Postfach, das sie öffnet, hat sich seit der Anzeige der Seite geändert. Die Liste muss erneut geprüft werden.
 sources-managed-user-untrusted = Diese Quelle wird vom Administrator verwaltet, aber die Adresse des Kontos ist noch nicht bestätigt, daher wird sie nicht synchronisiert.
 sources-managed-user-suspended = Diese Quelle wird vom Administrator verwaltet, aber das Konto ist deaktiviert, daher wird sie nicht synchronisiert.
 admin-ews-save = EWS-Einstellungen speichern

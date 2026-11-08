@@ -725,12 +725,15 @@ async fn sync_ews_calendars(
     // old mailbox's calendars would come back after `forget_mailbox`.
     let lock = crate::ews::global::mailbox_lock(source_id);
     let _guard = lock.lock().await;
-    let target: Option<String> =
+    let row: Option<Option<String>> =
         sqlx::query_scalar("SELECT impersonate_email FROM caldav_sources WHERE id = ?")
             .bind(source_id)
             .fetch_optional(pool)
-            .await?
-            .flatten();
+            .await?;
+    let Some(target) = row else {
+        tracing::info!(source_id = %source_id, "EWS sync discarded: the source was removed meanwhile");
+        return Ok(());
+    };
     if target.as_deref() != provider.impersonated_mailbox() {
         tracing::warn!(source_id = %source_id, "EWS sync discarded: the source now reads another mailbox");
         return Ok(());

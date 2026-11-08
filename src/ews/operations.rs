@@ -14,9 +14,8 @@
 use anyhow::{bail, Context, Result};
 
 use super::parse::{
-    parse_calendar_items_response, parse_create_item_response, parse_find_folder_response,
-    parse_get_item_response, parse_sync_folder_items_response, EwsCalendarFolder, EwsCalendarItem,
-    EwsSyncDelta,
+    parse_calendar_items_response, parse_create_item_response, parse_get_item_response,
+    parse_sync_folder_items_response, EwsCalendarFolder, EwsCalendarItem, EwsSyncDelta,
 };
 use super::soap::{escape, post_soap};
 
@@ -73,15 +72,30 @@ pub async fn default_calendar_folder_id(
         .filter(|id| !id.is_empty()))
 }
 
+/// Folders asked for per FindFolder page.
+const FOLDER_PAGE: usize = 100;
+/// Pages read at most: a mailbox with more calendar folders than this is
+/// refused as an incomplete listing rather than read in part.
+const FOLDER_PAGES_MAX: usize = 20;
+
 /// Enumerate the user's calendar folders by walking down from
 /// `msgfolderroot`. We restrict to `IPF.Appointment` containers.
+///
+/// Read page by page (`IndexedPageFolderView`) until the server says the
+/// last folder is in: a listing cut short would make the sync count the
+/// folders after the cut as missing. A server that never says it is done
+/// within `FOLDER_PAGES_MAX` pages fails the listing.
 pub async fn list_calendar_folders(
     endpoint: &str,
     username: &str,
     password: &str,
     impersonate_email: Option<&str>,
 ) -> Result<Vec<EwsCalendarFolder>> {
-    let body = r#"    <m:FindFolder Traversal="Deep">
+    let mut folders = Vec::new();
+    for page in 0..FOLDER_PAGES_MAX {
+        let offset = page * FOLDER_PAGE;
+        let body = format!(
+            r#"    <m:FindFolder Traversal="Deep">
       <m:FolderShape>
         <t:BaseShape>Default</t:BaseShape>
         <t:AdditionalProperties>
@@ -89,6 +103,7 @@ pub async fn list_calendar_folders(
           <t:FieldURI FieldURI="folder:DisplayName" />
         </t:AdditionalProperties>
       </m:FolderShape>
+      <m:IndexedPageFolderView MaxEntriesReturned="{FOLDER_PAGE}" Offset="{offset}" BasePoint="Beginning" />
       <m:Restriction>
         <t:IsEqualTo>
           <t:FieldURI FieldURI="folder:FolderClass" />
@@ -101,9 +116,30 @@ pub async fn list_calendar_folders(
         <t:DistinguishedFolderId Id="msgfolderroot" />
       </m:ParentFolderIds>
     </m:FindFolder>
-"#;
-    let resp = post_soap(endpoint, username, password, body, false, impersonate_email).await?;
-    parse_find_folder_response(&resp)
+"#
+        );
+        let resp = post_soap(
+            endpoint,
+            username,
+            password,
+            &body,
+            false,
+            impersonate_email,
+        )
+        .await?;
+        let (mut batch, includes_last) = super::parse::parse_find_folder_page(&resp)?;
+        let got = batch.len();
+        folders.append(&mut batch);
+        // A server that does not say (older Exchange, a test double) is
+        // taken at its word that one answer is the whole listing.
+        if includes_last.unwrap_or(true) || got == 0 {
+            return Ok(folders);
+        }
+    }
+    bail!(
+        "EWS FindFolder: more than {} calendar folders, listing incomplete",
+        FOLDER_PAGE * FOLDER_PAGES_MAX
+    )
 }
 
 /// Fetch every calendar item in a folder. Uses paging

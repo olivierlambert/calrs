@@ -366,13 +366,43 @@ async fn self_registration_is_not_provisioned() {
     assert!(page.contains("Addresses to confirm"));
     assert!(page.contains(&format!("value=\"{user_id}\"")));
 
+    assert!(page.contains("name=\"email\" value=\"ceo@example.com\""));
+
+    // A confirmation covers what the admin saw: an address that changed
+    // since (here the form shows an older one), or a mailbox the override
+    // now maps elsewhere, confirms nothing and asks to look again.
+    for body in [
+        format!("_csrf={csrf}&user_id={user_id}&email=old%40example.com&mailbox=old%40example.com"),
+        format!(
+            "_csrf={csrf}&user_id={user_id}&email=ceo%40example.com&mailbox=ceo%40corp.example"
+        ),
+    ] {
+        let resp = app
+            .clone()
+            .oneshot(post_form(
+                "/dashboard/admin/ews/trust",
+                &admin_session,
+                csrf,
+                &body,
+            ))
+            .await
+            .unwrap();
+        assert!(resp.headers()["location"]
+            .to_str()
+            .unwrap()
+            .contains("ews=trust-changed"));
+        assert!(managed_source_of(&pool, &user_id).await.is_none());
+    }
+
     // Confirming it is the admin's call, and provisions right away.
     let resp = app
         .oneshot(post_form(
             "/dashboard/admin/ews/trust",
             &admin_session,
             csrf,
-            &format!("_csrf={csrf}&user_id={user_id}"),
+            &format!(
+                "_csrf={csrf}&user_id={user_id}&email=ceo%40example.com&mailbox=ceo%40example.com"
+            ),
         ))
         .await
         .unwrap();
@@ -2354,9 +2384,13 @@ async fn a_new_override_prefers_the_verified_owner_and_asks_for_reconfirmation()
 
     let new = crate::ews::global::DomainOverride::new(Some("example.local"), Some("example.com"));
     assert_eq!(
-        crate::ews::global::untrust_remapped(&pool, None, new.as_ref())
-            .await
-            .unwrap(),
+        crate::ews::global::untrust_remapped(
+            &mut pool.acquire().await.unwrap(),
+            None,
+            new.as_ref()
+        )
+        .await
+        .unwrap(),
         1,
         "only the admin-confirmed address the override re-maps"
     );
@@ -2494,4 +2528,95 @@ async fn a_managed_calendar_is_a_destination_only_while_active() {
     .unwrap();
     assert_eq!((error, attempts, copies), (None, 0, 0));
     assert!(ews.created().is_empty());
+}
+
+/// Saving a domain override that re-maps an admin-confirmed address writes
+/// the override and withdraws that trust together: the redirect counts it,
+/// the address is no longer trusted and its managed source is gone.
+#[tokio::test]
+async fn saving_an_override_asks_to_reconfirm_remapped_addresses() {
+    let pool = setup_test_db().await;
+    let (admin_id, _, _) = seed_test_data(&pool).await;
+    store_global_config(&pool, false, false).await;
+    provision(&pool, &admin_id, "test@example.com").await;
+    let (app, session) = admin_app(&pool, &admin_id).await;
+    let csrf = "csrf-ews-reconfirm";
+    let resp = app
+        .oneshot(post_form(
+            "/dashboard/admin/ews",
+            &session,
+            csrf,
+            &format!("_csrf={csrf}&ews_global_enabled=on&ews_global_url=https%3A%2F%2Fexample.com%2FEWS%2FExchange.asmx&ews_service_username=svc%40example.com&ews_impersonation_from_domain=example.com&ews_impersonation_domain=corp.example"),
+        ))
+        .await
+        .unwrap();
+    let location = resp.headers()["location"].to_str().unwrap().to_string();
+    assert!(location.contains("reconfirm=1"), "{location}");
+    let (trusted, from): (bool, Option<String>) = sqlx::query_as(
+        "SELECT (SELECT email_trusted FROM users WHERE id = ?), \
+                (SELECT ews_impersonation_from_domain FROM auth_config WHERE id = 'singleton')",
+    )
+    .bind(&admin_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!((trusted, from.as_deref()), (false, Some("example.com")));
+    assert!(managed_source_of(&pool, &admin_id).await.is_none());
+}
+
+/// A user's own EWS source pointed at another account reads another
+/// mailbox: what it cached goes at once, not one sync later.
+#[tokio::test]
+async fn editing_an_own_ews_source_to_another_account_drops_its_calendars() {
+    let pool = setup_test_db().await;
+    let (host_id, account_id, et_id) = seed_test_data(&pool).await;
+    let enc = crate::crypto::encrypt_password(&[0u8; 32], "pw").unwrap();
+    let source = uuid::Uuid::new_v4().to_string();
+    sqlx::query(
+        "INSERT INTO caldav_sources (id, account_id, name, url, username, password_enc, provider_type, write_calendar_href) \
+         VALUES (?, ?, 'Mine', 'https://example.com/EWS/Exchange.asmx', 'me@example.com', ?, 'ews', 'CAL-x')",
+    )
+    .bind(&source)
+    .bind(&account_id)
+    .bind(&enc)
+    .execute(&pool)
+    .await
+    .unwrap();
+    seed_selected_calendar(&pool, &source, &et_id).await;
+    let (app, session) = admin_app(&pool, &host_id).await;
+    let csrf = "csrf-ews-own";
+    let edit = |user: &'static str| {
+        let app = app.clone();
+        let session = session.clone();
+        let source = source.clone();
+        async move {
+            app.oneshot(post_form(
+                &format!("/dashboard/sources/{source}/edit"),
+                &session,
+                csrf,
+                &format!("_csrf={csrf}&name=Mine&url=https%3A%2F%2Fexample.com%2FEWS%2FExchange.asmx&username={user}&password=&no_test=on"),
+            ))
+            .await
+            .unwrap()
+        }
+    };
+    edit("Me%40example.com").await;
+    assert_eq!(
+        calendar_count(&pool, &source).await,
+        1,
+        "same account: kept"
+    );
+    edit("boss%40example.com").await;
+    assert_eq!(
+        calendar_count(&pool, &source).await,
+        0,
+        "another account: dropped"
+    );
+    let write: Option<String> =
+        sqlx::query_scalar("SELECT write_calendar_href FROM caldav_sources WHERE id = ?")
+            .bind(&source)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(write, None);
 }

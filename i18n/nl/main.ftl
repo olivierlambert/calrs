@@ -1968,6 +1968,7 @@ admin-ews-trust-no-mailbox = geen (het adres wijst geen postvak aan)
 admin-ews-notice-selections-reset = Het postvak dat sommige beheerde bronnen lezen is gewijzigd, dus hun agenda's worden opnieuw gevonden. Afspraaktypen waarvan de agendaselectie is gereset: { $count } (vermeld in het serverlogboek).
 admin-ews-notice-reconfirm = De domeinvervanging koppelt sommige bevestigde adressen nu aan een ander postvak. Opnieuw te bevestigen adressen: { $count } (zie de lijst hieronder).
 admin-ews-row-taken-over = Overgenomen van { $user } op { $when }
+admin-ews-notice-trust-changed = Niets bevestigd: het adres van dit account, of het postvak dat het opent, is gewijzigd sinds de pagina werd getoond. Bekijk de lijst opnieuw.
 sources-managed-user-untrusted = Deze bron wordt door de beheerder beheerd, maar het adres van het account is nog niet bevestigd, dus hij wordt niet gesynchroniseerd.
 sources-managed-user-suspended = Deze bron wordt door de beheerder beheerd, maar het account is uitgeschakeld, dus hij wordt niet gesynchroniseerd.
 admin-ews-save = EWS-instellingen opslaan

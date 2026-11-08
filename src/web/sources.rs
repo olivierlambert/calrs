@@ -576,8 +576,9 @@ pub(super) async fn update_source(
 
     // Confirm the source belongs to this user and grab the existing
     // password (used as fallback when the form leaves it blank).
-    let existing: Option<(String, Option<String>)> = sqlx::query_as(
-        "SELECT cs.password_enc, cs.auth_type
+    #[allow(clippy::type_complexity)]
+    let existing: Option<(String, Option<String>, String, String, String)> = sqlx::query_as(
+        "SELECT cs.password_enc, cs.auth_type, cs.url, cs.username, cs.provider_type
          FROM caldav_sources cs
          JOIN accounts a ON a.id = cs.account_id
          WHERE cs.id = ? AND a.user_id = ?",
@@ -588,10 +589,11 @@ pub(super) async fn update_source(
     .await
     .unwrap_or(None);
 
-    let (existing_password_enc, auth_type) = match existing {
-        Some((enc, at)) => (enc, at),
-        None => return Redirect::to("/dashboard/sources").into_response(),
-    };
+    let (existing_password_enc, auth_type, previous_url, previous_username, provider_type) =
+        match existing {
+            Some(row) => row,
+            None => return Redirect::to("/dashboard/sources").into_response(),
+        };
 
     // OAuth2 sources don't have a password to decrypt and can't be reached
     // with basic auth — reject the update outright.
@@ -694,6 +696,20 @@ pub(super) async fn update_source(
                 .bind(&source_id)
                 .execute(&state.pool)
                 .await;
+    }
+
+    // An EWS source pointed at another account or server reads another
+    // mailbox: Exchange folder ids belong to the old one, so its calendars,
+    // cached events and write calendar go now rather than at the next sync.
+    if provider_type == crate::providers::factory::kinds::EWS
+        && (!previous_username
+            .trim()
+            .eq_ignore_ascii_case(username.trim())
+            || crate::resources::url_origin(&previous_url) != crate::resources::url_origin(&url))
+    {
+        if let Err(e) = crate::ews::global::forget_mailbox(&state.pool, &source_id).await {
+            tracing::warn!(source_id = %source_id, error = %e, "could not reset an EWS source pointed at another mailbox");
+        }
     }
 
     tracing::info!(

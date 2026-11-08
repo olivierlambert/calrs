@@ -1966,6 +1966,7 @@ admin-ews-trust-no-mailbox = puudub (aadress ei vasta ühelegi postkastile)
 admin-ews-notice-selections-reset = Mõne hallatud allika loetav postkast muutus, seega nende kalendrid tuvastatakse uuesti. Sündmuse tüübid, mille kalendrivalik lähtestati: { $count } (loetletud serveri logis).
 admin-ews-notice-reconfirm = Domeeni asendus seob nüüd mõned kinnitatud aadressid teise postkastiga. Uuesti kinnitamist vajavaid aadresse: { $count } (vt allolevat loendit).
 admin-ews-row-taken-over = Üle võetud kasutajalt { $user } { $when }
+admin-ews-notice-trust-changed = Midagi ei kinnitatud: selle konto aadress või postkast, mille see avab, on pärast lehe kuvamist muutunud. Vaata loend uuesti üle.
 sources-managed-user-untrusted = Seda allikat haldab administraator, kuid konto aadress pole veel kinnitatud, seega seda ei sünkroonita.
 sources-managed-user-suspended = Seda allikat haldab administraator, kuid konto on keelatud, seega seda ei sünkroonita.
 admin-ews-save = Salvesta EWS-i seaded

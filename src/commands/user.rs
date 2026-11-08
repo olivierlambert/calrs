@@ -162,6 +162,13 @@ pub async fn run(
             )
             .await?;
             auth::create_user_account(&mut tx, &user_id, &name, &email).await?;
+            // An admin typed this address, so it is trusted: global EWS
+            // impersonation may open the mailbox it names. Set with the row,
+            // so the account never exists untrusted.
+            sqlx::query("UPDATE users SET email_trusted = 1 WHERE id = ?")
+                .bind(&user_id)
+                .execute(&mut *tx)
+                .await?;
             tx.commit().await?;
 
             println!(
@@ -178,10 +185,6 @@ pub async fn run(
                     "  First user, automatically granted admin role.".dimmed()
                 );
             }
-
-            // An admin typed this address, so it is trusted: global EWS
-            // impersonation may open the mailbox it names.
-            crate::ews::global::trust_email(pool, &user_id).await?;
 
             // If the admin has enabled global EWS impersonation with
             // auto-provision, give the new user a managed Exchange source.
@@ -205,7 +208,14 @@ pub async fn run(
                     email
                 ),
             };
-            crate::ews::global::trust_email(pool, &user_id).await?;
+            // Exactly the stored address just shown, so a change in between
+            // is not confirmed unseen.
+            if !crate::ews::global::trust_email(pool, &user_id, &stored).await? {
+                anyhow::bail!(
+                    "The address of '{}' changed meanwhile; run the command again",
+                    email
+                );
+            }
             println!("{} Address confirmed: {}", "✓".green(), stored);
             if let Some(cfg) = crate::ews::global::load_ews_global_config(pool, secret_key).await {
                 provision_and_report(pool, &cfg, &user_id).await;

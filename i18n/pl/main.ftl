@@ -2037,6 +2037,7 @@ admin-ews-trust-no-mailbox = brak (adres nie wskazuje żadnej skrzynki)
 admin-ews-notice-selections-reset = Skrzynka czytana przez niektóre źródła zarządzane się zmieniła, więc ich kalendarze są wykrywane ponownie. Typy wydarzeń ze zresetowanym wyborem kalendarzy: { $count } (lista w dzienniku serwera).
 admin-ews-notice-reconfirm = Zastąpienie domeny przypisuje teraz niektóre potwierdzone adresy do innej skrzynki. Adresy do ponownego potwierdzenia: { $count } (lista poniżej).
 admin-ews-row-taken-over = Przejęte od { $user } dnia { $when }
+admin-ews-notice-trust-changed = Niczego nie potwierdzono: adres tego konta lub skrzynka, którą otwiera, zmieniły się od wyświetlenia strony. Sprawdź listę ponownie.
 sources-managed-user-untrusted = To źródło jest zarządzane przez administratora, ale adres konta nie został jeszcze potwierdzony, więc nie jest synchronizowane.
 sources-managed-user-suspended = To źródło jest zarządzane przez administratora, ale konto jest wyłączone, więc nie jest synchronizowane.
 admin-ews-save = Zapisz ustawienia EWS
