@@ -378,6 +378,7 @@ async fn approval_recheck_refuses_a_host_on_time_off() {
         user_ids: vec![user.clone()],
         team_id: None,
         collective: false,
+        participants: Vec::new(),
     };
     assert!(
         approval_hosts_free(
@@ -643,4 +644,153 @@ async fn an_impersonating_admin_reads_without_notes_and_cannot_change() {
         .await
         .unwrap();
     assert_eq!(label.as_deref(), Some("Bob private"));
+}
+
+#[tokio::test]
+async fn an_ongoing_absence_can_be_entered() {
+    let (app, _, session, _) = setup_test_app().await;
+    let page = body_string(
+        app.oneshot(get_authed("/dashboard/time-off", &session))
+            .await
+            .unwrap(),
+    )
+    .await;
+    let start = page
+        .split("id=\"to-start-date\"")
+        .nth(1)
+        .and_then(|rest| rest.split('>').next())
+        .unwrap();
+    assert!(
+        !start.contains("min="),
+        "a start in the past is allowed: {start}"
+    );
+}
+
+/// If the time off cannot be read, the user counts as busy: a booking,
+/// reschedule or approval is refused rather than made during time off.
+#[tokio::test]
+async fn an_unreadable_time_off_table_fails_closed() {
+    let pool = setup_test_db().await;
+    let (user, _, et_id) = seed_test_data(&pool).await;
+    sqlx::query("ALTER TABLE user_time_off RENAME TO user_time_off_gone")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let day = monday();
+    let slot = day.and_hms_opt(10, 0, 0).unwrap();
+    let busy = fetch_busy_times_for_user(
+        &pool,
+        &user,
+        day.and_time(NaiveTime::MIN),
+        day.and_hms_opt(23, 59, 59).unwrap(),
+        chrono_tz::Tz::UTC,
+        Some(&et_id),
+    )
+    .await;
+    assert!(has_conflict(&busy, slot, slot + Duration::minutes(30)));
+}
+
+#[tokio::test]
+async fn adjacent_periods_keep_their_own_notes_in_troubleshoot() {
+    let (app, pool, session, _) = setup_test_app().await;
+    let me = test_user_id(&pool).await;
+    let day = monday();
+    let at = |h| day.and_hms_opt(h, 0, 0).unwrap();
+    add_off(&pool, &me, at(10), at(11), Some("Dentist")).await;
+    add_off(&pool, &me, at(11), at(12), Some("Lunch")).await;
+    let body = body_string(
+        app.oneshot(get_authed(
+            &format!("/dashboard/troubleshoot?date={day}&event_type=test-meeting"),
+            &session,
+        ))
+        .await
+        .unwrap(),
+    )
+    .await;
+    assert!(
+        body.contains("10:00&ndash;11:00: Time off (Dentist)"),
+        "{body}"
+    );
+    assert!(body.contains("11:00&ndash;12:00: Time off (Lunch)"));
+}
+
+/// A dynamic group booking (`/u/a+b/slug`) remembers its co-host, and a
+/// reschedule or an approval checks their time off too, not only the owner's.
+#[tokio::test]
+async fn dynamic_group_reschedule_and_approval_check_every_participant() {
+    let (app, pool, _, et_id) = setup_test_app().await;
+    let second = uuid::Uuid::new_v4().to_string();
+    sqlx::query("INSERT INTO users (id, email, name, role, auth_provider, username, enabled) VALUES (?, 'second@example.com', 'Second User', 'user', 'local', 'seconduser', 1)")
+        .bind(&second)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO accounts (id, name, email, timezone, user_id) VALUES (?, 'Second User', 'second@example.com', 'UTC', ?)")
+        .bind(uuid::Uuid::new_v4().to_string())
+        .bind(&second)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let csrf = "csrf-dyn-off";
+    app.oneshot(post_form_unauthed(
+        "/u/testuser+seconduser/test-meeting/book",
+        csrf,
+        &book_body(csrf),
+    ))
+    .await
+    .unwrap();
+    let (booking_id, uid, owner): (String, String, String) = sqlx::query_as(
+        "SELECT b.id, b.uid, a.user_id FROM bookings b JOIN event_types et ON et.id = b.event_type_id \
+         JOIN accounts a ON a.id = et.account_id WHERE b.event_type_id = ?",
+    )
+    .bind(&et_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let hosts = reschedule_hosts(&pool, &uid, &owner).await;
+    assert_eq!(hosts.participants, vec![second.clone()]);
+
+    // Move it to 14:00 the same day, when the co-host is off.
+    let day = monday();
+    let new_start = day.and_hms_opt(14, 0, 0).unwrap();
+    let new_end = new_start + Duration::minutes(30);
+    let window = (
+        day.and_time(NaiveTime::MIN),
+        day.and_hms_opt(23, 59, 59).unwrap(),
+    );
+    let utc = chrono_tz::Tz::UTC;
+    let free = |busy: &BusySource| busy_source_is_free(busy, new_start, new_end);
+    let busy = reschedule_busy_source(
+        &pool,
+        &hosts,
+        &et_id,
+        window.0,
+        window.1,
+        utc,
+        &booking_id,
+        &uid,
+    )
+    .await;
+    assert!(free(&busy), "both free before the time off");
+    add_off(&pool, &second, new_start, new_end, None).await;
+    let busy = reschedule_busy_source(
+        &pool,
+        &hosts,
+        &et_id,
+        window.0,
+        window.1,
+        utc,
+        &booking_id,
+        &uid,
+    )
+    .await;
+    assert!(!free(&busy), "the co-host is off at the new time");
+
+    let (start_at, end_at) = (
+        format!("{}Z", new_start.format("%Y-%m-%dT%H:%M:%S")),
+        format!("{}Z", new_end.format("%Y-%m-%dT%H:%M:%S")),
+    );
+    assert!(
+        !approval_hosts_free(&pool, &hosts, &booking_id, &uid, &et_id, &start_at, &end_at).await
+    );
 }

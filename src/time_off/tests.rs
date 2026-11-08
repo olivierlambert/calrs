@@ -113,6 +113,13 @@ fn clock_changes_keep_the_whole_period() {
     let (start, _) =
         parse_period("2026-03-29", "02:30", "2026-03-29", "05:00", PARIS, now).unwrap();
     assert_eq!(start, utc("2026-03-29T01:00:00Z"));
+    // Any skipped minute lands on the first one after the gap, 03:00, for
+    // a start and for an end alike.
+    let (start, _) =
+        parse_period("2026-03-29", "02:01", "2026-03-29", "05:00", PARIS, now).unwrap();
+    assert_eq!(start, utc("2026-03-29T01:00:00Z"));
+    let (_, end) = parse_period("2026-03-29", "01:00", "2026-03-29", "02:45", PARIS, now).unwrap();
+    assert_eq!(end, utc("2026-03-29T01:00:00Z"));
     // 02:00 to 02:30 happens twice on 25 October 2026: the start takes the
     // first occurrence, the end the second, so both are covered.
     let (start, end) =
@@ -398,4 +405,46 @@ async fn a_user_holds_at_most_the_cap_of_upcoming_periods() {
     .await
     .unwrap()
     .is_some());
+}
+
+#[test]
+fn local_ranges_cover_the_repeated_hour() {
+    // 25 October 2026 in Paris: 03:00 CEST becomes 02:00 CET. 00:30Z is
+    // 02:30 CEST and 01:15Z is 02:15 CET, so the plain local ends reverse.
+    let (s, e) = local_range(
+        utc("2026-10-25T00:30:00Z"),
+        utc("2026-10-25T01:15:00Z"),
+        PARIS,
+    );
+    assert!(s < e, "{s} to {e}");
+    assert_eq!(
+        (s, e),
+        (local("2026-10-25T01:30"), local("2026-10-25T03:15"))
+    );
+    // Without a clock change the range is the plain local one.
+    let (s, e) = local_range(
+        utc("2026-12-21T13:00:00Z"),
+        utc("2026-12-21T16:00:00Z"),
+        PARIS,
+    );
+    assert_eq!(
+        (s, e),
+        (local("2026-12-21T14:00"), local("2026-12-21T17:00"))
+    );
+}
+
+#[tokio::test]
+async fn a_failed_read_blocks_the_whole_window() {
+    let pool = database().await;
+    pool.close().await;
+    let busy = busy_intervals(
+        &pool,
+        "anyone",
+        local("2026-12-21T00:00"),
+        local("2026-12-21T23:59"),
+        PARIS,
+    )
+    .await;
+    assert_eq!(busy.len(), 1);
+    assert!(busy[0].0 <= local("2026-12-21T00:00") && busy[0].1 >= local("2026-12-21T23:59"));
 }

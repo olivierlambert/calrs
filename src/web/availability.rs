@@ -2623,9 +2623,10 @@ pub(super) async fn troubleshoot(
     .unwrap_or_default()
     .into_iter()
     .map(|p| {
+        let (start, end) = crate::time_off::local_range(p.start, p.end, host_tz);
         (
-            p.start.with_timezone(&host_tz).naive_local(),
-            p.end.with_timezone(&host_tz).naive_local(),
+            start,
+            end,
             // An admin viewing as the user does not read their notes.
             if auth_user.impersonation.is_some() {
                 String::new()
@@ -2880,7 +2881,10 @@ pub(super) async fn troubleshoot(
     for tick in &ticks {
         let tick_end_time = (target_date.and_time(tick.time) + tick_size).time();
         if let Some(last) = blocks.last_mut() {
-            if last.status == tick.status && last.label == tick.label {
+            // Same detail too: two adjacent time off periods with
+            // different notes stay two blocks, each with its own note.
+            if last.status == tick.status && last.label == tick.label && last.detail == tick.detail
+            {
                 last.end = tick_end_time;
                 let start_min = (last.start - display_start).num_minutes() as f64;
                 let dur_min = (last.end - last.start).num_minutes() as f64;

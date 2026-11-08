@@ -12,7 +12,8 @@
 //! owner: guests only ever see that a time is not available.
 
 use chrono::{
-    DateTime, Datelike, Duration, LocalResult, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Utc,
+    DateTime, Datelike, Duration, LocalResult, NaiveDate, NaiveDateTime, NaiveTime, Offset,
+    TimeZone, Timelike, Utc,
 };
 use chrono_tz::Tz;
 use sqlx::SqlitePool;
@@ -124,17 +125,21 @@ impl InputError {
 
 /// A wall-clock time in `tz` as an instant. In a repeated hour the start
 /// takes the first occurrence and the end the second, so the period covers
-/// both; in a skipped hour both move to the first time that exists.
+/// both; in a skipped hour both move to the first minute that exists after
+/// the gap (03:00 for Paris in spring, whatever minute was typed).
 fn to_utc(tz: Tz, local: NaiveDateTime, is_end: bool) -> Option<DateTime<Utc>> {
     match tz.from_local_datetime(&local) {
         LocalResult::Single(t) => Some(t.with_timezone(&Utc)),
         LocalResult::Ambiguous(first, second) => {
             Some(if is_end { second } else { first }.with_timezone(&Utc))
         }
-        LocalResult::None => (1..=16)
-            .map(|step| local + Duration::minutes(15 * step))
-            .find_map(|t| tz.from_local_datetime(&t).earliest())
-            .map(|t| t.with_timezone(&Utc)),
+        LocalResult::None => {
+            let minute = local.with_second(0).unwrap_or(local);
+            (1..=6 * 60)
+                .map(|step| minute + Duration::minutes(step))
+                .find_map(|t| tz.from_local_datetime(&t).earliest())
+                .map(|t| t.with_timezone(&Utc))
+        }
     }
 }
 
@@ -320,11 +325,32 @@ pub async fn overlapping(
     Ok(rows.into_iter().filter_map(from_row).collect())
 }
 
+/// A stored period as wall-clock times in `tz`, the shape the slot engine
+/// works in. When the clocks go back inside the period, the plain local
+/// endpoints can come out reversed or short (00:30Z to 01:15Z on the last
+/// Sunday of October in Paris reads 02:30 to 02:15), so both ends are pushed
+/// out by the hour that repeats: the local range then covers every instant
+/// of the period, at the cost of up to an hour either side.
+pub fn local_range(
+    start: DateTime<Utc>,
+    end: DateTime<Utc>,
+    tz: Tz,
+) -> (NaiveDateTime, NaiveDateTime) {
+    let (s, e) = (start.with_timezone(&tz), end.with_timezone(&tz));
+    let rollback = s.offset().fix().local_minus_utc() - e.offset().fix().local_minus_utc();
+    let widen = Duration::seconds(rollback.max(0).into());
+    (s.naive_local() - widen, e.naive_local() + widen)
+}
+
 /// `user_id`'s time off around a window given as wall-clock times in `tz`,
-/// as busy intervals in `tz`: the shape the slot engine works in. The window
-/// is widened by two days, so its zone never needs resolving here; intervals
-/// outside it are harmless to the overlap checks. A read failure is logged
-/// and blocks nothing, like the other busy-time reads.
+/// as busy intervals in `tz` (see [`local_range`]). The window is widened by
+/// two days, so its zone never needs resolving here; intervals outside it
+/// are harmless to the overlap checks.
+///
+/// A read failure fails closed: the whole window comes back busy, so slot
+/// grids show nothing and the booking, reschedule and approval checks
+/// refuse with their usual "no longer available" answer rather than book
+/// someone during time off we could not read.
 pub async fn busy_intervals(
     pool: &SqlitePool,
     user_id: &str,
@@ -337,16 +363,14 @@ pub async fn busy_intervals(
     match overlapping(pool, user_id, from, to).await {
         Ok(periods) => periods
             .iter()
-            .map(|p| {
-                (
-                    p.start.with_timezone(&tz).naive_local(),
-                    p.end.with_timezone(&tz).naive_local(),
-                )
-            })
+            .map(|p| local_range(p.start, p.end, tz))
             .collect(),
         Err(error) => {
-            tracing::error!(%error, %user_id, "cannot read time off");
-            Vec::new()
+            tracing::error!(%error, %user_id, "cannot read time off; treating the window as busy");
+            vec![(
+                window_start - Duration::days(2),
+                window_end + Duration::days(2),
+            )]
         }
     }
 }

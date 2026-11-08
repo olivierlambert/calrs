@@ -254,13 +254,14 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
                 }
             }
 
-            // The host's time off (#46), as the web booking check counts it.
+            // Time off (#46) of the host, or of every collective member, as
+            // the web booking check counts it.
             let time_off = crate::commands::event_type::host_time_off(
                 pool, &et_id, buf_start, buf_end, host_tz,
             )
             .await?;
             if time_off.iter().any(|(s, e)| *s < buf_end && *e > buf_start) {
-                bail!("The host has time off at that time");
+                bail!("A host has time off at that time");
             }
 
             // Required shared resources: same check and lock discipline as
