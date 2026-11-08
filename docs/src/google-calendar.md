@@ -102,8 +102,14 @@ and daylight-saving changes. Cancelled occurrences are omitted from the returned
 snapshot and stop blocking after the next successful sync. Each sync refreshes a window
 from 90 days ago to 366 days ahead, covering the web booking flow's 365-day limit.
 Deleted absences are removed on the next successful sync. If the API request
-fails, previously cached absences remain blocking until a successful refresh.
-Working-location events are not treated as absences.
+fails, previously cached absences keep blocking, and the source's sync is
+reported as failing on the Sources page (with the usual email to its owner
+when it keeps failing). After 7 days without a successful refresh the cached
+absences are dropped, so an absence deleted meanwhile does not block forever.
+A Calendar API that is not enabled at all is not reported, as long as nothing
+was cached from it. An absence Google marks as a whole day (a `date` rather
+than a time) blocks those days in the calendar's own timezone. Working-location
+events are not treated as absences.
 
 ## Invitations and booking email aliases
 

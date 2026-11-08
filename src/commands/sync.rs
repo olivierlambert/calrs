@@ -244,22 +244,21 @@ async fn sync_caldav_calendars(
         // Google status events are only supported on the primary calendar and
         // are read through the Calendar API independently of CalDAV change
         // markers. Refresh even when the CalDAV ctag is unchanged.
-        if let Some(token) = client.google_access_token() {
-            match crate::google_calendar::sync_out_of_office(
+        // A failure fails the source's sync, like a calendar that cannot
+        // be fetched, so the host hears of absences that may be stale.
+        if let Some((api_base, token)) = client.google_calendar_api() {
+            if let Some(failure) = crate::google_calendar::refresh_out_of_office(
                 pool,
                 &cal_id,
                 client.base_url(),
                 &cal_info.href,
+                api_base,
                 token,
             )
             .await
             {
-                Ok(count) => {
-                    tracing::debug!(calendar = %cal_label, count, "Google out-of-office synced")
-                }
-                Err(e) => {
-                    tracing::warn!(calendar = %cal_label, error = %e, "Google out-of-office sync failed; retaining cached blocks")
-                }
+                println!("  {} {}: {}", "✗".red(), cal_label, failure);
+                calendar_failures.push(format!("{cal_label}: {failure}"));
             }
         }
 

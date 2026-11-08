@@ -163,7 +163,7 @@ impl CaldavClient {
     /// The Calendar API base and token for a Google client, `None` for any
     /// other server. Booking writes to Google take the Calendar API detour
     /// in `google_calendar` so Google sends no invitation of its own.
-    fn google_calendar_api(&self) -> Option<(&str, &str)> {
+    pub(crate) fn google_calendar_api(&self) -> Option<(&str, &str)> {
         #[cfg(test)]
         if let (Some(base), CaldavAuth::Bearer { access_token }) =
             (&self.google_api_base, &self.auth)

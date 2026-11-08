@@ -39,11 +39,76 @@ struct EventPage {
     time_zone: Option<String>,
 }
 
+/// Days an out-of-office snapshot keeps blocking without a successful
+/// fetch. Past them its rows are dropped: an absence the host has since
+/// deleted must not block forever because the Calendar API stopped
+/// answering (disabled, out of quota).
+pub(crate) const SNAPSHOT_MAX_AGE_DAYS: i64 = 7;
+
+/// Refresh one calendar's out-of-office snapshot during a source sync.
+/// Returns the failure to report on the source (so the sync health, the
+/// dashboard badge and the owner's alert apply), `None` on success or when
+/// the Calendar API is simply not in use: not usable for this project or
+/// token, with nothing cached that it could leave stale. On any failure,
+/// rows older than [`SNAPSHOT_MAX_AGE_DAYS`] are dropped.
+pub(crate) async fn refresh_out_of_office(
+    pool: &SqlitePool,
+    calendar_id: &str,
+    primary_calendar_href: &str,
+    href: &str,
+    api_base: &str,
+    token: &str,
+) -> Option<String> {
+    let error = match sync_out_of_office(
+        pool,
+        calendar_id,
+        primary_calendar_href,
+        href,
+        api_base,
+        token,
+    )
+    .await
+    {
+        Ok(count) => {
+            tracing::debug!(calendar_id = %calendar_id, count, "Google out-of-office synced");
+            return None;
+        }
+        Err(e) => e,
+    };
+    let expired = sqlx::query(
+        "DELETE FROM events WHERE calendar_id = ? AND google_out_of_office = 1
+           AND synced_at < datetime('now', ?)",
+    )
+    .bind(calendar_id)
+    .bind(format!("-{SNAPSHOT_MAX_AGE_DAYS} days"))
+    .execute(pool)
+    .await
+    .map(|r| r.rows_affected())
+    .unwrap_or(0);
+    let cached: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM events WHERE calendar_id = ? AND google_out_of_office = 1",
+    )
+    .bind(calendar_id)
+    .fetch_one(pool)
+    .await
+    .unwrap_or(0);
+    let no_access = error
+        .downcast_ref::<ApiFailure>()
+        .is_some_and(|f| f.no_access);
+    if no_access && cached == 0 && expired == 0 {
+        tracing::debug!(calendar_id = %calendar_id, error = %error, "Calendar API not usable, Google out-of-office not read");
+        return None;
+    }
+    tracing::warn!(calendar_id = %calendar_id, error = %error, cached, expired, "Google out-of-office sync failed");
+    Some(format!("Google out-of-office: {error:#}"))
+}
+
 pub(crate) async fn sync_out_of_office(
     pool: &SqlitePool,
     calendar_id: &str,
     primary_calendar_href: &str,
     href: &str,
+    api_base: &str,
     token: &str,
 ) -> Result<usize> {
     let remote_id = crate::google_meet::calendar_id_from_caldav_href(href)
@@ -58,7 +123,8 @@ pub(crate) async fn sync_out_of_office(
         return Ok(0);
     }
     let url = format!(
-        "https://www.googleapis.com/calendar/v3/calendars/{}/events",
+        "{}/calendars/{}/events",
+        api_base.trim_end_matches('/'),
         urlencoding::encode(&remote_id)
     );
     // Expand recurrence at Google so moved/cancelled instances and DST are
@@ -108,8 +174,9 @@ async fn fetch_out_of_office(
         }
         let response = request.send().await?;
         if !response.status().is_success() {
-            let status = response.status();
-            bail!("Google out-of-office fetch: HTTP {}", status);
+            return Err(ApiFailure::refused("Google out-of-office fetch", response)
+                .await
+                .into());
         }
         let page: EventPage = response.json().await?;
         zone = zone.or(page.time_zone);
@@ -853,6 +920,79 @@ mod tests {
         assert_eq!(time_max, "2027-11-08T12:30:45Z");
     }
 
+    /// A failed out-of-office fetch is reported on the source, so sync
+    /// health and the owner's alert see it, and a snapshot that has not
+    /// been refreshed for a week stops blocking. A Calendar API that is
+    /// simply not enabled, with nothing cached, is no failure.
+    #[tokio::test]
+    async fn out_of_office_failures_are_reported_and_stale_blocks_expire() {
+        const PRIMARY: &str = "http://x/caldav/v2/host%40example.com/user";
+        const CAL_HREF: &str = "/caldav/v2/host%40example.com/events";
+        async fn cached(pool: &SqlitePool) -> i64 {
+            sqlx::query_scalar("SELECT COUNT(*) FROM events WHERE google_out_of_office = 1")
+                .fetch_one(pool)
+                .await
+                .unwrap()
+        }
+        let pool = database().await;
+
+        // Not enabled, nothing cached: not a failure.
+        let fake = std::sync::Arc::new(FakeGoogle::without_api());
+        let (base, server) = super::fake::serve(fake).await;
+        let api = format!("{base}/api");
+        assert_eq!(
+            refresh_out_of_office(&pool, "c", PRIMARY, CAL_HREF, &api, "t").await,
+            None
+        );
+        server.abort();
+
+        // A fresh snapshot survives a failed fetch, which is reported.
+        replace_snapshot(
+            &pool,
+            "c",
+            &[absence("a", "2026-10-26T09:00:00Z", "2026-10-26T10:00:00Z")],
+            Tz::UTC,
+        )
+        .await
+        .unwrap();
+        for fake in [FakeGoogle::api_failing(503), FakeGoogle::without_api()] {
+            let (base, server) = super::fake::serve(std::sync::Arc::new(fake)).await;
+            let api = format!("{base}/api");
+            let failure = refresh_out_of_office(&pool, "c", PRIMARY, CAL_HREF, &api, "t")
+                .await
+                .unwrap();
+            assert!(failure.starts_with("Google out-of-office"), "{failure}");
+            assert!(!failure.contains("Backend Error"), "{failure}");
+            server.abort();
+            assert_eq!(cached(&pool).await, 1);
+        }
+
+        // A week without a successful fetch: the blocks are dropped.
+        sqlx::query("UPDATE events SET synced_at = datetime('now', '-8 days')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let (base, server) =
+            super::fake::serve(std::sync::Arc::new(FakeGoogle::api_failing(503))).await;
+        let api = format!("{base}/api");
+        assert!(
+            refresh_out_of_office(&pool, "c", PRIMARY, CAL_HREF, &api, "t")
+                .await
+                .is_some()
+        );
+        assert_eq!(cached(&pool).await, 0);
+
+        // Success: nothing to report.
+        server.abort();
+        let (base, server) = super::fake::serve(std::sync::Arc::new(FakeGoogle::default())).await;
+        let api = format!("{base}/api");
+        assert_eq!(
+            refresh_out_of_office(&pool, "c", PRIMARY, CAL_HREF, &api, "t").await,
+            None
+        );
+        server.abort();
+    }
+
     #[tokio::test]
     async fn cancelled_absences_and_working_locations_do_not_block() {
         let pool = database().await;
@@ -888,6 +1028,7 @@ mod tests {
             "other",
             "https://apidata.googleusercontent.com/caldav/v2/host%40example.com/user",
             "https://apidata.googleusercontent.com/caldav/v2/en.usa%23holiday%40group.v.calendar.google.com/events",
+            "http://127.0.0.1:9",
             "must-not-be-used",
         )
         .await
