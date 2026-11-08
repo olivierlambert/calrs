@@ -676,7 +676,7 @@ pub(crate) async fn put_event_without_invitations(
             // Without the API nothing can clear attendees, so only an event
             // that has none (or does not exist yet) may be rewritten.
             let current = client.get_event_raw(calendar_href, uid).await?;
-            if current.is_some_and(|ics| !split_scheduling(&ics).1.is_empty()) {
+            if current.is_some_and(|ics| lists_guests(&ics, api.calendar_id)) {
                 bail!("{e}; the event has attendees, so it is left as it is");
             }
             tracing::warn!(uid = %uid, error = %e, "google calendar: Calendar API not usable, writing the event without attendees");
@@ -773,6 +773,23 @@ pub(crate) async fn ensure_attendees(api: &EventsApi<'_>, uid: &str, ics: &str) 
         })
 }
 
+/// Whether an event as Google's CalDAV shows it lists anyone but its own
+/// people: Google can list the organizer and the calendar's owner as
+/// attendees of an event that has no guests.
+fn lists_guests(ics: &str, calendar_owner: &str) -> bool {
+    let unfolded = crate::utils::unfold_ical(ics);
+    let organizers: Vec<String> = unfolded
+        .split('\n')
+        .filter_map(|raw| crate::utils::parse_content_line(raw.strip_suffix('\r').unwrap_or(raw)))
+        .filter(|line| line.name.eq_ignore_ascii_case("ORGANIZER"))
+        .map(|line| attendee_email(line.value).to_string())
+        .collect();
+    split_scheduling(ics).1.iter().any(|a| {
+        !a.email.eq_ignore_ascii_case(calendar_owner)
+            && !organizers.iter().any(|o| o.eq_ignore_ascii_case(&a.email))
+    })
+}
+
 /// The one Google copy of a booking that carries its guests as attendees,
 /// as the id of the source it is written through. Google puts an event on
 /// the Google calendar of each of its attendees by itself, so attendees on
@@ -810,16 +827,23 @@ pub(crate) async fn delete_event_without_cancellations(
     uid: &str,
 ) -> Result<()> {
     match tokio::time::timeout(api.deadline, api.find(uid)).await {
-        Ok(Ok(Some(found))) if found.has_attendees => match api.delete(&found.id).await {
-            Ok(()) => Ok(()),
-            // Nothing retries a delete (`caldav_delete_booking` only logs),
-            // so returning the error would leave the cancelled meeting on
-            // the host's calendar and on the guests' Google calendars.
-            Err(e) => {
-                tracing::warn!(uid = %uid, error = %e, "google calendar: Calendar API delete failed, deleting over CalDAV; Google may notify the attendees");
-                client.delete_event_raw(calendar_href, uid).await
+        Ok(Ok(Some(found))) if found.has_attendees => {
+            match tokio::time::timeout(api.deadline, api.delete(&found.id)).await {
+                Ok(Ok(())) => Ok(()),
+                // Nothing retries a delete (`caldav_delete_booking` only
+                // logs), so returning the error would leave the cancelled
+                // meeting on the host's calendar and the guests' Google
+                // calendars.
+                Ok(Err(e)) => {
+                    tracing::warn!(uid = %uid, error = %e, "google calendar: Calendar API delete failed, deleting over CalDAV; Google may notify the attendees");
+                    client.delete_event_raw(calendar_href, uid).await
+                }
+                Err(_) => {
+                    tracing::warn!(uid = %uid, "google calendar: Calendar API delete too slow, deleting over CalDAV; Google may notify the attendees");
+                    client.delete_event_raw(calendar_href, uid).await
+                }
             }
-        },
+        }
         Ok(Ok(_)) => client.delete_event_raw(calendar_href, uid).await,
         Ok(Err(e)) => {
             tracing::warn!(uid = %uid, error = %e, "google calendar: Calendar API unavailable, deleting over CalDAV; Google may notify the attendees");
@@ -1567,6 +1591,65 @@ mod tests {
         assert_eq!(fake.attendees(CAL, "moved@calrs").unwrap().len(), 2);
     }
 
+    /// A Calendar API delete that does not answer within the deadline falls
+    /// back to CalDAV like a failed one.
+    #[tokio::test]
+    async fn a_slow_api_delete_falls_back_to_caldav() {
+        let fake = std::sync::Arc::new(FakeGoogle::slow_deletes(std::time::Duration::from_secs(5)));
+        fake.insert(
+            CAL,
+            "guests@calrs",
+            "ev1",
+            vec![json!({"email": "jane@example.com"})],
+        );
+        let (base, server) = super::fake::serve(fake.clone()).await;
+        let client = crate::caldav::CaldavClient::with_bearer(&base, "test-token");
+        let api_base = format!("{base}/api");
+        let mut api = EventsApi::new(&api_base, "test-token", CAL);
+        api.deadline = std::time::Duration::from_millis(300);
+        let started = std::time::Instant::now();
+        delete_event_without_cancellations(&client, &api, HREF, "guests@calrs")
+            .await
+            .unwrap();
+        assert!(started.elapsed() < std::time::Duration::from_secs(3));
+        server.abort();
+        assert!(
+            log(&fake)
+                .iter()
+                .any(|e| e
+                    .starts_with("DELETE /caldav/v2/host%40example.com/events/guests@calrs.ics"))
+        );
+    }
+
+    /// Without the API, an event that lists only the calendar's owner or
+    /// its organizer has no guests to lose, and is rewritten.
+    #[tokio::test]
+    async fn without_the_api_the_owner_alone_is_no_guest() {
+        let fake = std::sync::Arc::new(FakeGoogle::without_api());
+        fake.insert(
+            CAL,
+            "owner@calrs",
+            "ev1",
+            vec![json!({"email": "Host@Example.com"})],
+        );
+        let (client, server) = serve_fake(fake.clone()).await;
+        client
+            .put_event(HREF, "owner@calrs", &booking_ics("owner@calrs"))
+            .await
+            .unwrap();
+        server.abort();
+        assert!(log(&fake)
+            .iter()
+            .any(|e| e.starts_with("PUT ") && e.contains("owner@calrs")));
+        let ics = "BEGIN:VEVENT\r\nORGANIZER:mailto:boss@example.com\r\nATTENDEE:mailto:boss@example.com\r\nATTENDEE:mailto:host@example.com\r\nEND:VEVENT\r\n";
+        assert!(!lists_guests(ics, CAL));
+        let with_guest = ics.replace(
+            "END:VEVENT",
+            "ATTENDEE:mailto:jane@example.com\r\nEND:VEVENT",
+        );
+        assert!(lists_guests(&with_guest, CAL));
+    }
+
     /// One address Google refuses does not cost the guest their place on
     /// the event: they are added alone.
     #[tokio::test]
@@ -1658,6 +1741,8 @@ pub(crate) mod fake {
         rejected_attendee: Option<&'static str>,
         /// This many updates that add attendees answer 503 first.
         failing_adds: AtomicU32,
+        /// Calendar API deletes (only) wait this long first.
+        delete_delay: Option<std::time::Duration>,
     }
 
     /// Google's answer when the Calendar API is not enabled in the project.
@@ -1676,6 +1761,14 @@ pub(crate) mod fake {
         pub(crate) fn slow(delay: std::time::Duration) -> Self {
             Self {
                 api_delay: Some(delay),
+                ..Default::default()
+            }
+        }
+
+        /// A Google whose Calendar API deletes take `delay`.
+        pub(crate) fn slow_deletes(delay: std::time::Duration) -> Self {
+            Self {
+                delete_delay: Some(delay),
                 ..Default::default()
             }
         }
@@ -1805,6 +1898,9 @@ pub(crate) mod fake {
             };
         }
         if let Some(delay) = fake.api_delay {
+            tokio::time::sleep(delay).await;
+        }
+        if let (Some(delay), "DELETE") = (fake.delete_delay, method.as_str()) {
             tokio::time::sleep(delay).await;
         }
         if let Some((status, body)) = fake.api_failure {

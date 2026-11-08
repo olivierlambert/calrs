@@ -514,3 +514,68 @@ async fn the_attendee_copy_carries_no_guest_phone() {
     assert!(!put_to("alice%40google.test").contains("612345678"));
     assert!(put_to("bob%40google.test").contains("612345678"));
 }
+
+/// A fresh push runs inside the booking request: once its time budget is
+/// spent, the hosts left are recorded as failed and written by the retry.
+#[tokio::test]
+async fn a_fresh_push_leaves_hosts_past_its_budget_to_the_retry() {
+    let pool = setup_test_db().await;
+    let alice = insert_role_user(&pool, "alice@google.test", "user").await;
+    let bob = insert_role_user(&pool, "bob@google.test", "user").await;
+    let (_, et_id) = insert_team_with_et(
+        &pool,
+        "g237budget",
+        "g237budget-et",
+        &[(&alice, "member"), (&bob, "member")],
+    )
+    .await;
+    sqlx::query("UPDATE event_types SET scheduling_mode = 'collective' WHERE id = ?")
+        .bind(&et_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let google = Arc::new(FakeGoogle::default());
+    let (base, server) = fake::serve(google.clone()).await;
+    google_source(&pool, "src-a", &alice, &base, "alice@google.test").await;
+    google_source(&pool, "src-b", &bob, &base, "bob@google.test").await;
+    insert_booking(&pool, &et_id, None, start(), "confirmed").await;
+    let uid = only_booking_uid(&pool, &et_id).await;
+
+    let failures = super::super::writeback::push_and_record_within(
+        &pool,
+        &KEY,
+        &alice,
+        &uid,
+        &details(&uid),
+        super::super::writeback::PushKind::Fresh,
+        std::time::Duration::ZERO,
+    )
+    .await;
+    assert_eq!(failures.len(), 1, "{failures:?}");
+    let written = ["alice@google.test", "bob@google.test"]
+        .iter()
+        .filter(|c| google.attendees(c, &uid).is_some())
+        .count();
+    assert_eq!(written, 1);
+    let error: Option<String> =
+        sqlx::query_scalar("SELECT writeback_error FROM bookings WHERE uid = ?")
+            .bind(&uid)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(error.is_some_and(|e| e.contains("retries")));
+
+    let failures = super::super::writeback::push_and_record(
+        &pool,
+        &KEY,
+        &alice,
+        &uid,
+        &details(&uid),
+        super::super::writeback::PushKind::Retry,
+    )
+    .await;
+    server.abort();
+    assert!(failures.is_empty(), "{failures:?}");
+    assert!(google.attendees("alice@google.test", &uid).is_some());
+    assert!(google.attendees("bob@google.test", &uid).is_some());
+}

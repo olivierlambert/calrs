@@ -75,9 +75,46 @@ pub(super) async fn push_and_record(
     details: &crate::email::BookingDetails,
     kind: PushKind,
 ) -> Vec<(String, String)> {
+    push_and_record_within(
+        pool,
+        key,
+        user_id,
+        booking_uid,
+        details,
+        kind,
+        INLINE_PUSH_BUDGET,
+    )
+    .await
+}
+
+/// How long a fresh push, which runs inside a booking request, keeps
+/// writing to further hosts' calendars (each Google one may wait on the
+/// Calendar API). The hosts left once it is spent are recorded as failed
+/// and written by the write-back retry a few minutes later.
+pub(super) const INLINE_PUSH_BUDGET: std::time::Duration = std::time::Duration::from_secs(45);
+
+/// [`push_and_record`] with a time budget for a fresh push: past it, the
+/// remaining hosts are left to the retry. The first host is always written.
+pub(super) async fn push_and_record_within(
+    pool: &SqlitePool,
+    key: &[u8; 32],
+    user_id: &str,
+    booking_uid: &str,
+    details: &crate::email::BookingDetails,
+    kind: PushKind,
+    budget: std::time::Duration,
+) -> Vec<(String, String)> {
     let mut failures = Vec::new();
     let targets = super::booking_write_targets(pool, booking_uid, user_id).await;
-    for target in &targets {
+    let started = std::time::Instant::now();
+    for (i, target) in targets.iter().enumerate() {
+        if kind == PushKind::Fresh && i > 0 && started.elapsed() >= budget {
+            failures.push((
+                target.clone(),
+                "not written yet: the calendar writes of this booking took too long, the write-back retries".to_string(),
+            ));
+            continue;
+        }
         // The only host-language text in the event is the phone label, and
         // each copy belongs to its target: every collective member reads it
         // in their own language, and a caller that left `host_language`
