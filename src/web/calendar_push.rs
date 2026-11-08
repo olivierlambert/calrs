@@ -202,9 +202,13 @@ pub(super) async fn push_to_sources(
         CopyOwner::Host if writes_to_google => {
             let holder = crate::google_calendar::attendee_copy_holder(pool, booking_uid).await;
             if holder.as_deref() == Some(user_id) {
+                // The rule the Meet source follows (`google_meet`): a token,
+                // and a write calendar, so guests and Meet share one copy.
                 sources
                     .iter()
                     .filter(|row| is_google(&row.5, row.9.as_deref()))
+                    .filter(|row| row.6.as_deref().is_some_and(|t| !t.is_empty()))
+                    .filter(|row| !row.4.trim().is_empty())
                     .map(|row| row.0.clone())
                     .min()
             } else {
@@ -359,12 +363,7 @@ pub(super) async fn push_to_sources(
                             .ensure_google_attendees(calendar_href, booking_uid, &attendee_ics)
                             .await
                     }
-                    // Not a write that failed: the check cannot run, and the
-                    // time patch above reports what credentials break.
-                    Err(e) => {
-                        tracing::warn!(uid = %booking_uid, error = format!("{e:#}"), "google meet: could not check the Meet event's attendees");
-                        Ok(())
-                    }
+                    Err(e) => Err(e),
                 };
                 if let Err(e) = ensured {
                     tracing::warn!(uid = %booking_uid, error = format!("{e:#}"), "google meet: the Meet event still lacks its attendees");
@@ -550,7 +549,7 @@ async fn caldav_delete_for_user(
         {
             continue;
         }
-        delete_from(pool, key, &row, booking_uid).await;
+        delete_from(pool, key, &row, booking_uid, DeleteKind::Ended).await;
     }
 
     // Remove cached event

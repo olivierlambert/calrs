@@ -135,7 +135,19 @@ pub(super) async fn push_and_record_within(
     let _guard = lock.lock().await;
 
     let mut failures = Vec::new();
-    let targets = super::booking_write_targets(pool, booking_uid, user_id).await;
+    let mut targets = super::booking_write_targets(pool, booking_uid, user_id).await;
+    // The holder of the Google attendee copy writes first (#237): a calendar
+    // two hosts share then holds the holder's copy, with the guests, and
+    // the others skip it below rather than clear and rewrite it.
+    if let Some(holder) = crate::google_calendar::attendee_copy_holder(pool, booking_uid).await {
+        if let Some(i) = targets.iter().position(|t| *t == holder) {
+            let holder = targets.remove(i);
+            targets.insert(0, holder);
+        }
+    }
+    // Collections an earlier host of this push wrote: one event per
+    // collection, so a shared calendar is written once.
+    let mut written_collections: Vec<super::Collection> = Vec::new();
     // Read before anything is written: whether earlier copies may need to
     // move once this push has landed (#47).
     let was_written = super::was_written(pool, booking_uid).await;
@@ -184,7 +196,7 @@ pub(super) async fn push_and_record_within(
             booking_uid,
             details,
             owner,
-            &[],
+            &written_collections,
             &sources,
             plan,
         )
@@ -214,7 +226,7 @@ pub(super) async fn push_and_record_within(
                         booking_uid,
                         details,
                         owner,
-                        &[],
+                        &written_collections,
                         &sources,
                         plan,
                     )
@@ -223,6 +235,9 @@ pub(super) async fn push_and_record_within(
             } else if pushed.is_empty() {
                 super::clear_refusal(pool, booking_uid, target).await;
             }
+        }
+        if pushed.is_empty() {
+            written_collections.extend(sources.iter().map(super::row_collection));
         }
         pushed_ok.push(pushed.is_empty());
         for failure in pushed {

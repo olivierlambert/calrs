@@ -664,3 +664,263 @@ async fn write_destinations_follow_the_one_attendee_copy_rule() {
         .iter()
         .any(|e| e.starts_with("DELETE /api/calendars/alice-team%40google.test/events/")));
 }
+
+/// A chosen Google destination that was deleted is refused for good, so
+/// the write goes to the source setting at once, with the guests, instead
+/// of eight retries and an alert.
+#[tokio::test]
+async fn a_deleted_google_destination_falls_back_to_the_source_setting() {
+    let pool = setup_test_db().await;
+    let alice = insert_role_user(&pool, "alice@google.test", "user").await;
+    let et_id = insert_personal_et(&pool, &alice, "g237gone").await;
+    let google = Arc::new(FakeGoogle::default());
+    let (base, server) = fake::serve(google.clone()).await;
+    google_source(&pool, "src-a", &alice, &base, "alice@google.test").await;
+    choose_destination(&pool, &et_id, &alice, "src-a", "alice-gone@google.test").await;
+    google.remove_calendar("alice-gone@google.test");
+    insert_booking(&pool, &et_id, None, start(), "confirmed").await;
+    let uid = only_booking_uid(&pool, &et_id).await;
+
+    caldav_push_booking(&pool, &KEY, &alice, &uid, &details(&uid)).await;
+    server.abort();
+    assert_eq!(google.attendees("alice@google.test", &uid), Some(guests()));
+    let error: Option<String> =
+        sqlx::query_scalar("SELECT writeback_error FROM bookings WHERE uid = ?")
+            .bind(&uid)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(error, None);
+}
+
+/// Two collective members writing to one shared Google calendar: the
+/// holder writes it, with the guests, and the other member skips it rather
+/// than clear and rewrite it, on the first push and on a retry.
+#[tokio::test]
+async fn a_shared_google_calendar_is_written_once_with_the_guests() {
+    let pool = setup_test_db().await;
+    let alice = insert_role_user(&pool, "alice@google.test", "user").await;
+    let bob = insert_role_user(&pool, "bob@google.test", "user").await;
+    let (_, et_id) = insert_team_with_et(
+        &pool,
+        "g237shared",
+        "g237shared-et",
+        &[(&alice, "member"), (&bob, "member")],
+    )
+    .await;
+    sqlx::query("UPDATE event_types SET scheduling_mode = 'collective' WHERE id = ?")
+        .bind(&et_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let google = Arc::new(FakeGoogle::default());
+    let (base, server) = fake::serve(google.clone()).await;
+    google_source(&pool, "src-a", &alice, &base, "team@google.test").await;
+    google_source(&pool, "src-b", &bob, &base, "team@google.test").await;
+    insert_booking(&pool, &et_id, None, start(), "confirmed").await;
+    let uid = only_booking_uid(&pool, &et_id).await;
+    // Bob holds the attendee copy: he must write first whatever the order.
+    sqlx::query("UPDATE bookings SET organizer_user_id = ? WHERE uid = ?")
+        .bind(&bob)
+        .bind(&uid)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    caldav_push_booking(&pool, &KEY, &alice, &uid, &details(&uid)).await;
+    assert_eq!(google.attendees("team@google.test", &uid), Some(guests()));
+    let failures = super::super::writeback::push_and_record(
+        &pool,
+        &KEY,
+        &alice,
+        &uid,
+        &details(&uid),
+        super::super::writeback::PushKind::Retry,
+    )
+    .await;
+    server.abort();
+    assert!(failures.is_empty(), "{failures:?}");
+    assert_eq!(google.attendees("team@google.test", &uid), Some(guests()));
+    let log = google.log();
+    assert_nothing_announced(&log);
+    let puts = log
+        .iter()
+        .filter(|e| e.starts_with("PUT /caldav/v2/team%40google.test/"))
+        .count();
+    assert_eq!(puts, 2, "one write per push: {log:#?}");
+}
+
+/// The same with a Google Meet: the Meet event on the shared calendar is
+/// never rewritten (which would strip the conference) and keeps its guests.
+#[tokio::test]
+async fn a_shared_google_calendar_keeps_its_meet_event() {
+    let pool = setup_test_db().await;
+    let alice = insert_role_user(&pool, "alice@google.test", "user").await;
+    let bob = insert_role_user(&pool, "bob@google.test", "user").await;
+    let (_, et_id) = insert_team_with_et(
+        &pool,
+        "g237sharedmeet",
+        "g237sharedmeet-et",
+        &[(&alice, "member"), (&bob, "member")],
+    )
+    .await;
+    sqlx::query(
+        "UPDATE event_types SET scheduling_mode = 'collective', location_type = ? WHERE id = ?",
+    )
+    .bind(crate::google_meet::LOCATION_TYPE)
+    .bind(&et_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let google = Arc::new(FakeGoogle::default());
+    let (base, server) = fake::serve(google.clone()).await;
+    google_source(&pool, "src-a", &alice, &base, "team@google.test").await;
+    google_source(&pool, "src-b", &bob, &base, "team@google.test").await;
+    insert_booking(&pool, &et_id, None, start(), "confirmed").await;
+    let uid = only_booking_uid(&pool, &et_id).await;
+    sqlx::query("UPDATE bookings SET organizer_user_id = ?, meeting_url = ? WHERE uid = ?")
+        .bind(&bob)
+        .bind("https://meet.google.com/aaa-bbbb-ccc")
+        .bind(&uid)
+        .execute(&pool)
+        .await
+        .unwrap();
+    google.insert("team@google.test", &uid, "ev-meet", guests());
+
+    caldav_push_booking(&pool, &KEY, &alice, &uid, &details(&uid)).await;
+    server.abort();
+    assert_eq!(google.attendees("team@google.test", &uid), Some(guests()));
+    let log = google.log();
+    assert_nothing_announced(&log);
+    assert!(!log.iter().any(|e| e.starts_with("PUT ")), "{log:#?}");
+}
+
+/// A copy released because the booking moved (#47) is never deleted over
+/// CalDAV when the Calendar API cannot delete it (Google would mail the
+/// guests a cancellation): it stays recorded, and the background sweep
+/// deletes it quietly once the API answers.
+#[tokio::test]
+async fn a_failed_release_is_retried_quietly_by_the_sweep() {
+    let pool = setup_test_db().await;
+    let alice = insert_role_user(&pool, "alice@google.test", "user").await;
+    let et_id = insert_personal_et(&pool, &alice, "g237release").await;
+    let google = Arc::new(FakeGoogle::default());
+    let (base, server) = fake::serve(google.clone()).await;
+    google_source(&pool, "src-a", &alice, &base, "alice@google.test").await;
+    choose_destination(&pool, &et_id, &alice, "src-a", "alice-team@google.test").await;
+    // Ahead: the sweep drops the copies of bookings that are over.
+    let ahead = (Utc::now() + Duration::days(30)).naive_utc();
+    insert_booking(&pool, &et_id, None, ahead, "confirmed").await;
+    let uid = only_booking_uid(&pool, &et_id).await;
+    caldav_push_booking(&pool, &KEY, &alice, &uid, &details(&uid)).await;
+    assert_eq!(
+        google.attendees("alice-team@google.test", &uid),
+        Some(guests())
+    );
+
+    sqlx::query("DELETE FROM event_type_write_targets WHERE user_id = ?")
+        .bind(&alice)
+        .execute(&pool)
+        .await
+        .unwrap();
+    google.fail_deletes(Some(503));
+    caldav_push_booking(&pool, &KEY, &alice, &uid, &details(&uid)).await;
+    assert_eq!(google.attendees("alice@google.test", &uid), Some(guests()));
+    assert_eq!(
+        google.attendees("alice-team@google.test", &uid),
+        Some(guests())
+    );
+    assert!(!google
+        .log()
+        .iter()
+        .any(|e| e.starts_with("DELETE /caldav/")));
+    let pending: (i64, Option<String>) = sqlx::query_as(
+        "SELECT delete_attempts, next_delete_at FROM booking_write_copies \
+         WHERE booking_uid = ? AND calendar_href LIKE '%alice-team%'",
+    )
+    .bind(&uid)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(pending.0 > 0 && pending.1.is_some(), "{pending:?}");
+
+    google.fail_deletes(None);
+    let tried = super::super::write_targets::sweep_leftover_copies(
+        &pool,
+        &KEY,
+        Utc::now() + Duration::hours(1),
+    )
+    .await;
+    server.abort();
+    assert_eq!(tried, 1);
+    assert_eq!(google.attendees("alice-team@google.test", &uid), None);
+    assert_eq!(google.attendees("alice@google.test", &uid), Some(guests()));
+    let log = google.log();
+    assert_nothing_announced(&log);
+    assert!(log
+        .iter()
+        .any(|e| e.starts_with("DELETE /api/calendars/alice-team%40google.test/events/")));
+}
+
+/// When the Meet event's attendees cannot be checked (the source's client
+/// cannot be built), the push records a failure for the retry.
+#[tokio::test]
+async fn an_unchecked_meet_event_is_a_failure_to_retry() {
+    let pool = setup_test_db().await;
+    let alice = insert_role_user(&pool, "alice@google.test", "user").await;
+    let et_id = insert_personal_et(&pool, &alice, "g237meetcheck").await;
+    sqlx::query("UPDATE event_types SET location_type = ? WHERE id = ?")
+        .bind(crate::google_meet::LOCATION_TYPE)
+        .bind(&et_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let google = Arc::new(FakeGoogle::default());
+    let (base, server) = fake::serve(google.clone()).await;
+    google_source(&pool, "src-a", &alice, &base, "alice@google.test").await;
+    sqlx::query("UPDATE caldav_sources SET access_token_enc = 'unopenable' WHERE id = 'src-a'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    insert_booking(&pool, &et_id, None, start(), "confirmed").await;
+    let uid = only_booking_uid(&pool, &et_id).await;
+    sqlx::query("UPDATE bookings SET meeting_url = ? WHERE uid = ?")
+        .bind("https://meet.google.com/aaa-bbbb-ccc")
+        .bind(&uid)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    caldav_push_booking(&pool, &KEY, &alice, &uid, &details(&uid)).await;
+    server.abort();
+    let error: Option<String> =
+        sqlx::query_scalar("SELECT writeback_error FROM bookings WHERE uid = ?")
+            .bind(&uid)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(error.is_some());
+}
+
+/// The attendee copy follows the rule the Meet source does: a source
+/// without a token is passed over, so guests and a Meet land together.
+#[tokio::test]
+async fn the_attendee_copy_skips_a_google_source_without_a_token() {
+    let pool = setup_test_db().await;
+    let alice = insert_role_user(&pool, "alice@google.test", "user").await;
+    let et_id = insert_personal_et(&pool, &alice, "g237token").await;
+    let google = Arc::new(FakeGoogle::default());
+    let (base, server) = fake::serve(google.clone()).await;
+    google_source(&pool, "src-a0", &alice, &base, "alice-old@google.test").await;
+    google_source(&pool, "src-a1", &alice, &base, "alice@google.test").await;
+    sqlx::query("UPDATE caldav_sources SET access_token_enc = '' WHERE id = 'src-a0'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    insert_booking(&pool, &et_id, None, start(), "confirmed").await;
+    let uid = only_booking_uid(&pool, &et_id).await;
+
+    caldav_push_booking(&pool, &KEY, &alice, &uid, &details(&uid)).await;
+    server.abort();
+    assert_eq!(google.attendees("alice@google.test", &uid), Some(guests()));
+}

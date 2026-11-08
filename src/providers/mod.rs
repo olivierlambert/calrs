@@ -97,6 +97,13 @@ pub trait CalendarProvider: Send + Sync {
     /// Delete an event by UID.
     async fn delete_event(&self, calendar_id: &str, uid: &str) -> Result<()>;
 
+    /// Delete the copy of a booking that moved to another calendar (#47).
+    /// A provider that may notify attendees when its quiet path fails
+    /// (Google) returns the error instead, for a later try; others delete.
+    async fn release_event(&self, calendar_id: &str, uid: &str) -> Result<()> {
+        self.delete_event(calendar_id, uid).await
+    }
+
     /// Whether an event with this UID can be read back from the calendar.
     ///
     /// `Ok(true)` when the server confirms it is there, `Ok(false)` when the

@@ -1800,6 +1800,8 @@ pub(crate) async fn cancel_orphaned_bookings(
 /// sync that skips it, which also clears whatever a sync already in flight
 /// when it was turned off wrote back.
 async fn forget_calendar_events(pool: &SqlitePool, cal_id: &str) {
+    // Out-of-office rows go too: the next sync must fetch them again.
+    crate::google_calendar::forget_refresh(cal_id);
     let _ = sqlx::query("DELETE FROM events WHERE calendar_id = ?")
         .bind(cal_id)
         .execute(pool)

@@ -601,6 +601,30 @@ impl CaldavClient {
                     &crate::google_calendar::EventsApi::new(api_base, token, &calendar_id),
                     calendar_href,
                     uid,
+                    crate::google_calendar::DeleteFallback::CalDav,
+                )
+                .await;
+            }
+        }
+        self.delete_event_raw(calendar_href, uid).await
+    }
+
+    /// Delete a copy of a booking that moved elsewhere (#47). Like
+    /// `delete_event`, except that on Google an event with attendees the
+    /// Calendar API cannot delete is left for a later try rather than
+    /// deleted over CalDAV, which would have Google mail a cancellation of
+    /// a meeting that still takes place.
+    pub(crate) async fn release_event(&self, calendar_href: &str, uid: &str) -> Result<()> {
+        if let Some((api_base, token)) = self.google_calendar_api() {
+            if let Some(calendar_id) =
+                crate::google_meet::calendar_id_from_caldav_href(calendar_href)
+            {
+                return crate::google_calendar::delete_event_without_cancellations(
+                    self,
+                    &crate::google_calendar::EventsApi::new(api_base, token, &calendar_id),
+                    calendar_href,
+                    uid,
+                    crate::google_calendar::DeleteFallback::Retry,
                 )
                 .await;
             }
