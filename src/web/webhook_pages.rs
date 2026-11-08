@@ -104,6 +104,7 @@ async fn may_manage_webhook(
 
 /// The checks every POST shares: CSRF, the admin switch, and for an existing
 /// endpoint the right to manage it.
+#[allow(clippy::result_large_err)]
 async fn guard(
     state: &AppState,
     headers: &HeaderMap,
