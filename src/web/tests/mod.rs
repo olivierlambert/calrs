@@ -54,10 +54,18 @@ fn dt(y: i32, m: u32, d: u32, h: u32, mi: u32) -> NaiveDateTime {
 // --- Integration tests with in-memory SQLite ---
 
 async fn setup_test_db() -> SqlitePool {
+    setup_test_db_with(2).await
+}
+
+/// [`setup_test_db`] with a pool of `connections`. A booking core holds one
+/// connection for its transaction and reads on another, so a test running
+/// more concurrent bookings than the pool can serve would wait out sqlx's
+/// 30 second acquire timeout for each, over and over.
+async fn setup_test_db_with(connections: u32) -> SqlitePool {
     use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
     use std::str::FromStr;
     let pool = SqlitePoolOptions::new()
-        .max_connections(2)
+        .max_connections(connections)
         .connect_with(
             SqliteConnectOptions::from_str("sqlite::memory:")
                 .unwrap()
@@ -321,7 +329,12 @@ use http_body_util::BodyExt;
 use tower::ServiceExt;
 
 async fn setup_test_app() -> (Router, SqlitePool, String, String) {
-    let pool = setup_test_db().await;
+    setup_test_app_with(2).await
+}
+
+/// [`setup_test_app`] over a pool of `connections` (see [`setup_test_db_with`]).
+async fn setup_test_app_with(connections: u32) -> (Router, SqlitePool, String, String) {
+    let pool = setup_test_db_with(connections).await;
     let (user_id, _account_id, et_id) = seed_test_data(&pool).await;
 
     // Create a session for the test user
