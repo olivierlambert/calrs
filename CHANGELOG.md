@@ -190,7 +190,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Security
 
-- **A new account can no longer take over an existing one** - When a user was created (registration, single sign-on auto-registration or `calrs user create`), calrs gave them any scheduling account stored under the same email address, even one that already belonged to another user. The address stored on an account is the one it was created with and does not follow later changes, for instance when someone's address changes at the identity provider, so registering an address its former owner no longer used could take over that owner's event types, bookings and calendars. A new user now only adopts an account that has no user yet (as left by very old single-user installs), and otherwise gets an account of their own.
+- **New users always get a scheduling account of their own** - Under certain conditions, a new user (registration, single sign-on auto-registration or `calrs user create`) could be attached to an existing user's scheduling account, with its event types, bookings and calendars. A new user now always gets a new account. At startup, an account left without a user is only linked to a user with the same address who has no account yet; otherwise it stays unlinked and a warning names it in the log for the administrator to review. A single sign-on login that changes a user's address now also updates the copy kept on their account. Registration also stores the email address without surrounding spaces.
 
 ## [2.0.0-beta.2] - 2026-11-07
 

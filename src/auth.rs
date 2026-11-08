@@ -500,69 +500,98 @@ pub(crate) async fn create_local_user<'e, E: sqlx::SqliteExecutor<'e>>(
     .context("user insert returned no role")
 }
 
-/// Give a user that was just created its scheduling account, and return the
-/// account id. A legacy single-tenant account with no user yet and the same
-/// address (compared trimmed and case-insensitively) is adopted; otherwise a
-/// new account is created. An account that already belongs to someone is
-/// never handed over, whatever its stored address: `accounts.email` is the
-/// address the account was created with and is not kept in step with
-/// `users.email`, so a match says nothing about who owns the address today.
-/// Nothing reads it besides this function, the startup adoption of orphaned
-/// accounts and `calrs config export`.
-/// Run it in the transaction that inserted the user.
-pub(crate) async fn attach_account(
+/// Give a user that was just created a scheduling account of its own, and
+/// return the account id. An existing account is never handed over, whatever
+/// address it carries: owned accounts belong to their user, and an unowned one
+/// is either a legacy account that `db::migrate` has already given its own
+/// user, or one orphaned by a user removed outside calrs, whose data must not
+/// go to whoever registers its old address next. Run it in the transaction
+/// that inserted the user.
+///
+/// `accounts.email` is unique and only informative: nothing reads it besides
+/// the startup migration of orphaned accounts and `calrs config export`. An
+/// owned account still holding the new user's address has a stale copy (its
+/// owner's address changed since); it gets its owner's current address, or
+/// the placeholder [`placeholder_account_email`] when another account holds
+/// that one. An unowned account keeps its address, which is how the operator
+/// recognises it, and the new account gets the placeholder instead.
+pub(crate) async fn create_user_account(
     conn: &mut sqlx::SqliteConnection,
     user_id: &str,
     name: &str,
     email: &str,
 ) -> Result<String> {
-    let legacy: Option<String> = sqlx::query_scalar(
-        "SELECT id FROM accounts
-         WHERE user_id IS NULL AND lower(trim(email)) = lower(trim(?))
-         ORDER BY created_at, id LIMIT 1",
+    let holders: Vec<(String, Option<String>)> = sqlx::query_as(
+        "SELECT a.id, u.email FROM accounts a LEFT JOIN users u ON u.id = a.user_id
+         WHERE a.email = ?",
     )
     .bind(email)
-    .fetch_optional(&mut *conn)
-    .await?;
-    if let Some(account_id) = legacy {
-        let adopted = sqlx::query(
-            "UPDATE accounts SET user_id = ?, name = ? WHERE id = ? AND user_id IS NULL",
-        )
-        .bind(user_id)
-        .bind(name)
-        .bind(&account_id)
-        .execute(&mut *conn)
-        .await?;
-        if adopted.rows_affected() == 1 {
-            tracing::info!(user_id = %user_id, account_id = %account_id, "adopted unowned account");
-            return Ok(account_id);
-        }
-    }
-    // `accounts.email` is unique. An owned account still holding this address
-    // has a stale copy (its owner's address changed since): give it its
-    // owner's current one, which no other user can hold, so the new account
-    // can take the address without touching anything else of the old one.
-    sqlx::query(
-        "UPDATE accounts
-         SET email = (SELECT u.email FROM users u WHERE u.id = accounts.user_id),
-             updated_at = datetime('now')
-         WHERE email = ? AND user_id IS NOT NULL AND user_id != ?",
-    )
-    .bind(email)
-    .bind(user_id)
-    .execute(&mut *conn)
+    .fetch_all(&mut *conn)
     .await?;
     let account_id = uuid::Uuid::new_v4().to_string();
+    let mut own_email = email.to_string();
+    for (holder_id, owner_email) in holders {
+        let Some(owner_email) = owner_email else {
+            own_email = placeholder_account_email(&account_id);
+            continue;
+        };
+        let taken: bool =
+            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM accounts WHERE email = ? AND id != ?)")
+                .bind(&owner_email)
+                .bind(&holder_id)
+                .fetch_one(&mut *conn)
+                .await?;
+        let replacement = if taken {
+            placeholder_account_email(&holder_id)
+        } else {
+            owner_email
+        };
+        sqlx::query("UPDATE accounts SET email = ?, updated_at = datetime('now') WHERE id = ?")
+            .bind(&replacement)
+            .bind(&holder_id)
+            .execute(&mut *conn)
+            .await?;
+    }
     sqlx::query(
         "INSERT INTO accounts (id, name, email, timezone, user_id) VALUES (?, ?, ?, 'UTC', ?)",
     )
     .bind(&account_id)
     .bind(name)
-    .bind(email)
+    .bind(&own_email)
     .bind(user_id)
     .execute(&mut *conn)
     .await?;
     Ok(account_id)
+}
+
+/// Stand-in for `accounts.email` when the real address is held by another
+/// account. Unique by construction (it embeds the account id), and `.invalid`
+/// is reserved (RFC 2606), so it can never be anyone's address.
+pub(crate) fn placeholder_account_email(account_id: &str) -> String {
+    format!("account-{account_id}@invalid")
+}
+
+/// Follow a change of `users.email` on the user's account, unless another
+/// account holds the new address (then the old copy stays, harmlessly).
+async fn sync_account_email(
+    conn: &mut sqlx::SqliteConnection,
+    user_id: &str,
+    email: &str,
+) -> Result<()> {
+    sqlx::query(
+        "UPDATE accounts SET email = ?, updated_at = datetime('now')
+         WHERE user_id = ? AND email != ?
+           AND id = (SELECT id FROM accounts WHERE user_id = ? ORDER BY created_at, id LIMIT 1)
+           AND NOT EXISTS (SELECT 1 FROM accounts WHERE email = ?)",
+    )
+    .bind(email)
+    .bind(user_id)
+    .bind(email)
+    .bind(user_id)
+    .bind(email)
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
 }
 
 // --- Axum extractors ---
@@ -928,7 +957,7 @@ async fn register_handler(
     }
 
     // Validate email domain
-    if !is_email_allowed(&form.email, &auth_config.allowed_email_domains) {
+    if !is_email_allowed(email, &auth_config.allowed_email_domains) {
         return render_register_error(&state, lang, "auth-error-email-domain", &auth_config);
     }
 
@@ -939,7 +968,7 @@ async fn register_handler(
 
     // Check if email already taken
     let existing: Option<(String,)> = sqlx::query_as("SELECT id FROM users WHERE email = ?")
-        .bind(&form.email)
+        .bind(email)
         .fetch_optional(&state.pool)
         .await
         .unwrap_or(None);
@@ -954,7 +983,7 @@ async fn register_handler(
     };
 
     let user_id = uuid::Uuid::new_v4().to_string();
-    let username = match generate_username(&state.pool, &form.email).await {
+    let username = match generate_username(&state.pool, email).await {
         Ok(u) => u,
         Err(_) => return render_register_error(&state, lang, "auth-error-internal", &auth_config),
     };
@@ -967,14 +996,14 @@ async fn register_handler(
         create_local_user(
             &mut *tx,
             &user_id,
-            &form.email,
+            email,
             &form.name,
             &password_hash,
             &username,
             false,
         )
         .await?;
-        attach_account(&mut tx, &user_id, &form.name, &form.email).await?;
+        create_user_account(&mut tx, &user_id, &form.name, email).await?;
         tx.commit().await?;
         anyhow::Ok(())
     }
@@ -988,7 +1017,7 @@ async fn register_handler(
     let Some(user) = get_user_by_id(&state.pool, &user_id).await else {
         return Redirect::to("/auth/login").into_response();
     };
-    tracing::info!(email = %form.email, "user registered");
+    tracing::info!(email = %email, "user registered");
     match crate::mfa::begin_login(&state.pool, &state.secret_key, &user, false).await {
         Ok(result) => crate::mfa::login_response(result),
         Err(e) => crate::web::internal_error_response("registration login", &e),
@@ -1527,14 +1556,17 @@ async fn find_or_create_oidc_user(
     .await?
     {
         // Update email in case it changed on the IdP; only update name if currently empty
+        let mut tx = pool.begin().await?;
         sqlx::query(
             "UPDATE users SET name = CASE WHEN name IS NULL OR name = '' THEN ? ELSE name END, email = ?, updated_at = datetime('now') WHERE id = ?",
         )
         .bind(name)
         .bind(email)
         .bind(&id)
-        .execute(pool)
+        .execute(&mut *tx)
         .await?;
+        sync_account_email(&mut tx, &id, email).await?;
+        tx.commit().await?;
         return Ok(id);
     }
 
@@ -1629,7 +1661,7 @@ async fn find_or_create_oidc_user(
     .bind(&username)
     .execute(&mut *tx)
     .await?;
-    attach_account(&mut tx, &user_id, name, email).await?;
+    create_user_account(&mut tx, &user_id, name, email).await?;
     tx.commit().await?;
 
     Ok(user_id)
@@ -3487,58 +3519,123 @@ mod tests {
         assert_eq!(et_account, victim_account);
     }
 
-    #[tokio::test]
-    async fn oidc_auto_register_adopts_a_legacy_account_without_a_user() {
-        let pool = setup_db().await;
-        let cfg = auth_config_with_oidc(&pool, true).await;
-        let legacy = uuid::Uuid::new_v4().to_string();
-        sqlx::query(
-            "INSERT INTO accounts (id, name, email, timezone) VALUES (?, 'L', 'Legacy@Co.com', 'UTC')",
-        )
-        .bind(&legacy)
-        .execute(&pool)
-        .await
-        .unwrap();
-        let user = find_or_create_oidc_user(&pool, "sub", "legacy@co.com", true, "L", &cfg)
+    async fn account_email(pool: &SqlitePool, account_id: &str) -> String {
+        sqlx::query_scalar("SELECT email FROM accounts WHERE id = ?")
+            .bind(account_id)
+            .fetch_one(pool)
             .await
-            .unwrap();
-        assert_eq!(account_of(&pool, &user).await, legacy);
+            .unwrap()
     }
 
     #[tokio::test]
-    async fn attach_account_skips_owned_accounts_and_matches_case_insensitively() {
+    async fn oidc_auto_register_never_hands_over_an_unowned_account() {
         let pool = setup_db().await;
-        let (owner, owned) = insert_user_with_account(&pool, "a@co.com", "A", "user").await;
+        let cfg = auth_config_with_oidc(&pool, true).await;
         let orphan = uuid::Uuid::new_v4().to_string();
         sqlx::query(
-            "INSERT INTO accounts (id, name, email, timezone) VALUES (?, 'O', ' B@Co.com ', 'UTC')",
+            "INSERT INTO accounts (id, name, email, timezone) VALUES (?, 'O', 'gone@co.com', 'UTC')",
         )
         .bind(&orphan)
         .execute(&pool)
         .await
         .unwrap();
-
-        // An owned account with the same address is left alone.
-        let first = insert_user(&pool, "x@co.com", "X", "user").await;
-        let mut conn = pool.acquire().await.unwrap();
-        let created = attach_account(&mut conn, &first, "X", "A@co.com")
+        let user = find_or_create_oidc_user(&pool, "sub", "gone@co.com", true, "N", &cfg)
             .await
             .unwrap();
+        let own = account_of(&pool, &user).await;
+        assert_ne!(own, orphan);
+        assert_eq!(
+            account_email(&pool, &own).await,
+            placeholder_account_email(&own)
+        );
+        let owner: Option<String> = sqlx::query_scalar("SELECT user_id FROM accounts WHERE id = ?")
+            .bind(&orphan)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(owner, None);
+        assert_eq!(account_email(&pool, &orphan).await, "gone@co.com");
+    }
+
+    #[tokio::test]
+    async fn oidc_login_keeps_the_account_address_unless_another_account_holds_it() {
+        let pool = setup_db().await;
+        let cfg = auth_config_with_oidc(&pool, true).await;
+        let user = find_or_create_oidc_user(&pool, "sub", "one@co.com", true, "U", &cfg)
+            .await
+            .unwrap();
+        let account = account_of(&pool, &user).await;
+        find_or_create_oidc_user(&pool, "sub", "two@co.com", true, "U", &cfg)
+            .await
+            .unwrap();
+        assert_eq!(account_email(&pool, &account).await, "two@co.com");
+
+        // The next address is held by another account: the login still
+        // succeeds and the account keeps its previous copy.
+        insert_user_with_account(&pool, "three@co.com", "T", "user").await;
+        sqlx::query("UPDATE users SET email = 'other@co.com' WHERE email = 'three@co.com'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let again = find_or_create_oidc_user(&pool, "sub", "three@co.com", true, "U", &cfg)
+            .await
+            .unwrap();
+        assert_eq!(again, user);
+        assert_eq!(account_email(&pool, &account).await, "two@co.com");
+    }
+
+    #[tokio::test]
+    async fn stale_account_address_falls_back_to_a_placeholder_on_collision() {
+        let pool = setup_db().await;
+        // P's account still says y@co.com, P is now p@co.com, and O's account
+        // already holds p@co.com: P's copy cannot take its owner's address.
+        let (o_user, o_account) = insert_user_with_account(&pool, "p@co.com", "O", "user").await;
+        sqlx::query("UPDATE users SET email = 'o@co.com' WHERE id = ?")
+            .bind(&o_user)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let (p_user, p_account) = insert_user_with_account(&pool, "y@co.com", "P", "user").await;
+        sqlx::query("UPDATE users SET email = 'p@co.com' WHERE id = ?")
+            .bind(&p_user)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let x = insert_user(&pool, "y@co.com", "X", "user").await;
+        let mut conn = pool.acquire().await.unwrap();
+        let x_account = create_user_account(&mut conn, &x, "X", "y@co.com")
+            .await
+            .expect("registration must not fail on someone else's stale copy");
+        drop(conn);
+        assert_eq!(account_email(&pool, &x_account).await, "y@co.com");
+        assert_eq!(
+            account_email(&pool, &p_account).await,
+            placeholder_account_email(&p_account)
+        );
+        assert_eq!(account_email(&pool, &o_account).await, "p@co.com");
+        assert_eq!(account_of(&pool, &p_user).await, p_account);
+    }
+
+    #[tokio::test]
+    async fn stale_account_address_moves_to_its_owners_current_one() {
+        let pool = setup_db().await;
+        let (owner, owned) = insert_user_with_account(&pool, "a@co.com", "A", "user").await;
+        sqlx::query("UPDATE users SET email = 'a2@co.com' WHERE id = ?")
+            .bind(&owner)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let x = insert_user(&pool, "a@co.com", "X", "user").await;
+        let mut conn = pool.acquire().await.unwrap();
+        let created = create_user_account(&mut conn, &x, "X", "a@co.com")
+            .await
+            .unwrap();
+        drop(conn);
         assert_ne!(created, owned);
         assert_eq!(account_of(&pool, &owner).await, owned);
-
-        // An unowned one is adopted, once.
-        let second = insert_user(&pool, "y@co.com", "Y", "user").await;
-        let adopted = attach_account(&mut conn, &second, "Y", "b@co.com")
-            .await
-            .unwrap();
-        assert_eq!(adopted, orphan);
-        let third = insert_user(&pool, "z@co.com", "Z", "user").await;
-        let fresh = attach_account(&mut conn, &third, "Z", "b@co.com")
-            .await
-            .unwrap();
-        assert_ne!(fresh, orphan);
-        assert_eq!(account_of(&pool, &second).await, orphan);
+        assert_eq!(account_email(&pool, &owned).await, "a2@co.com");
+        assert_eq!(account_email(&pool, &created).await, "a@co.com");
     }
 
     // --- delete_user ---

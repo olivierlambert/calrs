@@ -348,38 +348,63 @@ async fn register_with_a_former_address_creates_a_separate_account() {
 }
 
 #[tokio::test]
-async fn register_adopts_a_legacy_account_without_a_user() {
+async fn register_never_hands_over_an_unowned_account() {
     let (app, pool, _, _) = setup_test_app().await;
-    let legacy = uuid::Uuid::new_v4().to_string();
+    // An account left without a user (its user removed outside calrs), with
+    // its data still attached.
+    let orphan = uuid::Uuid::new_v4().to_string();
     sqlx::query(
         "INSERT INTO accounts (id, name, email, timezone, user_id) \
-         VALUES (?, 'Legacy', ' Legacy@Example.com ', 'UTC', NULL)",
+         VALUES (?, 'Gone', 'Gone@example.com', 'UTC', NULL)",
     )
-    .bind(&legacy)
+    .bind(&orphan)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO caldav_sources (id, account_id, name, url, username, password_enc) \
+         VALUES (?, ?, 'Work', 'https://dav.example.com/', 'u', 'BLOB')",
+    )
+    .bind(uuid::Uuid::new_v4().to_string())
+    .bind(&orphan)
     .execute(&pool)
     .await
     .unwrap();
 
-    let response = register(app, "legacy%40example.com").await;
+    let response = register(app, "+Gone%40example.com+").await;
     assert!(response.status().is_redirection());
 
     let new_user: String =
-        sqlx::query_scalar("SELECT id FROM users WHERE email = 'legacy@example.com'")
+        sqlx::query_scalar("SELECT id FROM users WHERE email = 'Gone@example.com'")
             .fetch_one(&pool)
             .await
-            .unwrap();
-    let (owner, name): (Option<String>, String) =
-        sqlx::query_as("SELECT user_id, name FROM accounts WHERE id = ?")
-            .bind(&legacy)
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-    assert_eq!(owner.as_deref(), Some(new_user.as_str()));
-    assert_eq!(name, "Newcomer");
-    let accounts: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM accounts WHERE user_id = ?")
-        .bind(&new_user)
+            .expect("the address is stored trimmed");
+    let owner: Option<String> = sqlx::query_scalar("SELECT user_id FROM accounts WHERE id = ?")
+        .bind(&orphan)
         .fetch_one(&pool)
         .await
         .unwrap();
-    assert_eq!(accounts, 1, "no second account next to the adopted one");
+    assert_eq!(owner, None);
+    let own: Vec<String> = sqlx::query_scalar("SELECT id FROM accounts WHERE user_id = ?")
+        .bind(&new_user)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+    assert_eq!(own.len(), 1);
+    assert_ne!(own[0], orphan);
+    let own_email: String = sqlx::query_scalar("SELECT email FROM accounts WHERE id = ?")
+        .bind(&own[0])
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(own_email, crate::auth::placeholder_account_email(&own[0]));
+
+    // A restart does not hand it over either.
+    crate::db::migrate(&pool).await.unwrap();
+    let owner: Option<String> = sqlx::query_scalar("SELECT user_id FROM accounts WHERE id = ?")
+        .bind(&orphan)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(owner, None);
 }

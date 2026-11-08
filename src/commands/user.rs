@@ -110,9 +110,7 @@ pub async fn run(pool: &SqlitePool, data_dir: &Path, cmd: UserCommands) -> Resul
                 admin,
             )
             .await?;
-            // Adopts a legacy account (e.g. from old `calrs init`) that has no
-            // user yet, never one that belongs to someone else.
-            auth::attach_account(&mut tx, &user_id, &name, &email).await?;
+            auth::create_user_account(&mut tx, &user_id, &name, &email).await?;
             tx.commit().await?;
 
             println!(
