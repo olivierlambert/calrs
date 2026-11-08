@@ -256,6 +256,9 @@ them the order near those rows can be off by the timezone's offset.
       "guest": {"name": "Jeanne Martin", "email": "jeanne@example.com",
                 "phone": null, "timezone": "Europe/Paris", "language": "fr",
                 "notes": "About the renewal"},
+      "answers": [{"key": "company", "label": "Company", "kind": "short_text",
+                   "value": "Martin SARL", "option_ids": [], "consent": false,
+                   "link_url": null, "answered_at": "2026-11-07T09:12:44Z"}],
       "attendees": ["paul@example.com"],
       "location": {"type": "link", "value": "https://meet.example.com/abc"},
       "host_notes": "Prefers mornings."
@@ -266,7 +269,9 @@ them the order near those rows can be off by the timezone's offset.
 ```
 
 `uid` is the iCalendar UID of the invitation (the one webhooks carry).
-`host_notes` are the hosts' own notes on the booking.
+`host_notes` are the hosts' own notes on the booking. `answers` are the
+guest's answers to the event type's [booking questions](booking-questions.md),
+in the shape webhooks use.
 
 ### `GET /api/v1/bookings/{id}`
 
@@ -302,6 +307,10 @@ Books an event type you manage for a guest.
   `de` becomes `de-formal`, as on the booking page.
 - No invite is needed for internal or private event types: you manage them.
   None is used up either.
+- The event type's [booking questions](booking-questions.md) are not asked:
+  you are booking for the guest, as with `calrs booking create`. `notes` is
+  stored as given whatever the notes field setting, and the booking has no
+  answers.
 
 The booking goes through the booking page's own code: the same validation, a
 re-check of the time against the slot engine and of the shared resources

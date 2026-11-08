@@ -9,6 +9,7 @@
 - [Google Calendar](./google-calendar.md)
 - [Event Types](./event-types.md)
 - [Booking Flow](./booking-flow.md)
+- [Booking Questions](./booking-questions.md)
 - [Teams](./teams.md)
 - [Shared Resources](./resources.md)
 - [SMS Notifications](./sms.md)
