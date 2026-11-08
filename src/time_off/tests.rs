@@ -417,9 +417,21 @@ fn local_ranges_cover_the_repeated_hour() {
         PARIS,
     );
     assert!(s < e, "{s} to {e}");
+    // The hull of what it covers: the whole repeated hour, no more.
     assert_eq!(
         (s, e),
-        (local("2026-10-25T01:30"), local("2026-10-25T03:15"))
+        (local("2026-10-25T02:00"), local("2026-10-25T03:00"))
+    );
+    // Starting before the repeated hour and ending in its first occurrence
+    // (02:30 CEST) keeps both ends: nothing of the second one is covered.
+    let (s, e) = local_range(
+        utc("2026-10-24T22:00:00Z"),
+        utc("2026-10-25T00:30:00Z"),
+        PARIS,
+    );
+    assert_eq!(
+        (s, e),
+        (local("2026-10-25T00:00"), local("2026-10-25T02:30"))
     );
     // Without a clock change the range is the plain local one.
     let (s, e) = local_range(
@@ -447,4 +459,33 @@ async fn a_failed_read_blocks_the_whole_window() {
     .await;
     assert_eq!(busy.len(), 1);
     assert!(busy[0].0 <= local("2026-12-21T00:00") && busy[0].1 >= local("2026-12-21T23:59"));
+}
+
+#[test]
+fn a_period_across_a_fall_back_keeps_its_own_ends() {
+    // Paris, 20 October 14:00 to 27 October 09:00, across 25 October.
+    let (s, e) = local_range(
+        utc("2026-10-20T12:00:00Z"),
+        utc("2026-10-27T08:00:00Z"),
+        PARIS,
+    );
+    assert_eq!(
+        (s, e),
+        (local("2026-10-20T14:00"), local("2026-10-27T09:00"))
+    );
+    // Santiago goes back from Saturday 24:00 to 23:00 (4 April 2026): the
+    // whole Saturday stays Saturday 00:00 to Sunday 00:00.
+    let santiago = chrono_tz::America::Santiago;
+    let start = to_utc(santiago, local("2026-04-04T00:00"), false).unwrap();
+    let end = to_utc(santiago, local("2026-04-05T00:00"), true).unwrap();
+    assert_ne!(
+        start.with_timezone(&santiago).offset().fix(),
+        end.with_timezone(&santiago).offset().fix(),
+        "the period spans the change"
+    );
+    let (s, e) = local_range(start, end, santiago);
+    assert_eq!(
+        (s, e),
+        (local("2026-04-04T00:00"), local("2026-04-05T00:00"))
+    );
 }

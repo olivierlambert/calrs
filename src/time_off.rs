@@ -326,31 +326,77 @@ pub async fn overlapping(
 }
 
 /// A stored period as wall-clock times in `tz`, the shape the slot engine
-/// works in. When the clocks go back inside the period, the plain local
-/// endpoints can come out reversed or short (00:30Z to 01:15Z on the last
-/// Sunday of October in Paris reads 02:30 to 02:15), so both ends are pushed
-/// out by the hour that repeats: the local range then covers every instant
-/// of the period, at the cost of up to an hour either side.
+/// works in. Local time runs backwards where the clocks go back, so the
+/// plain local endpoints of a period across that change can come out
+/// reversed or short (00:30Z to 01:15Z on the last Sunday of October in
+/// Paris reads 02:30 to 02:15). The range is the hull of every local time
+/// the period covers: the start moves back to the start of the repeated
+/// hour only when it lies in that hour's first occurrence, and the end
+/// moves out to its end only when it lies in the second one. A period that
+/// merely spans the change keeps its own ends.
 pub fn local_range(
     start: DateTime<Utc>,
     end: DateTime<Utc>,
     tz: Tz,
 ) -> (NaiveDateTime, NaiveDateTime) {
-    let (s, e) = (start.with_timezone(&tz), end.with_timezone(&tz));
-    let rollback = s.offset().fix().local_minus_utc() - e.offset().fix().local_minus_utc();
-    let widen = Duration::seconds(rollback.max(0).into());
-    (s.naive_local() - widen, e.naive_local() + widen)
+    let offset = |t: DateTime<Utc>| t.with_timezone(&tz).offset().fix().local_minus_utc();
+    let local = |t: DateTime<Utc>| t.with_timezone(&tz).naive_local();
+    let (mut low, mut high) = (local(start), local(end));
+    // A day at a time, so a period of up to a year costs a few hundred
+    // offset lookups; each fall-back found is pinned to the second.
+    let mut a = start;
+    while a < end {
+        let b = (a + Duration::days(1)).min(end);
+        if offset(b) < offset(a) {
+            let (mut before, mut after) = (a, b);
+            while after - before > Duration::seconds(1) {
+                let mid = before + (after - before) / 2;
+                if offset(mid) == offset(a) {
+                    before = mid;
+                } else {
+                    after = mid;
+                }
+            }
+            // `after` is within a second past the change, which falls on a
+            // whole second: drop the fraction to land on it exactly.
+            let after = after.with_nanosecond(0).unwrap_or(after);
+            // The repeated hour runs from the change read in the new offset
+            // (02:00) to the same instant read in the old one (03:00).
+            let repeat_low = local(after);
+            let repeat_high = after.naive_utc() + Duration::seconds(offset(before).into());
+            low = low.min(repeat_low);
+            high = high.max(repeat_high);
+        }
+        a = b;
+    }
+    (low, high)
 }
 
 /// `user_id`'s time off around a window given as wall-clock times in `tz`,
 /// as busy intervals in `tz` (see [`local_range`]). The window is widened by
 /// two days, so its zone never needs resolving here; intervals outside it
 /// are harmless to the overlap checks.
-///
-/// A read failure fails closed: the whole window comes back busy, so slot
-/// grids show nothing and the booking, reschedule and approval checks
-/// refuse with their usual "no longer available" answer rather than book
-/// someone during time off we could not read.
+pub async fn try_busy_intervals(
+    pool: &SqlitePool,
+    user_id: &str,
+    window_start: NaiveDateTime,
+    window_end: NaiveDateTime,
+    tz: Tz,
+) -> Result<Vec<(NaiveDateTime, NaiveDateTime)>, sqlx::Error> {
+    let from = window_start.and_utc() - Duration::days(2);
+    let to = window_end.and_utc() + Duration::days(2);
+    Ok(overlapping(pool, user_id, from, to)
+        .await?
+        .iter()
+        .map(|p| local_range(p.start, p.end, tz))
+        .collect())
+}
+
+/// [`try_busy_intervals`] for the web slot engine, failing closed: if the
+/// time off cannot be read, the whole window comes back busy, so slot grids
+/// show nothing and the booking, reschedule and approval checks refuse with
+/// their usual "no longer available" answer rather than book someone during
+/// time off we could not read.
 pub async fn busy_intervals(
     pool: &SqlitePool,
     user_id: &str,
@@ -358,13 +404,8 @@ pub async fn busy_intervals(
     window_end: NaiveDateTime,
     tz: Tz,
 ) -> Vec<(NaiveDateTime, NaiveDateTime)> {
-    let from = window_start.and_utc() - Duration::days(2);
-    let to = window_end.and_utc() + Duration::days(2);
-    match overlapping(pool, user_id, from, to).await {
-        Ok(periods) => periods
-            .iter()
-            .map(|p| local_range(p.start, p.end, tz))
-            .collect(),
+    match try_busy_intervals(pool, user_id, window_start, window_end, tz).await {
+        Ok(busy) => busy,
         Err(error) => {
             tracing::error!(%error, %user_id, "cannot read time off; treating the window as busy");
             vec![(

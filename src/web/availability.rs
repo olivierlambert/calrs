@@ -720,6 +720,7 @@ pub(super) async fn fetch_busy_times_for_user_opts(
     .bind(user_id)
     .bind(user_id)
     .bind(user_id)
+    .bind(user_id)
     .bind(&end_iso)
     .bind(&start_iso)
     .bind(exclude_id)
@@ -2490,6 +2491,7 @@ pub(super) async fn troubleshoot(
          ORDER BY b.start_at",
         crate::booking_time::user_busy_bookings(true)
     ))
+    .bind(&user.id)
     .bind(&user.id)
     .bind(&user.id)
     .bind(&user.id)

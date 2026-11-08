@@ -454,6 +454,12 @@ pub(super) async fn approval_hosts_free(
         )
         .await;
         if has_conflict(&busy, start, end) {
+            tracing::info!(
+                uid = %booking_uid,
+                %user_id,
+                co_host = et_filter.is_none(),
+                "approval refused: a host is busy at the requested time"
+            );
             return false;
         }
     }

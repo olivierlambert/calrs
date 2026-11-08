@@ -256,6 +256,8 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
 
             // Time off (#46) of the host, or of every collective member, as
             // the web booking check counts it.
+            // A read failure is reported as such ("could not read the time
+            // off"), never as a free host.
             let time_off = crate::commands::event_type::host_time_off(
                 pool, &et_id, buf_start, buf_end, host_tz,
             )
@@ -1111,6 +1113,24 @@ mod tests {
         run(&pool, &[0u8; 32], create_at("11:00", "on@test.com"))
             .await
             .expect("the host is back at 11:00");
+    }
+
+    /// A time off table that cannot be read refuses the booking and says so.
+    #[tokio::test]
+    async fn create_reports_an_unreadable_time_off() {
+        let pool = setup_db().await;
+        seed_event_type(&pool).await;
+        sqlx::query("ALTER TABLE user_time_off RENAME TO user_time_off_gone")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let err = run(&pool, &[0u8; 32], create_at("10:00", "x@test.com"))
+            .await
+            .expect_err("unknown time off is not a free host");
+        assert!(
+            err.to_string().contains("could not read the time off"),
+            "{err}"
+        );
     }
 
     /// The CLI used to ignore the bookable date range: a fair limited to a

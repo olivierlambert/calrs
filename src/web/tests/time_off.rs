@@ -750,8 +750,25 @@ async fn dynamic_group_reschedule_and_approval_check_every_participant() {
     let hosts = reschedule_hosts(&pool, &uid, &owner).await;
     assert_eq!(hosts.participants, vec![second.clone()]);
 
-    // Move it to 14:00 the same day, when the co-host is off.
+    // The co-host is busy during their own group booking (10:00 Monday).
     let day = monday();
+    let booked = day.and_hms_opt(10, 0, 0).unwrap();
+    let co_host_busy = fetch_busy_times_for_user(
+        &pool,
+        &second,
+        day.and_time(NaiveTime::MIN),
+        day.and_hms_opt(23, 59, 59).unwrap(),
+        chrono_tz::Tz::UTC,
+        None,
+    )
+    .await;
+    assert!(has_conflict(
+        &co_host_busy,
+        booked,
+        booked + Duration::minutes(30)
+    ));
+
+    // Move it to 14:00 the same day, when the co-host is off.
     let new_start = day.and_hms_opt(14, 0, 0).unwrap();
     let new_end = new_start + Duration::minutes(30);
     let window = (

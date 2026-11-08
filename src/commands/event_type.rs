@@ -130,6 +130,7 @@ pub(crate) async fn host_busy_bookings(
     .bind(&host)
     .bind(&host)
     .bind(&host)
+    .bind(&host)
     .bind(window_end_iso)
     .bind(window_start_iso)
     .fetch_all(pool)
@@ -185,7 +186,7 @@ async fn time_off_hosts(pool: &SqlitePool, et_id: &str) -> Result<Option<Vec<Str
 /// Time off (#46) around a window, as busy intervals in `host_tz`, for
 /// every user `et_id` needs (see [`time_off_hosts`]), the way the web slot
 /// engine adds it. A collective event type with nobody eligible is busy
-/// over the whole window.
+/// over the whole window. A failed read is an error, not a free host.
 pub(crate) async fn host_time_off(
     pool: &SqlitePool,
     et_id: &str,
@@ -198,9 +199,12 @@ pub(crate) async fn host_time_off(
     };
     let mut busy = Vec::new();
     for user in users {
-        busy.extend(
-            crate::time_off::busy_intervals(pool, &user, window_start, window_end, host_tz).await,
-        );
+        // The CLI reports a failed read instead of failing closed silently.
+        let off =
+            crate::time_off::try_busy_intervals(pool, &user, window_start, window_end, host_tz)
+                .await
+                .map_err(|e| anyhow::anyhow!("could not read the time off of {user}: {e}"))?;
+        busy.extend(off);
     }
     Ok(busy)
 }
