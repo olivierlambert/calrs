@@ -921,6 +921,28 @@ pub(crate) fn forget_refresh(calendar_id: &str) {
     }
 }
 
+/// Record a refresh of `calendar_id` now, as a successful fetch does.
+#[cfg(test)]
+pub(crate) fn mark_refreshed(api_base: &str, calendar_id: &str) {
+    if let Ok(mut last) = LAST_REFRESH.lock() {
+        last.insert(
+            format!("{api_base}|{calendar_id}"),
+            std::time::Instant::now(),
+        );
+    }
+}
+
+/// Whether some Calendar API base refreshed `calendar_id` in the last five
+/// minutes, so the next sync would skip it.
+#[cfg(test)]
+pub(crate) fn refreshed_recently(calendar_id: &str) -> bool {
+    let suffix = format!("|{calendar_id}");
+    LAST_REFRESH.lock().is_ok_and(|last| {
+        last.iter()
+            .any(|(key, at)| key.ends_with(&suffix) && at.elapsed() < REFRESH_INTERVAL)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

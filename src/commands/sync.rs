@@ -2673,6 +2673,10 @@ pub(crate) async fn set_calendar_sync_enabled(
             .execute(pool)
             .await?;
     }
+    // Its out-of-office rows went with the events (or never came while it
+    // was off), so the next sync must read them again rather than trust a
+    // refresh from the last five minutes, as `forget_calendar_events` does.
+    crate::google_calendar::forget_refresh(calendar_id);
     tracing::info!(source_id = %source_id, calendar_id = %calendar_id, enabled, "calendar sync setting changed");
     Ok(true)
 }
@@ -5411,6 +5415,48 @@ mod tests {
             .unwrap()
             .iter()
             .any(|r| r.starts_with("REPORT /cals/colleague")));
+    }
+
+    /// Turning a calendar off drops its out-of-office rows, so it also
+    /// forgets their last refresh: turned back on within five minutes, the
+    /// next sync reads them again instead of leaving the absences out.
+    #[tokio::test]
+    async fn turning_a_calendar_off_forgets_its_out_of_office_refresh() {
+        let pool = setup_test_db().await;
+        let (source_id, _) = seed_fixtures(&pool).await;
+        let cal_id = Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO calendars (id, source_id, href) VALUES (?, ?, '/ooo/')")
+            .bind(&cal_id)
+            .bind(&source_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO events (id, calendar_id, uid, start_at, end_at, google_out_of_office) VALUES (?, ?, 'google-out-of-office:a', '20300615T000000Z', '20300616T000000Z', 1)")
+            .bind(Uuid::new_v4().to_string())
+            .bind(&cal_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        crate::google_calendar::mark_refreshed("https://google.test/api", &cal_id);
+        assert!(crate::google_calendar::refreshed_recently(&cal_id));
+
+        assert!(set_calendar_sync_enabled(&pool, &source_id, &cal_id, false)
+            .await
+            .unwrap());
+        let left: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM events WHERE calendar_id = ?")
+            .bind(&cal_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(left, 0);
+        assert!(!crate::google_calendar::refreshed_recently(&cal_id));
+
+        // A refresh recorded while it was off is forgotten when it comes back.
+        crate::google_calendar::mark_refreshed("https://google.test/api", &cal_id);
+        assert!(set_calendar_sync_enabled(&pool, &source_id, &cal_id, true)
+            .await
+            .unwrap());
+        assert!(!crate::google_calendar::refreshed_recently(&cal_id));
     }
 
     #[tokio::test]
