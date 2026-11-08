@@ -1637,4 +1637,26 @@ mod tests {
         );
         assert_eq!(output["booking_frequency_limits"][0]["period"], "day");
     }
+
+    #[tokio::test]
+    async fn dump_lists_an_account_with_a_placeholder_address() {
+        let pool = setup_db().await;
+        let user_id = Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO users (id, email, name) VALUES (?, 'p@test.com', 'P')")
+            .bind(&user_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let account_id = Uuid::new_v4().to_string();
+        let placeholder = crate::auth::placeholder_account_email(&account_id);
+        sqlx::query("INSERT INTO accounts (id, name, email, user_id) VALUES (?, 'P', ?, ?)")
+            .bind(&account_id)
+            .bind(&placeholder)
+            .bind(&user_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let output = build_dump_output(&pool).await.unwrap();
+        assert_eq!(output["accounts"][0]["email"], placeholder.as_str());
+    }
 }

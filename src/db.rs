@@ -376,6 +376,11 @@ pub async fn migrate(pool: &SqlitePool) -> Result<()> {
 
 /// For each account without a linked user, create a user (admin, local provider,
 /// no password — must be set via `calrs user create` or web registration) and link it.
+/// An orphan whose address belongs to a user is linked to that user only when
+/// the user has no account yet (a user created before its account). A user who
+/// already has one did not create this account: it was orphaned by a user
+/// removed outside calrs, and its address may since have gone to someone else,
+/// so it stays unlinked and is reported for the operator.
 async fn migrate_orphaned_accounts(pool: &SqlitePool) -> Result<()> {
     let orphans: Vec<(String, String, String, String)> =
         sqlx::query_as("SELECT id, name, email, timezone FROM accounts WHERE user_id IS NULL")
@@ -390,6 +395,18 @@ async fn migrate_orphaned_accounts(pool: &SqlitePool) -> Result<()> {
             .await?;
 
         let user_id = if let Some((uid,)) = existing {
+            let has_account: bool =
+                sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM accounts WHERE user_id = ?)")
+                    .bind(&uid)
+                    .fetch_one(pool)
+                    .await?;
+            if has_account {
+                tracing::warn!(
+                    account_id = %account_id,
+                    "account has no user and its address belongs to a user with an account of their own; left unlinked, review it"
+                );
+                continue;
+            }
             uid
         } else {
             let uid = uuid::Uuid::new_v4().to_string();
@@ -1268,6 +1285,72 @@ mod tests {
             linked.is_some(),
             "Orphaned account should be linked to a user"
         );
+    }
+
+    async fn insert_orphan(pool: &SqlitePool, email: &str) -> String {
+        let id = uuid::Uuid::new_v4().to_string();
+        sqlx::query(
+            "INSERT INTO accounts (id, name, email, timezone, user_id) VALUES (?, 'O', ?, 'UTC', NULL)",
+        )
+        .bind(&id)
+        .bind(email)
+        .execute(pool)
+        .await
+        .unwrap();
+        id
+    }
+
+    async fn insert_plain_user(pool: &SqlitePool, email: &str) -> String {
+        let id = uuid::Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO users (id, email, name) VALUES (?, ?, 'U')")
+            .bind(&id)
+            .bind(email)
+            .execute(pool)
+            .await
+            .unwrap();
+        id
+    }
+
+    async fn owner_of(pool: &SqlitePool, account_id: &str) -> Option<String> {
+        sqlx::query_scalar("SELECT user_id FROM accounts WHERE id = ?")
+            .bind(account_id)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn orphaned_account_goes_to_a_matching_user_without_an_account() {
+        let pool = memory_pool().await;
+        migrate(&pool).await.unwrap();
+        let user = insert_plain_user(&pool, "cli@test.com").await;
+        let orphan = insert_orphan(&pool, "cli@test.com").await;
+        migrate(&pool).await.unwrap();
+        assert_eq!(owner_of(&pool, &orphan).await, Some(user));
+    }
+
+    #[tokio::test]
+    async fn orphaned_account_is_not_given_to_a_user_who_has_an_account() {
+        let pool = memory_pool().await;
+        migrate(&pool).await.unwrap();
+        let user = insert_plain_user(&pool, "taken@test.com").await;
+        sqlx::query(
+            "INSERT INTO accounts (id, name, email, timezone, user_id) VALUES (?, 'U', 'own@test.com', 'UTC', ?)",
+        )
+        .bind(uuid::Uuid::new_v4().to_string())
+        .bind(&user)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let orphan = insert_orphan(&pool, "taken@test.com").await;
+        migrate(&pool).await.unwrap();
+        assert_eq!(owner_of(&pool, &orphan).await, None);
+        let accounts: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM accounts WHERE user_id = ?")
+            .bind(&user)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(accounts, 1);
     }
 
     #[tokio::test]
