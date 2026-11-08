@@ -1112,6 +1112,8 @@ async fn create_booking_inner(
         additional_guests: &additional_guests,
         date: &date,
         time: &time,
+        // A manager booking for a guest: no booking questions (#210).
+        fields: None,
     };
     let resolve_tz = move |_: Tz| guest_tz;
     let team: Option<Option<String>> =

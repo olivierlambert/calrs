@@ -203,6 +203,11 @@ pub(super) struct GuestRequest<'a> {
     pub(super) additional_guests: &'a Option<String>,
     pub(super) date: &'a str,
     pub(super) time: &'a str,
+    /// The booking questions' fields (#210), `q_<id>` and
+    /// `q_<id>__<option id>`, read against the event type's current form.
+    /// `None` for a manager booking through the API, which, like
+    /// `calrs booking create`, asks no questions: the host is booking.
+    pub(super) fields: Option<&'a HashMap<String, String>>,
 }
 
 impl<'a> GuestRequest<'a> {
@@ -215,6 +220,7 @@ impl<'a> GuestRequest<'a> {
             additional_guests: &form.additional_guests,
             date: &form.date,
             time: &form.time,
+            fields: Some(&form.fields),
         }
     }
 }
@@ -251,6 +257,10 @@ pub(super) struct NewBooking {
     pub(super) host_name: Option<String>,
     pub(super) cancel_notice_min: Option<i32>,
     pub(super) reschedule_notice_min: Option<i32>,
+    /// The notes as stored (none when the event type hides the field).
+    pub(super) notes: Option<String>,
+    /// The guest's answers to the booking questions (#210).
+    pub(super) answers: Vec<crate::email::BookingAnswer>,
 }
 
 /// Why a booking was not made, as the booking form tells the guest. The API
@@ -366,6 +376,8 @@ pub(super) async fn handle_group_booking(
         host_name,
         cancel_notice_min,
         reschedule_notice_min,
+        notes,
+        answers,
         ..
     } = match book_team(&state, et, &slug, &guest, access, &resolve_tz, lang).await {
         Ok(booked) => booked,
@@ -387,7 +399,8 @@ pub(super) async fn handle_group_booking(
             time_end => guest_end_time,
             host_name => host_name,
             guest_email => form.email,
-            notes => form.notes,
+            notes => notes,
+            answers => questions::display_rows(&answers, lang, crate::email::AnswerReader::Guest),
             pending => needs_approval,
             location_type => loc_type,
             location_value => location_display,
@@ -524,6 +537,12 @@ pub(super) async fn book_team(
             }
         }
     }
+
+    // The booking questions and the notes field (#210), read against the
+    // event type's current form once access is checked, so a guest without
+    // the invite never learns what a private event type asks.
+    let submission =
+        questions::read_submission(&state.pool, &et_id, guest.notes, guest.fields, lang).await?;
     let date = match NaiveDate::parse_from_str(guest.date, "%Y-%m-%d") {
         Ok(d) => d,
         Err(_) => return Err(BookingRefusal::Plain("error-invalid-date")),
@@ -799,7 +818,7 @@ pub(super) async fn book_team(
     .bind(guest.name)
     .bind(guest.email)
     .bind(&guest_timezone)
-    .bind(guest.notes)
+    .bind(&submission.notes)
     .bind(&start_at)
     .bind(&end_at)
     .bind(initial_status)
@@ -844,6 +863,11 @@ pub(super) async fn book_team(
                 .bind(attendee_email)
                 .execute(&mut *tx)
                 .await;
+    }
+
+    if let Err(e) = questions::insert_answers(&mut tx, &id, &submission.answers).await {
+        let _ = tx.rollback().await;
+        return Err(BookingRefusal::Internal("booking answers", e.to_string()));
     }
 
     if let Err(e) = tx.commit().await {
@@ -906,7 +930,7 @@ pub(super) async fn book_team(
         host_name: host_name.clone(),
         host_email: host_email.clone(),
         uid: uid.clone(),
-        notes: guest.notes.clone(),
+        notes: submission.notes.clone(),
         guest_phone: phone_to_store.clone(),
         location: location_display.clone(),
         reminder_minutes: reminder_min,
@@ -1039,6 +1063,8 @@ pub(super) async fn book_team(
         host_name: Some(host_name),
         cancel_notice_min,
         reschedule_notice_min,
+        notes: submission.notes,
+        answers: submission.answers.into_iter().map(|a| a.answer).collect(),
     })
 }
 
@@ -1170,6 +1196,21 @@ async fn handle_dynamic_group_booking(
         }
     };
 
+    // The booking questions and the notes field (#210), read against the
+    // event type's current form once access is checked, so a guest without
+    // the invite never learns what a private event type asks.
+    let submission = match questions::read_submission(
+        &state.pool,
+        &et_id,
+        &form.notes,
+        Some(&form.fields),
+        lang,
+    )
+    .await
+    {
+        Ok(submission) => submission,
+        Err(refusal) => return refusal.into_page(state, lang),
+    };
     let date = match NaiveDate::parse_from_str(&form.date, "%Y-%m-%d") {
         Ok(d) => d,
         Err(_) => {
@@ -1390,7 +1431,7 @@ async fn handle_dynamic_group_booking(
     .bind(&form.name)
     .bind(&form.email)
     .bind(&guest_timezone)
-    .bind(&form.notes)
+    .bind(&submission.notes)
     .bind(&start_at)
     .bind(&end_at)
     .bind(initial_status)
@@ -1465,6 +1506,11 @@ async fn handle_dynamic_group_booking(
                 .await;
     }
 
+    if let Err(e) = questions::insert_answers(&mut tx, &id, &submission.answers).await {
+        let _ = tx.rollback().await;
+        return internal_error_response("booking answers", &e);
+    }
+
     if let Err(e) = tx.commit().await {
         if e.to_string().contains("UNIQUE constraint failed") {
             return Html(crate::i18n::translate(lang, "error-slot-unavailable", None))
@@ -1511,7 +1557,7 @@ async fn handle_dynamic_group_booking(
         host_name: host_name.clone(),
         host_email: owner_email,
         uid: uid.clone(),
-        notes: form.notes.clone(),
+        notes: submission.notes.clone(),
         guest_phone: phone_to_store.clone(),
         location: location_display.clone(),
         reminder_minutes: reminder_min,
@@ -1601,7 +1647,12 @@ async fn handle_dynamic_group_booking(
             time_end => guest_end_time,
             host_name => host_display,
             guest_email => form.email,
-            notes => form.notes,
+            notes => submission.notes,
+            answers => questions::display_rows(
+                &submission.booking_answers(),
+                lang,
+                crate::email::AnswerReader::Guest,
+            ),
             pending => needs_approval,
             location_type => loc_type,
             location_value => location_display,
@@ -1704,6 +1755,8 @@ pub(super) async fn handle_booking_for_user(
         additional_attendees,
         cancel_notice_min,
         reschedule_notice_min,
+        notes,
+        answers,
         ..
     } = match book_personal(&state, et, &slug, &guest, access, &resolve_tz, lang).await {
         Ok(booked) => booked,
@@ -1731,7 +1784,8 @@ pub(super) async fn handle_booking_for_user(
             time_end => guest_end_time,
             host_name => host_name,
             guest_email => form.email,
-            notes => form.notes,
+            notes => notes,
+            answers => questions::display_rows(&answers, lang, crate::email::AnswerReader::Guest),
             pending => needs_approval,
             location_type => loc_type,
             location_value => location_display,
@@ -1842,6 +1896,12 @@ pub(super) async fn book_personal(
             }
         }
     }
+
+    // The booking questions and the notes field (#210), read against the
+    // event type's current form once access is checked, so a guest without
+    // the invite never learns what a private event type asks.
+    let submission =
+        questions::read_submission(&state.pool, &et_id, guest.notes, guest.fields, lang).await?;
     let date = match NaiveDate::parse_from_str(guest.date, "%Y-%m-%d") {
         Ok(d) => d,
         Err(_) => return Err(BookingRefusal::Plain("error-invalid-date")),
@@ -2032,7 +2092,7 @@ pub(super) async fn book_personal(
     .bind(guest.name)
     .bind(guest.email)
     .bind(&guest_timezone)
-    .bind(guest.notes)
+    .bind(&submission.notes)
     .bind(&start_at)
     .bind(&end_at)
     .bind(initial_status)
@@ -2073,6 +2133,11 @@ pub(super) async fn book_personal(
                 .bind(attendee_email)
                 .execute(&mut *tx)
                 .await;
+    }
+
+    if let Err(e) = questions::insert_answers(&mut tx, &id, &submission.answers).await {
+        let _ = tx.rollback().await;
+        return Err(BookingRefusal::Internal("booking answers", e.to_string()));
     }
 
     if let Err(e) = tx.commit().await {
@@ -2146,7 +2211,7 @@ pub(super) async fn book_personal(
             host_name,
             host_email,
             uid: uid.clone(),
-            notes: guest.notes.clone(),
+            notes: submission.notes.clone(),
             guest_phone: phone_to_store.clone(),
             location: location_display.clone(),
             reminder_minutes: reminder_min,
@@ -2244,6 +2309,8 @@ pub(super) async fn book_personal(
         host_name: None,
         cancel_notice_min,
         reschedule_notice_min,
+        notes: submission.notes,
+        answers: submission.answers.into_iter().map(|a| a.answer).collect(),
     })
 }
 
@@ -2367,6 +2434,12 @@ pub(super) struct BookForm {
     /// `sms_phone_mode` set; ignored otherwise even if posted.
     #[serde(default)]
     phone: Option<String>,
+    /// Everything else posted: the booking questions' fields (#210),
+    /// `q_<question id>` and, per multiple-choice box,
+    /// `q_<question id>__<option id>`. Read by `questions::read_submission`
+    /// against the event type's current form; other names are ignored.
+    #[serde(flatten)]
+    pub(super) fields: HashMap<String, String>,
 }
 
 /// Whether `user` may put an event type into an SMS-sending mode.
@@ -2661,6 +2734,21 @@ pub(super) async fn handle_booking(
     .unwrap_or(None)
     .unwrap_or_default();
 
+    // The booking questions and the notes field (#210), read against the
+    // event type's current form once access is checked, so a guest without
+    // the invite never learns what a private event type asks.
+    let submission = match questions::read_submission(
+        &state.pool,
+        &et_id,
+        &form.notes,
+        Some(&form.fields),
+        lang,
+    )
+    .await
+    {
+        Ok(submission) => submission,
+        Err(refusal) => return refusal.into_page(&state, lang),
+    };
     let date = match NaiveDate::parse_from_str(&form.date, "%Y-%m-%d") {
         Ok(d) => d,
         Err(_) => {
@@ -2860,7 +2948,7 @@ pub(super) async fn handle_booking(
     .bind(&form.name)
     .bind(&form.email)
     .bind(&guest_timezone)
-    .bind(&form.notes)
+    .bind(&submission.notes)
     .bind(&start_at)
     .bind(&end_at)
     .bind(initial_status)
@@ -2902,6 +2990,11 @@ pub(super) async fn handle_booking(
                 .bind(attendee_email)
                 .execute(&mut *tx)
                 .await;
+    }
+
+    if let Err(e) = questions::insert_answers(&mut tx, &id, &submission.answers).await {
+        let _ = tx.rollback().await;
+        return internal_error_response("booking answers", &e);
     }
 
     if let Err(e) = tx.commit().await {
@@ -2966,7 +3059,7 @@ pub(super) async fn handle_booking(
             host_name,
             host_email,
             uid: uid.clone(),
-            notes: form.notes.clone(),
+            notes: submission.notes.clone(),
             guest_phone: phone_to_store.clone(),
             location: location_display,
             reminder_minutes: reminder_min,
@@ -3074,7 +3167,12 @@ pub(super) async fn handle_booking(
             time_end => guest_end_time,
             host_name => host_name,
             guest_email => form.email,
-            notes => form.notes,
+            notes => submission.notes,
+            answers => questions::display_rows(
+                &submission.booking_answers(),
+                lang,
+                crate::email::AnswerReader::Guest,
+            ),
             pending => needs_approval,
             additional_attendees => additional_attendees,
             ics_url => format!("/booking/ics/{}", cancel_token),

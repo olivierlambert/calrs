@@ -581,3 +581,346 @@ fn every_editor_refusal_is_translated() {
     .message("en");
     assert!(message.contains("20"), "{message}");
 }
+
+// --- Through the web handlers ---
+
+/// The five kinds on an event type: a required short text, a single choice,
+/// a multiple choice, a required consent with a policy link, and an
+/// optional checkbox kept out of the calendar event.
+async fn seed_questions(pool: &SqlitePool, et_id: &str) -> Vec<Question> {
+    let json = serde_json::json!([
+        {"kind": "short_text", "label": "Licence plate", "required": true},
+        {"kind": "single_choice", "label": "Where are the tyres", "options": [{"label": "At the shop"}, {"label": "I bring them"}]},
+        {"kind": "multiple_choice", "label": "Topics", "options": [{"label": "Tax"}, {"label": "Accounting"}, {"label": "Strategy"}]},
+        {"kind": "checkbox", "label": "I agree to the privacy policy", "consent": true, "required": true, "link": "https://example.com/privacy"},
+        {"kind": "checkbox", "label": "Area of concern: housing", "in_calendar": false}
+    ]);
+    let qs = parse_editor(&json.to_string(), &[]).unwrap();
+    save(pool, et_id, Some(&qs), None).await.unwrap();
+    load(pool, et_id).await.unwrap()
+}
+
+/// The fields a browser posts for `seed_questions` with every box ticked
+/// but the last.
+fn answer_fields(qs: &[Question]) -> String {
+    format!(
+        "&q_{}=AB-123&q_{}=o2&q_{}__o1=1&q_{}__o3=1&q_{}=1",
+        qs[0].id, qs[1].id, qs[2].id, qs[2].id, qs[3].id
+    )
+}
+
+async fn answers_of(pool: &SqlitePool, et_id: &str) -> Vec<(String, String, String, bool)> {
+    sqlx::query_as(
+        "SELECT ba.label, ba.value, COALESCE(ba.value_ids, ''), ba.in_calendar
+         FROM booking_answers ba JOIN bookings b ON b.id = ba.booking_id
+         WHERE b.event_type_id = ? ORDER BY ba.position",
+    )
+    .bind(et_id)
+    .fetch_all(pool)
+    .await
+    .unwrap()
+}
+
+async fn bookings_of(pool: &SqlitePool, et_id: &str) -> i64 {
+    sqlx::query_scalar("SELECT COUNT(*) FROM bookings WHERE event_type_id = ?")
+        .bind(et_id)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+fn assert_stored(answers: &[(String, String, String, bool)]) {
+    let got: Vec<(&str, &str)> = answers
+        .iter()
+        .map(|(l, v, _, _)| (l.as_str(), v.as_str()))
+        .collect();
+    assert_eq!(
+        got,
+        [
+            ("Licence plate", "AB-123"),
+            ("Where are the tyres", "I bring them"),
+            ("Topics", "Tax, Strategy"),
+            ("I agree to the privacy policy", "yes"),
+            ("Area of concern: housing", "no"),
+        ]
+    );
+    assert_eq!(answers[2].2, r#"["o1","o3"]"#);
+    assert!(!answers[4].3, "in_calendar is snapshotted");
+}
+
+#[tokio::test]
+async fn the_booking_form_renders_the_questions_accessibly() {
+    let (app, pool, _, et_id) = setup_test_app().await;
+    let qs = seed_questions(&pool, &et_id).await;
+    let body = body_string(app.oneshot(get(&booking_form_uri(None))).await.unwrap()).await;
+    assert!(body.contains(&format!(r#"name="q_{}""#, qs[0].id)));
+    assert!(
+        body.contains(r#"<label for="q0">Licence plate</label>"#),
+        "{body}"
+    );
+    // A choice group is a fieldset with a legend; each box its own name.
+    assert!(body.contains("<legend>Where are the tyres"));
+    assert!(body.contains(&format!(r#"name="q_{}__o3""#, qs[2].id)));
+    // The required consent is natively required and links its policy.
+    let consent = &body[body.find(&format!(r#"name="q_{}""#, qs[3].id)).unwrap()..];
+    assert!(consent[..80].contains("required"), "{}", &consent[..80]);
+    assert!(body.contains(
+        r#"href="https:&#x2f;&#x2f;example.com&#x2f;privacy" target="_blank" rel="noopener noreferrer""#
+    ));
+    // In the host's order, before the notes.
+    let first = body.find("Licence plate").unwrap();
+    let last = body.find("Area of concern").unwrap();
+    let notes = body.find(r#"id="notes""#).unwrap();
+    assert!(first < last && last < notes);
+}
+
+#[tokio::test]
+async fn the_notes_field_follows_its_mode() {
+    let (app, pool, _, et_id) = setup_test_app().await;
+    save(&pool, &et_id, None, Some("off")).await.unwrap();
+    let body = body_string(
+        app.clone()
+            .oneshot(get(&booking_form_uri(None)))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(!body.contains(r#"name="notes""#));
+    save(&pool, &et_id, None, Some("required")).await.unwrap();
+    let body = body_string(
+        app.clone()
+            .oneshot(get(&booking_form_uri(None)))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(body.contains(r#"placeholder"#));
+    let notes = &body[body.find(r#"id="notes""#).unwrap()..];
+    assert!(notes[..200].contains(" required"));
+
+    // Required: an empty note refuses the booking.
+    let csrf = "csrf-q-notes";
+    let response = app
+        .clone()
+        .oneshot(post_form_unauthed(
+            "/u/testuser/test-meeting/book",
+            csrf,
+            &format!("{}&notes=+", book_body(csrf)),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    assert_eq!(bookings_of(&pool, &et_id).await, 0);
+
+    // Off: a posted note is not stored.
+    save(&pool, &et_id, None, Some("off")).await.unwrap();
+    app.oneshot(post_form_unauthed(
+        "/u/testuser/test-meeting/book",
+        csrf,
+        &format!("{}&notes=sneaked", book_body(csrf)),
+    ))
+    .await
+    .unwrap();
+    let notes: Option<String> =
+        sqlx::query_scalar("SELECT notes FROM bookings WHERE event_type_id = ?")
+            .bind(&et_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(notes, None);
+}
+
+#[tokio::test]
+async fn a_personal_booking_stores_the_answers_with_the_booking() {
+    let (app, pool, _, et_id) = setup_test_app().await;
+    let qs = seed_questions(&pool, &et_id).await;
+    let csrf = "csrf-q-user";
+    let response = app
+        .oneshot(post_form_unauthed(
+            "/u/testuser/test-meeting/book",
+            csrf,
+            &format!("{}{}", book_body(csrf), answer_fields(&qs)),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let page = body_string(response).await;
+    assert_stored(&answers_of(&pool, &et_id).await);
+    // The guest reads their own answers on the confirmation page.
+    assert!(page.contains("AB-123"));
+    assert!(page.contains("You agreed"));
+    assert!(page.contains("I bring them"));
+}
+
+#[tokio::test]
+async fn the_legacy_route_stores_the_answers() {
+    let (app, pool, _, et_id) = setup_test_app().await;
+    let qs = seed_questions(&pool, &et_id).await;
+    let csrf = "csrf-q-legacy";
+    let response = app
+        .oneshot(post_form_unauthed(
+            "/test-meeting/book",
+            csrf,
+            &format!("{}{}", book_body(csrf), answer_fields(&qs)),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    assert_stored(&answers_of(&pool, &et_id).await);
+}
+
+#[tokio::test]
+async fn a_team_booking_stores_the_answers() {
+    let (app, pool, _, _) = setup_test_app().await;
+    let (_team_id, et_id) = seed_team_event_type(&pool).await;
+    let qs = seed_questions(&pool, &et_id).await;
+    let csrf = "csrf-q-team";
+    let response = app
+        .oneshot(post_form_unauthed(
+            "/team/horizon-team/team-sync/book",
+            csrf,
+            &format!("{}{}", book_body(csrf), answer_fields(&qs)),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    assert_stored(&answers_of(&pool, &et_id).await);
+}
+
+#[tokio::test]
+async fn a_dynamic_group_booking_stores_the_answers() {
+    let (app, pool, _, et_id) = setup_test_app().await;
+    let qs = seed_questions(&pool, &et_id).await;
+    sqlx::query("UPDATE users SET allow_dynamic_group = 1 WHERE username = 'testuser'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (viewer, _) =
+        insert_test_user_with_session(&pool, "Viewer", "viewer@example.com", "viewer").await;
+    sqlx::query("UPDATE users SET allow_dynamic_group = 1 WHERE id = ?")
+        .bind(&viewer)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let csrf = "csrf-q-dyn";
+    let response = app
+        .oneshot(post_form_unauthed(
+            "/u/testuser+viewer/test-meeting/book",
+            csrf,
+            &format!("{}{}", book_body(csrf), answer_fields(&qs)),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    assert_eq!(bookings_of(&pool, &et_id).await, 1);
+    assert_stored(&answers_of(&pool, &et_id).await);
+}
+
+#[tokio::test]
+async fn a_missing_required_answer_leaves_no_booking() {
+    let (app, pool, _, et_id) = setup_test_app().await;
+    let qs = seed_questions(&pool, &et_id).await;
+    let csrf = "csrf-q-missing";
+    // Everything but the required consent.
+    let fields = format!("&q_{}=AB-123", qs[0].id);
+    let response = app
+        .clone()
+        .oneshot(post_form_unauthed(
+            "/u/testuser/test-meeting/book",
+            csrf,
+            &format!("{}{fields}", book_body(csrf)),
+        ))
+        .await
+        .unwrap();
+    let page = body_string(response).await;
+    assert!(page.contains("I agree to the privacy policy"), "{page}");
+    assert_eq!(bookings_of(&pool, &et_id).await, 0);
+    let stored: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM booking_answers")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(stored, 0);
+
+    // An option the question does not offer is refused too.
+    let fields = format!("{}&q_{}=o9", answer_fields(&qs), qs[1].id);
+    let fields = fields.replacen(&format!("&q_{}=o2", qs[1].id), "", 1);
+    app.oneshot(post_form_unauthed(
+        "/u/testuser/test-meeting/book",
+        csrf,
+        &format!("{}{fields}", book_body(csrf)),
+    ))
+    .await
+    .unwrap();
+    assert_eq!(bookings_of(&pool, &et_id).await, 0);
+}
+
+/// A private event type's questions are read only once the invite is
+/// checked: a POST without one never hears what the form asks.
+#[tokio::test]
+async fn a_private_event_types_questions_stay_behind_the_invite() {
+    let (app, pool, _, et_id) = setup_test_app().await;
+    seed_questions(&pool, &et_id).await;
+    sqlx::query("UPDATE event_types SET visibility = 'private' WHERE id = ?")
+        .bind(&et_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let csrf = "csrf-q-private";
+    let page = body_string(
+        app.oneshot(post_form_unauthed(
+            "/u/testuser/test-meeting/book",
+            csrf,
+            &book_body(csrf),
+        ))
+        .await
+        .unwrap(),
+    )
+    .await;
+    assert!(!page.contains("Licence plate"), "{page}");
+    assert_eq!(bookings_of(&pool, &et_id).await, 0);
+}
+
+/// With notes hidden, a posted note reaches neither the row nor the host.
+#[tokio::test]
+async fn a_hidden_notes_field_keeps_a_posted_note_out_of_the_emails() {
+    let (app, pool, _, et_id) = setup_test_app().await;
+    let (port, mails) = spawn_capturing_mta().await;
+    use_capturing_mta(&pool, port).await;
+    save(&pool, &et_id, None, Some("off")).await.unwrap();
+    let csrf = "csrf-q-off-mail";
+    app.oneshot(post_form_unauthed(
+        "/u/testuser/test-meeting/book",
+        csrf,
+        &format!("{}&notes=sneaked+in", book_body(csrf)),
+    ))
+    .await
+    .unwrap();
+    let host = mail_to(&mails, "test@example.com").await;
+    assert!(!host.contains("sneaked"));
+}
+
+#[tokio::test]
+async fn editing_or_deleting_a_question_keeps_past_answers() {
+    let (app, pool, _, et_id) = setup_test_app().await;
+    let qs = seed_questions(&pool, &et_id).await;
+    let csrf = "csrf-q-snap";
+    app.oneshot(post_form_unauthed(
+        "/u/testuser/test-meeting/book",
+        csrf,
+        &format!("{}{}", book_body(csrf), answer_fields(&qs)),
+    ))
+    .await
+    .unwrap();
+    // Rename the first question, drop the others.
+    let json = serde_json::json!([{"id": qs[0].id, "kind": "short_text", "label": "Plate number"}]);
+    let kept = parse_editor(&json.to_string(), &qs).unwrap();
+    save(&pool, &et_id, Some(&kept), None).await.unwrap();
+    assert_eq!(load(&pool, &et_id).await.unwrap().len(), 1);
+    assert_stored(&answers_of(&pool, &et_id).await);
+    let orphans: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM booking_answers WHERE question_id IS NULL")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(orphans, 4);
+}
