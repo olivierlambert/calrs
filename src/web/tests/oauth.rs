@@ -1051,7 +1051,7 @@ async fn oauth_endpoints_are_rate_limited_per_ip() {
             ))
             .unwrap()
     };
-    for _ in 0..10 {
+    for _ in 0..30 {
         let response = app
             .clone()
             .oneshot(from("203.0.113.7", register()))
@@ -1068,18 +1068,11 @@ async fn oauth_endpoints_are_rate_limited_per_ip() {
 }
 
 #[tokio::test]
-async fn oauth_registration_requires_ascii_normalized_redirects_and_consent_shows_the_host() {
+async fn oauth_registration_requires_ascii_redirects_and_consent_shows_the_host() {
     let _lock = crate::test_support::ENV_LOCK.lock().await;
     let _env = environment();
     let (app, _, session, _) = setup_test_app().await;
-    for uri in [
-        "https://ex\u{0430}mple.com/cb",
-        "https://Example.com/cb",
-        "https://example.com",
-        "https://example.com/a/../cb",
-        "https://example.com:443/cb",
-        "https://example.com/cb\n",
-    ] {
+    for uri in ["https://ex\u{0430}mple.com/cb", "https://example.com/cb\n"] {
         let response = app
             .clone()
             .oneshot(
@@ -1185,11 +1178,41 @@ async fn oauth_registration_at_the_cap_reclaims_the_oldest_unused_client() {
     assert!(kept, "a client with a grant is never reclaimed");
 
     // When every client is in use, registration is refused.
+    // Expired or anonymous requests spare nothing: an unauthenticated
+    // /oauth/authorize must not pin clients.
     sqlx::query(
-        "INSERT INTO oauth_requests (id, client_id, parameters, expires_at)
-         SELECT 'req-' || id, id, '{}', 9999999999 FROM oauth_clients
+        "INSERT INTO oauth_requests (id, client_id, parameters, user_id, expires_at)
+         SELECT 'req-' || id, id, '{}', NULL, 9999999999 FROM oauth_clients
          WHERE NOT EXISTS (SELECT 1 FROM oauth_grants g WHERE g.client_id = oauth_clients.id)",
     )
+    .execute(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        register_from(&app, "2001:db8::3").await,
+        StatusCode::CREATED
+    );
+    let user_id: String = sqlx::query_scalar("SELECT user_id FROM sessions WHERE id = ?")
+        .bind(&session)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE oauth_requests SET user_id = ?")
+        .bind(&user_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    // A client registered just now is not reclaimable either.
+    sqlx::query("UPDATE oauth_clients SET created_at = 0 WHERE created_at > 1000000")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT OR IGNORE INTO oauth_requests (id, client_id, parameters, user_id, expires_at)
+         SELECT 'req-' || id, id, '{}', ?, 9999999999 FROM oauth_clients
+         WHERE NOT EXISTS (SELECT 1 FROM oauth_grants g WHERE g.client_id = oauth_clients.id)",
+    )
+    .bind(&user_id)
     .execute(&pool)
     .await
     .unwrap();
@@ -1205,7 +1228,7 @@ async fn oauth_registration_limit_counts_an_ipv6_64_as_one_client() {
     let _lock = crate::test_support::ENV_LOCK.lock().await;
     let _env = environment();
     let (app, _, _, _) = setup_test_app().await;
-    for i in 0..10 {
+    for i in 0..30 {
         let ip = format!("2001:db8:aa:bb::{:x}", i + 1);
         assert_eq!(register_from(&app, &ip).await, StatusCode::CREATED);
     }
@@ -1331,4 +1354,194 @@ async fn oauth_foreign_keys_are_indexed() {
     ] {
         assert!(indexes.iter().any(|i| i == name), "{name}: {indexes:?}");
     }
+}
+
+#[tokio::test]
+async fn oauth_a_client_whose_grant_was_revoked_can_authorize_again_after_cleanup() {
+    let _lock = crate::test_support::ENV_LOCK.lock().await;
+    let _env = environment();
+    let (app, pool, session, _) = setup_test_app().await;
+    let (client, _) = issue_tokens(&app, &session).await;
+    let grant: String = sqlx::query_scalar("SELECT id FROM oauth_grants")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let response = app
+        .clone()
+        .oneshot(post_form(
+            &format!("/dashboard/settings/apps/{grant}/revoke"),
+            &session,
+            "csrf",
+            "_csrf=csrf",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    // Registered long ago, granted recently: kept.
+    sqlx::query("UPDATE oauth_clients SET created_at = 0")
+        .execute(&pool)
+        .await
+        .unwrap();
+    crate::oauth::cleanup(&pool).await.unwrap();
+    let status = app
+        .clone()
+        .oneshot(get(&authorization_uri(&client)))
+        .await
+        .unwrap()
+        .status();
+    assert_eq!(status, StatusCode::SEE_OTHER, "the client is still known");
+    // Last granted over 180 days ago: removed.
+    sqlx::query("DELETE FROM oauth_requests")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE oauth_clients SET last_granted_at = 1")
+        .execute(&pool)
+        .await
+        .unwrap();
+    crate::oauth::cleanup(&pool).await.unwrap();
+    let clients: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM oauth_clients")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(clients, 0);
+}
+
+#[tokio::test]
+async fn oauth_one_address_cannot_hold_many_clients_nobody_approved() {
+    let _lock = crate::test_support::ENV_LOCK.lock().await;
+    let _env = environment();
+    let (app, pool, _, _) = setup_test_app().await;
+    let key = crate::oauth::hash("2001:db8:cc:dd::/64");
+    sqlx::query(
+        "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 50)
+         INSERT INTO oauth_clients (id, name, redirect_uris, created_at, registered_by)
+         SELECT 'pending-' || i, 'Pending', '[]', CAST(strftime('%s', 'now') AS INTEGER), ? FROM n",
+    )
+    .bind(&key)
+    .execute(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        register_from(&app, "2001:db8:cc:dd::99").await,
+        StatusCode::TOO_MANY_REQUESTS
+    );
+    assert_eq!(
+        register_from(&app, "2001:db8:cc:de::1").await,
+        StatusCode::CREATED
+    );
+    // Once one of them is approved, the address may register again.
+    sqlx::query("UPDATE oauth_clients SET last_granted_at = 1 WHERE id = 'pending-1'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        register_from(&app, "2001:db8:cc:dd::99").await,
+        StatusCode::CREATED
+    );
+}
+
+#[tokio::test]
+async fn oauth_registration_accepts_common_client_shapes() {
+    let _lock = crate::test_support::ENV_LOCK.lock().await;
+    let _env = environment();
+    let (app, _, session, _) = setup_test_app().await;
+    for (body, callback) in [
+        // Claude Code: loopback callback, public client.
+        (
+            json!({"client_name": "Claude Code", "redirect_uris": ["http://localhost:33418/callback"],
+                   "grant_types": ["authorization_code", "refresh_token"], "response_types": ["code"],
+                   "token_endpoint_auth_method": "none"}),
+            "http://localhost:51234/callback",
+        ),
+        // VS Code: a bare loopback origin and an https redirect, plus the
+        // device flow, which is narrowed away.
+        (
+            json!({"client_name": "Visual Studio Code", "redirect_uris": ["http://127.0.0.1:33418", "https://vscode.dev/redirect"],
+                   "grant_types": ["authorization_code", "refresh_token", "urn:ietf:params:oauth:grant-type:device_code"],
+                   "response_types": ["code"], "token_endpoint_auth_method": "none"}),
+            "http://127.0.0.1:40000/",
+        ),
+        // claude.ai: an https callback, extra metadata ignored.
+        (
+            json!({"client_name": "claude.ai", "redirect_uris": ["https://claude.ai/api/mcp/auth_callback"],
+                   "grant_types": ["authorization_code", "refresh_token"], "token_endpoint_auth_method": "none",
+                   "scope": "event-types:read", "client_uri": "https://claude.ai"}),
+            "https://claude.ai/api/mcp/auth_callback",
+        ),
+        // A registration naming the default port and no path.
+        (
+            json!({"client_name": "Plain", "redirect_uris": ["https://app.example", "http://localhost:80/cb"]}),
+            "https://app.example/",
+        ),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/oauth/register")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CREATED, "{body}");
+        let registered = json_body(response).await;
+        assert_eq!(
+            registered["grant_types"],
+            json!(["authorization_code", "refresh_token"])
+        );
+        let client = registered["client_id"].as_str().unwrap().to_string();
+        let uri = format!("/oauth/authorize?client_id={client}&redirect_uri={}&response_type=code&code_challenge={}&code_challenge_method=S256&resource={}", urlencoding::encode(callback), crate::oauth::hash(VERIFIER), urlencoding::encode(RESOURCE));
+        let response = app.clone().oneshot(get(&uri)).await.unwrap();
+        assert_eq!(response.status(), StatusCode::SEE_OTHER, "{callback}");
+        let request = request_cookie(&response);
+        // The consent page binds the request to the signed-in user.
+        let page = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/oauth/consent")
+                    .header(
+                        "cookie",
+                        format!("__Host-calrs_session={session}; __Host-calrs_oauth={request}"),
+                    )
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(page.status(), StatusCode::OK);
+        let response = app
+            .clone()
+            .oneshot(consent_request(&session, &request, "allow", "csrf"))
+            .await
+            .unwrap();
+        let location = response.headers()["location"].to_str().unwrap().to_string();
+        let target = reqwest::Url::parse(&location).unwrap();
+        assert_eq!(
+            target.host_str(),
+            reqwest::Url::parse(callback).unwrap().host_str()
+        );
+        assert!(target.query_pairs().any(|(k, _)| k == "code"), "{location}");
+    }
+    // Still refused: no code flow at all.
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/oauth/register")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({"redirect_uris": [CALLBACK], "grant_types": ["client_credentials"]})
+                        .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 }

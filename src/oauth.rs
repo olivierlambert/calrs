@@ -29,6 +29,19 @@ const GRANT_LIFETIME: i64 = 30 * 86400;
 /// A registered client that never obtained a grant is dropped after a day, so
 /// anonymous registrations cannot hold the client cap for long.
 const UNUSED_CLIENT_LIFETIME: i64 = 86400;
+/// A client once granted is kept this long after its last grant, so an MCP
+/// client whose grant was revoked or expired can simply authorize again.
+const GRANTED_CLIENT_LIFETIME: i64 = 180 * 86400;
+/// Clients never granted, registered from one address (`rate_key`) within
+/// a day, beyond which that address cannot register more.
+const PENDING_CLIENTS_PER_ADDRESS: i64 = 50;
+/// The clients cleanup and the cap may remove, as a condition on `c`, binding
+/// now, now - UNUSED_CLIENT_LIFETIME and now - GRANTED_CLIENT_LIFETIME: no
+/// grant left, no authorization a signed-in user is looking at, and either
+/// never granted and over a day old, or last granted over 180 days ago.
+const RECLAIMABLE_CLIENT: &str = "NOT EXISTS (SELECT 1 FROM oauth_grants g WHERE g.client_id = c.id)
+    AND NOT EXISTS (SELECT 1 FROM oauth_requests r WHERE r.client_id = c.id AND r.user_id IS NOT NULL AND r.expires_at > ?)
+    AND ((c.last_granted_at IS NULL AND c.created_at < ?) OR c.last_granted_at < ?)";
 /// Registered clients kept at most (`register` reclaims unused ones).
 const CLIENT_CAP: i64 = 10_000;
 /// The local MFA policy of `auth::validate_session`, applied to a grant `g` of
@@ -165,14 +178,14 @@ fn rate_key(headers: &HeaderMap) -> String {
     }
 }
 
-/// Per client address (`rate_key`). Registration is rare (once per client)
-/// and uses the login budget, 10 per 15 minutes; authorization, token
-/// exchanges and revocations come from every connected client of an office
-/// behind one address, so they get 60 per 5 minutes each.
+/// Per client address (`rate_key`). Registration gets 30 per 15 minutes
+/// (one per client, but an office behind one NAT registers many);
+/// authorization, token exchanges and revocations come from every connected
+/// client of that office, so they get 60 per 5 minutes each.
 async fn rate_limit(state: &AppState, headers: &HeaderMap, operation: &str) -> Result<(), Error> {
     let key = format!("oauth:{operation}:{}", rate_key(headers));
     let limiter = match operation {
-        "register" => &state.login_limiter,
+        "register" => &state.oauth_register_limiter,
         _ => &state.oauth_limiter,
     };
     if limiter.check_limited(&key).await {
@@ -220,41 +233,42 @@ fn valid_redirect(uri: &str) -> bool {
             .any(|(k, _)| matches!(k.as_ref(), "code" | "state" | "error" | "iss"))
 }
 
-// RFC 8252 section 7.3: native apps choose an available loopback port at
-// authorization time. Compare the remaining URI literally, without URL
-// normalization that could also change the host, path, or query.
+/// Whether an authorization request's `redirect_uri` is one the client
+/// registered. Both are compared as parsed URLs, so `https://app.example`
+/// matches `https://app.example/` and `http://localhost:80/cb` matches
+/// `http://localhost/cb`, as the browser treats them; the path and query stay
+/// exact (no case folding, no percent-decoding). RFC 8252 section 7.3: a
+/// loopback callback may use any port. The code goes to the requested string.
 fn redirect_matches(registered: &str, requested: &str) -> bool {
-    fn loopback_parts(uri: &str) -> Option<(&str, &str)> {
-        if !valid_redirect(uri) {
-            return None;
-        }
-        let rest = uri.strip_prefix("http://")?;
-        let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
-        let (authority, suffix) = rest.split_at(end);
-        for host in ["127.0.0.1", "[::1]", "localhost"] {
-            if let Some(port) = authority.strip_prefix(host) {
-                if port.is_empty()
-                    || port
-                        .strip_prefix(':')
-                        .is_some_and(|p| !p.is_empty() && p.bytes().all(|c| c.is_ascii_digit()))
-                {
-                    return Some((host, suffix));
-                }
-            }
-        }
-        None
+    if !valid_redirect(registered) || !valid_redirect(requested) {
+        return false;
     }
-
-    registered == requested
-        || loopback_parts(registered)
-            .zip(loopback_parts(requested))
-            .is_some_and(|(a, b)| a == b)
+    let (Ok(mut registered), Ok(mut requested)) = (Url::parse(registered), Url::parse(requested))
+    else {
+        return false;
+    };
+    if registered == requested {
+        return true;
+    }
+    let loopback = |u: &Url| {
+        u.scheme() == "http" && matches!(u.host_str(), Some("localhost" | "127.0.0.1" | "[::1]"))
+    };
+    loopback(&registered)
+        && loopback(&requested)
+        && registered.set_port(None).is_ok()
+        && requested.set_port(None).is_ok()
+        && registered == requested
 }
 
 #[test]
 fn loopback_redirect_matching_only_relaxes_the_port() {
     for host in ["127.0.0.1", "[::1]", "localhost"] {
         let registered = format!("http://{host}:4321/callback?app=calrs");
+        // Dot segments resolve as in the browser, to the same callback.
+        assert!(redirect_matches(
+            &registered,
+            &format!("http://{host}:52319/a/../callback?app=calrs")
+        ));
         for port in [":52319", "", ":80"] {
             assert!(redirect_matches(
                 &registered,
@@ -265,7 +279,6 @@ fn loopback_redirect_matching_only_relaxes_the_port() {
             format!("https://{host}:52319/callback?app=calrs"),
             format!("http://{host}:52319/other?app=calrs"),
             format!("http://{host}:52319/callback?app=other"),
-            format!("http://{host}:52319/a/../callback?app=calrs"),
             format!("http://{host}:52319/callback?app=calrs#fragment"),
             format!("http://user@{host}:52319/callback?app=calrs"),
         ] {
@@ -312,7 +325,41 @@ fn rate_keys_group_ipv6_by_64_and_keep_ipv4_whole() {
 }
 
 #[test]
-fn redirect_matching_is_literal_for_case_and_percent_encoding() {
+fn redirect_matching_keeps_path_case_and_percent_encoding() {
+    // Hosts are case blind, as in the browser; nothing else is folded.
+    assert!(redirect_matches(
+        "https://app.example/callback",
+        "https://APP.example/callback"
+    ));
+    assert!(redirect_matches(
+        "http://localhost:4321/callback",
+        "http://LOCALHOST:4321/callback"
+    ));
+    // Forms the parser normalizes, as clients register them.
+    assert!(redirect_matches(
+        "https://app.example",
+        "https://app.example"
+    ));
+    assert!(redirect_matches(
+        "https://app.example",
+        "https://app.example/"
+    ));
+    assert!(redirect_matches(
+        "http://localhost:80/cb",
+        "http://localhost:80/cb"
+    ));
+    assert!(redirect_matches(
+        "http://localhost:80/cb",
+        "http://localhost/cb"
+    ));
+    assert!(redirect_matches(
+        "https://app.example:443/cb",
+        "https://app.example/cb"
+    ));
+    assert!(!redirect_matches(
+        "https://app.example:8443/cb",
+        "https://app.example/cb"
+    ));
     for (registered, requested) in [
         (
             "http://127.0.0.1:4321/callback",
@@ -321,14 +368,6 @@ fn redirect_matching_is_literal_for_case_and_percent_encoding() {
         (
             "http://127.0.0.1:4321/callback",
             "http://127.0.0.1:4321/%63allback",
-        ),
-        (
-            "http://localhost:4321/callback",
-            "http://LOCALHOST:4321/callback",
-        ),
-        (
-            "https://app.example/callback",
-            "https://APP.example/callback",
         ),
         (
             "https://app.example/callback",
@@ -365,24 +404,26 @@ async fn register(
     Json(form): Json<Registration>,
 ) -> Result<Response, Error> {
     rate_limit(&state, &headers, "register").await?;
-    // Registered URIs must already be in the parser's normal form, so the one
-    // stored is the one compared and the one the code is sent to.
+    // Stored as registered; authorize compares parsed URLs (redirect_matches).
     if form.redirect_uris.is_empty()
         || form.redirect_uris.len() > 10
-        || !form
-            .redirect_uris
-            .iter()
-            .all(|u| valid_redirect(u) && Url::parse(u).is_ok_and(|url| url.as_str() == u))
+        || !form.redirect_uris.iter().all(|u| valid_redirect(u))
     {
         return Err(invalid("invalid_redirect_uri"));
     }
+    // RFC 7591 section 3.2.1: the server may narrow the requested grant and
+    // response types. Clients asking for more (VS Code also lists the device
+    // flow) get the two supported ones back, as long as they ask for the code
+    // flow at all.
     if form.token_endpoint_auth_method.as_deref().unwrap_or("none") != "none"
-        || form.grant_types.as_ref().is_some_and(|v| {
-            v.is_empty()
-                || v.iter()
-                    .any(|g| g != "authorization_code" && g != "refresh_token")
-        })
-        || form.response_types.as_ref().is_some_and(|v| v != &["code"])
+        || form
+            .grant_types
+            .as_ref()
+            .is_some_and(|v| !v.iter().any(|g| g == "authorization_code"))
+        || form
+            .response_types
+            .as_ref()
+            .is_some_and(|v| !v.iter().any(|r| r == "code"))
     {
         return Err(invalid("invalid_client_metadata"));
     }
@@ -392,14 +433,32 @@ async fn register(
     }
     let id = random_token();
     let now = Utc::now().timestamp();
-    // At the cap, the oldest client that never got a grant (and has no
-    // authorization in progress) makes room, so a registration flood cannot
-    // lock out new clients; only a cap full of clients in use refuses.
+    let registered_by = hash(&rate_key(&headers));
+    // At the cap, the oldest reclaimable client (RECLAIMABLE_CLIENT) makes
+    // room; only a cap full of clients in use refuses. One address cannot
+    // hold more than PENDING_CLIENTS_PER_ADDRESS clients nobody approved.
     let mut tx = state.pool.begin().await?;
-    sqlx::query("DELETE FROM oauth_clients WHERE id IN (SELECT c.id FROM oauth_clients c WHERE (SELECT COUNT(*) FROM oauth_clients) >= ? AND NOT EXISTS (SELECT 1 FROM oauth_grants g WHERE g.client_id = c.id) AND NOT EXISTS (SELECT 1 FROM oauth_requests r WHERE r.client_id = c.id) ORDER BY c.created_at, c.id LIMIT 1)")
-        .bind(CLIENT_CAP).execute(&mut *tx).await?;
-    let inserted = sqlx::query("INSERT INTO oauth_clients (id, name, redirect_uris, created_at) SELECT ?, ?, ?, ? WHERE (SELECT COUNT(*) FROM oauth_clients) < ?")
-        .bind(&id).bind(name).bind(json!(form.redirect_uris).to_string()).bind(now).bind(CLIENT_CAP).execute(&mut *tx).await?;
+    let reclaim = format!("DELETE FROM oauth_clients WHERE id IN (SELECT c.id FROM oauth_clients c WHERE (SELECT COUNT(*) FROM oauth_clients) >= ? AND {RECLAIMABLE_CLIENT} ORDER BY COALESCE(c.last_granted_at, c.created_at), c.id LIMIT 1)");
+    sqlx::query(&reclaim)
+        .bind(CLIENT_CAP)
+        .bind(now)
+        .bind(now - UNUSED_CLIENT_LIFETIME)
+        .bind(now - GRANTED_CLIENT_LIFETIME)
+        .execute(&mut *tx)
+        .await?;
+    let pending: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM oauth_clients WHERE registered_by = ? AND last_granted_at IS NULL AND created_at > ?")
+        .bind(&registered_by)
+        .bind(now - UNUSED_CLIENT_LIFETIME)
+        .fetch_one(&mut *tx)
+        .await?;
+    if pending >= PENDING_CLIENTS_PER_ADDRESS {
+        return Err(Error(
+            StatusCode::TOO_MANY_REQUESTS,
+            "temporarily_unavailable",
+        ));
+    }
+    let inserted = sqlx::query("INSERT INTO oauth_clients (id, name, redirect_uris, created_at, registered_by) SELECT ?, ?, ?, ?, ? WHERE (SELECT COUNT(*) FROM oauth_clients) < ?")
+        .bind(&id).bind(name).bind(json!(form.redirect_uris).to_string()).bind(now).bind(&registered_by).bind(CLIENT_CAP).execute(&mut *tx).await?;
     tx.commit().await?;
     if inserted.rows_affected() != 1 {
         return Err(Error(
@@ -601,6 +660,11 @@ async fn consent(
         sqlx::query("INSERT INTO oauth_grants (id, client_id, user_id, resource, scope, expires_at, mfa_verified, created_at) VALUES (?, ?, ?, ?, ?, ?, COALESCE((SELECT mfa_verified FROM sessions WHERE id = ? AND user_id = ?), 0), ?)")
             .bind(&grant).bind(&params.client_id).bind(&user.id).bind(&params.resource).bind(params.scope.as_deref().unwrap_or(""))
             .bind(now + GRANT_LIFETIME).bind(session).bind(&user.id).bind(now).execute(&mut *tx).await?;
+        sqlx::query("UPDATE oauth_clients SET last_granted_at = ? WHERE id = ?")
+            .bind(now)
+            .bind(&params.client_id)
+            .execute(&mut *tx)
+            .await?;
         sqlx::query("INSERT INTO oauth_credentials (hash, grant_id, kind, expires_at, redirect_uri, challenge) VALUES (?, ?, 'code', ?, ?, ?)")
             .bind(hash(&code)).bind(&grant).bind(now + 120).bind(&params.redirect_uri).bind(&params.code_challenge).execute(&mut *tx).await?;
         redirect.query_pairs_mut().append_pair("code", &code);
@@ -882,7 +946,14 @@ pub async fn cleanup(pool: &SqlitePool) -> Result<(), sqlx::Error> {
         .execute(pool)
         .await?;
     // Retain spent refresh credentials until their grant expires (replay detection).
-    sqlx::query("DELETE FROM oauth_clients WHERE created_at < ? AND NOT EXISTS (SELECT 1 FROM oauth_grants WHERE client_id = oauth_clients.id) AND NOT EXISTS (SELECT 1 FROM oauth_requests WHERE client_id = oauth_clients.id)")
-        .bind(now - UNUSED_CLIENT_LIFETIME).execute(pool).await?;
+    let clients = format!(
+        "DELETE FROM oauth_clients WHERE id IN (SELECT c.id FROM oauth_clients c WHERE {RECLAIMABLE_CLIENT})"
+    );
+    sqlx::query(&clients)
+        .bind(now)
+        .bind(now - UNUSED_CLIENT_LIFETIME)
+        .bind(now - GRANTED_CLIENT_LIFETIME)
+        .execute(pool)
+        .await?;
     Ok(())
 }

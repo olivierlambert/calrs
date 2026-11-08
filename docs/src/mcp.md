@@ -87,8 +87,8 @@ existing reusable access token. Generating a link does not change visibility.
 
 Each call for an internal/private event creates a **new** link. Avoid automatically
 repeating a successful call. Link requests are limited to ten attempts per user
-per five minutes, and all tool calls together to 120 per user per minute (HTTP
-429 beyond).
+per five minutes, and all MCP requests together (`initialize`, `ping`,
+`tools/list`, tool calls) to 120 per user per minute (HTTP 429 beyond).
 
 Example request after MCP initialization:
 
@@ -166,7 +166,12 @@ the original grant permissions. Existing access tokens keep their own scopes.
 Authorization
 and token requests must include `resource=<public-base-url>/mcp`. Public clients
 use `token_endpoint_auth_method=none`, authorization code with **S256 PKCE**, and
-an exactly registered HTTPS or loopback HTTP callback URI.
+a registered HTTPS or loopback HTTP callback URI (ASCII only). The callback of
+an authorization must equal a registered one as a parsed URL (so
+`https://app.example` and `https://app.example/` are the same, the path and
+query are exact); a loopback callback may use any port (RFC 8252). Registrations
+asking for other grant types too (VS Code lists the device flow) get the two
+supported ones back.
 
 Access tokens last at most **one hour**. Refresh tokens rotate on each exchange
 and expire **30 days after approval**; reconnect then. Clients must serialize
@@ -210,11 +215,17 @@ revokes all of them.
 
 The OAuth endpoints are rate limited per client address (the rightmost
 `X-Forwarded-For` value, as for bookings; an IPv6 address counts by its /64):
-client registration 10 requests per 15 minutes, authorization, token exchanges
-and revocations 60 requests per 5 minutes each. At most 10,000 clients are
-registered; at that cap the oldest client that never obtained a grant is
-removed to make room, and registration is refused only when every client is in
-use. Over the limit they answer HTTP 429 with
+client registration 30 requests per 15 minutes, authorization, token exchanges
+and revocations 60 requests per 5 minutes each. One address cannot hold more
+than 50 clients registered in the last day that nobody approved. At most 10,000
+clients are registered.
+
+A client nobody approved is deleted after a day. A client once approved is kept
+for 180 days after its last approval, even when its grant was revoked or
+expired, so the MCP client can simply authorize again. At the 10,000 cap the
+oldest client in either of those deletable states makes room, and registration
+is refused only when no client can be removed. An authorization a signed-in
+user is looking at keeps its client. Over the limit they answer HTTP 429 with
 `{"error":"temporarily_unavailable"}`.
 
 Discovery and endpoints:

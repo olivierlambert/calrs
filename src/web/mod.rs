@@ -146,8 +146,11 @@ pub struct AppState {
     pub templates: Environment<'static>,
     pub login_limiter: RateLimiter,
     pub booking_limiter: RateLimiter,
-    /// OAuth token exchanges and revocations, per client IP (`oauth::rate_limit`).
+    /// OAuth authorizations, token exchanges and revocations, per client
+    /// address (`oauth::rate_limit`).
     pub oauth_limiter: RateLimiter,
+    /// OAuth client registrations, per client address.
+    pub oauth_register_limiter: RateLimiter,
     /// MCP tool calls, per user (`mcp::handle`).
     pub mcp_limiter: RateLimiter,
     pub data_dir: PathBuf,
@@ -675,6 +678,7 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
         login_limiter: RateLimiter::new(10, 900),
         booking_limiter: RateLimiter::new(10, 300),
         oauth_limiter: RateLimiter::new(60, 300),
+        oauth_register_limiter: RateLimiter::new(30, 900),
         mcp_limiter: RateLimiter::new(120, 60),
         secret_key,
         data_dir,

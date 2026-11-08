@@ -750,7 +750,7 @@ async fn mcp_admin_tokens_get_no_reach_over_other_users_event_types() {
 }
 
 #[tokio::test]
-async fn mcp_tool_calls_are_rate_limited_per_user() {
+async fn mcp_requests_are_rate_limited_per_user() {
     let _lock = crate::test_support::ENV_LOCK.lock().await;
     let _env = oauth::environment();
     let (app, _, session, _) = setup_test_app().await;
@@ -773,7 +773,7 @@ async fn mcp_tool_calls_are_rate_limited_per_user() {
         .unwrap()
         .status();
     assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
-    // Other methods are not tool calls.
+    // Every request counts, not only tool calls.
     let ping = json!({"jsonrpc":"2.0","id":8,"method":"ping"});
     let status = app
         .clone()
@@ -781,5 +781,5 @@ async fn mcp_tool_calls_are_rate_limited_per_user() {
         .await
         .unwrap()
         .status();
-    assert_eq!(status, StatusCode::OK);
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
 }

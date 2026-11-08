@@ -3,7 +3,14 @@ CREATE TABLE oauth_clients (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
     redirect_uris TEXT NOT NULL,
-    created_at INTEGER NOT NULL
+    created_at INTEGER NOT NULL,
+    -- Last time a user approved it; NULL = never. Cleanup keeps clients that
+    -- were granted within 180 days, so a revoked or expired grant does not
+    -- strand the MCP client with an unknown client_id.
+    last_granted_at INTEGER,
+    -- Hash of the registering address (oauth::rate_key), for the
+    -- per-address cap on clients never granted.
+    registered_by TEXT
 );
 CREATE TABLE oauth_requests (
     id TEXT PRIMARY KEY,
@@ -45,3 +52,4 @@ CREATE INDEX idx_oauth_grants_user ON oauth_grants(user_id);
 CREATE INDEX idx_oauth_grants_client ON oauth_grants(client_id);
 CREATE INDEX idx_oauth_requests_client ON oauth_requests(client_id);
 CREATE INDEX idx_oauth_requests_user ON oauth_requests(user_id);
+CREATE INDEX idx_oauth_clients_registered_by ON oauth_clients(registered_by, created_at);

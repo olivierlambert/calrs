@@ -136,6 +136,15 @@ async fn handle(State(state): State<Arc<AppState>>, headers: HeaderMap, body: By
             StatusCode::BAD_REQUEST.into_response()
         };
     };
+    // One token cannot load the database: 120 requests per minute per user,
+    // whatever the method (notifications above do no work).
+    if state
+        .mcp_limiter
+        .check_limited(&format!("mcp:{}", user.id))
+        .await
+    {
+        return StatusCode::TOO_MANY_REQUESTS.into_response();
+    }
     let result = match method {
         "initialize" => {
             let Some(version) = params["protocolVersion"].as_str() else {
@@ -169,15 +178,6 @@ async fn handle(State(state): State<Arc<AppState>>, headers: HeaderMap, body: By
             };
             if !scopes.split_whitespace().any(|s| s == required) {
                 return challenge(StatusCode::FORBIDDEN, required);
-            }
-            // One token cannot load the database: 120 tool calls per minute
-            // per user, whichever tool.
-            if state
-                .mcp_limiter
-                .check_limited(&format!("mcp:{}", user.id))
-                .await
-            {
-                return StatusCode::TOO_MANY_REQUESTS.into_response();
             }
             // Bound write amplification independently of the IP login limiter.
             if name == "create_invite_link"
