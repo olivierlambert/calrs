@@ -254,6 +254,7 @@ async fn sync_caldav_calendars(
                 &cal_info.href,
                 api_base,
                 token,
+                crate::google_calendar::REFRESH_BUDGET,
             )
             .await
             {

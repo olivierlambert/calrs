@@ -107,7 +107,9 @@ reported as failing on the Sources page (with the usual email to its owner
 when it keeps failing). After 7 days without a successful refresh the cached
 absences are dropped, so an absence deleted meanwhile does not block forever.
 A Calendar API that is not enabled at all is not reported, as long as nothing
-was cached from it. An absence Google marks as a whole day (a `date` rather
+was cached from it. The absences are fetched at most every 5 minutes per
+calendar, and a fetch that takes over 10 seconds counts as a failure rather
+than holding up a booking page. An absence Google marks as a whole day (a `date` rather
 than a time) blocks those days in the calendar's own timezone. Working-location
 events are not treated as absences.
 

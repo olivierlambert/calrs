@@ -45,12 +45,29 @@ struct EventPage {
 /// answering (disabled, out of quota).
 pub(crate) const SNAPSHOT_MAX_AGE_DAYS: i64 = 7;
 
-/// Refresh one calendar's out-of-office snapshot during a source sync.
+/// How long an out-of-office refresh may take. A sync can run inside a
+/// slot page request (on-demand sync), which must not wait on Google.
+pub(crate) const REFRESH_BUDGET: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// A snapshot refreshed this recently is not fetched again: syncs come
+/// every minute from the background loop and on demand from slot pages.
+const REFRESH_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5 * 60);
+
+/// When each calendar's snapshot was last refreshed successfully, by
+/// Calendar API base and calendar id. In memory: after a restart the first
+/// sync refreshes.
+static LAST_REFRESH: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::HashMap<String, std::time::Instant>>,
+> = std::sync::LazyLock::new(Default::default);
+
+/// Refresh one calendar's out-of-office snapshot during a source sync,
+/// within `budget`, unless it was refreshed in the last five minutes.
 /// Returns the failure to report on the source (so the sync health, the
-/// dashboard badge and the owner's alert apply), `None` on success or when
-/// the Calendar API is simply not in use: not usable for this project or
-/// token, with nothing cached that it could leave stale. On any failure,
-/// rows older than [`SNAPSHOT_MAX_AGE_DAYS`] are dropped.
+/// dashboard badge and the owner's alert apply), `None` on success, when
+/// skipped, or when the Calendar API is simply not in use: not usable for
+/// this project or token, with nothing cached that it could leave stale.
+/// On any failure, rows older than [`SNAPSHOT_MAX_AGE_DAYS`] are dropped.
+/// A failed refresh is tried again on the next sync.
 pub(crate) async fn refresh_out_of_office(
     pool: &SqlitePool,
     calendar_id: &str,
@@ -58,19 +75,41 @@ pub(crate) async fn refresh_out_of_office(
     href: &str,
     api_base: &str,
     token: &str,
+    budget: std::time::Duration,
 ) -> Option<String> {
-    let error = match sync_out_of_office(
-        pool,
-        calendar_id,
-        primary_calendar_href,
-        href,
-        api_base,
-        token,
+    let key = format!("{api_base}|{calendar_id}");
+    let fresh = LAST_REFRESH
+        .lock()
+        .ok()
+        .and_then(|last| last.get(&key).copied())
+        .is_some_and(|at| at.elapsed() < REFRESH_INTERVAL);
+    if fresh {
+        return None;
+    }
+    let refreshed = tokio::time::timeout(
+        budget,
+        sync_out_of_office(
+            pool,
+            calendar_id,
+            primary_calendar_href,
+            href,
+            api_base,
+            token,
+        ),
     )
     .await
-    {
+    .unwrap_or_else(|_| {
+        Err(anyhow::anyhow!(
+            "Google out-of-office fetch: no answer within {} s",
+            budget.as_secs()
+        ))
+    });
+    let error = match refreshed {
         Ok(count) => {
             tracing::debug!(calendar_id = %calendar_id, count, "Google out-of-office synced");
+            if let Ok(mut last) = LAST_REFRESH.lock() {
+                last.insert(key, std::time::Instant::now());
+            }
             return None;
         }
         Err(e) => e,
@@ -1046,7 +1085,7 @@ mod tests {
         let (base, server) = super::fake::serve(fake).await;
         let api = format!("{base}/api");
         assert_eq!(
-            refresh_out_of_office(&pool, "c", PRIMARY, CAL_HREF, &api, "t").await,
+            refresh_out_of_office(&pool, "c", PRIMARY, CAL_HREF, &api, "t", REFRESH_BUDGET).await,
             None
         );
         server.abort();
@@ -1063,9 +1102,10 @@ mod tests {
         for fake in [FakeGoogle::api_failing(503), FakeGoogle::without_api()] {
             let (base, server) = super::fake::serve(std::sync::Arc::new(fake)).await;
             let api = format!("{base}/api");
-            let failure = refresh_out_of_office(&pool, "c", PRIMARY, CAL_HREF, &api, "t")
-                .await
-                .unwrap();
+            let failure =
+                refresh_out_of_office(&pool, "c", PRIMARY, CAL_HREF, &api, "t", REFRESH_BUDGET)
+                    .await
+                    .unwrap();
             assert!(failure.starts_with("Google out-of-office"), "{failure}");
             assert!(!failure.contains("Backend Error"), "{failure}");
             server.abort();
@@ -1081,7 +1121,7 @@ mod tests {
             super::fake::serve(std::sync::Arc::new(FakeGoogle::api_failing(503))).await;
         let api = format!("{base}/api");
         assert!(
-            refresh_out_of_office(&pool, "c", PRIMARY, CAL_HREF, &api, "t")
+            refresh_out_of_office(&pool, "c", PRIMARY, CAL_HREF, &api, "t", REFRESH_BUDGET)
                 .await
                 .is_some()
         );
@@ -1092,10 +1132,56 @@ mod tests {
         let (base, server) = super::fake::serve(std::sync::Arc::new(FakeGoogle::default())).await;
         let api = format!("{base}/api");
         assert_eq!(
-            refresh_out_of_office(&pool, "c", PRIMARY, CAL_HREF, &api, "t").await,
+            refresh_out_of_office(&pool, "c", PRIMARY, CAL_HREF, &api, "t", REFRESH_BUDGET).await,
             None
         );
         server.abort();
+    }
+
+    /// A snapshot refreshed in the last five minutes is not fetched again,
+    /// and a refresh that does not answer within its budget is a failure
+    /// (tried again on the next sync) instead of holding a slot page.
+    #[tokio::test]
+    async fn out_of_office_refreshes_are_spaced_and_bounded() {
+        const PRIMARY: &str = "http://x/caldav/v2/host%40example.com/user";
+        const CAL_HREF: &str = "/caldav/v2/host%40example.com/events";
+        let pool = database().await;
+        let fake = std::sync::Arc::new(FakeGoogle::default());
+        let (base, server) = super::fake::serve(fake.clone()).await;
+        let api = format!("{base}/api");
+        for _ in 0..2 {
+            assert_eq!(
+                refresh_out_of_office(&pool, "c", PRIMARY, CAL_HREF, &api, "t", REFRESH_BUDGET)
+                    .await,
+                None
+            );
+        }
+        server.abort();
+        let fetches = fake
+            .log()
+            .iter()
+            .filter(|e| e.starts_with("GET /api/"))
+            .count();
+        assert_eq!(fetches, 1);
+
+        let slow = std::sync::Arc::new(FakeGoogle::slow(std::time::Duration::from_secs(5)));
+        let (base, server) = super::fake::serve(slow).await;
+        let api = format!("{base}/api");
+        let started = std::time::Instant::now();
+        let failure = refresh_out_of_office(
+            &pool,
+            "c",
+            PRIMARY,
+            CAL_HREF,
+            &api,
+            "t",
+            std::time::Duration::from_millis(200),
+        )
+        .await
+        .unwrap();
+        server.abort();
+        assert!(started.elapsed() < std::time::Duration::from_secs(3));
+        assert!(failure.contains("no answer within"), "{failure}");
     }
 
     #[tokio::test]
