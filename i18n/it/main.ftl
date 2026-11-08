@@ -2034,7 +2034,9 @@ admin-ews-row-conflict = Non predisposto: la fonte di un altro utente legge già
 admin-ews-trust-title = Indirizzi da confermare
 admin-ews-trust-help = Questi account attivi nei domini consentiti hanno un indirizzo che nessuno ha garantito (registrazione libera, o creati prima di questo controllo), quindi non ricevono alcuna fonte Exchange gestita. Conferma un indirizzo solo quando sai che appartiene a quella persona: confermandolo, calrs legge per lei il calendario di quella casella.
 admin-ews-trust-confirm = Conferma
-admin-ews-trust-more = { $shown } di { $total } mostrati.
+admin-ews-search = Cerca per utente o casella di posta
+admin-ews-no-match = Nessuna casella gestita o indirizzo da confermare corrisponde a questa ricerca.
+admin-ews-conflicts-more = Casella già usata da un altro utente: { $shown } di { $total } mostrati.
 admin-ews-http-warning = L'endpoint usa http://: la password dell'account di servizio viene inviata in chiaro. Meglio https://.
 # Time off (templates/time_off.html, src/web/time_off.rs, troubleshoot view)
 

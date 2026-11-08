@@ -2034,7 +2034,9 @@ admin-ews-row-conflict = Sin aprovisionar: la fuente de otro usuario ya lee este
 admin-ews-trust-title = Direcciones por confirmar
 admin-ews-trust-help = Estas cuentas activas de los dominios permitidos tienen una dirección que nadie ha avalado (registro abierto, o creadas antes de esta comprobación), así que no reciben ninguna fuente de Exchange gestionada. Confirma una solo cuando sepas que la dirección pertenece a esa persona: al confirmarla, calrs lee para ella el calendario de ese buzón.
 admin-ews-trust-confirm = Confirmar
-admin-ews-trust-more = Se muestran { $shown } de { $total }.
+admin-ews-search = Buscar por usuario o buzón
+admin-ews-no-match = Ningún buzón gestionado ni dirección por confirmar coincide con esta búsqueda.
+admin-ews-conflicts-more = Buzón ya usado por otro usuario: se muestran { $shown } de { $total }.
 admin-ews-http-warning = El punto de conexión usa http://: la contraseña de la cuenta de servicio se envía sin cifrar. Es preferible https://.
 # Time off (templates/time_off.html, src/web/time_off.rs, troubleshoot view)
 

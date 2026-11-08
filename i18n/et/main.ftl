@@ -2034,7 +2034,9 @@ admin-ews-row-conflict = Seadistamata: teise kasutaja allikas loeb seda postkast
 admin-ews-trust-title = Kinnitamist ootavad aadressid
 admin-ews-trust-help = Nendel lubatud domeenide aktiivsetel kontodel on aadress, mille eest keegi pole vastutanud (vaba registreerumine või loodud enne seda kontrolli), seega ei saa nad hallatavat Exchange'i allikat. Kinnita aadress ainult siis, kui tead, et see kuulub sellele inimesele: kinnitamisel loeb calrs tema jaoks selle postkasti kalendrit.
 admin-ews-trust-confirm = Kinnita
-admin-ews-trust-more = Kuvatakse { $shown } / { $total }.
+admin-ews-search = Otsi kasutaja või postkasti järgi
+admin-ews-no-match = Ükski hallatav postkast ega kinnitamist ootav aadress ei vasta otsingule.
+admin-ews-conflicts-more = Postkast on juba teise kasutaja kasutuses: kuvatakse { $shown } / { $total }.
 admin-ews-http-warning = Lõpp-punkt kasutab http://: teenusekonto parool saadetakse krüptimata kujul. Eelista https://.
 # Time off (templates/time_off.html, src/web/time_off.rs, troubleshoot view)
 

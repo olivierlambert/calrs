@@ -21,17 +21,114 @@ const NOTICES: &[&str] = &[
     "trust-changed",
 ];
 
-/// How many unconfirmed addresses the card lists at most.
-const UNTRUSTED_SHOWN: usize = 20;
+/// Unconfirmed addresses per page of the card's list.
+const UNTRUSTED_SHOWN: i64 = 20;
+
+/// Managed sources per page of the per-user status table (#138): a page
+/// load renders this many rows at most, however many users are provisioned.
+const SOURCES_PAGE_SIZE: i64 = 50;
+
+/// Users whose mailbox is already another user's, listed at most.
+const CONFLICTS_SHOWN: i64 = 50;
+
+/// The card's lists as carried in the URL: `ewsq` (search, applied to both
+/// lists), `ewsp` (page of managed sources), `ewsu` (page of addresses to
+/// confirm). Unknown or malformed values fall back to the defaults.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct EwsListState {
+    pub q: String,
+    pub sources_page: i64,
+    pub untrusted_page: i64,
+}
+
+impl EwsListState {
+    pub(super) fn from_query(query: &std::collections::HashMap<String, String>) -> Self {
+        let get = |k: &str| query.get(k).map(String::as_str);
+        Self {
+            q: listing::bounded_search(get("ewsq").unwrap_or_default()),
+            sources_page: listing::lenient_page(get("ewsp")),
+            untrusted_page: listing::lenient_page(get("ewsu")),
+        }
+    }
+
+    /// `/dashboard/admin` on these pages, scrolled to the card.
+    pub(super) fn href(&self, sources_page: i64, untrusted_page: i64) -> String {
+        let mut params = Vec::new();
+        if !self.q.is_empty() {
+            params.push(format!("ewsq={}", urlencoding::encode(&self.q)));
+        }
+        if sources_page > 1 {
+            params.push(format!("ewsp={sources_page}"));
+        }
+        if untrusted_page > 1 {
+            params.push(format!("ewsu={untrusted_page}"));
+        }
+        if params.is_empty() {
+            "/dashboard/admin#ews-global".to_string()
+        } else {
+            format!("/dashboard/admin?{}#ews-global", params.join("&"))
+        }
+    }
+
+    /// The search as a bound `GLOB` pattern, `None` when there is none.
+    fn pattern(&self) -> Option<String> {
+        (!self.q.is_empty()).then(|| listing::ci_glob(&self.q))
+    }
+}
+
+/// The SQL test `is_email_allowed` applies, so the list of addresses to
+/// confirm can be counted and paged in the database: the text after the
+/// last `@`, lowercased, is one of the allowed domains. `rtrim(email, <every
+/// character but @>)` keeps the address up to its last `@`. SQLite's
+/// `lower` folds ASCII only, so a domain written with non-ASCII capitals is
+/// left out; such an address names no mailbox anyway (`mailbox_for`).
+fn push_allowed_domains(
+    qb: &mut sqlx::QueryBuilder<'_, sqlx::Sqlite>,
+    allowed_domains: &Option<String>,
+) {
+    let Some(domains) = allowed_domains.as_deref().filter(|d| !d.trim().is_empty()) else {
+        return;
+    };
+    qb.push(
+        " AND instr(email, '@') > 0 \
+          AND lower(substr(email, length(rtrim(email, replace(email, '@', ''))) + 1)) IN (",
+    );
+    let mut list = qb.separated(", ");
+    for domain in domains.split(',') {
+        list.push_bind(domain.trim().to_lowercase());
+    }
+    qb.push(")");
+}
+
+/// Enabled accounts in the allowed domains whose address nobody vouched for.
+fn push_untrusted_filter(
+    qb: &mut sqlx::QueryBuilder<'_, sqlx::Sqlite>,
+    allowed_domains: &Option<String>,
+    pattern: &Option<String>,
+) {
+    qb.push(" FROM users WHERE enabled = 1 AND email_trusted = 0");
+    push_allowed_domains(qb, allowed_domains);
+    if let Some(pattern) = pattern {
+        qb.push(" AND (email GLOB ");
+        qb.push_bind(pattern.clone());
+        qb.push(" OR name GLOB ");
+        qb.push_bind(pattern.clone());
+        qb.push(")");
+    }
+}
 
 /// Template context for the admin panel card. `notice` is the raw `?ews=`
-/// query value; anything unknown is dropped.
+/// query value; anything unknown is dropped. Every list on it is counted
+/// and paged in SQL, so an instance with thousands of provisioned users
+/// renders one page of each.
 pub(super) async fn admin_context(
     state: &AppState,
     query: &std::collections::HashMap<String, String>,
 ) -> minijinja::Value {
     let notice = query.get("ews").map(String::as_str);
     let count = |k: &str| query.get(k).and_then(|n| n.parse::<u32>().ok());
+    let list = EwsListState::from_query(query);
+    let pattern = list.pattern();
     let cfg = state.ews_global.read().await.clone();
     // What the admin last saved, even when incomplete or switched off: the
     // live config is `None` then, but the form must not come back empty.
@@ -59,16 +156,32 @@ pub(super) async fn admin_context(
     let (_, url, username, has_password, lock, auto, domain, from_domain, allowed_domains) =
         stored.unwrap_or((0, None, None, false, 0, 0, None, None, None));
 
-    let managed_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM caldav_sources WHERE managed = 1 AND provider_type = 'ews'",
+    let (managed_count, ok_count): (i64, i64) = sqlx::query_as(
+        "SELECT COUNT(*), COALESCE(SUM(u.enabled = 1 AND u.email_trusted = 1 \
+                    AND cs.last_sync_error IS NULL AND cs.last_synced IS NOT NULL), 0) \
+             FROM caldav_sources cs \
+             LEFT JOIN accounts a ON a.id = cs.account_id \
+             LEFT JOIN users u ON u.id = a.user_id \
+             WHERE cs.managed = 1 AND cs.provider_type = 'ews'",
     )
     .fetch_one(&state.pool)
     .await
-    .unwrap_or(0);
+    .unwrap_or((0, 0));
 
     // Per-user status of the managed sources, so the admin can see which
     // mailboxes synced and which failed (e.g. a user without an Exchange
-    // mailbox). Failing rows first.
+    // mailbox). Failing rows first, one page at a time.
+    const SOURCE_FILTER: &str = " FROM caldav_sources cs \
+             JOIN accounts a ON a.id = cs.account_id \
+             JOIN users u ON u.id = a.user_id \
+             WHERE cs.managed = 1 AND cs.provider_type = 'ews' \
+               AND (?1 IS NULL OR u.email GLOB ?1 OR cs.impersonate_email GLOB ?1)";
+    let sources_matched: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*){SOURCE_FILTER}"))
+        .bind(&pattern)
+        .fetch_one(&state.pool)
+        .await
+        .unwrap_or(0);
+    let sources_page = listing::clamp_page(list.sources_page, sources_matched, SOURCES_PAGE_SIZE);
     #[allow(clippy::type_complexity)]
     let rows: Vec<(
         String,
@@ -81,19 +194,19 @@ pub(super) async fn admin_context(
         String,
         Option<String>,
         Option<String>,
-    )> = sqlx::query_as(
+    )> = sqlx::query_as(&format!(
         "SELECT u.email, cs.impersonate_email, cs.last_synced, cs.last_sync_error, cs.enabled, \
-                u.enabled, u.email_trusted, u.id, cs.taken_over_from, cs.taken_over_at \
-             FROM caldav_sources cs \
-             JOIN accounts a ON a.id = cs.account_id \
-             JOIN users u ON u.id = a.user_id \
-             WHERE cs.managed = 1 AND cs.provider_type = 'ews' \
-             ORDER BY (cs.last_sync_error IS NOT NULL) DESC, u.email",
-    )
+                u.enabled, u.email_trusted, u.id, cs.taken_over_from, cs.taken_over_at\
+         {SOURCE_FILTER} \
+         ORDER BY (cs.last_sync_error IS NOT NULL) DESC, u.email, cs.id \
+         LIMIT ?2 OFFSET ?3"
+    ))
+    .bind(&pattern)
+    .bind(SOURCES_PAGE_SIZE)
+    .bind((sources_page - 1) * SOURCES_PAGE_SIZE)
     .fetch_all(&state.pool)
     .await
     .unwrap_or_default();
-    let mut ok_count = 0usize;
     let mut sources: Vec<minijinja::Value> = rows
         .iter()
         .map(
@@ -122,9 +235,6 @@ pub(super) async fn admin_context(
                     None if last_synced.is_some() => ("synced", ""),
                     None => ("never", ""),
                 };
-                if status == "synced" {
-                    ok_count += 1;
-                }
                 context! {
                     user_id => user_id,
                     taken_over_from => taken_over_from,
@@ -143,26 +253,58 @@ pub(super) async fn admin_context(
         .collect();
 
     // Trusted users left without a source because their mailbox is already
-    // another user's: listed too, so the admin sees why.
+    // another user's: listed too, above the first page, so the admin sees
+    // why. The database maps each address to its mailbox (lowercased, the
+    // domain override applied) and matches it against the managed sources;
+    // `impersonation_target` then confirms each row it returns.
+    let mut conflict_count = 0i64;
     if let Some(c) = cfg.as_ref() {
-        let taken: std::collections::HashSet<String> =
-            rows.iter().filter_map(|r| r.1.clone()).collect();
-        let unprovisioned: Vec<String> = sqlx::query_scalar(
-            "SELECT u.email FROM users u WHERE u.enabled = 1 AND u.email_trusted = 1 \
-               AND NOT EXISTS (SELECT 1 FROM caldav_sources cs JOIN accounts a ON a.id = cs.account_id \
-                               WHERE a.user_id = u.id AND cs.managed = 1 AND cs.provider_type = 'ews') \
-             ORDER BY u.email",
-        )
-        .fetch_all(&state.pool)
-        .await
-        .unwrap_or_default();
-        for email in unprovisioned {
-            let Some(mailbox) = c.impersonation_target(&email) else {
-                continue;
-            };
-            if taken.contains(&mailbox) {
-                sources.insert(
-                    0,
+        let (from, to) = c
+            .domain_override
+            .as_ref()
+            .map(|o| (Some(o.from.clone()), Some(o.to.clone())))
+            .unwrap_or((None, None));
+        const CONFLICTS: &str = "WITH cand AS (
+               SELECT u.email AS email, lower(trim(u.email)) AS addr FROM users u
+               WHERE u.enabled = 1 AND u.email_trusted = 1
+                 AND (?1 IS NULL OR u.email GLOB ?1)
+                 AND NOT EXISTS (SELECT 1 FROM caldav_sources cs
+                                 JOIN accounts a ON a.id = cs.account_id
+                                 WHERE a.user_id = u.id AND cs.managed = 1
+                                   AND cs.provider_type = 'ews')),
+             mapped AS (
+               SELECT email, CASE WHEN ?2 IS NOT NULL
+                                   AND substr(addr, instr(addr, '@') + 1) = ?2
+                              THEN substr(addr, 1, instr(addr, '@')) || ?3
+                              ELSE addr END AS mailbox
+               FROM cand)
+             SELECT email, mailbox FROM mapped
+             WHERE mailbox IN (SELECT impersonate_email FROM caldav_sources
+                               WHERE managed = 1 AND provider_type = 'ews'
+                                 AND impersonate_email IS NOT NULL)";
+        conflict_count = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM ({CONFLICTS})"))
+            .bind(&pattern)
+            .bind(&from)
+            .bind(&to)
+            .fetch_one(&state.pool)
+            .await
+            .unwrap_or(0);
+        if sources_page == 1 && conflict_count > 0 {
+            let conflicts: Vec<(String, String)> =
+                sqlx::query_as(&format!("{CONFLICTS} ORDER BY email LIMIT ?4"))
+                    .bind(&pattern)
+                    .bind(&from)
+                    .bind(&to)
+                    .bind(CONFLICTS_SHOWN)
+                    .fetch_all(&state.pool)
+                    .await
+                    .unwrap_or_default();
+            let rows: Vec<minijinja::Value> = conflicts
+                .into_iter()
+                .filter(|(email, mailbox)| {
+                    c.impersonation_target(email).as_deref() == Some(mailbox.as_str())
+                })
+                .map(|(email, mailbox)| {
                     context! {
                         email => email,
                         mailbox => mailbox,
@@ -171,33 +313,43 @@ pub(super) async fn admin_context(
                         enabled => true,
                         status => "conflict",
                         error => "",
-                    },
-                );
-            }
+                    }
+                })
+                .collect();
+            sources.splice(0..0, rows);
         }
     }
+    let sources_pager = listing::pager(sources_page, sources_matched, SOURCES_PAGE_SIZE, |n| {
+        list.href(n, list.untrusted_page)
+    });
 
     // Enabled accounts in the allowed domains whose address nobody vouched
     // for: they get no managed source until the admin confirms them.
-    let untrusted: Vec<(String, String, String)> = sqlx::query_as(
-        "SELECT id, email, name FROM users WHERE enabled = 1 AND email_trusted = 0 \
-         ORDER BY lower(email)",
-    )
-    .fetch_all(&state.pool)
-    .await
-    .unwrap_or_default();
-    let untrusted: Vec<&(String, String, String)> = untrusted
-        .iter()
-        .filter(|(_, email, _)| crate::auth::is_email_allowed(email, &allowed_domains))
-        .collect();
-    let untrusted_count = untrusted.len();
+    let mut counted = sqlx::QueryBuilder::new("SELECT COUNT(*)");
+    push_untrusted_filter(&mut counted, &allowed_domains, &pattern);
+    let untrusted_count: i64 = counted
+        .build_query_scalar()
+        .fetch_one(&state.pool)
+        .await
+        .unwrap_or(0);
+    let untrusted_page = listing::clamp_page(list.untrusted_page, untrusted_count, UNTRUSTED_SHOWN);
+    let mut select = sqlx::QueryBuilder::new("SELECT id, email, name");
+    push_untrusted_filter(&mut select, &allowed_domains, &pattern);
+    select.push(" ORDER BY lower(email), id LIMIT ");
+    select.push_bind(UNTRUSTED_SHOWN);
+    select.push(" OFFSET ");
+    select.push_bind((untrusted_page - 1) * UNTRUSTED_SHOWN);
+    let untrusted: Vec<(String, String, String)> = select
+        .build_query_as()
+        .fetch_all(&state.pool)
+        .await
+        .unwrap_or_default();
     // The mailbox a confirmation would open, as the admin must judge it:
     // after the domain override, or "none" for an address that names none.
     let domain_override =
         ews_global::DomainOverride::new(from_domain.as_deref(), domain.as_deref());
     let untrusted_users: Vec<minijinja::Value> = untrusted
         .iter()
-        .take(UNTRUSTED_SHOWN)
         .map(|(id, email, name)| {
             context! {
                 id => id,
@@ -207,6 +359,9 @@ pub(super) async fn admin_context(
             }
         })
         .collect();
+    let untrusted_pager = listing::pager(untrusted_page, untrusted_count, UNTRUSTED_SHOWN, |n| {
+        list.href(sources_page, n)
+    });
 
     let url = url.unwrap_or_default();
     context! {
@@ -222,8 +377,22 @@ pub(super) async fn admin_context(
         ews_managed_source_count => managed_count,
         ews_managed_ok_count => ok_count,
         ews_managed_sources => sources,
+        ews_managed_matched => sources_matched,
+        ews_managed_pager => sources_pager,
+        ews_conflict_count => conflict_count,
+        ews_conflicts_shown => CONFLICTS_SHOWN.min(conflict_count),
+        // Conflicts are listed above the first page only.
+        ews_conflicts_truncated => sources_page == 1 && conflict_count > CONFLICTS_SHOWN,
         ews_untrusted_users => untrusted_users,
         ews_untrusted_count => untrusted_count,
+        ews_untrusted_pager => untrusted_pager,
+        // The search box shows once a list runs over one page, or while a
+        // search is active (so it can be cleared).
+        ews_search_shown => !list.q.is_empty()
+            || sources_matched > SOURCES_PAGE_SIZE
+            || untrusted_count > UNTRUSTED_SHOWN,
+        ews_q => list.q.clone(),
+        ews_search_max => listing::MAX_SEARCH_CHARS,
         ews_notice => notice.filter(|n| NOTICES.contains(n)).unwrap_or(""),
         // How many managed sources the save just created, when it ran the
         // batch, or the removal deleted (`?n=`); absent otherwise.

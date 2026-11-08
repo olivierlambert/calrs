@@ -2105,7 +2105,9 @@ admin-ews-row-conflict = Nie udostępniono: źródło innego użytkownika już c
 admin-ews-trust-title = Adresy do potwierdzenia
 admin-ews-trust-help = Te aktywne konta w dozwolonych domenach mają adres, za który nikt nie poręczył (rejestracja otwarta lub konto sprzed tej kontroli), więc nie otrzymują zarządzanego źródła Exchange. Potwierdź adres tylko wtedy, gdy wiesz, że należy do tej osoby: po potwierdzeniu calrs czyta dla niej kalendarz tej skrzynki.
 admin-ews-trust-confirm = Potwierdź
-admin-ews-trust-more = Wyświetlono { $shown } z { $total }.
+admin-ews-search = Szukaj według użytkownika lub skrzynki
+admin-ews-no-match = Żadna zarządzana skrzynka ani adres do potwierdzenia nie pasuje do wyszukiwania.
+admin-ews-conflicts-more = Skrzynka używana już przez innego użytkownika: wyświetlono { $shown } z { $total }.
 admin-ews-http-warning = Punkt końcowy używa http://: hasło konta usługi jest wysyłane bez szyfrowania. Lepiej użyj https://.
 # Time off (templates/time_off.html, src/web/time_off.rs, troubleshoot view)
 

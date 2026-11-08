@@ -2034,7 +2034,9 @@ admin-ews-row-conflict = Nicht bereitgestellt: Die Quelle eines anderen Benutzer
 admin-ews-trust-title = Zu bestätigende Adressen
 admin-ews-trust-help = Diese aktiven Konten in den erlaubten Domains haben eine Adresse, für die niemand bürgt (selbst registriert oder vor dieser Prüfung angelegt), und erhalten daher keine verwaltete Exchange-Quelle. Bestätige eine Adresse nur, wenn du weißt, dass sie dieser Person gehört: Damit liest calrs für sie den Kalender dieses Postfachs.
 admin-ews-trust-confirm = Bestätigen
-admin-ews-trust-more = { $shown } von { $total } angezeigt.
+admin-ews-search = Nach Benutzer oder Postfach suchen
+admin-ews-no-match = Kein verwaltetes Postfach und keine zu bestätigende Adresse passt zu dieser Suche.
+admin-ews-conflicts-more = Postfach bereits von einem anderen Benutzer verwendet: { $shown } von { $total } angezeigt.
 admin-ews-http-warning = Der Endpunkt verwendet http://: Das Passwort des Dienstkontos wird unverschlüsselt gesendet. Verwende besser https://.
 # Time off (templates/time_off.html, src/web/time_off.rs, troubleshoot view)
 

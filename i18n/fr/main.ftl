@@ -2034,7 +2034,9 @@ admin-ews-row-conflict = Non provisionné : la source d'un autre utilisateur lit
 admin-ews-trust-title = Adresses à confirmer
 admin-ews-trust-help = Ces comptes actifs des domaines autorisés ont une adresse que personne n'a garantie (inscription libre, ou création avant cette vérification) : ils ne reçoivent donc aucune source Exchange gérée. Ne confirmez une adresse que si vous savez qu'elle appartient à cette personne : la confirmer permet à calrs de lire pour elle le calendrier de cette boîte.
 admin-ews-trust-confirm = Confirmer
-admin-ews-trust-more = { $shown } affichées sur { $total }.
+admin-ews-search = Rechercher par utilisateur ou boîte aux lettres
+admin-ews-no-match = Aucune boîte gérée ni adresse à confirmer ne correspond à cette recherche.
+admin-ews-conflicts-more = Boîte aux lettres déjà utilisée par un autre utilisateur : { $shown } affichées sur { $total }.
 admin-ews-http-warning = Le point de terminaison utilise http:// : le mot de passe du compte de service circule en clair. Préférez https://.
 # Time off (templates/time_off.html, src/web/time_off.rs, troubleshoot view)
 
