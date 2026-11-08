@@ -45,7 +45,7 @@ impl Multistatus {
         if !root.is(DAV, "multistatus") {
             bail!(
                 "expected a WebDAV multistatus, got a <{}> document",
-                root.local_name()
+                xml::quoted(root.local_name())
             );
         }
         Ok(Self(root))

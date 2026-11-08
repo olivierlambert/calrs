@@ -3,15 +3,18 @@
 //! An XML element name only means something together with the namespace URI
 //! its prefix is bound to: `<D:href>`, `<d:href>`, `<a:href>` and
 //! `<href xmlns="DAV:">` are one and the same WebDAV element, while
-//! `<calendar xmlns="http://groupdav.org/"/>` is not CalDAV's `calendar`.
+//! `<href xmlns="urn:example"/>` is some other vocabulary's `href`.
 //! [`parse`] turns a document into a tree whose elements carry their
 //! namespace URI and local name, so callers match on what an element is
 //! rather than on how a server happened to spell it.
 //!
 //! The input comes from remote servers, so the reader is bounded: the input
-//! size, the nesting depth and the number of elements are capped, and going
-//! over a cap is an error, as is malformed markup (an unclosed or mismatched
-//! tag, a second root element). Nothing is ever expanded beyond the five
+//! size, the nesting depth, the number of elements and the namespace
+//! declarations in scope are capped, and going over a cap is an error, as is
+//! malformed markup (an unclosed or mismatched tag, text before the root
+//! element). Reading stops once the root element closes, so whatever a
+//! server appends after it (PHP warnings on a sabre/dav install with
+//! `display_errors` on) is never looked at. Nothing is ever expanded beyond the five
 //! predefined entities and character references: a `<!DOCTYPE>` is skipped
 //! unread, so neither external entities nor nested entity definitions
 //! ("billion laughs") can do anything, and an unknown `&name;` stays as it
@@ -21,7 +24,7 @@
 use std::sync::Arc;
 
 use anyhow::{anyhow, bail, Result};
-use quick_xml::events::Event;
+use quick_xml::events::{BytesStart, Event};
 use quick_xml::name::ResolveResult;
 use quick_xml::NsReader;
 
@@ -35,22 +38,32 @@ pub const MAX_INPUT_BYTES: usize = 64 * 1024 * 1024;
 /// levels deep; the cap also keeps dropping the tree off a deep stack.
 pub const MAX_DEPTH: usize = 128;
 
-/// Most elements [`parse`] accepts in one document, about ten per event in a
-/// calendar REPORT, so this allows a few hundred thousand events while
-/// bounding the memory a hostile server can make the tree take.
-pub const MAX_ELEMENTS: usize = 4_000_000;
+/// Most elements [`parse`] accepts in one document. A REPORT takes about
+/// seven per event (a 5000-event calendar about 35 000), so this allows
+/// some 140 000 events. Names and namespaces are shared between elements,
+/// so an element costs about 100 bytes of tree: a hostile document at the
+/// cap costs about 100 MB on top of its body (64 MB at most), text included.
+pub const MAX_ELEMENTS: usize = 1_000_000;
 
-/// Distinct namespace URIs shared between elements; past this many, each
-/// further element gets its own copy, so a document declaring thousands of
-/// namespaces cannot make the lookup quadratic.
-const MAX_INTERNED_NAMESPACES: usize = 32;
+/// Most namespace declarations (`xmlns`, `xmlns:p`) in scope at once.
+/// quick-xml resolves each name by scanning the bindings in scope, so
+/// without a cap a root declaring a million prefixes over a million
+/// elements is quadratic. A real multistatus declares fewer than ten.
+pub const MAX_NAMESPACE_BINDINGS: usize = 256;
+
+/// Distinct names and namespace URIs shared between elements; past this
+/// many, each further element gets its own copy.
+const MAX_INTERNED: usize = 1024;
+
+/// Longest server-controlled name or message quoted in an error.
+const MAX_QUOTED: usize = 64;
 
 /// An element: its namespace, its local name and its children in document
 /// order. Attributes are not kept, since nothing calrs reads needs them.
 #[derive(Debug)]
 pub struct Element {
     ns: Option<Arc<str>>,
-    name: Box<str>,
+    name: Arc<str>,
     children: Vec<Node>,
 }
 
@@ -179,13 +192,24 @@ struct Limits {
     input_bytes: usize,
     depth: usize,
     elements: usize,
+    bindings: usize,
 }
 
 const LIMITS: Limits = Limits {
     input_bytes: MAX_INPUT_BYTES,
     depth: MAX_DEPTH,
     elements: MAX_ELEMENTS,
+    bindings: MAX_NAMESPACE_BINDINGS,
 };
+
+/// `text` cut to [`MAX_QUOTED`] characters, for an error message: names and
+/// parser messages can be as long as the server likes.
+pub fn quoted(text: &str) -> String {
+    match text.char_indices().nth(MAX_QUOTED) {
+        Some((cut, _)) => format!("{}...", &text[..cut]),
+        None => text.to_string(),
+    }
+}
 
 fn parse_with(xml: &str, limits: &Limits) -> Result<Option<Element>> {
     if xml.len() > limits.input_bytes {
@@ -209,38 +233,36 @@ fn parse_with(xml: &str, limits: &Limits) -> Result<Option<Element>> {
             Ok(read) => read,
             Err(e) => {
                 let at = reader.error_position();
-                bail!("malformed XML at byte {at}: {e}");
+                bail!("malformed XML at byte {at}: {}", quoted(&e.to_string()));
             }
         };
         match event {
             Event::Start(start) => {
                 let ns = builder.namespace(&resolved)?;
-                let name = utf8(start.local_name().into_inner())?;
-                builder.open(ns, name)?;
+                builder.open(ns, &start)?;
             }
             Event::Empty(start) => {
                 let ns = builder.namespace(&resolved)?;
-                let name = utf8(start.local_name().into_inner())?;
-                builder.open(ns, name)?;
+                builder.open(ns, &start)?;
                 builder.close()?;
             }
             Event::End(_) => builder.close()?,
             Event::Text(text) => {
                 let text = text.decode().map_err(|e| anyhow!("XML text: {e}"))?;
-                builder.push_text(&text);
+                builder.push_text(&text)?;
             }
             Event::CData(cdata) => {
                 let text = cdata.decode().map_err(|e| anyhow!("XML CDATA: {e}"))?;
-                builder.push_text(&text);
+                builder.push_text(&text)?;
             }
             Event::GeneralRef(reference) => {
                 let name = reference
                     .decode()
                     .map_err(|e| anyhow!("XML reference: {e}"))?;
-                match decode_reference(&name, reference.resolve_char_ref().ok().flatten()) {
-                    Some(c) => builder.push_text(c.encode_utf8(&mut [0; 4])),
+                match decode_reference(&name) {
+                    Some(c) => builder.push_text(c.encode_utf8(&mut [0; 4]))?,
                     // Unknown or invalid: keep it as written, never expand it.
-                    None => builder.push_text(&format!("&{name};")),
+                    None => builder.push_text(&format!("&{name};"))?,
                 }
             }
             Event::Eof => break,
@@ -249,20 +271,37 @@ fn parse_with(xml: &str, limits: &Limits) -> Result<Option<Element>> {
             // declaration carry nothing calrs reads.
             Event::DocType(_) | Event::Comment(_) | Event::PI(_) | Event::Decl(_) => {}
         }
+        if builder.root.is_some() {
+            // The root closed: what follows is not part of the document.
+            break;
+        }
     }
     builder.finish()
 }
 
 /// The character a reference stands for: one of the five predefined
-/// entities, or a character reference already resolved by quick-xml.
-fn decode_reference(name: &str, char_ref: Option<char>) -> Option<char> {
+/// entities, or a character reference (`&#65;`, `&#x41;`, `&#X41;`). `None`
+/// for anything else, including a reference to NUL, a surrogate or a code
+/// point past U+10FFFF, which the caller keeps as written.
+fn decode_reference(name: &str) -> Option<char> {
     match name {
         "amp" => Some('&'),
         "lt" => Some('<'),
         "gt" => Some('>'),
         "quot" => Some('"'),
         "apos" => Some('\''),
-        _ => char_ref,
+        _ => {
+            let number = name.strip_prefix('#')?;
+            let code = match number.strip_prefix(['x', 'X']) {
+                Some(hex) if hex.bytes().all(|b| b.is_ascii_hexdigit()) => {
+                    u32::from_str_radix(hex, 16).ok()?
+                }
+                Some(_) => return None,
+                None if number.bytes().all(|b| b.is_ascii_digit()) => number.parse().ok()?,
+                None => return None,
+            };
+            char::from_u32(code).filter(|&c| c != '\0')
+        }
     }
 }
 
@@ -274,10 +313,13 @@ fn utf8(bytes: &[u8]) -> Result<&str> {
 struct Builder<'l> {
     limits: &'l Limits,
     stack: Vec<Element>,
+    /// Namespace declarations made by each open element, and their sum.
+    declarations: Vec<usize>,
+    bindings: usize,
     root: Option<Element>,
     text: String,
     elements: usize,
-    namespaces: Vec<Arc<str>>,
+    interned: std::collections::HashSet<Arc<str>>,
 }
 
 impl<'l> Builder<'l> {
@@ -285,11 +327,26 @@ impl<'l> Builder<'l> {
         Self {
             limits,
             stack: Vec::new(),
+            declarations: Vec::new(),
+            bindings: 0,
             root: None,
             text: String::new(),
             elements: 0,
-            namespaces: Vec::new(),
+            interned: std::collections::HashSet::new(),
         }
+    }
+
+    /// A shared copy of `text`, so the names and namespaces repeated on
+    /// every response cost one allocation each.
+    fn intern(&mut self, text: &str) -> Arc<str> {
+        if let Some(known) = self.interned.get(text) {
+            return known.clone();
+        }
+        let shared: Arc<str> = Arc::from(text);
+        if self.interned.len() < MAX_INTERNED {
+            self.interned.insert(shared.clone());
+        }
+        shared
     }
 
     fn namespace(&mut self, resolved: &ResolveResult<'_>) -> Result<Option<Arc<str>>> {
@@ -301,19 +358,27 @@ impl<'l> Builder<'l> {
         if uri.is_empty() {
             return Ok(None);
         }
-        if let Some(known) = self.namespaces.iter().find(|known| &***known == uri) {
-            return Ok(Some(known.clone()));
-        }
-        let ns: Arc<str> = Arc::from(uri);
-        if self.namespaces.len() < MAX_INTERNED_NAMESPACES {
-            self.namespaces.push(ns.clone());
-        }
-        Ok(Some(ns))
+        Ok(Some(self.intern(uri)))
     }
 
-    fn open(&mut self, ns: Option<Arc<str>>, name: &str) -> Result<()> {
-        if self.stack.is_empty() && self.root.is_some() {
-            bail!("malformed XML: more than one root element");
+    fn open(&mut self, ns: Option<Arc<str>>, start: &BytesStart<'_>) -> Result<()> {
+        let name = utf8(start.local_name().into_inner())?;
+        // The namespace declarations this element brings into scope.
+        let declarations = start
+            .attributes()
+            .with_checks(false)
+            .filter_map(|attr| attr.ok())
+            .filter(|attr| {
+                let key = attr.key.into_inner();
+                key == b"xmlns" || key.starts_with(b"xmlns:")
+            })
+            .count();
+        self.bindings += declarations;
+        if self.bindings > self.limits.bindings {
+            bail!(
+                "XML declares more than {} namespaces in scope",
+                self.limits.bindings
+            );
         }
         if self.stack.len() >= self.limits.depth {
             bail!("XML nested deeper than {} elements", self.limits.depth);
@@ -326,20 +391,24 @@ impl<'l> Builder<'l> {
             );
         }
         self.flush_text();
+        let name = self.intern(name);
         self.stack.push(Element {
             ns,
-            name: name.into(),
+            name,
             children: Vec::new(),
         });
+        self.declarations.push(declarations);
         Ok(())
     }
 
     fn close(&mut self) -> Result<()> {
         self.flush_text();
-        let el = self
+        let mut el = self
             .stack
             .pop()
             .ok_or_else(|| anyhow!("malformed XML: close tag without an open one"))?;
+        self.bindings -= self.declarations.pop().unwrap_or(0);
+        el.children.shrink_to_fit();
         match self.stack.last_mut() {
             Some(parent) => parent.children.push(Node::Element(el)),
             None => self.root = Some(el),
@@ -347,11 +416,17 @@ impl<'l> Builder<'l> {
         Ok(())
     }
 
-    fn push_text(&mut self, text: &str) {
-        // Outside the root element there is nothing to attach text to.
+    fn push_text(&mut self, text: &str) -> Result<()> {
         if !self.stack.is_empty() {
             self.text.push_str(text);
+        } else if !text.trim().is_empty() {
+            // Before the root (reading stops after it): not an XML document.
+            bail!(
+                "malformed XML: text before the root element: {}",
+                quoted(text.trim())
+            );
         }
+        Ok(())
     }
 
     fn flush_text(&mut self) {
@@ -368,7 +443,7 @@ impl<'l> Builder<'l> {
         if let Some(open) = self.stack.last() {
             bail!(
                 "malformed XML: document ends inside <{}>",
-                open.local_name()
+                quoted(open.local_name())
             );
         }
         Ok(self.root)
@@ -490,7 +565,6 @@ mod tests {
         assert!(parse("<?xml version=\"1.0\"?><!-- nothing -->")
             .unwrap()
             .is_none());
-        assert!(parse("Not Found").unwrap().is_none());
     }
 
     #[test]
@@ -500,7 +574,8 @@ mod tests {
             "<a>",
             "<a></b>",
             "</a>",
-            "<a/><b/>",
+            "Not Found",
+            "garbage<a/>",
             "<a><b></b>",
             "<a x=\"1></a>",
             "<a><![CDATA[never closed</a>",
@@ -531,6 +606,7 @@ mod tests {
             input_bytes: 1000,
             depth: 8,
             elements: 10,
+            bindings: 4,
         };
         // The root and nine children fit; one more does not.
         let fits = format!("<r>{}</r>", "<a/>".repeat(9));
@@ -541,6 +617,90 @@ mod tests {
         let big = format!("<r>{}</r>", "x".repeat(1000));
         let err = parse_with(&big, &limits).unwrap_err().to_string();
         assert!(err.contains("too large"), "{err}");
+    }
+
+    #[test]
+    fn reading_stops_when_the_root_closes() {
+        // Baikal or Nextcloud with PHP `display_errors` on append warnings
+        // after the document.
+        let xml = "<d:multistatus xmlns:d=\"DAV:\"><d:response/></d:multistatus>\n<br />\n<b>Deprecated</b>:  Creation of dynamic property Sabre\\DAV\\Server::$debugExceptions is deprecated in <b>/var/www/baikal/vendor/sabre/dav/lib/DAV/Server.php</b> on line <b>233</b><br />\n";
+        let doc = root(xml);
+        assert_eq!(doc.local_name(), "multistatus");
+        assert_eq!(doc.elements().count(), 1);
+        // A second root, or broken markup after the first, is never read.
+        assert_eq!(root("<a/><b/>").local_name(), "a");
+        assert_eq!(root("<a></a></b><c").local_name(), "a");
+    }
+
+    #[test]
+    fn namespace_declarations_in_scope_are_capped() {
+        let declare =
+            |n: usize| -> String { (0..n).map(|i| format!(" xmlns:p{i}=\"urn:{i}\"")).collect() };
+        let at_cap = format!("<r{}/>", declare(MAX_NAMESPACE_BINDINGS));
+        assert!(parse(&at_cap).unwrap().is_some());
+        let over = format!("<r{}/>", declare(MAX_NAMESPACE_BINDINGS + 1));
+        let err = parse(&over).unwrap_err().to_string();
+        assert!(err.contains("namespaces in scope"), "{err}");
+
+        // Counted across the open elements, and released when they close.
+        let limits = Limits {
+            input_bytes: 10_000,
+            depth: 8,
+            elements: 100,
+            bindings: 4,
+        };
+        let siblings = r#"<a xmlns:x="urn:1" xmlns:y="urn:2"><b xmlns:z="urn:3" xmlns="urn:4"/><c xmlns:w="urn:5" xmlns:v="urn:6"/></a>"#;
+        assert!(parse_with(siblings, &limits).unwrap().is_some());
+        let nested = r#"<a xmlns:x="urn:1" xmlns:y="urn:2"><b xmlns:z="urn:3" xmlns="urn:4"><c xmlns:w="urn:5"/></b></a>"#;
+        assert!(parse_with(nested, &limits).is_err());
+    }
+
+    #[test]
+    fn names_and_namespaces_are_shared() {
+        let doc = root(r#"<r xmlns="DAV:"><href>/a</href><href>/b</href></r>"#);
+        let hrefs: Vec<_> = doc.elements().collect();
+        assert!(Arc::ptr_eq(&hrefs[0].name, &hrefs[1].name));
+        assert!(Arc::ptr_eq(
+            hrefs[0].ns.as_ref().unwrap(),
+            hrefs[1].ns.as_ref().unwrap()
+        ));
+    }
+
+    #[test]
+    fn character_references_in_every_form() {
+        assert_eq!(
+            root("<x>&#65;&#x42;&#X43;&#x1F600;</x>").text(),
+            "ABC\u{1F600}"
+        );
+        // Invalid code points stay as written, and nothing panics.
+        for reference in [
+            "&#0;",
+            "&#x0;",
+            "&#xD800;",
+            "&#x110000;",
+            "&#99999999999999999999;",
+            "&#xFFFFFFFFFF;",
+            "&#;",
+            "&#x;",
+            "&#xZZ;",
+            "&#-1;",
+            "&#+65;",
+        ] {
+            assert_eq!(root(&format!("<x>{reference}</x>")).text(), reference);
+        }
+    }
+
+    #[test]
+    fn server_controlled_names_are_bounded_in_errors() {
+        let long = "n".repeat(10_000);
+        for xml in [
+            format!("<{long}>"),
+            format!("<a></{long}>"),
+            format!("{long}<a/>"),
+        ] {
+            let err = parse(&xml).unwrap_err().to_string();
+            assert!(err.len() < 300, "{} bytes: {}", err.len(), &err[..100]);
+        }
     }
 
     #[test]

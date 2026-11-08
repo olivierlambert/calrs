@@ -359,15 +359,20 @@ fn an_empty_multistatus_holds_no_responses() {
 }
 
 #[test]
+fn a_plain_text_or_trailing_garbage_body() {
+    // Text with no element is not a document.
+    assert!(parse_event_responses("Internal Server Error").is_err());
+    // A sabre/dav server with PHP `display_errors` on appends warnings after
+    // the multistatus; the document itself still reads.
+    let xml = "<?xml version=\"1.0\"?>\n<d:multistatus xmlns:d=\"DAV:\" xmlns:cal=\"urn:ietf:params:xml:ns:caldav\"><d:response><d:href>/dav.php/calendars/alice/default/e.ics</d:href><d:propstat><d:prop><cal:calendar-data>BEGIN:VCALENDAR</cal:calendar-data></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response></d:multistatus>\n<br />\n<b>Deprecated</b>:  Creation of dynamic property Sabre\\DAV\\Server::$debugExceptions is deprecated in <b>/var/www/baikal/vendor/sabre/dav/lib/DAV/Server.php</b> on line <b>233</b><br />\n";
+    assert_eq!(events(xml).len(), 1);
+}
+
+#[test]
 fn an_empty_body_is_an_error() {
     // Read as "no events", it would let the sync store the calendar's new
     // ctag without having read anything.
-    for body in [
-        "",
-        "  \r\n",
-        "<?xml version=\"1.0\"?>",
-        "Internal Server Error",
-    ] {
+    for body in ["", "  \r\n", "<?xml version=\"1.0\"?>"] {
         let err = parse_event_responses(body).unwrap_err().to_string();
         assert!(err.contains("empty response"), "{body:?}: {err}");
         assert!(parse_sync_response(body).is_err());
