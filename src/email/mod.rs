@@ -208,6 +208,38 @@ pub struct BookingDetails {
     pub guest_footer: Option<String>,
 }
 
+/// One answer to a booking question (#210), as stored with the booking:
+/// the question's label and flags as the guest read them, and the answer.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct BookingAnswer {
+    /// The question's stable key, for webhooks.
+    pub key: String,
+    /// short_text, long_text, single_choice, multiple_choice or checkbox.
+    pub kind: String,
+    pub label: String,
+    /// The text typed, the chosen option labels joined by ", ", or "yes" /
+    /// "no" for a checkbox (written out per reader by `answer_display`).
+    pub value: String,
+    /// The chosen option ids of a choice question.
+    pub option_ids: Vec<String>,
+    /// A consent checkbox: the guest agreed (or did not) to the label.
+    pub consent: bool,
+    /// The policy a consent checkbox linked to.
+    pub link_url: Option<String>,
+    /// Written into the host's calendar event.
+    pub in_calendar: bool,
+    /// When the booking form was submitted, UTC (`2026-11-10T09:00:00Z`).
+    pub answered_at: String,
+}
+
+/// Who reads an answer: a consent reads "Agreed" to the host and "You
+/// agreed" to the guest.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AnswerReader {
+    Host,
+    Guest,
+}
+
 #[derive(Clone, Default)]
 pub struct CancellationDetails {
     /// Exact UTC endpoints for new bookings; legacy records use wall-clock fields.

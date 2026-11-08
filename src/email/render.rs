@@ -634,6 +634,25 @@ pub(super) fn push_row(rows: &mut Vec<EmailRow>, lang: &str, key: &str, value: O
     }
 }
 
+/// An answer to a booking question (#210) written for its reader in `lang`:
+/// the text or option labels as the guest gave them, a checkbox as "Yes" /
+/// "No", a consent as "Agreed" / "Not agreed" to the host and "You agreed" /
+/// "You did not agree" to the guest.
+pub fn answer_display(answer: &BookingAnswer, lang: &str, reader: AnswerReader) -> String {
+    if answer.kind != "checkbox" {
+        return answer.value.clone();
+    }
+    let yes = answer.value == "yes";
+    match (answer.consent, reader, yes) {
+        (true, AnswerReader::Guest, true) => t(lang, "answer-you-agreed"),
+        (true, AnswerReader::Guest, false) => t(lang, "answer-you-did-not-agree"),
+        (true, AnswerReader::Host, true) => t(lang, "answer-agreed"),
+        (true, AnswerReader::Host, false) => t(lang, "answer-not-agreed"),
+        (false, _, true) => t(lang, "answer-yes"),
+        (false, _, false) => t(lang, "answer-no"),
+    }
+}
+
 /// Event, date, time and guest: the rows every host-facing email opens with.
 pub(super) fn host_rows(
     lang: &str,

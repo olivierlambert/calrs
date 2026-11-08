@@ -24,6 +24,7 @@ mod notify;
 mod overview_stats;
 mod pending;
 mod public_pages;
+pub(crate) mod questions;
 mod sources;
 mod teams;
 mod time_off;
