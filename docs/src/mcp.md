@@ -38,8 +38,13 @@ Returns enabled event types the connected user can distribute:
 
 - Personal event types they own.
 - Team event types they manage as a team admin.
-- Internal event types, which any authenticated colleague can distribute.
-- Global administrators can manage all event types.
+- Internal event types the booking directory offers them, which any
+  authenticated colleague can distribute.
+
+Global administrators get no extra reach here: an admin's integration sees and
+distributes only what the admin owns or manages as a team admin, plus the
+directory's internal types, like the busy-time tool, which reads only the
+admin's own calendar. The dashboard keeps the admin's full access.
 
 Each item has `id`, `slug`, `title`, `duration_min`, `visibility`, and `team_id`.
 Use the **ID**, not the slug, when creating an invite. Slugs can be shared by
@@ -73,7 +78,7 @@ it sends no email and creates no booking. You can manage the resulting internal
 and private invites on the dashboard's invite-management page.
 
 Internal events are available to any authenticated user. Private and public
-events require owner, team-admin, or global-admin permissions. Disabled events
+events require owner or team-admin permissions. Disabled events
 are rejected. Public events return their ordinary **reusable booking URL**, with
 `expires_at: null` and `max_uses: null`, without inserting an invitation record;
 `expires_days` does not affect these public URLs.
@@ -82,7 +87,8 @@ existing reusable access token. Generating a link does not change visibility.
 
 Each call for an internal/private event creates a **new** link. Avoid automatically
 repeating a successful call. Link requests are limited to ten attempts per user
-per five minutes.
+per five minutes, and all tool calls together to 120 per user per minute (HTTP
+429 beyond).
 
 Example request after MCP initialization:
 

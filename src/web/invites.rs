@@ -627,7 +627,13 @@ pub(super) async fn create_quick_invite(
     // can generate quick links. Internal event types remain open to any
     // authenticated user — that's the documented "any authenticated colleague
     // can distribute a one-time link" contract.
-    let manages = can_manage_event_type(pool, user, &et_id).await;
+    // MCP gets no global admin bypass (owns_or_admins_team_of); the dashboard
+    // keeps the admin's reach.
+    let manages = if integration {
+        owns_or_admins_team_of(pool, &user.id, &et_id).await
+    } else {
+        can_manage_event_type(pool, user, &et_id).await
+    };
     if visibility != "internal" && !manages {
         return Ok(QuickInviteOutcome::NotPermitted);
     }

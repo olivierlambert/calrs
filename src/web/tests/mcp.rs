@@ -640,7 +640,14 @@ async fn mcp_public_links_are_reusable_and_private_team_links_work() {
     );
     assert!(result["structuredContent"]["expires_at"].is_null());
     assert!(result["structuredContent"]["max_uses"].is_null());
-    let (team, team_et) = insert_team_with_et(&pool, "hidden-team", "demo", &[]).await;
+    // MCP has no global admin bypass: the token holder administers the team.
+    let owner: String = sqlx::query_scalar("SELECT user_id FROM sessions WHERE id = ?")
+        .bind(&session)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let (team, team_et) =
+        insert_team_with_et(&pool, "hidden-team", "demo", &[(&owner, "admin")]).await;
     sqlx::query(
         "UPDATE teams SET visibility = 'private', invite_token = 'team-token' WHERE id = ?",
     )
@@ -674,4 +681,105 @@ async fn mcp_public_links_are_reusable_and_private_team_links_work() {
         count, 0,
         "public links must not promise unenforced invite limits"
     );
+}
+
+#[tokio::test]
+async fn mcp_admin_tokens_get_no_reach_over_other_users_event_types() {
+    let _lock = crate::test_support::ENV_LOCK.lock().await;
+    let _env = oauth::environment();
+    let (app, pool, session, own) = setup_test_app().await;
+    let role: String = sqlx::query_scalar(
+        "SELECT u.role FROM users u JOIN sessions s ON s.user_id = u.id WHERE s.id = ?",
+    )
+    .bind(&session)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(role, "admin");
+    let other = insert_role_user(&pool, "other@test.com", "user").await;
+    let private = insert_personal_et(&pool, &other, "private").await;
+    let public = insert_personal_et(&pool, &other, "public").await;
+    sqlx::query("UPDATE event_types SET visibility = 'private' WHERE id = ?")
+        .bind(&private)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (_, tokens) = oauth::issue_tokens(&app, &session).await;
+    let token = tokens["access_token"].as_str().unwrap();
+
+    let listed = call(&app, token, "list_event_types", json!({})).await;
+    let ids: Vec<&str> = listed["structuredContent"]["event_types"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["id"].as_str().unwrap())
+        .collect();
+    assert!(ids.contains(&own.as_str()), "{ids:?}");
+    assert!(!ids.contains(&private.as_str()), "{ids:?}");
+    assert!(!ids.contains(&public.as_str()), "{ids:?}");
+    for id in [&private, &public] {
+        let result = call(
+            &app,
+            token,
+            "create_invite_link",
+            json!({"event_type_id": id, "expires_days": 0}),
+        )
+        .await;
+        assert_eq!(result["isError"], true, "{result}");
+    }
+    let invites: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM booking_invites WHERE event_type_id = ?")
+            .bind(&private)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(invites, 0);
+
+    // The dashboard keeps the admin's reach.
+    let response = app
+        .clone()
+        .oneshot(post_form(
+            &format!("/dashboard/invites/{private}/quick-link"),
+            &session,
+            "csrf",
+            "_csrf=csrf",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn mcp_tool_calls_are_rate_limited_per_user() {
+    let _lock = crate::test_support::ENV_LOCK.lock().await;
+    let _env = oauth::environment();
+    let (app, _, session, _) = setup_test_app().await;
+    let (_, tokens) = oauth::issue_tokens(&app, &session).await;
+    let token = tokens["access_token"].as_str().unwrap();
+    let list = json!({"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"list_event_types","arguments":{}}});
+    for _ in 0..120 {
+        let status = app
+            .clone()
+            .oneshot(rpc(token, list.clone()))
+            .await
+            .unwrap()
+            .status();
+        assert_eq!(status, StatusCode::OK);
+    }
+    let status = app
+        .clone()
+        .oneshot(rpc(token, list.clone()))
+        .await
+        .unwrap()
+        .status();
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+    // Other methods are not tool calls.
+    let ping = json!({"jsonrpc":"2.0","id":8,"method":"ping"});
+    let status = app
+        .clone()
+        .oneshot(rpc(token, ping))
+        .await
+        .unwrap()
+        .status();
+    assert_eq!(status, StatusCode::OK);
 }

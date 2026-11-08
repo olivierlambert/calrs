@@ -151,6 +151,19 @@ fn filter_by_search(
 /// including those on private teams. Public types on private teams require a
 /// team token, so their bare URLs are not offered here. Private event types
 /// remain in their owners' management pages.
+/// Ids of the meetings `directory_entries` offers the user, for callers that
+/// only need the visibility rule (MCP's `list_event_types`).
+pub(super) async fn directory_ids(
+    pool: &SqlitePool,
+    user_id: &str,
+) -> Result<std::collections::HashSet<String>, sqlx::Error> {
+    Ok(directory_entries(pool, user_id, false, None)
+        .await?
+        .into_iter()
+        .map(|entry| entry.id)
+        .collect())
+}
+
 pub(super) async fn directory_entries(
     pool: &SqlitePool,
     user_id: &str,

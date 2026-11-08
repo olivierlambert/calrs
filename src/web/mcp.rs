@@ -170,6 +170,15 @@ async fn handle(State(state): State<Arc<AppState>>, headers: HeaderMap, body: By
             if !scopes.split_whitespace().any(|s| s == required) {
                 return challenge(StatusCode::FORBIDDEN, required);
             }
+            // One token cannot load the database: 120 tool calls per minute
+            // per user, whichever tool.
+            if state
+                .mcp_limiter
+                .check_limited(&format!("mcp:{}", user.id))
+                .await
+            {
+                return StatusCode::TOO_MANY_REQUESTS.into_response();
+            }
             // Bound write amplification independently of the IP login limiter.
             if name == "create_invite_link"
                 && state
@@ -252,31 +261,34 @@ async fn call_tool(
             if args.cursor.as_ref().is_some_and(|s| s.len() > 64) {
                 return Err("Invalid cursor.".into());
             }
-            // Page over stable IDs before applying the shared permissions
-            // helper. Sparse pages still advance next_cursor.
-            let rows: Vec<(String, String, String, i32, String, Option<String>)> = sqlx::query_as(
-                "SELECT id, slug, title, duration_min, visibility, team_id FROM event_types WHERE enabled = 1 AND id > ? ORDER BY id LIMIT 101")
-                .bind(args.cursor.as_deref().unwrap_or("")).fetch_all(pool).await.map_err(db_error)?;
+            // Page over stable IDs. Whether the user manages each row (owner
+            // or team admin, no global admin bypass, as create_invite_link)
+            // comes from the same query; internal types they do not manage are
+            // listed when the directory offers them. Two queries per page.
+            // Sparse pages still advance next_cursor.
+            #[allow(clippy::type_complexity)]
+            let rows: Vec<(String, String, String, i32, String, Option<String>, bool)> = sqlx::query_as(
+                "SELECT et.id, et.slug, et.title, et.duration_min, et.visibility, et.team_id,
+                        ((et.team_id IS NULL AND a.user_id = ?)
+                         OR (et.team_id IS NOT NULL AND EXISTS (SELECT 1 FROM team_members tm
+                             WHERE tm.team_id = et.team_id AND tm.user_id = ? AND tm.role = 'admin')))
+                 FROM event_types et LEFT JOIN accounts a ON a.id = et.account_id
+                 WHERE et.enabled = 1 AND et.id > ? ORDER BY et.id LIMIT 101")
+                .bind(&user.id).bind(&user.id).bind(args.cursor.as_deref().unwrap_or("")).fetch_all(pool).await.map_err(db_error)?;
+            let offered = if rows.iter().any(|r| r.4 == "internal" && !r.6) {
+                directory_ids(pool, &user.id).await.map_err(db_error)?
+            } else {
+                Default::default()
+            };
             let next = if rows.len() > 100 {
                 Some(rows[99].0.clone())
             } else {
                 None
             };
             let mut events = Vec::new();
-            for (id, slug, title, duration, visibility, team) in rows.into_iter().take(100) {
-                // Same rule as create_quick_invite: an internal type the user
-                // does not manage is listed only while the directory offers it
-                // (owner enabled, inside its booking window).
-                let listed = if can_manage_event_type(pool, user, &id).await {
-                    true
-                } else {
-                    visibility == "internal"
-                        && !directory_entries(pool, &user.id, false, Some(&id))
-                            .await
-                            .map_err(db_error)?
-                            .is_empty()
-                };
-                if listed {
+            for (id, slug, title, duration, visibility, team, manages) in rows.into_iter().take(100)
+            {
+                if manages || (visibility == "internal" && offered.contains(&id)) {
                     events.push(json!({"id":id,"slug":slug,"title":title,"duration_min":duration,"visibility":visibility,"team_id":team}));
                 }
             }
