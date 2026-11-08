@@ -34,8 +34,11 @@ Every user-facing string goes through Fluent (`i18n/`).
 
  background loop, every 60 s (run_reminder_loop in web/notify.rs)
    session cleanup, pending sweep (web/pending.rs), reminders,
-   write-back retries (web/writeback.rs), sync of the stalest source
-   (commands/sync.rs)
+   write-back retries (web/writeback.rs)
+
+ background sync, every 60 s (commands/sync_scheduler.rs)
+   due sources (commands/sync.rs, daily full resyncs first, then the
+   stalest), a few at once, one per server
 
  webhook task (run_webhook_loop in web/webhooks.rs)
    delivers queued booking webhooks when woken and every 30 s
@@ -208,8 +211,11 @@ Call sites use `crate::email::name` whatever file `name` lives in.
   Graph retains the booking UID in an extended property and updates the same
   remote event when rescheduled. It does not send Graph attendee invitations:
   calrs owns the email lifecycle.
-  Sync lives in `src/commands/sync.rs` (`sync_if_stale` on page loads) and
-  `src/commands/sync_health.rs` (failure tracking).
+  Sync lives in `src/commands/sync.rs` (`sync_if_stale` on page loads,
+  `due_background_sources` for the background sync),
+  `src/commands/sync_scheduler.rs` (the background sync task: quota,
+  concurrency, one sync per server) and `src/commands/sync_health.rs`
+  (failure tracking).
   Snapshot providers reconcile a full snapshot, each through its own path.
   EWS goes through `sync_ews_source` (busy-only storage for managed
   sources, a folder removed only after two listings miss it, #362).
