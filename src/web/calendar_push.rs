@@ -153,6 +153,27 @@ pub(super) async fn caldav_push_booking_for_user(
     }
 
     let ics = crate::email::generate_ics_caldav(details);
+    // One Google copy of the booking carries the guests as attendees (#237):
+    // Google adds an event to each attendee's own Google calendar, so a
+    // second copy with attendees would show them the meeting twice. The
+    // others are written without ATTENDEE lines, which also clears, without
+    // a word to anyone, attendees an earlier write left on them.
+    let is_google = |auth_type: &str, provider: Option<&str>| {
+        auth_type == "oauth2" && provider == Some("google")
+    };
+    let writes_to_google =
+        sources
+            .iter()
+            .any(|(_, _, _, _, _, auth_type, _, _, _, provider, _)| {
+                is_google(auth_type, provider.as_deref())
+            });
+    let attendee_source = match owner {
+        CopyOwner::Host if writes_to_google => {
+            crate::google_calendar::attendee_copy_source(pool, booking_uid).await
+        }
+        _ => None,
+    };
+    let without_attendees = crate::google_calendar::split_scheduling(&ics).0;
     let mut preserved_meet_href = false;
 
     for (
@@ -281,9 +302,19 @@ pub(super) async fn caldav_push_booking_for_user(
 
         // A 2xx on the write is not proof the host sees the event (#162):
         // read it back by UID before calling it written.
-        let written =
-            crate::providers::put_and_verify(provider.as_ref(), calendar_href, booking_uid, &ics)
-                .await;
+        let google = is_google(auth_type, oauth2_provider.as_deref());
+        let source_ics = if google && attendee_source.as_deref() != Some(source_id.as_str()) {
+            &without_attendees
+        } else {
+            &ics
+        };
+        let written = crate::providers::put_and_verify(
+            provider.as_ref(),
+            calendar_href,
+            booking_uid,
+            source_ics,
+        )
+        .await;
         let event_may_exist = match &written {
             Ok(()) => true,
             Err(e) => e.event_may_exist(),

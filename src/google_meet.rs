@@ -647,6 +647,15 @@ async fn google_write_source_for_user(
     )
 }
 
+/// The source a user's Google Meet events are minted on, and the one their
+/// copy of a booking carries the guests as attendees on
+/// (`google_calendar::attendee_copy_source`).
+pub(crate) async fn google_write_source_id(pool: &SqlitePool, user_id: &str) -> Option<String> {
+    google_write_source_for_user(pool, user_id)
+        .await
+        .map(|source| source.id)
+}
+
 /// PUT the booking ICS onto the owner's Google calendar, then attach Meet.
 pub async fn create_meet_for_booking(
     pool: &SqlitePool,

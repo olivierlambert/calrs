@@ -435,6 +435,29 @@ pub(crate) async fn put_event_without_invitations(
     Ok(())
 }
 
+/// The one Google copy of a booking that carries its guests as attendees,
+/// as the id of the source it is written through. Google puts an event on
+/// the Google calendar of each of its attendees by itself, so attendees on
+/// two copies (two collective members, a claimant's copy) would show a guest
+/// the meeting twice. Every other Google copy is written without attendees.
+///
+/// That copy is the Meet owner's when the booking has a Meet, otherwise the
+/// booking's primary host's: the stored organizer, else the assigned member,
+/// else the first collective member, else the event type owner. Both are the
+/// same person, `google_meet::elect_meet_owner`, on the same source, the one
+/// a Meet is minted on. `None` when that host writes to no Google calendar:
+/// then no Google copy carries attendees.
+pub(crate) async fn attendee_copy_source(pool: &SqlitePool, booking_uid: &str) -> Option<String> {
+    let booking_id: String = sqlx::query_scalar("SELECT id FROM bookings WHERE uid = ?")
+        .bind(booking_uid)
+        .fetch_optional(pool)
+        .await
+        .ok()
+        .flatten()?;
+    let holder = crate::google_meet::elect_meet_owner(pool, &booking_id).await?;
+    crate::google_meet::google_write_source_id(pool, &holder).await
+}
+
 /// Delete a booking from a Google calendar without a cancellation from
 /// Google. An event with attendees goes through the Calendar API with
 /// `sendUpdates=none`; one without (or not visible to the API) through
@@ -691,107 +714,19 @@ mod tests {
 
     // --- #237: booking writes Google does not announce ---
 
-    /// A fake Google: CalDAV under `/caldav/v2/`, the Calendar API under
-    /// `/api/`. Every request is logged as "METHOD path?query body".
-    #[derive(Default)]
-    struct FakeGoogle {
-        log: std::sync::Mutex<Vec<String>>,
-        /// iCalUID -> (event id, attendees as the API holds them).
-        events: std::sync::Mutex<HashMap<String, (String, Vec<serde_json::Value>)>>,
-        api_down: bool,
-        next_id: std::sync::atomic::AtomicU32,
-    }
-
-    async fn fake_google(
-        axum::extract::State(fake): axum::extract::State<std::sync::Arc<FakeGoogle>>,
-        method: axum::http::Method,
-        uri: axum::http::Uri,
-        body: String,
-    ) -> axum::response::Response {
-        use axum::response::IntoResponse;
-        use std::sync::atomic::Ordering;
-        let path = uri.path().to_string();
-        let query = uri.query().unwrap_or("").to_string();
-        fake.log
-            .lock()
-            .unwrap()
-            .push(format!("{method} {path}?{query} {body}"));
-        if let Some(rest) = path.strip_prefix("/caldav/v2/host%40example.com/events/") {
-            let uid = rest.trim_end_matches(".ics").to_string();
-            let mut events = fake.events.lock().unwrap();
-            return match method.as_str() {
-                "PUT" => {
-                    // A CalDAV PUT replaces the event, attendees included.
-                    let id = events.get(&uid).map(|e| e.0.clone()).unwrap_or_else(|| {
-                        format!("ev{}", fake.next_id.fetch_add(1, Ordering::SeqCst))
-                    });
-                    events.insert(uid, (id, Vec::new()));
-                    axum::http::StatusCode::CREATED.into_response()
-                }
-                "DELETE" => {
-                    events.remove(&uid);
-                    axum::http::StatusCode::NO_CONTENT.into_response()
-                }
-                _ => axum::http::StatusCode::METHOD_NOT_ALLOWED.into_response(),
-            };
-        }
-        if fake.api_down {
-            return axum::http::StatusCode::FORBIDDEN.into_response();
-        }
-        let Some(rest) = path.strip_prefix("/api/calendars/host%40example.com/events") else {
-            return axum::http::StatusCode::NOT_FOUND.into_response();
-        };
-        let mut events = fake.events.lock().unwrap();
-        if rest.is_empty() && method == axum::http::Method::GET {
-            let uid = query
-                .split('&')
-                .find_map(|kv| kv.strip_prefix("iCalUID="))
-                .map(|v| urlencoding::decode(v).unwrap().into_owned())
-                .unwrap_or_default();
-            let items: Vec<_> = events
-                .get(&uid)
-                .map(|(id, attendees)| json!({"id": id, "attendees": attendees}))
-                .into_iter()
-                .collect();
-            return Json(json!({ "items": items })).into_response();
-        }
-        let id = rest.trim_start_matches('/');
-        let Some(uid) = events
-            .iter()
-            .find(|(_, (eid, _))| eid == id)
-            .map(|(uid, _)| uid.clone())
-        else {
-            return axum::http::StatusCode::NOT_FOUND.into_response();
-        };
-        match method.as_str() {
-            "PATCH" => {
-                let patch: serde_json::Value = serde_json::from_str(&body).unwrap();
-                let attendees = patch["attendees"].as_array().cloned().unwrap_or_default();
-                events.get_mut(&uid).unwrap().1 = attendees;
-                Json(json!({"id": id})).into_response()
-            }
-            "DELETE" => {
-                events.remove(&uid);
-                axum::http::StatusCode::NO_CONTENT.into_response()
-            }
-            _ => axum::http::StatusCode::METHOD_NOT_ALLOWED.into_response(),
-        }
-    }
+    use super::fake::{assert_nothing_announced, FakeGoogle};
 
     const HREF: &str = "/caldav/v2/host%40example.com/events";
+    const CAL: &str = "host@example.com";
 
     async fn serve_fake(
         fake: std::sync::Arc<FakeGoogle>,
     ) -> (crate::caldav::CaldavClient, tokio::task::JoinHandle<()>) {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let base = format!("http://{}", listener.local_addr().unwrap());
-        let app = Router::new().fallback(fake_google).with_state(fake);
-        let server = tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
-        });
-        let client = crate::caldav::CaldavClient::with_bearer(&base, "test-token")
-            .with_google_api_base(&format!("{base}/api"));
-        (client, server)
+        let (base, server) = super::fake::serve(fake).await;
+        (
+            crate::caldav::CaldavClient::with_bearer(&base, "test-token"),
+            server,
+        )
     }
 
     fn booking_ics(uid: &str) -> String {
@@ -813,21 +748,7 @@ mod tests {
     }
 
     fn log(fake: &FakeGoogle) -> Vec<String> {
-        fake.log.lock().unwrap().clone()
-    }
-
-    /// Every Calendar API write carries `sendUpdates=none`, and no CalDAV
-    /// write names an attendee or an organizer: the two ways Google mails.
-    fn assert_nothing_announced(log: &[String]) {
-        for entry in log {
-            if entry.starts_with("PATCH /api/") || entry.starts_with("DELETE /api/") {
-                assert!(entry.contains("sendUpdates=none"), "{entry}");
-            }
-            if entry.starts_with("PUT /caldav/") {
-                assert!(!entry.contains("ATTENDEE"), "{entry}");
-                assert!(!entry.contains("ORGANIZER"), "{entry}");
-            }
-        }
+        fake.log()
     }
 
     #[test]
@@ -885,11 +806,9 @@ mod tests {
         let log = log(&fake);
         assert_nothing_announced(&log);
         assert!(log.iter().any(|e| e.starts_with("PUT /caldav/")));
-        let events = fake.events.lock().unwrap();
-        let (_, attendees) = &events["new@calrs"];
         assert_eq!(
-            attendees,
-            &vec![
+            fake.attendees(CAL, "new@calrs").unwrap(),
+            vec![
                 json!({"email": "jane@example.com", "displayName": "Doe, Jane"}),
                 json!({"email": "bob@example.com"}),
             ]
@@ -899,9 +818,11 @@ mod tests {
     #[tokio::test]
     async fn rewriting_a_google_event_clears_its_attendees_before_the_put() {
         let fake = std::sync::Arc::new(FakeGoogle::default());
-        fake.events.lock().unwrap().insert(
-            "moved@calrs".into(),
-            ("ev-old".into(), vec![json!({"email": "jane@example.com"})]),
+        fake.insert(
+            CAL,
+            "moved@calrs",
+            "ev-old",
+            vec![json!({"email": "jane@example.com"})],
         );
         let (client, server) = serve_fake(fake.clone()).await;
         client
@@ -917,15 +838,12 @@ mod tests {
         assert!(writes[0].ends_with(r#"{"attendees":[]}"#), "{}", writes[0]);
         assert!(writes[1].starts_with("PUT /caldav/"));
         assert!(writes[2].starts_with("PATCH /api/") && writes[2].contains("jane@example.com"));
-        assert_eq!(fake.events.lock().unwrap()["moved@calrs"].1.len(), 2);
+        assert_eq!(fake.attendees(CAL, "moved@calrs").unwrap().len(), 2);
     }
 
     #[tokio::test]
     async fn google_event_is_still_written_host_only_without_the_calendar_api() {
-        let fake = std::sync::Arc::new(FakeGoogle {
-            api_down: true,
-            ..Default::default()
-        });
+        let fake = std::sync::Arc::new(FakeGoogle::without_api());
         let (client, server) = serve_fake(fake.clone()).await;
         client
             .put_event(HREF, "noapi@calrs", &booking_ics("noapi@calrs"))
@@ -934,21 +852,20 @@ mod tests {
         server.abort();
         let log = log(&fake);
         assert_nothing_announced(&log);
-        assert!(fake.events.lock().unwrap().contains_key("noapi@calrs"));
+        assert!(fake.attendees(CAL, "noapi@calrs").is_some());
         assert!(!log.iter().any(|e| e.starts_with("PATCH ")));
     }
 
     #[tokio::test]
     async fn google_event_with_attendees_is_deleted_silently_through_the_api() {
         let fake = std::sync::Arc::new(FakeGoogle::default());
-        {
-            let mut events = fake.events.lock().unwrap();
-            events.insert(
-                "guests@calrs".into(),
-                ("ev1".into(), vec![json!({"email": "jane@example.com"})]),
-            );
-            events.insert("alone@calrs".into(), ("ev2".into(), Vec::new()));
-        }
+        fake.insert(
+            CAL,
+            "guests@calrs",
+            "ev1",
+            vec![json!({"email": "jane@example.com"})],
+        );
+        fake.insert(CAL, "alone@calrs", "ev2", Vec::new());
         let (client, server) = serve_fake(fake.clone()).await;
         client.delete_event(HREF, "guests@calrs").await.unwrap();
         client.delete_event(HREF, "alone@calrs").await.unwrap();
@@ -962,23 +879,22 @@ mod tests {
             .iter()
             .any(|e| e.starts_with("DELETE /caldav/v2/host%40example.com/events/alone@calrs.ics")));
         assert!(!log.iter().any(|e| e.contains("/events/guests@calrs.ics")));
-        assert!(fake.events.lock().unwrap().is_empty());
+        assert!(fake.is_empty());
     }
 
     #[tokio::test]
     async fn google_delete_falls_back_to_caldav_without_the_calendar_api() {
-        let fake = std::sync::Arc::new(FakeGoogle {
-            api_down: true,
-            ..Default::default()
-        });
-        fake.events.lock().unwrap().insert(
-            "gone@calrs".into(),
-            ("ev1".into(), vec![json!({"email": "jane@example.com"})]),
+        let fake = std::sync::Arc::new(FakeGoogle::without_api());
+        fake.insert(
+            CAL,
+            "gone@calrs",
+            "ev1",
+            vec![json!({"email": "jane@example.com"})],
         );
         let (client, server) = serve_fake(fake.clone()).await;
         client.delete_event(HREF, "gone@calrs").await.unwrap();
         server.abort();
-        assert!(fake.events.lock().unwrap().is_empty());
+        assert!(fake.is_empty());
     }
 
     /// Any other CalDAV server keeps the ATTENDEE lines (with
@@ -986,12 +902,7 @@ mod tests {
     #[tokio::test]
     async fn other_caldav_servers_keep_attendees_in_the_ics() {
         let fake = std::sync::Arc::new(FakeGoogle::default());
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let base = format!("http://{}", listener.local_addr().unwrap());
-        let app = Router::new().fallback(fake_google).with_state(fake.clone());
-        let server = tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
-        });
+        let (base, server) = super::fake::serve_plain(fake.clone()).await;
         let client = crate::caldav::CaldavClient::with_bearer(&base, "test-token");
         client
             .put_event(HREF, "plain@calrs", &booking_ics("plain@calrs"))
@@ -1003,5 +914,189 @@ mod tests {
         assert!(
             log[0].starts_with("PUT /caldav/") && log[0].contains("ATTENDEE;SCHEDULE-AGENT=CLIENT")
         );
+    }
+}
+
+/// A fake Google for tests: CalDAV under `/caldav/v2/{calendar}/events/`,
+/// the Calendar API under `/api/calendars/{calendar}/events`, any number of
+/// calendars. Every request is logged as "METHOD path?query body".
+#[cfg(test)]
+pub(crate) mod fake {
+    use axum::{response::IntoResponse, Json, Router};
+    use serde_json::{json, Value};
+    use std::collections::HashMap;
+    use std::sync::atomic::{AtomicU32, Ordering};
+    use std::sync::{Arc, Mutex};
+
+    type Key = (String, String);
+
+    #[derive(Default)]
+    pub(crate) struct FakeGoogle {
+        log: Mutex<Vec<String>>,
+        /// (calendar id, iCalUID) -> (event id, attendees as the API holds them).
+        events: Mutex<HashMap<Key, (String, Vec<Value>)>>,
+        api_down: bool,
+        next_id: AtomicU32,
+    }
+
+    impl FakeGoogle {
+        /// A Google whose Calendar API refuses every call (not enabled).
+        pub(crate) fn without_api() -> Self {
+            Self {
+                api_down: true,
+                ..Default::default()
+            }
+        }
+
+        pub(crate) fn log(&self) -> Vec<String> {
+            self.log.lock().unwrap().clone()
+        }
+
+        /// An event already on `calendar`, as an earlier write left it.
+        pub(crate) fn insert(&self, calendar: &str, uid: &str, id: &str, attendees: Vec<Value>) {
+            self.events.lock().unwrap().insert(
+                (calendar.to_string(), uid.to_string()),
+                (id.to_string(), attendees),
+            );
+        }
+
+        /// The attendees of the event, `None` when it is not on `calendar`.
+        pub(crate) fn attendees(&self, calendar: &str, uid: &str) -> Option<Vec<Value>> {
+            self.events
+                .lock()
+                .unwrap()
+                .get(&(calendar.to_string(), uid.to_string()))
+                .map(|(_, attendees)| attendees.clone())
+        }
+
+        pub(crate) fn is_empty(&self) -> bool {
+            self.events.lock().unwrap().is_empty()
+        }
+    }
+
+    fn decode(segment: &str) -> String {
+        urlencoding::decode(segment)
+            .map(|s| s.into_owned())
+            .unwrap_or_else(|_| segment.to_string())
+    }
+
+    async fn handle(
+        axum::extract::State(fake): axum::extract::State<Arc<FakeGoogle>>,
+        method: axum::http::Method,
+        uri: axum::http::Uri,
+        body: String,
+    ) -> axum::response::Response {
+        use axum::http::StatusCode;
+        let path = uri.path().to_string();
+        let query = uri.query().unwrap_or("").to_string();
+        fake.log
+            .lock()
+            .unwrap()
+            .push(format!("{method} {path}?{query} {body}"));
+        if let Some(rest) = path.strip_prefix("/caldav/v2/") {
+            let Some((calendar, uid)) = rest.split_once("/events/") else {
+                return StatusCode::NOT_FOUND.into_response();
+            };
+            let key = (decode(calendar), decode(uid.trim_end_matches(".ics")));
+            let mut events = fake.events.lock().unwrap();
+            return match method.as_str() {
+                "PUT" => {
+                    // A CalDAV PUT replaces the event, attendees included.
+                    let id = events.get(&key).map(|e| e.0.clone()).unwrap_or_else(|| {
+                        format!("ev{}", fake.next_id.fetch_add(1, Ordering::SeqCst))
+                    });
+                    events.insert(key, (id, Vec::new()));
+                    StatusCode::CREATED.into_response()
+                }
+                "HEAD" if events.contains_key(&key) => StatusCode::OK.into_response(),
+                "HEAD" => StatusCode::NOT_FOUND.into_response(),
+                "DELETE" => {
+                    events.remove(&key);
+                    StatusCode::NO_CONTENT.into_response()
+                }
+                _ => StatusCode::METHOD_NOT_ALLOWED.into_response(),
+            };
+        }
+        if fake.api_down {
+            return StatusCode::FORBIDDEN.into_response();
+        }
+        let Some(rest) = path.strip_prefix("/api/calendars/") else {
+            return StatusCode::NOT_FOUND.into_response();
+        };
+        let Some((calendar, rest)) = rest.split_once("/events") else {
+            return StatusCode::NOT_FOUND.into_response();
+        };
+        let calendar = decode(calendar);
+        let mut events = fake.events.lock().unwrap();
+        if rest.is_empty() && method == axum::http::Method::GET {
+            let uid = query
+                .split('&')
+                .find_map(|kv| kv.strip_prefix("iCalUID="))
+                .map(decode)
+                .unwrap_or_default();
+            let items: Vec<_> = events
+                .get(&(calendar, uid))
+                .map(|(id, attendees)| json!({"id": id, "attendees": attendees}))
+                .into_iter()
+                .collect();
+            return Json(json!({ "items": items })).into_response();
+        }
+        let id = decode(rest.trim_start_matches('/'));
+        let Some(key) = events
+            .iter()
+            .find(|((cal, _), (eid, _))| *cal == calendar && *eid == id)
+            .map(|(key, _)| key.clone())
+        else {
+            return StatusCode::NOT_FOUND.into_response();
+        };
+        match method.as_str() {
+            "PATCH" => {
+                let patch: Value = serde_json::from_str(&body).unwrap();
+                let attendees = patch["attendees"].as_array().cloned().unwrap_or_default();
+                events.get_mut(&key).unwrap().1 = attendees;
+                Json(json!({ "id": id })).into_response()
+            }
+            "DELETE" => {
+                events.remove(&key);
+                StatusCode::NO_CONTENT.into_response()
+            }
+            _ => StatusCode::METHOD_NOT_ALLOWED.into_response(),
+        }
+    }
+
+    /// Serve `fake` on loopback without telling `CaldavClient` it is Google:
+    /// what any other CalDAV server sees. Returns its base URL.
+    pub(crate) async fn serve_plain(
+        fake: Arc<FakeGoogle>,
+    ) -> (String, tokio::task::JoinHandle<()>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let app = Router::new().fallback(handle).with_state(fake);
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        (base, server)
+    }
+
+    /// Serve `fake` as Google: every `CaldavClient` built for the returned
+    /// base URL takes the Calendar API detour, against the fake's `/api`.
+    pub(crate) async fn serve(fake: Arc<FakeGoogle>) -> (String, tokio::task::JoinHandle<()>) {
+        let (base, server) = serve_plain(fake).await;
+        crate::caldav::CaldavClient::treat_as_google(&base, &format!("{base}/api"));
+        (base, server)
+    }
+
+    /// Every Calendar API write carries `sendUpdates=none`, and no CalDAV
+    /// write names an attendee or an organizer: the two ways Google mails.
+    pub(crate) fn assert_nothing_announced(log: &[String]) {
+        for entry in log {
+            if entry.starts_with("PATCH /api/") || entry.starts_with("DELETE /api/") {
+                assert!(entry.contains("sendUpdates=none"), "{entry}");
+            }
+            if entry.starts_with("PUT /caldav/") {
+                assert!(!entry.contains("ATTENDEE"), "{entry}");
+                assert!(!entry.contains("ORGANIZER"), "{entry}");
+            }
+        }
     }
 }

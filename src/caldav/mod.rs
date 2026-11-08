@@ -24,6 +24,12 @@ pub struct CaldavClient {
     google_api_base: Option<String>,
 }
 
+/// See `CaldavClient::treat_as_google`.
+#[cfg(test)]
+static TEST_GOOGLE_ORIGINS: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::HashMap<String, String>>,
+> = std::sync::LazyLock::new(Default::default);
+
 /// Check if an IP address is in a private/reserved range (SSRF protection).
 fn is_private_ip(ip: &IpAddr) -> bool {
     match ip {
@@ -168,10 +174,17 @@ impl CaldavClient {
             .map(|token| (crate::google_meet::CALENDAR_API_BASE, token))
     }
 
+    /// Tests only: every client built from now on for `origin` (scheme, host
+    /// and port, as `build` computes it) is a Google one whose Calendar API
+    /// lives at `api_base`. Lets a fake Google stand behind clients the code
+    /// under test builds itself (`build_client_for_source`). Each fake listens
+    /// on its own port, so parallel tests do not see each other's entries.
     #[cfg(test)]
-    pub(crate) fn with_google_api_base(mut self, base: &str) -> Self {
-        self.google_api_base = Some(base.trim_end_matches('/').to_string());
-        self
+    pub(crate) fn treat_as_google(origin: &str, api_base: &str) {
+        TEST_GOOGLE_ORIGINS.lock().unwrap().insert(
+            origin.trim_end_matches('/').to_string(),
+            api_base.trim_end_matches('/').to_string(),
+        );
     }
 
     pub fn new(base_url: &str, username: &str, password: &str) -> Self {
@@ -210,10 +223,10 @@ impl CaldavClient {
         Self {
             client,
             base_url: base,
-            origin,
             auth,
             #[cfg(test)]
-            google_api_base: None,
+            google_api_base: TEST_GOOGLE_ORIGINS.lock().unwrap().get(&origin).cloned(),
+            origin,
         }
     }
 
