@@ -190,7 +190,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Added
 
-- **Google out-of-office blocks availability** (#240) - An "Out of office" event in a connected Google calendar now blocks booking slots. calrs reads them through the Google Calendar API, the documented interface for them, with the existing OAuth connection (no new scope, no reconnect), on every sync of the primary calendar, from 90 days back to 366 days ahead, with recurring absences expanded by Google. They follow the calendar's busy toggle, the "sync this calendar" switch and per-event-type calendar selection like any other event, and show only as busy time. If the API call fails, the absences cached by the last good sync keep blocking. Needs the Google Calendar API enabled in the Google Cloud project, as for Meet. One new migration. Thanks @chetan.
+- **Google out-of-office blocks availability** (#240) - An "Out of office" event in a connected Google calendar now blocks booking slots. calrs reads them through the Google Calendar API, the documented interface for them, with the existing OAuth connection (no new scope, no reconnect), on every sync of the primary calendar, from 90 days back to 366 days ahead, with recurring absences expanded by Google, and whole-day ones blocking their days in the calendar's timezone. They follow the calendar's busy toggle, the "sync this calendar" switch and per-event-type calendar selection like any other event, and show only as busy time. If the API call fails, the absences cached by the last good sync keep blocking. Needs the Google Calendar API enabled in the Google Cloud project, as for Meet. One new migration. Thanks @chetan.
 
 ### Fixed
 

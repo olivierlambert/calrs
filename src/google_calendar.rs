@@ -3,15 +3,19 @@
 //! rely on a proprietary iCalendar extension being present in CalDAV.
 
 use anyhow::{bail, Context, Result};
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Duration, NaiveDate, SecondsFormat, TimeZone, Utc};
+use chrono_tz::Tz;
 use serde::Deserialize;
 use sqlx::SqlitePool;
 use std::collections::HashSet;
 
-#[derive(Debug, Deserialize)]
+/// A start or end as the Calendar API sends it: `dateTime` for a timed
+/// event, `date` (end exclusive) for a whole-day one.
+#[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct EventTime {
-    date_time: String,
+    date_time: Option<String>,
+    date: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -31,6 +35,8 @@ struct EventPage {
     #[serde(default)]
     items: Vec<StatusEvent>,
     next_page_token: Option<String>,
+    /// The calendar's own timezone, which whole-day events are in.
+    time_zone: Option<String>,
 }
 
 pub(crate) async fn sync_out_of_office(
@@ -48,25 +54,30 @@ pub(crate) async fn sync_out_of_office(
     // holidays and other secondary collections can return 404 for this query.
     if !remote_id.eq_ignore_ascii_case(&primary_id) {
         tracing::debug!("skipping Google out-of-office query for secondary calendar");
-        replace_snapshot(pool, calendar_id, &[]).await?;
+        replace_snapshot(pool, calendar_id, &[], Tz::UTC).await?;
         return Ok(0);
     }
     let url = format!(
         "https://www.googleapis.com/calendar/v3/calendars/{}/events",
         urlencoding::encode(&remote_id)
     );
-    let now = Utc::now();
     // Expand recurrence at Google so moved/cancelled instances and DST are
-    // authoritative. Cover the booking validator's 365-day limit, plus a day
-    // for guest timezone boundaries; retain the same history as CalDAV sync.
-    let events = fetch_out_of_office(
-        &url,
-        token,
-        &(now - Duration::days(90)).to_rfc3339(),
-        &(now + Duration::days(366)).to_rfc3339(),
+    // authoritative.
+    let (time_min, time_max) = query_window(Utc::now());
+    let (events, zone) = fetch_out_of_office(&url, token, &time_min, &time_max).await?;
+    let zone = zone.and_then(|z| z.parse::<Tz>().ok()).unwrap_or(Tz::UTC);
+    replace_snapshot(pool, calendar_id, &events, zone).await
+}
+
+/// `timeMin` and `timeMax` of the out-of-office query: the booking
+/// validator's 365-day limit plus a day for guest timezone boundaries, and
+/// the same history as CalDAV sync. Whole seconds in UTC, the RFC 3339
+/// shape the Calendar API documents (`to_rfc3339` would send nanoseconds).
+fn query_window(now: DateTime<Utc>) -> (String, String) {
+    (
+        (now - Duration::days(90)).to_rfc3339_opts(SecondsFormat::Secs, true),
+        (now + Duration::days(366)).to_rfc3339_opts(SecondsFormat::Secs, true),
     )
-    .await?;
-    replace_snapshot(pool, calendar_id, &events).await
 }
 
 async fn fetch_out_of_office(
@@ -74,12 +85,13 @@ async fn fetch_out_of_office(
     token: &str,
     time_min: &str,
     time_max: &str,
-) -> Result<Vec<StatusEvent>> {
+) -> Result<(Vec<StatusEvent>, Option<String>)> {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(60))
         .redirect(reqwest::redirect::Policy::none())
         .build()?;
     let mut events = Vec::new();
+    let mut zone = None;
     let mut page_token = None;
     let mut seen_tokens = HashSet::new();
     loop {
@@ -100,6 +112,7 @@ async fn fetch_out_of_office(
             bail!("Google out-of-office fetch: HTTP {}", status);
         }
         let page: EventPage = response.json().await?;
+        zone = zone.or(page.time_zone);
         events.extend(page.items);
         match page.next_page_token {
             Some(next) if !next.is_empty() => {
@@ -108,18 +121,47 @@ async fn fetch_out_of_office(
                 }
                 page_token = Some(next);
             }
-            _ => return Ok(events),
+            _ => return Ok((events, zone)),
         }
     }
 }
 
+/// The UTC instant of a start or end. A whole day starts at midnight in
+/// `zone`, the calendar's timezone, or at the first instant that exists
+/// there when a clock change skips midnight.
+fn instant(time: &EventTime, zone: Tz) -> Option<DateTime<Utc>> {
+    if let Some(date_time) = time.date_time.as_deref() {
+        return DateTime::parse_from_rfc3339(date_time)
+            .ok()
+            .map(|t| t.with_timezone(&Utc));
+    }
+    let day = NaiveDate::parse_from_str(time.date.as_deref()?, "%Y-%m-%d").ok()?;
+    (0..=2).find_map(|hour| {
+        zone.from_local_datetime(&day.and_hms_opt(hour, 0, 0)?)
+            .earliest()
+            .map(|t| t.with_timezone(&Utc))
+    })
+}
+
+/// The UTC interval an absence blocks, `None` when Google sent something
+/// unusable (no start or end, an unparseable or empty interval).
+fn absence_interval(event: &StatusEvent, zone: Tz) -> Option<(DateTime<Utc>, DateTime<Utc>)> {
+    let start = instant(event.start.as_ref()?, zone)?;
+    let end = instant(event.end.as_ref()?, zone)?;
+    (end > start).then_some((start, end))
+}
+
 /// Replace only API-owned rows, atomically, after every page has been fetched.
-/// An empty successful snapshot clears deleted absences; any fetch, parse or DB
+/// An empty successful snapshot clears deleted absences; a fetch or DB
 /// failure leaves the previous snapshot intact. Ordinary CalDAV rows survive.
+/// An item that cannot be read is skipped and logged rather than failing
+/// the snapshot: one odd item must not freeze every other absence, deleted
+/// ones included. A repeated id is stored once.
 async fn replace_snapshot(
     pool: &SqlitePool,
     calendar_id: &str,
     events: &[StatusEvent],
+    zone: Tz,
 ) -> Result<usize> {
     let mut tx = pool.begin().await?;
     sqlx::query("DELETE FROM events WHERE calendar_id = ? AND google_out_of_office = 1")
@@ -127,33 +169,23 @@ async fn replace_snapshot(
         .execute(&mut *tx)
         .await?;
     let mut count = 0;
+    let mut seen = HashSet::new();
     for event in events {
         if event.event_type != "outOfOffice" || event.status.as_deref() == Some("cancelled") {
             continue;
         }
-        let start = DateTime::parse_from_rfc3339(
-            &event
-                .start
-                .as_ref()
-                .context("Missing out-of-office start")?
-                .date_time,
-        )?
-        .with_timezone(&Utc);
-        let end = DateTime::parse_from_rfc3339(
-            &event
-                .end
-                .as_ref()
-                .context("Missing out-of-office end")?
-                .date_time,
-        )?
-        .with_timezone(&Utc);
-        if event.id.is_empty() || end <= start {
-            bail!("Invalid Google out-of-office interval");
+        let interval = absence_interval(event, zone).filter(|_| !event.id.is_empty());
+        let Some((start, end)) = interval else {
+            tracing::warn!(calendar_id = %calendar_id, "Google out-of-office item without a usable interval, skipped");
+            continue;
+        };
+        if !seen.insert(event.id.as_str()) {
+            continue;
         }
         // Use a distinct UID namespace: CalDAV can expose the same absence,
         // but its incremental/deletion lifecycle must not own this API copy.
         sqlx::query(
-            "INSERT INTO events (id, calendar_id, uid, summary, start_at, end_at,
+            "INSERT OR IGNORE INTO events (id, calendar_id, uid, summary, start_at, end_at,
                  timezone, status, transp, google_out_of_office)
              VALUES (?, ?, ?, ?, ?, ?, 'UTC', 'CONFIRMED', 'OPAQUE', 1)",
         )
@@ -703,7 +735,7 @@ mod tests {
         sqlx::query("INSERT INTO events (id, calendar_id, uid, start_at, end_at) VALUES ('normal', 'c', 'normal', '20261026T130000', '20261026T140000')")
             .execute(&pool).await.unwrap();
         assert_eq!(
-            replace_snapshot(&pool, "c", &[whole_day, timed])
+            replace_snapshot(&pool, "c", &[whole_day, timed], Tz::UTC)
                 .await
                 .unwrap(),
             2
@@ -716,6 +748,7 @@ mod tests {
                 "2026-10-26T09:00:00Z",
                 "2026-10-26T10:00:00Z",
             )],
+            Tz::UTC,
         )
         .await
         .unwrap();
@@ -733,7 +766,7 @@ mod tests {
         );
         assert_eq!(rows[1].0, "20261026T080000Z");
         assert_eq!(rows[1].1, "20261026T110000Z");
-        replace_snapshot(&pool, "c", &[]).await.unwrap();
+        replace_snapshot(&pool, "c", &[], Tz::UTC).await.unwrap();
         let remaining: Vec<String> = sqlx::query_scalar("SELECT uid FROM events ORDER BY uid")
             .fetch_all(&pool)
             .await
@@ -741,8 +774,11 @@ mod tests {
         assert_eq!(remaining, vec!["google-out-of-office:other", "normal"]);
     }
 
+    /// An item that cannot be read (no dateTime, a bad one, an empty
+    /// interval, no id) is skipped, not fatal: the rest of the snapshot is
+    /// stored, and a deleted absence stops blocking. A repeated id once.
     #[tokio::test]
-    async fn invalid_snapshot_preserves_previous_blocks() {
+    async fn unusable_absences_are_skipped_and_repeats_stored_once() {
         let pool = database().await;
         replace_snapshot(
             &pool,
@@ -752,21 +788,69 @@ mod tests {
                 "2026-10-26T09:00:00Z",
                 "2026-10-26T10:00:00Z",
             )],
+            Tz::UTC,
         )
         .await
         .unwrap();
-        assert!(replace_snapshot(
-            &pool,
-            "c",
-            &[absence("bad", "invalid", "2026-10-26T10:00:00Z")]
-        )
-        .await
-        .is_err());
-        let uid: String = sqlx::query_scalar("SELECT uid FROM events")
-            .fetch_one(&pool)
+        let no_times: StatusEvent =
+            serde_json::from_value(json!({"id": "bare", "eventType": "outOfOffice"})).unwrap();
+        let events = [
+            absence("bad", "invalid", "2026-10-26T10:00:00Z"),
+            absence("empty", "2026-10-26T10:00:00Z", "2026-10-26T10:00:00Z"),
+            absence("", "2026-10-26T09:00:00Z", "2026-10-26T10:00:00Z"),
+            no_times,
+            absence("good", "2026-10-27T09:00:00Z", "2026-10-27T10:00:00Z"),
+            absence("good", "2026-10-27T09:00:00Z", "2026-10-27T10:00:00Z"),
+        ];
+        assert_eq!(
+            replace_snapshot(&pool, "c", &events, Tz::UTC)
+                .await
+                .unwrap(),
+            1
+        );
+        let uids: Vec<String> = sqlx::query_scalar("SELECT uid FROM events")
+            .fetch_all(&pool)
             .await
             .unwrap();
-        assert_eq!(uid, "google-out-of-office:old");
+        assert_eq!(uids, vec!["google-out-of-office:good"]);
+    }
+
+    /// A whole-day absence (`date`, end exclusive) blocks its days in the
+    /// calendar's timezone, including a 25-hour day at the end of DST.
+    #[tokio::test]
+    async fn whole_day_absences_block_their_days_in_the_calendar_timezone() {
+        let pool = database().await;
+        let page: EventPage = serde_json::from_value(json!({
+            "timeZone": "Europe/Paris",
+            "items": [{
+                "id": "allday", "eventType": "outOfOffice", "status": "confirmed",
+                "start": {"date": "2026-10-25"}, "end": {"date": "2026-10-26"}
+            }]
+        }))
+        .unwrap();
+        let zone: Tz = page.time_zone.as_deref().unwrap().parse().unwrap();
+        assert_eq!(
+            replace_snapshot(&pool, "c", &page.items, zone)
+                .await
+                .unwrap(),
+            1
+        );
+        let (start, end): (String, String) =
+            sqlx::query_as("SELECT start_at, end_at FROM events WHERE calendar_id = 'c'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(start, "20261024T220000Z");
+        assert_eq!(end, "20261025T230000Z");
+    }
+
+    #[test]
+    fn query_window_is_whole_seconds_in_utc() {
+        let now = Utc.with_ymd_and_hms(2026, 11, 7, 12, 30, 45).unwrap()
+            + Duration::nanoseconds(123_456_789);
+        let (time_min, time_max) = query_window(now);
+        assert_eq!(time_min, "2026-08-09T12:30:45Z");
+        assert_eq!(time_max, "2027-11-08T12:30:45Z");
     }
 
     #[tokio::test]
@@ -777,7 +861,7 @@ mod tests {
         let mut location = absence("location", "2026-10-26T09:00:00Z", "2026-10-26T10:00:00Z");
         location.event_type = "workingLocation".into();
         assert_eq!(
-            replace_snapshot(&pool, "c", &[cancelled, location])
+            replace_snapshot(&pool, "c", &[cancelled, location], Tz::UTC)
                 .await
                 .unwrap(),
             0
@@ -795,6 +879,7 @@ mod tests {
                 "2026-10-26T09:00:00Z",
                 "2026-10-26T10:00:00Z",
             )],
+            Tz::UTC,
         )
         .await
         .unwrap();
@@ -849,7 +934,7 @@ mod tests {
                 .await
                 .unwrap();
         });
-        let events = fetch_out_of_office(
+        let (events, _) = fetch_out_of_office(
             &url,
             "test-token",
             "2026-10-01T00:00:00Z",
