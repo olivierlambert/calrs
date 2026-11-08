@@ -54,7 +54,7 @@ receives events added in later versions of calrs.
 | `booking.confirmed` | The host approves a pending request, or a pending reschedule. |
 | `booking.declined` | The host declines a pending request (or a pending reschedule). |
 | `booking.expired` | A pending request reached its deadline unanswered. calrs declines it. |
-| `booking.cancelled` | The guest or the host cancelled. `cancelled_by` says who. |
+| `booking.cancelled` | The guest or the host cancelled, or the host deleted the event from their calendar. `cancelled_by` says who. |
 | `booking.rescheduled` | The booking moved. `previous` holds the old times; `status` is `pending` when the new time waits for approval. |
 | `booking.claimed` | A member of a watcher team claimed the booking. `claimed_by` names them. |
 | `ping` | The **Send test** button. `test` is `true`, the booking is made up. |

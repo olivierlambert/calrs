@@ -1307,6 +1307,15 @@ async fn cancel_orphaned_booking(
         booking_id = %booking_id,
         "booking cancelled: calendar event deleted externally"
     );
+    // The host deleted the event: a cancellation by the host for the
+    // booking webhooks (#168). Every provider's sync ends up here.
+    crate::web::webhooks::enqueue(
+        pool,
+        &booking_id,
+        crate::web::webhooks::Event::Cancelled,
+        crate::web::webhooks::Context::cancelled(crate::web::webhooks::Actor::Host, None),
+    )
+    .await;
     // The host's event is already gone; a claimant's copy is not (#269).
     crate::web::claimant_delete_booking(pool, key, &booking_uid).await;
 
@@ -2221,6 +2230,13 @@ mod tests {
         .await
         .unwrap();
 
+        // A webhook on the host's event types (#168).
+        sqlx::query("INSERT INTO webhooks (id, user_id, url, secret_enc) SELECT 'wh', a.user_id, 'https://93.184.215.14/h', 'x' FROM event_types et JOIN accounts a ON a.id = et.account_id WHERE et.id = ?")
+            .bind(&et_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
         let outcome = cancel_orphaned_booking(
             &pool,
             &key,
@@ -2230,6 +2246,15 @@ mod tests {
         )
         .await;
         assert!(matches!(outcome, OrphanOutcome::Cancelled));
+
+        // Queued as a cancellation by the host.
+        let payload: String = sqlx::query_scalar("SELECT payload FROM webhook_deliveries")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let v: serde_json::Value = serde_json::from_str(&payload).unwrap();
+        assert_eq!(v["event"], "booking.cancelled");
+        assert_eq!(v["booking"]["cancelled_by"], "host");
 
         let copies: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM events WHERE uid = 'deleted-uid' AND calendar_id = ?",

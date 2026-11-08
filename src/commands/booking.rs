@@ -504,7 +504,7 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
                     // may have cancelled it, or a reschedule sent it back to
                     // pending, in the meantime. Only a booking still confirmed
                     // is cancelled, and only then are its holders told.
-                    if !cancel_if_confirmed(pool, &full_id).await? {
+                    if !cancel_if_confirmed(pool, &full_id, reason.clone()).await? {
                         println!(
                             "{} Booking {} is no longer confirmed, nothing was cancelled.",
                             "✗".red(),
@@ -513,17 +513,6 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
                         return Ok(());
                     }
                     println!("{} Booking {} cancelled.", "✓".green(), &full_id[..8]);
-                    // Queued for `calrs serve`, which delivers it (#168).
-                    crate::web::webhooks::enqueue(
-                        pool,
-                        &full_id,
-                        crate::web::webhooks::Event::Cancelled,
-                        crate::web::webhooks::Context::cancelled(
-                            crate::web::webhooks::Actor::Host,
-                            None,
-                        ),
-                    )
-                    .await;
 
                     // Remote cleanup, same order as the web cancel paths:
                     // host calendar first, then resource reservations. All
@@ -682,8 +671,14 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
 /// Cancel a booking if it is still confirmed. `false` when it no longer is
 /// (cancelled, declined or sent back to pending since it was read), in
 /// which case nothing changed. Bumps the SEQUENCE so the CANCEL sent next
-/// outranks the copy its holders have (RFC 5546, migration 072).
-async fn cancel_if_confirmed(pool: &SqlitePool, booking_id: &str) -> Result<bool> {
+/// outranks the copy its holders have (RFC 5546, migration 072). A
+/// cancellation is queued for the booking webhooks, with the host's
+/// reason, for `calrs serve` to deliver (#168).
+async fn cancel_if_confirmed(
+    pool: &SqlitePool,
+    booking_id: &str,
+    reason: Option<String>,
+) -> Result<bool> {
     let updated = sqlx::query(
         "UPDATE bookings SET status = 'cancelled', ics_sequence = ics_sequence + 1 WHERE id = ? AND status = 'confirmed'",
     )
@@ -691,6 +686,15 @@ async fn cancel_if_confirmed(pool: &SqlitePool, booking_id: &str) -> Result<bool
     .execute(pool)
     .await?
     .rows_affected();
+    if updated == 1 {
+        crate::web::webhooks::enqueue(
+            pool,
+            booking_id,
+            crate::web::webhooks::Event::Cancelled,
+            crate::web::webhooks::Context::cancelled(crate::web::webhooks::Actor::Host, reason),
+        )
+        .await;
+    }
     Ok(updated == 1)
 }
 
@@ -938,9 +942,38 @@ mod tests {
         )
         .await;
 
-        assert!(!cancel_if_confirmed(&pool, &pending).await.unwrap());
-        assert!(cancel_if_confirmed(&pool, &confirmed).await.unwrap());
-        assert!(!cancel_if_confirmed(&pool, &confirmed).await.unwrap());
+        // A webhook on the host's event types gets the cancellation, with
+        // the reason typed at the prompt.
+        let host: String = sqlx::query_scalar(
+            "SELECT a.user_id FROM event_types et JOIN accounts a ON a.id = et.account_id WHERE et.id = ?",
+        )
+        .bind(&et_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO webhooks (id, user_id, url, secret_enc) VALUES ('wh', ?, 'https://93.184.215.14/h', 'x')")
+            .bind(&host)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        assert!(!cancel_if_confirmed(&pool, &pending, None).await.unwrap());
+        let reason = Some("Host is ill".to_string());
+        assert!(cancel_if_confirmed(&pool, &confirmed, reason.clone())
+            .await
+            .unwrap());
+        assert!(!cancel_if_confirmed(&pool, &confirmed, reason)
+            .await
+            .unwrap());
+        let payloads: Vec<String> = sqlx::query_scalar("SELECT payload FROM webhook_deliveries")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        assert_eq!(payloads.len(), 1);
+        let v: serde_json::Value = serde_json::from_str(&payloads[0]).unwrap();
+        assert_eq!(v["event"], "booking.cancelled");
+        assert_eq!(v["booking"]["cancelled_by"], "host");
+        assert_eq!(v["booking"]["reason"], "Host is ill");
         let statuses: Vec<String> =
             sqlx::query_scalar("SELECT status FROM bookings ORDER BY start_at")
                 .fetch_all(&pool)
