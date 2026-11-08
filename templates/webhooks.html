@@ -18,6 +18,11 @@
   .wh-edit summary { cursor: pointer; font-size: 13px; color: var(--text-secondary); }
   .wh-edit form { margin-top: 0.6rem; max-width: 36rem; }
   .wh-form { max-width: 36rem; padding-top: 0.75rem; }
+  .wh-events { border: 0; padding: 0; margin: 0 0 1.25rem; }
+  .wh-events legend { font-weight: 500; font-size: 0.875rem; margin-bottom: 0.375rem; padding: 0; }
+  .wh-events label { display: flex; align-items: baseline; gap: 0.5rem; font-size: 0.9rem; padding: 0.15rem 0; cursor: pointer; }
+  .wh-events input { width: 1rem; height: 1rem; accent-color: var(--ink); flex-shrink: 0; }
+  .wh-events code { color: var(--text-muted); font-size: 12px; }
   .wh-form select { width: 100%; padding: 0.5rem 0.75rem; border: 1px solid var(--border); border-radius: var(--r-control); font-size: 0.925rem; font-family: inherit; background: var(--surface); color: var(--text); }
   @media (max-width: 600px) {
     .wh-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); width: 100%; }
@@ -28,12 +33,21 @@
 <header class="page-header">
   <div class="page-header-text">
     <h1 class="page-title">{{ t("webhooks-title") }}</h1>
-    <p class="page-subtitle">{{ t("webhooks-subtitle") }} <a href="https://cal.rs/docs/webhooks.html" target="_blank" rel="noopener noreferrer">{{ t("webhooks-docs") }}</a></p>
+    <p class="page-subtitle">{{ t("webhooks-subtitle") }}</p>
   </div>
 </header>
 
 {% if notice %}<div class="notice notice--success" role="status" style="margin-bottom: 1rem;">{{ ic.icon("check", 14) }}<span>{{ notice }}</span></div>{% endif %}
 {% if error %}<div class="notice notice--error" role="alert" style="margin-bottom: 1rem;">{{ ic.icon("alert", 14) }}<span>{{ error }}</span></div>{% endif %}
+
+{% macro event_boxes(events) -%}
+<fieldset class="wh-events">
+  <legend>{{ t("webhooks-events") }}</legend>
+  {% for e in events %}
+  <label><input type="checkbox" name="events" value="{{ e.name }}"{% if e.checked %} checked{% endif %}> {{ t(e.label_key) }} <code>{{ e.name }}</code></label>
+  {% endfor %}
+</fieldset>
+{%- endmacro %}
 
 {% if not allowed %}
 <p class="empty-line">{{ t("webhooks-not-allowed") }}</p>
@@ -48,7 +62,8 @@
           <div class="wh-url">{{ w.url }}</div>
           <div class="wh-meta">
             {% if w.personal %}{{ t("webhooks-scope-personal") }}{% elif w.team_name %}{{ t("webhooks-scope-team-event-type", title=w.event_type_title, team=w.team_name) }}{% else %}{{ t("webhooks-scope-event-type", title=w.event_type_title) }}{% endif %}
-            {% if not w.personal %}<br>{{ t("webhooks-added-by", name=w.added_by) }}{% endif %}
+            {% if not w.personal %}<br>{% if w.added_by %}{{ t("webhooks-added-by", name=w.added_by) }}{% else %}{{ t("webhooks-added-by-former") }}{% endif %}{% endif %}
+            <br>{% if w.all_events %}{{ t("webhooks-events-all") }}{% else %}{{ t("webhooks-events") }}: {% for e in w.events if e.checked %}{{ t(e.label_key) }}{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}
           </div>
           <div class="wh-meta">
             {% if not w.enabled %}<span class="wh-state">{{ t("webhooks-state-off") }}</span>
@@ -84,6 +99,7 @@
             <label for="wh-secret-{{ w.id }}">{{ t("webhooks-secret") }} <span class="hint">{{ t("admin-keep-current-set-hint") }}</span></label>
             <input type="password" id="wh-secret-{{ w.id }}" name="secret" value="" autocomplete="new-password" placeholder="{{ t('admin-keep-unchanged') }}">
           </div>
+          {{ event_boxes(w.events) }}
           <button type="submit" class="ui-btn ui-btn--primary">{{ t("webhooks-save") }}</button>
         </form>
       </details>
@@ -114,6 +130,8 @@
       <label for="wh-secret">{{ t("webhooks-secret") }} <span class="hint">{{ t("webhooks-secret-hint", min=secret_min) }}</span></label>
       <input type="password" id="wh-secret" name="secret" required minlength="{{ secret_min }}" maxlength="256" autocomplete="new-password">
     </div>
+    {{ event_boxes(new_events) }}
+    <p class="sec-note" style="margin-bottom: 0.5rem;">{{ t("webhooks-signature-help") | safe }}</p>
     <p class="sec-note" style="margin-bottom: 0.75rem;">{{ t("webhooks-privacy-note") }}</p>
     <button type="submit" class="ui-btn ui-btn--primary">{{ t("webhooks-add-submit") }}</button>
   </form>

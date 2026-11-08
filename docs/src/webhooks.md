@@ -31,6 +31,16 @@ Each webhook covers one of:
 
 Up to 10 webhooks per scope.
 
+A webhook on an event type stays when the user who added it is deleted; the
+page then says it was added by a former member. A webhook for "all my
+personal event types" is deleted with its user.
+
+## Choosing events
+
+Each webhook has a checkbox per event, all ticked by default. Events left
+unticked are not sent at all. With every box ticked the webhook also
+receives events added in later versions of calrs.
+
 ## Events
 
 | Event | When |
@@ -185,7 +195,8 @@ within a second.
 - Each webhook shows the time and result of its last attempt, the error (with
   at most 200 characters of the response body), and how many deliveries wait
   for a retry or were given up.
-- **Send test** sends a `ping` straight away and shows the result.
+- **Send test** sends a `ping` straight away and shows the result, whatever
+  events are ticked. Each user can send 10 tests per 10 minutes.
 - **Switch off** stops deliveries and drops what is still queued, so switching
   back on starts from new events rather than replaying old ones.
 

@@ -600,7 +600,7 @@ async fn admin_adds_a_webhook_and_the_secret_is_encrypted() {
             &session,
             csrf,
             &format!(
-                "_csrf={csrf}&scope=personal&url=https%3A%2F%2F93.184.215.14%2Fhook&secret={SECRET}"
+                "_csrf={csrf}&scope=personal&url=https%3A%2F%2F93.184.215.14%2Fhook&secret={SECRET}&events=booking.created"
             ),
         ))
         .await
@@ -629,7 +629,7 @@ async fn admin_adds_a_webhook_and_the_secret_is_encrypted() {
             &format!("/dashboard/webhooks/{id}/update"),
             &session,
             csrf,
-            &format!("_csrf={csrf}&url=https%3A%2F%2F93.184.215.14%2Fother&secret="),
+            &format!("_csrf={csrf}&url=https%3A%2F%2F93.184.215.14%2Fother&secret=&events=booking.created&events=booking.cancelled"),
         ))
         .await
         .unwrap();
@@ -640,6 +640,11 @@ async fn admin_adds_a_webhook_and_the_secret_is_encrypted() {
         .unwrap();
     assert_eq!(url, "https://93.184.215.14/other");
     assert_eq!(enc2, enc);
+    let events: Option<String> = sqlx::query_scalar("SELECT events FROM webhooks")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(events.as_deref(), Some("booking.created,booking.cancelled"));
 
     // The page lists it and never the secret.
     let response = app
@@ -691,7 +696,9 @@ async fn unsafe_urls_and_weak_secrets_are_refused() {
                 "/dashboard/webhooks",
                 &session,
                 csrf,
-                &format!("_csrf={csrf}&scope=personal&url={url}&secret={secret}"),
+                &format!(
+                    "_csrf={csrf}&scope=personal&url={url}&secret={secret}&events=booking.created"
+                ),
             ))
             .await
             .unwrap();
@@ -709,7 +716,7 @@ async fn unsafe_urls_and_weak_secrets_are_refused() {
             &session,
             csrf,
             &format!(
-                "_csrf={csrf}&scope=no-such-id&url=https%3A%2F%2F93.184.215.14%2Fh&secret={SECRET}"
+                "_csrf={csrf}&scope=no-such-id&url=https%3A%2F%2F93.184.215.14%2Fh&secret={SECRET}&events=booking.created"
             ),
         ))
         .await
@@ -725,7 +732,7 @@ async fn unsafe_urls_and_weak_secrets_are_refused() {
             "/dashboard/webhooks",
             &session,
             csrf,
-            &format!("scope=personal&url=https%3A%2F%2F93.184.215.14%2Fh&secret={SECRET}"),
+            &format!("scope=personal&url=https%3A%2F%2F93.184.215.14%2Fh&secret={SECRET}&events=booking.created"),
         ))
         .await
         .unwrap();
@@ -741,7 +748,7 @@ async fn non_admins_need_the_switch() {
     insert_personal_et(&pool, &member, "member-meeting").await;
     let csrf = "csrf-wh-switch";
     let add =
-        format!("_csrf={csrf}&scope=personal&url=https%3A%2F%2F93.184.215.14%2Fh&secret={SECRET}");
+        format!("_csrf={csrf}&scope=personal&url=https%3A%2F%2F93.184.215.14%2Fh&secret={SECRET}&events=booking.created");
 
     let page = body_string(
         app.clone()
@@ -819,7 +826,7 @@ async fn users_cannot_touch_each_others_webhooks() {
                 &format!("/dashboard/webhooks/{id}/update"),
                 &member_session,
                 csrf,
-                &format!("_csrf={csrf}&url=https%3A%2F%2F93.184.215.14%2Fevil&secret="),
+                &format!("_csrf={csrf}&url=https%3A%2F%2F93.184.215.14%2Fevil&secret=&events=booking.created"),
             ))
             .await
             .unwrap();
@@ -841,7 +848,7 @@ async fn users_cannot_touch_each_others_webhooks() {
             &member_session,
             csrf,
             &format!(
-                "_csrf={csrf}&scope={admin_et}&url=https%3A%2F%2F93.184.215.14%2Fh&secret={SECRET}"
+                "_csrf={csrf}&scope={admin_et}&url=https%3A%2F%2F93.184.215.14%2Fh&secret={SECRET}&events=booking.created"
             ),
         ))
         .await
@@ -881,7 +888,7 @@ async fn team_admins_manage_their_team_event_types_only() {
     .await;
     let csrf = "csrf-wh-team";
     let add =
-        format!("_csrf={csrf}&scope={team_et}&url=https%3A%2F%2F93.184.215.14%2Fh&secret={SECRET}");
+        format!("_csrf={csrf}&scope={team_et}&url=https%3A%2F%2F93.184.215.14%2Fh&secret={SECRET}&events=booking.created");
     let response = app
         .clone()
         .oneshot(post_form("/dashboard/webhooks", &plain_session, csrf, &add))
@@ -959,6 +966,10 @@ async fn send_test_posts_a_signed_ping() {
 
 #[tokio::test]
 async fn webhook_page_keys_exist() {
+    for event in wh::ALL_EVENTS {
+        let key = event.label_key();
+        assert_ne!(crate::i18n::translate("en", key, None), key, "{key}");
+    }
     for key in [
         "webhooks-notice-created",
         "webhooks-notice-updated",
@@ -975,7 +986,267 @@ async fn webhook_page_keys_exist() {
         "webhooks-error-scope",
         "webhooks-error-limit",
         "webhooks-error-test",
+        "webhooks-error-test-limit",
+        "webhooks-error-events",
+        "webhooks-added-by-former",
     ] {
         assert_ne!(crate::i18n::translate("en", key, None), key, "{key}");
     }
+}
+
+#[tokio::test]
+async fn unticked_events_are_not_queued() {
+    let (app, pool, session, et_id) = setup_test_app().await;
+    let csrf = "csrf-wh-events";
+    // Nothing ticked is refused.
+    let response = app
+        .clone()
+        .oneshot(post_form(
+            "/dashboard/webhooks",
+            &session,
+            csrf,
+            &format!(
+                "_csrf={csrf}&scope=personal&url=https%3A%2F%2F93.184.215.14%2Fh&secret={SECRET}"
+            ),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        response.headers()["location"],
+        "/dashboard/webhooks?error=webhooks-error-events"
+    );
+    // Every box ticked is stored as "all".
+    let all: String = wh::ALL_EVENTS
+        .iter()
+        .map(|e| format!("&events={}", e.name()))
+        .collect();
+    app.clone()
+        .oneshot(post_form(
+            "/dashboard/webhooks",
+            &session,
+            csrf,
+            &format!("_csrf={csrf}&scope=personal&url=https%3A%2F%2F93.184.215.14%2Fall&secret={SECRET}{all}"),
+        ))
+        .await
+        .unwrap();
+    // Only cancellations.
+    app.clone()
+        .oneshot(post_form(
+            "/dashboard/webhooks",
+            &session,
+            csrf,
+            &format!("_csrf={csrf}&scope=personal&url=https%3A%2F%2F93.184.215.14%2Fcancel&secret={SECRET}&events=booking.cancelled"),
+        ))
+        .await
+        .unwrap();
+    let stored: Vec<(String, Option<String>)> =
+        sqlx::query_as("SELECT url, events FROM webhooks ORDER BY url")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        stored,
+        [
+            ("https://93.184.215.14/all".to_string(), None),
+            (
+                "https://93.184.215.14/cancel".to_string(),
+                Some("booking.cancelled".to_string())
+            ),
+        ]
+    );
+
+    let (booking_id, _, _) = insert_test_booking(
+        &pool,
+        &et_id,
+        "2030-01-07T10:00:00",
+        "2030-01-07T10:30:00",
+        "confirmed",
+    )
+    .await;
+    wh::enqueue(&pool, &booking_id, Event::Created, Context::default()).await;
+    wh::enqueue(
+        &pool,
+        &booking_id,
+        Event::Cancelled,
+        Context::cancelled(Actor::Host, None),
+    )
+    .await;
+    let queued: Vec<(String, String)> = sqlx::query_as(
+        "SELECT w.url, d.event FROM webhook_deliveries d JOIN webhooks w ON w.id = d.webhook_id ORDER BY w.url, d.seq",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    let queued: Vec<(&str, &str)> = queued
+        .iter()
+        .map(|(u, e)| (u.as_str(), e.as_str()))
+        .collect();
+    assert_eq!(
+        queued,
+        [
+            ("https://93.184.215.14/all", "booking.created"),
+            ("https://93.184.215.14/all", "booking.cancelled"),
+            ("https://93.184.215.14/cancel", "booking.cancelled"),
+        ]
+    );
+    // The page shows the selection.
+    let page = body_string(
+        app.oneshot(get_authed("/dashboard/webhooks", &session))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(page.contains(&crate::i18n::translate("en", "webhooks-events-all", None)));
+    assert!(page.contains(r#"value="booking.rescheduled" checked"#));
+}
+
+#[tokio::test]
+async fn an_event_type_webhook_outlives_the_user_who_added_it() {
+    let (app, pool, admin_session, admin_et) = setup_test_app().await;
+    let admin_id = test_user_id(&pool).await;
+    let (team_id, team_et) =
+        insert_team_with_et(&pool, "keep-team", "keep-call", &[(&admin_id, "admin")]).await;
+    // A second team admin adds a webhook on the team event type, and one
+    // for their own event types, then leaves.
+    let (leaver, _) =
+        insert_test_user_with_session(&pool, "Leaver", "leaver@example.com", "leaver").await;
+    sqlx::query("INSERT INTO team_members (team_id, user_id, role, source) VALUES (?, ?, 'admin', 'direct')")
+        .bind(&team_id)
+        .bind(&leaver)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let on_team =
+        insert_webhook(&pool, &leaver, Some(&team_et), "https://93.184.215.14/team").await;
+    insert_webhook(&pool, &leaver, None, "https://93.184.215.14/mine").await;
+    let _ = admin_et;
+    crate::auth::delete_user(&pool, &leaver, None, None)
+        .await
+        .unwrap();
+
+    let rows: Vec<(String, Option<String>)> = sqlx::query_as("SELECT id, user_id FROM webhooks")
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+    assert_eq!(rows, [(on_team.clone(), None)]);
+
+    // Shown to the team's admins as added by a former member.
+    let page = body_string(
+        app.oneshot(get_authed("/dashboard/webhooks", &admin_session))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(page.contains(&crate::i18n::translate(
+        "en",
+        "webhooks-added-by-former",
+        None
+    )));
+
+    // The leaver was not an admin: with the switch off it stays quiet, with
+    // it on it delivers again.
+    let (booking_id, _, _) = insert_test_booking(
+        &pool,
+        &team_et,
+        "2030-01-07T10:00:00",
+        "2030-01-07T10:30:00",
+        "confirmed",
+    )
+    .await;
+    wh::enqueue(&pool, &booking_id, Event::Created, Context::default()).await;
+    assert!(deliveries(&pool).await.is_empty());
+    sqlx::query("UPDATE auth_config SET webhooks_allow_all_users = 1 WHERE id = 'singleton'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    wh::enqueue(&pool, &booking_id, Event::Created, Context::default()).await;
+    assert_eq!(deliveries(&pool).await.len(), 1);
+}
+
+#[tokio::test]
+async fn an_admins_event_type_webhook_keeps_working_after_they_are_deleted() {
+    let pool = setup_test_db().await;
+    let (owner, _, _) = seed_test_data(&pool).await;
+    let second_admin = insert_role_user(&pool, "admin2@example.com", "admin").await;
+    let (_, team_et) = insert_team_with_et(
+        &pool,
+        "admin-team",
+        "admin-call",
+        &[(&owner, "admin"), (&second_admin, "admin")],
+    )
+    .await;
+    insert_webhook(
+        &pool,
+        &second_admin,
+        Some(&team_et),
+        "https://93.184.215.14/t",
+    )
+    .await;
+    crate::auth::delete_user(&pool, &second_admin, None, None)
+        .await
+        .unwrap();
+    let (booking_id, _, _) = insert_test_booking(
+        &pool,
+        &team_et,
+        "2030-01-07T10:00:00",
+        "2030-01-07T10:30:00",
+        "confirmed",
+    )
+    .await;
+    // Switch off (the default): still delivered, as before the deletion.
+    wh::enqueue(&pool, &booking_id, Event::Created, Context::default()).await;
+    assert_eq!(deliveries(&pool).await.len(), 1);
+}
+
+#[tokio::test]
+async fn send_test_is_rate_limited_per_user() {
+    let (app, pool, session, _) = setup_test_app().await;
+    let admin_id = test_user_id(&pool).await;
+    // A private target is refused before any network traffic.
+    let id = insert_webhook(&pool, &admin_id, None, "https://10.255.255.1/hook").await;
+    let csrf = "csrf-wh-limit";
+    for _ in 0..10 {
+        let response = app
+            .clone()
+            .oneshot(post_form(
+                &format!("/dashboard/webhooks/{id}/test"),
+                &session,
+                csrf,
+                &format!("_csrf={csrf}"),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(
+            response.headers()["location"],
+            "/dashboard/webhooks?error=webhooks-error-test"
+        );
+    }
+    let response = app
+        .clone()
+        .oneshot(post_form(
+            &format!("/dashboard/webhooks/{id}/test"),
+            &session,
+            csrf,
+            &format!("_csrf={csrf}"),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        response.headers()["location"],
+        "/dashboard/webhooks?error=webhooks-error-test-limit"
+    );
+    let page = body_string(
+        app.oneshot(get_authed(
+            "/dashboard/webhooks?error=webhooks-error-test-limit",
+            &session,
+        ))
+        .await
+        .unwrap(),
+    )
+    .await;
+    assert!(page.contains(&crate::i18n::translate(
+        "en",
+        "webhooks-error-test-limit",
+        None
+    )));
 }

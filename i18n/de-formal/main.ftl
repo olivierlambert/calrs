@@ -430,3 +430,5 @@ webhooks-error-url = Geben Sie eine vollständige URL ein, zum Beispiel https://
 webhooks-error-credentials = Entfernen Sie Benutzername und Passwort aus der URL: Das Signaturgeheimnis authentifiziert calrs.
 webhooks-error-scope = Sie können dieser Terminart keinen Webhook hinzufügen.
 admin-webhooks-manage = Ihre Webhooks verwalten
+webhooks-error-events = Wählen Sie mindestens ein Ereignis aus.
+webhooks-error-test-limit = Zu viele Tests in kurzer Zeit. Warten Sie ein paar Minuten und versuchen Sie es erneut.

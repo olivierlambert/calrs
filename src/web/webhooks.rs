@@ -66,10 +66,14 @@ const FAILED_RETENTION_DAYS: i64 = 7;
 const BATCH: i64 = 100;
 
 /// SQL condition for an endpoint that may receive deliveries. Expects the
-/// aliases `w` (webhooks) and `u` (the user who added it). The admin switch
-/// is read live, so turning it off stops every non-admin endpoint at once,
-/// queued deliveries included.
-const ACTIVE_ENDPOINT: &str = "w.enabled = 1 AND u.enabled = 1 AND (u.role = 'admin' OR COALESCE((SELECT webhooks_allow_all_users FROM auth_config WHERE id = 'singleton'), 0) = 1)";
+/// aliases `w` (webhooks) and `u` (the user who added it, `LEFT JOIN`ed:
+/// NULL once that user is deleted). The admin switch is read live, so
+/// turning it off stops every non-admin endpoint at once, queued deliveries
+/// included. An event type's webhook outlives the user who added it, and
+/// is then judged by the role they had when deleted (`creator_was_admin`).
+const ACTIVE_ENDPOINT: &str = "w.enabled = 1 AND (
+    (u.id IS NOT NULL AND u.enabled = 1 AND (u.role = 'admin' OR COALESCE((SELECT webhooks_allow_all_users FROM auth_config WHERE id = 'singleton'), 0) = 1))
+    OR (w.user_id IS NULL AND w.event_type_id IS NOT NULL AND (w.creator_was_admin = 1 OR COALESCE((SELECT webhooks_allow_all_users FROM auth_config WHERE id = 'singleton'), 0) = 1)))";
 
 /// What happened to the booking.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -106,6 +110,24 @@ impl Event {
         }
     }
 
+    pub fn from_name(name: &str) -> Option<Self> {
+        ALL_EVENTS.iter().copied().find(|e| e.name() == name)
+    }
+
+    /// The label of the event's checkbox on the webhooks page.
+    pub fn label_key(self) -> &'static str {
+        match self {
+            Event::Created => "webhooks-event-created",
+            Event::Requested => "webhooks-event-requested",
+            Event::Confirmed => "webhooks-event-confirmed",
+            Event::Declined => "webhooks-event-declined",
+            Event::Expired => "webhooks-event-expired",
+            Event::Cancelled => "webhooks-event-cancelled",
+            Event::Rescheduled => "webhooks-event-rescheduled",
+            Event::Ping => "webhooks-send-test",
+        }
+    }
+
     /// `Created` or `Requested`, for a booking that was just inserted.
     pub fn new_booking(pending: bool) -> Self {
         if pending {
@@ -113,6 +135,42 @@ impl Event {
         } else {
             Event::Created
         }
+    }
+}
+
+/// The events a webhook can subscribe to, in the order the page lists them.
+pub const ALL_EVENTS: [Event; 7] = [
+    Event::Created,
+    Event::Requested,
+    Event::Confirmed,
+    Event::Declined,
+    Event::Expired,
+    Event::Cancelled,
+    Event::Rescheduled,
+];
+
+/// The `webhooks.events` value for the boxes ticked on the form: `None`
+/// (every event, also the ones added later) when all are ticked, else the
+/// ticked names in canonical order. Unknown names are ignored; `Err` when
+/// nothing valid is left.
+pub fn events_column(posted: &[String]) -> Result<Option<String>, ()> {
+    let picked: Vec<&str> = ALL_EVENTS
+        .iter()
+        .map(|e| e.name())
+        .filter(|name| posted.iter().any(|p| p == name))
+        .collect();
+    match picked.len() {
+        0 => Err(()),
+        n if n == ALL_EVENTS.len() => Ok(None),
+        _ => Ok(Some(picked.join(","))),
+    }
+}
+
+/// The events a stored `webhooks.events` value subscribes to.
+pub fn subscribed(column: Option<&str>) -> Vec<Event> {
+    match column {
+        None => ALL_EVENTS.to_vec(),
+        Some(list) => list.split(',').filter_map(Event::from_name).collect(),
     }
 }
 
@@ -460,8 +518,9 @@ pub async fn enqueue(pool: &SqlitePool, booking_key: &str, event: Event, ctx: Co
         return;
     };
     let endpoints: Vec<String> = sqlx::query_scalar(&format!(
-        "SELECT w.id FROM webhooks w JOIN users u ON u.id = w.user_id
+        "SELECT w.id FROM webhooks w LEFT JOIN users u ON u.id = w.user_id
          WHERE {ACTIVE_ENDPOINT}
+           AND (w.events IS NULL OR instr(',' || w.events || ',', ',' || ?2 || ',') > 0)
            AND (w.event_type_id = ?1
                 OR (w.event_type_id IS NULL AND EXISTS (
                     SELECT 1 FROM event_types et JOIN accounts a ON a.id = et.account_id
@@ -469,6 +528,7 @@ pub async fn enqueue(pool: &SqlitePool, booking_key: &str, event: Event, ctx: Co
          ORDER BY w.created_at, w.id"
     ))
     .bind(&snap.event_type_id)
+    .bind(event.name())
     .fetch_all(pool)
     .await
     .unwrap_or_default();
@@ -868,7 +928,7 @@ async fn deliver_pass(
         "SELECT d.id, d.webhook_id, d.event, d.payload, d.attempts, w.url, w.secret_enc
          FROM webhook_deliveries d
          JOIN webhooks w ON w.id = d.webhook_id
-         JOIN users u ON u.id = w.user_id
+         LEFT JOIN users u ON u.id = w.user_id
          WHERE d.state = 'pending' AND d.next_attempt_at <= ? AND {ACTIVE_ENDPOINT}
            AND NOT EXISTS (
                SELECT 1 FROM webhook_deliveries o
@@ -1028,6 +1088,29 @@ mod tests {
                 "ping"
             ]
         );
+    }
+
+    #[test]
+    fn event_selection_is_stored_compactly() {
+        let all: Vec<String> = ALL_EVENTS.iter().map(|e| e.name().to_string()).collect();
+        assert_eq!(events_column(&all), Ok(None));
+        let some = vec![
+            "booking.cancelled".to_string(),
+            "booking.created".to_string(),
+            "ping".to_string(),
+            "nonsense".to_string(),
+        ];
+        assert_eq!(
+            events_column(&some),
+            Ok(Some("booking.created,booking.cancelled".to_string()))
+        );
+        assert_eq!(events_column(&["ping".to_string()]), Err(()));
+        assert_eq!(events_column(&[]), Err(()));
+        assert_eq!(
+            subscribed(Some("booking.created,booking.cancelled")),
+            vec![Event::Created, Event::Cancelled]
+        );
+        assert_eq!(subscribed(None).len(), ALL_EVENTS.len());
     }
 
     #[test]

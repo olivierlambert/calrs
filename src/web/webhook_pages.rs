@@ -39,6 +39,8 @@ const ERRORS: &[&str] = &[
     "webhooks-error-scope",
     "webhooks-error-limit",
     "webhooks-error-test",
+    "webhooks-error-test-limit",
+    "webhooks-error-events",
 ];
 
 /// Whether this user may add and manage webhooks at all: admins always,
@@ -85,16 +87,16 @@ async fn may_manage_webhook(
     user: &crate::models::User,
     webhook_id: &str,
 ) -> bool {
-    let row: Option<(String, Option<String>)> =
+    let row: Option<(Option<String>, Option<String>)> =
         sqlx::query_as("SELECT user_id, event_type_id FROM webhooks WHERE id = ?")
             .bind(webhook_id)
             .fetch_optional(pool)
             .await
             .unwrap_or(None);
     match row {
-        Some((owner, None)) => owner == user.id,
+        Some((Some(owner), None)) => owner == user.id,
         Some((_, Some(et_id))) => can_manage_event_type(pool, user, &et_id).await,
-        None => false,
+        _ => false,
     }
 }
 
@@ -156,16 +158,17 @@ pub(super) async fn webhooks_page(
             Option<String>,
             Option<i64>,
             Option<String>,
-            String,
+            Option<String>,
+            Option<String>,
             i64,
             i64,
         )> = sqlx::query_as(
             "SELECT w.id, w.url, w.event_type_id, et.title, t.name, w.enabled,
-                    w.last_attempt_at, w.last_status, w.last_error, cu.name,
+                    w.last_attempt_at, w.last_status, w.last_error, cu.name, w.events,
                     (SELECT COUNT(*) FROM webhook_deliveries d WHERE d.webhook_id = w.id AND d.state = 'pending'),
                     (SELECT COUNT(*) FROM webhook_deliveries d WHERE d.webhook_id = w.id AND d.state = 'failed')
              FROM webhooks w
-             JOIN users cu ON cu.id = w.user_id
+             LEFT JOIN users cu ON cu.id = w.user_id
              LEFT JOIN event_types et ON et.id = w.event_type_id
              LEFT JOIN teams t ON t.id = et.team_id
              WHERE (w.event_type_id IS NULL AND w.user_id = ?1)
@@ -192,6 +195,7 @@ pub(super) async fn webhooks_page(
             last_status,
             last_error,
             added_by,
+            events,
             queued,
             failed,
         ) in rows
@@ -210,6 +214,8 @@ pub(super) async fn webhooks_page(
                 last_status => last_status,
                 last_error => last_error,
                 added_by => added_by,
+                events => event_choices(events.as_deref()),
+                all_events => events.is_none(),
                 queued => queued,
                 failed => failed,
             });
@@ -243,6 +249,7 @@ pub(super) async fn webhooks_page(
             notice => notice,
             error => error,
             secret_min => SECRET_MIN_LEN,
+            new_events => event_choices(None),
             impersonating => impersonating,
             impersonating_name => impersonating_name,
         })
@@ -251,19 +258,38 @@ pub(super) async fn webhooks_page(
     .into_response()
 }
 
+/// One checkbox per event, ticked when `column` subscribes to it.
+fn event_choices(column: Option<&str>) -> Vec<minijinja::Value> {
+    let on = super::webhooks::subscribed(column);
+    super::webhooks::ALL_EVENTS
+        .iter()
+        .map(|e| {
+            context! {
+                name => e.name(),
+                label_key => e.label_key(),
+                checked => on.contains(e),
+            }
+        })
+        .collect()
+}
+
+/// Repeated `events` fields, one per ticked box: parsed with
+/// `axum_extra`'s form extractor, as the source calendars form is.
 #[derive(Deserialize)]
 pub(super) struct CreateWebhookForm {
     _csrf: Option<String>,
     scope: String,
     url: String,
     secret: String,
+    #[serde(default)]
+    events: Vec<String>,
 }
 
 pub(super) async fn create_webhook(
     State(state): State<Arc<AppState>>,
     auth_user: crate::auth::AuthUser,
     headers: HeaderMap,
-    Form(form): Form<CreateWebhookForm>,
+    axum_extra::extract::Form(form): axum_extra::extract::Form<CreateWebhookForm>,
 ) -> impl IntoResponse {
     let user = &auth_user.user;
     if let Err(resp) = guard(&state, &headers, &form._csrf, user, None).await {
@@ -286,6 +312,9 @@ pub(super) async fn create_webhook(
     if !secret_ok(&form.secret) {
         return back("error", "webhooks-error-secret");
     }
+    let Ok(events) = super::webhooks::events_column(&form.events) else {
+        return back("error", "webhooks-error-events");
+    };
     let allowlist = crate::settings::private_host_allowlist();
     if let Err(e) = check_target(&form.url, &allowlist).await {
         return back("error", e.key());
@@ -313,13 +342,14 @@ pub(super) async fn create_webhook(
     };
     let id = uuid::Uuid::new_v4().to_string();
     if let Err(e) = sqlx::query(
-        "INSERT INTO webhooks (id, user_id, event_type_id, url, secret_enc) VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO webhooks (id, user_id, event_type_id, url, secret_enc, events) VALUES (?, ?, ?, ?, ?, ?)",
     )
     .bind(&id)
     .bind(&user.id)
     .bind(&event_type_id)
     .bind(form.url.trim())
     .bind(&secret_enc)
+    .bind(&events)
     .execute(&state.pool)
     .await
     {
@@ -335,6 +365,8 @@ pub(super) struct UpdateWebhookForm {
     url: String,
     #[serde(default)]
     secret: String,
+    #[serde(default)]
+    events: Vec<String>,
 }
 
 /// Change the URL, and the secret when a new one is typed (an empty field
@@ -344,12 +376,15 @@ pub(super) async fn update_webhook(
     auth_user: crate::auth::AuthUser,
     headers: HeaderMap,
     Path(id): Path<String>,
-    Form(form): Form<UpdateWebhookForm>,
+    axum_extra::extract::Form(form): axum_extra::extract::Form<UpdateWebhookForm>,
 ) -> impl IntoResponse {
     let user = &auth_user.user;
     if let Err(resp) = guard(&state, &headers, &form._csrf, user, Some(&id)).await {
         return resp;
     }
+    let Ok(events) = super::webhooks::events_column(&form.events) else {
+        return back("error", "webhooks-error-events");
+    };
     let allowlist = crate::settings::private_host_allowlist();
     if let Err(e) = check_target(&form.url, &allowlist).await {
         return back("error", e.key());
@@ -365,10 +400,11 @@ pub(super) async fn update_webhook(
         return back("error", "webhooks-error-secret");
     };
     if let Err(e) = sqlx::query(
-        "UPDATE webhooks SET url = ?, secret_enc = COALESCE(?, secret_enc) WHERE id = ?",
+        "UPDATE webhooks SET url = ?, secret_enc = COALESCE(?, secret_enc), events = ? WHERE id = ?",
     )
     .bind(form.url.trim())
     .bind(&secret_enc)
+    .bind(&events)
     .bind(&id)
     .execute(&state.pool)
     .await
@@ -456,6 +492,10 @@ pub(super) async fn test_webhook(
     let user = &auth_user.user;
     if let Err(resp) = guard(&state, &headers, &form._csrf, user, Some(&id)).await {
         return resp;
+    }
+    // Each test is a real request to a URL of the user's choosing.
+    if state.webhook_test_limiter.check_limited(&user.id).await {
+        return back("error", "webhooks-error-test-limit");
     }
     let allowlist = crate::settings::private_host_allowlist();
     let attempt =

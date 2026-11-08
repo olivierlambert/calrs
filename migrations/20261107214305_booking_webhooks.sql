@@ -3,16 +3,24 @@
 -- Outgoing webhooks for booking events (#168). An endpoint belongs either to
 -- one event type (`event_type_id` set: managed by whoever may manage that
 -- event type) or to a user (`event_type_id` NULL: every personal event type
--- of `user_id`). `user_id` is always the user who added it. The secret signs
--- every request (HMAC-SHA256, the meeting webhook's scheme) and is stored
--- encrypted with the instance key, like every other credential.
+-- of `user_id`). `user_id` is the user who added it; it becomes NULL when
+-- that user is deleted, and an event type's webhook lives on (the trigger
+-- below removes a user's own "all my event types" webhooks with them).
+-- `creator_was_admin` records, at that moment, whether the user was an
+-- admin, so the admin switch keeps judging the webhook as before. `events`
+-- lists the events sent, comma separated; NULL means all of them. The
+-- secret signs every request (HMAC-SHA256, the meeting webhook's scheme)
+-- and is stored encrypted with the instance key, like every other
+-- credential.
 CREATE TABLE webhooks (
     id                TEXT PRIMARY KEY,
-    user_id           TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user_id           TEXT REFERENCES users(id) ON DELETE SET NULL,
     event_type_id     TEXT REFERENCES event_types(id) ON DELETE CASCADE,
     url               TEXT NOT NULL,
     secret_enc        TEXT NOT NULL,
+    events            TEXT,
     enabled           INTEGER NOT NULL DEFAULT 1,
+    creator_was_admin INTEGER NOT NULL DEFAULT 0,
     last_attempt_at   TEXT,
     last_status       INTEGER,
     last_error        TEXT,
@@ -21,6 +29,13 @@ CREATE TABLE webhooks (
 );
 CREATE INDEX idx_webhooks_event_type ON webhooks(event_type_id);
 CREATE INDEX idx_webhooks_user ON webhooks(user_id);
+
+-- Runs before the foreign key sets `user_id` to NULL on the rest.
+CREATE TRIGGER webhooks_follow_deleted_user BEFORE DELETE ON users
+BEGIN
+    DELETE FROM webhooks WHERE user_id = OLD.id AND event_type_id IS NULL;
+    UPDATE webhooks SET creator_was_admin = (OLD.role = 'admin') WHERE user_id = OLD.id;
+END;
 
 -- The delivery queue. A row is written after the booking change commits and
 -- delivered by the background webhook task. `id` is the idempotency id sent
