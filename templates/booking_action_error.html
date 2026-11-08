@@ -1,11 +1,12 @@
 {% extends "base.html" %}
 
-{% block title %}{{ t("action-error-page-title") }}{% endblock %}
+{% block title %}{% if page_title %}{{ page_title }}{% else %}{{ t("action-error-page-title") }}{% endif %}{% endblock %}
 
 {% block content %}
 <div class="card" style="text-align: center;">
   <div class="check" style="background: var(--text-muted);">!</div>
   <h1>{{ title }}</h1>
   <p class="subtitle">{{ message }}</p>
+  {% if back_href %}<p><a href="{{ back_href }}">{{ back_label }}</a></p>{% endif %}
 </div>
 {% endblock %}

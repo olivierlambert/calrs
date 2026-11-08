@@ -19,6 +19,7 @@ mod google_calendar;
 mod google_meet;
 mod i18n;
 mod mfa;
+mod microsoft_oauth;
 mod models;
 mod oauth;
 mod oauth2_caldav;

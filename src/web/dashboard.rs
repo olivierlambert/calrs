@@ -11,10 +11,23 @@ pub(super) async fn root_redirect() -> impl IntoResponse {
 // --- Dashboard (overview) ---
 
 /// Where "Open your calendar" goes: the calendar's own web app when the
-/// source tells us (Google, an Exchange server's OWA, the CalDAV server's
-/// origin, which is the web interface for Nextcloud, BlueMind and Kerio),
-/// else the sources page. calrs is the booking layer on top of it.
-fn calendar_web_url(url: &str, auth_type: &str, provider: &str) -> String {
+/// source tells us (Outlook on the web for Microsoft, Google, an Exchange
+/// server's OWA, the CalDAV server's origin, which is the web interface for
+/// Nextcloud, BlueMind and Kerio), else the sources page. calrs is the
+/// booking layer on top of it.
+pub(super) fn calendar_web_url(
+    url: &str,
+    auth_type: &str,
+    provider: &str,
+    microsoft_user_id: Option<&str>,
+) -> String {
+    if provider == crate::providers::factory::kinds::MICROSOFT {
+        return if microsoft_user_id.is_some_and(crate::microsoft_oauth::is_personal_account) {
+            "https://outlook.live.com/calendar/".to_string()
+        } else {
+            "https://outlook.office.com/calendar/".to_string()
+        };
+    }
     if auth_type == "oauth2" {
         return "https://calendar.google.com/".to_string();
     }
@@ -88,8 +101,9 @@ pub(super) async fn dashboard(
     .await
     .unwrap_or_default();
 
-    let source: Option<(String, String, String)> = sqlx::query_as(
-        "SELECT cs.url, COALESCE(cs.auth_type, ''), COALESCE(cs.provider_type, 'caldav')
+    let source: Option<(String, String, String, Option<String>)> = sqlx::query_as(
+        "SELECT cs.url, COALESCE(cs.auth_type, ''), COALESCE(cs.provider_type, 'caldav'),
+                cs.microsoft_user_id
          FROM caldav_sources cs JOIN accounts a ON a.id = cs.account_id
          WHERE a.user_id = ? ORDER BY cs.enabled DESC, cs.created_at LIMIT 1",
     )
@@ -235,7 +249,9 @@ pub(super) async fn dashboard(
 
     let calendar_url = source
         .as_ref()
-        .map(|(url, auth, provider)| calendar_web_url(url, auth, provider));
+        .map(|(url, auth, provider, microsoft_user)| {
+            calendar_web_url(url, auth, provider, microsoft_user.as_deref())
+        });
     let (impersonating, impersonating_name, _) = impersonation_ctx(&auth_user);
 
     Html(
@@ -566,6 +582,9 @@ pub(super) async fn dashboard_bookings(
             crate::i18n::translate(auth_user.lang, "bae-body-resource-gone", None)
         }
         Some("host-busy") => crate::i18n::translate(auth_user.lang, "bae-body-host-busy", None),
+        Some("host-not-synced") => {
+            crate::i18n::translate(auth_user.lang, "bae-body-host-not-synced", None)
+        }
         Some("no-bookable-dates") => {
             crate::i18n::translate(auth_user.lang, "bookings-error-no-bookable-dates", None)
         }
@@ -1838,6 +1857,9 @@ pub(super) async fn confirm_booking(
     .await
     {
         tracing::warn!(booking_id = %bid, "approval refused: host no longer free");
+        if approval_hosts_awaiting_first_sync(&state.pool, &approval_hosts).await {
+            return Redirect::to("/dashboard/bookings?error=host-not-synced").into_response();
+        }
         return Redirect::to("/dashboard/bookings?error=host-busy").into_response();
     }
 

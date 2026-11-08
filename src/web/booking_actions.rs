@@ -252,6 +252,14 @@ pub(super) async fn approve_booking_by_token(
     .await
     {
         tracing::warn!(booking_id = %bid, "approval refused: host no longer free");
+        if approval_hosts_awaiting_first_sync(&state.pool, &approval_hosts).await {
+            return render_booking_action_error_keys_in(
+                &state,
+                lang,
+                "bae-title-cannot-approve",
+                "bae-body-host-not-synced",
+            );
+        }
         return render_booking_action_error_keys_in(
             &state,
             lang,

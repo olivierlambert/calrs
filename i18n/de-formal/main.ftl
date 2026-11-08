@@ -122,6 +122,9 @@ invite-links-empty-link-label = Legen Sie eine Terminart an
 # Dashboard calendar sources (templates/dashboard_sources.html)
 
 sources-no-write-calendar = Kein Schreibkalender ausgewählt. Bestätigte Buchungen bleiben in calrs und werden nicht in diesen Kalender übertragen. Wählen Sie unten einen aus, um das Rückschreiben zu aktivieren.
+sources-write-calendar-read-only = Der Kalender, in den Buchungen geschrieben werden, ist jetzt schreibgeschützt, sie kommen dort nicht mehr an. Wählen Sie unten einen beschreibbaren aus.
+sources-write-calendar-refused = Dieser Kalender kann keine Buchungen aufnehmen: Er gehört nicht zu dieser Quelle oder das Konto darf nicht hineinschreiben. Wählen Sie einen anderen.
+sources-microsoft-not-ready = calrs hat diesen Kalender noch nicht fertig gelesen. Bis dahin zeigen Ihre Buchungsseiten keine freie Zeit. Das dauert nach dem Verbinden bis zu etwa einer Minute; dauert es länger, nennt der Synchronisierungsfehler oben den Grund.
 sources-empty-link-label = Fügen Sie eine hinzu
 source-calendars-help = Wählen Sie, welche Kalender von { $name } calrs synchronisiert. Nicht ausgewählte Kalender werden nie abgerufen und blockieren Ihre Verfügbarkeit nicht.
 source-calendars-saved = Gespeichert. Neu ausgewählte Kalender werden bei der nächsten Synchronisierung abgerufen; mit „Synchronisieren“ auf der Seite der Quellen holen Sie sie sofort.
@@ -231,7 +234,7 @@ etf-timezone-help = Die Zeiten unten werden in dieser Zeitzone ausgelegt. Wähle
 etf-reset-default-title = Diese Zeiten durch die Standardverfügbarkeit aus Ihrem Profil ersetzen
 etf-availability-prefilled = Vorbelegt aus Ihrer { $link }. Sie können sie hier für diese Terminart überschreiben.
 etf-requires-confirmation-help = Buchungen bleiben ausstehend, bis Sie sie im Dashboard bestätigen.
-etf-conflict-calendars-help = Wählen Sie, welche Kalender auf Konflikte geprüft werden. Ohne Auswahl werden alle Kalender verwendet.
+etf-conflict-calendars-help = Wählen Sie, welche Kalender auf Konflikte geprüft werden. Ohne Auswahl werden Ihre Kalender geprüft, die als belegt zählen, nicht aber von Kollegen geteilte: Wählen Sie alle Kalender aus, die blockieren sollen, auch geteilte.
 etf-no-resources = Noch keine geteilten Ressourcen eingerichtet. Legen Sie im { $link } eine an (Demolabor, Besprechungsraum), um sie hier zu verlangen.
 etf-visibility-public = Öffentlich — auf Ihrem Profil sichtbar
 etf-reminder-help = Vor dem Termin eine Erinnerungs-E-Mail an Sie und Ihren Gast senden.
@@ -422,6 +425,21 @@ sources-subtitle = Kalender, die calrs liest, um zu wissen, wann Sie beschäftig
 event-types-subtitle = Die Termine, die andere bei Ihnen buchen können. Kopieren Sie einen Link oder betten Sie ihn auf Ihrer Website ein.
 settings-subtitle = Ihr öffentliches Profil, Sprache, Zeitzone und Standard-Arbeitszeiten.
 
+## Microsoft Graph calendar connection (independent of SSO)
+microsoft-calendar-help = Verbinden Sie Ihren Microsoft-Kalender mit delegierter Zustimmung. Ihr Microsoft-Konto kann vom calrs-Anmeldekonto abweichen. Für lokales Exchange verwenden Sie unten EWS.
+microsoft-admin-help = Registrieren Sie eine Webanwendung mit genau dieser Umleitungs-URI. Fordern Sie delegierte Berechtigungen Calendars.ReadWrite, User.Read und offline_access an, keine Anwendungsberechtigungen. Jeder Benutzer verbindet sein eigenes Konto. Implizite Freigabe und öffentliche Clientflows sind nicht erforderlich.
+microsoft-error-impersonation = Sie können den Microsoft-Kalender nicht verbinden, während Sie als ein anderer Benutzer angemeldet sind.
+microsoft-error-start = Die Microsoft-Autorisierung konnte nicht gestartet werden. Prüfen Sie die App-Konfiguration, die öffentliche HTTPS-Basis-URL und ob diese Quelle zu Ihrem Konto gehört.
+microsoft-error-state = Der Microsoft-Autorisierungsstatus ist ungültig, abgelaufen oder bereits verwendet, oder Ihre Sitzung hat sich geändert. Starten Sie die Verbindung erneut.
+microsoft-error-consent = Die Microsoft-Autorisierung wurde nicht abgeschlossen. Starten Sie erneut und erlauben Sie Kalenderzugriff zum Lesen und Schreiben, Profilzugriff und Offlinezugriff.
+microsoft-error-connect = Der Microsoft-Kalender konnte nicht verbunden werden. Prüfen Sie Einstellungen und Berechtigungen. Wählen Sie zum erneuten Verbinden das ursprüngliche Microsoft-Konto; fügen Sie für ein anderes Konto eine neue Quelle hinzu.
+microsoft-error-sync = Microsoft ist verbunden, aber die Synchronisierung ist fehlgeschlagen. Prüfen Sie, ob das Konto einen Exchange-Online- oder Outlook.com-Kalender hat. Kehren Sie zu den Kalenderquellen zurück und synchronisieren oder verbinden Sie erneut.
+microsoft-error-selection = Microsoft ist verbunden, aber die Kalenderauswahl konnte nicht geladen werden. Kehren Sie zu den Kalenderquellen zurück.
+microsoft-error-settings = Die Microsoft-Einstellungen wurden nicht gespeichert. Prüfen Sie Client-UUID, Mandant und Datenbankzugriff. Ein leeres Geheimnis behält das vorhandene bei.
+source-test-microsoft-failed = Verbindung zum Microsoft-Kalender fehlgeschlagen. Prüfen Sie den Kalenderzugriff oder verbinden Sie neu.
+source-test-microsoft-credentials = Die Zugangsdaten für den Microsoft-Kalender konnten nicht geladen werden. Verbinden Sie Ihr Konto neu.
+microsoft-callback-needs-https = Setzen Sie die öffentliche Basis-URL auf einen HTTPS-Ursprung ohne Pfad, um die zu registrierende Callback-URL zu sehen.
+
 admin-ews-http-warning = Der Endpunkt verwendet http://: Das Passwort des Dienstkontos wird unverschlüsselt gesendet. Verwenden Sie besser https://.
 sources-locked-notice = Ihr Administrator verwaltet Exchange zentral. Das Hinzufügen weiterer Kalenderquellen ist deaktiviert.
 sources-locked-by-admin = Das Hinzufügen persönlicher Kalenderquellen wurde vom Administrator deaktiviert. Ihr Exchange-Kalender wird zentral verwaltet.
@@ -443,6 +461,9 @@ time-off-error-too-many = Sie haben bereits 100 Zeiträume geplant. Löschen Sie
 time-off-hint = Um Daten für alle Terminarten auf einmal zu sperren, nutzen Sie { $link }.
 time-off-pending-notice = Anfragen, die in einem Zeitraum auf Ihre Bestätigung warten, lassen sich nicht mehr annehmen: Lehnen Sie sie ab oder löschen Sie zuerst die Abwesenheit.
 time-off-impersonating = Sie sehen diese Seite als { $name }. Die Abwesenheiten sind für Sie hier nur lesbar, die Notizen sind ausgeblendet.
+
+bae-body-host-not-synced = Der Microsoft-Kalender eines Gastgebers ist noch nicht zum ersten Mal synchronisiert, calrs weiß also nicht, ob diese Zeit frei ist. Versuchen Sie es in einer Minute erneut oder sehen Sie sich den Synchronisierungsfehler der Quelle unter Kalenderquellen an.
+troubleshoot-microsoft-not-ready = Ihr Microsoft-Kalender ist noch nicht zum ersten Mal synchronisiert: Bis dahin ist jede Zeit belegt. Siehe Kalenderquellen.
 
 # OAuth connection consent (templates/auth/consent.html)
 
