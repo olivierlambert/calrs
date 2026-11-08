@@ -2152,3 +2152,93 @@ sources-destinations-saved = Zapisano. Nowe rezerwacje trafiają do wybranych tu
 write-destination-not-yours = Nic nie zapisano: wybierz jeden z własnych kalendarzy, dla typu wydarzenia, który prowadzisz.
 write-destination-unavailable = { $name } (niedostępny)
 write-destination-refused = Ten kalendarz odrzucił ostatnią rezerwację ({ $error }), więc zapisano ją według ustawienia źródła. Następna rezerwacja spróbuje ponownie.
+# Booking webhooks (templates/webhooks.html, admin card, #168)
+webhooks-title = Webhooki
+webhooks-back = Wróć do typów wydarzeń
+webhooks-subtitle = calrs wysyła podpisaną wiadomość JSON na te adresy, gdy rezerwacja zostanie utworzona, zgłoszona, zatwierdzona, odrzucona, wygaśnie, zostanie anulowana lub przeniesiona.
+webhooks-not-allowed = Na tej instancji webhooki są dostępne tylko dla administratorów.
+webhooks-endpoints = Adresy docelowe
+webhooks-empty = Nie ma jeszcze webhooków. Dodaj jeden poniżej, aby calrs powiadamiał inny system o Twoich rezerwacjach.
+webhooks-scope = Wysyłaj zdarzenia dla
+webhooks-scope-personal = Wszystkie moje osobiste typy wydarzeń
+webhooks-scope-event-type = Typ wydarzenia: { $title }
+webhooks-scope-team-event-type = Typ wydarzenia: { $title } ({ $team })
+webhooks-added-by = Dodane przez: { $name }
+webhooks-state-off = Wyłączony
+webhooks-never-sent = Jeszcze nic nie wysłano
+webhooks-state-ok = Ostatnie doręczenie udane
+webhooks-state-failing = Ostatnie doręczenie nieudane
+webhooks-queued =
+    { $count ->
+        [one] 1 doręczenie czeka na ponowną próbę
+        [few] { $count } doręczenia czekają na ponowną próbę
+        [many] { $count } doręczeń czeka na ponowną próbę
+       *[other] { $count } doręczenia czeka na ponowną próbę
+    }
+webhooks-gave-up =
+    { $count ->
+        [one] 1 doręczenie porzucone po wszystkich próbach
+        [few] { $count } doręczenia porzucone po wszystkich próbach
+        [many] { $count } doręczeń porzuconych po wszystkich próbach
+       *[other] { $count } doręczenia porzucone po wszystkich próbach
+    }
+webhooks-send-test = Wyślij test
+webhooks-enable = Włącz
+webhooks-disable = Wyłącz
+webhooks-delete = Usuń
+webhooks-delete-confirm = Usunąć ten webhook? Oczekujące doręczenia zostaną odrzucone.
+webhooks-edit = Edytuj
+webhooks-url = URL
+webhooks-url-hint = (https)
+webhooks-secret = Sekret podpisu
+webhooks-secret-hint = (co najmniej { $min } znaków, podpisuje każde żądanie, nie będzie już wyświetlany)
+webhooks-save = Zapisz
+webhooks-add = Dodaj webhook
+webhooks-add-submit = Dodaj webhook
+webhooks-privacy-note = Każda wiadomość zawiera imię i nazwisko, e-mail, numer telefonu i notatki gościa. Wysyłaj ją tylko do systemu, któremu powierzasz te dane.
+webhooks-notice-created = Dodano webhook. Użyj „Wyślij test”, aby sprawdzić, czy dociera.
+webhooks-notice-updated = Zapisano webhook.
+webhooks-notice-deleted = Usunięto webhook.
+webhooks-notice-enabled = Włączono webhook.
+webhooks-notice-disabled = Wyłączono webhook. Oczekujące doręczenia zostały odrzucone.
+webhooks-notice-test-ok = Test doręczony: adres docelowy odpowiedział statusem 2xx.
+webhooks-error-url = Podaj pełny adres URL, na przykład https://hooks.example.com/calrs.
+webhooks-error-https = Adres URL musi zaczynać się od https://. Zwykłe http działa tylko dla hosta z listy dozwolonych hostów prywatnych.
+webhooks-error-credentials = Usuń nazwę użytkownika i hasło z adresu URL: calrs uwierzytelnia sekret podpisu.
+webhooks-error-secret = Sekret podpisu musi mieć od 16 do 256 znaków.
+webhooks-error-scope = Nie możesz dodać webhooka do tego typu wydarzenia.
+webhooks-error-limit = Ten zakres ma już maksymalną liczbę 10 webhooków.
+webhooks-error-test = Test nie został doręczony. Przyczyna jest widoczna przy webhooku.
+admin-webhooks = Webhooki rezerwacji
+admin-webhooks-help =
+    { $count ->
+        [one] Na tej instancji skonfigurowano 1 webhook.
+        [few] Na tej instancji skonfigurowano { $count } webhooki.
+        [many] Na tej instancji skonfigurowano { $count } webhooków.
+       *[other] Na tej instancji skonfigurowano { $count } webhooka.
+    }
+admin-webhooks-allow-all = Pozwól każdemu użytkownikowi dodawać webhooki
+admin-webhooks-allow-all-help = Domyślnie wyłączone: webhook wysyła imiona, adresy e-mail i numery telefonów gości na adres wybrany przez użytkownika, więc tylko administratorzy mogą go dodać. Wyłączenie zatrzymuje webhooki dodane przez innych użytkowników.
+admin-webhooks-manage = Zarządzaj swoimi webhookami
+webhooks-events = Zdarzenia
+webhooks-events-all = Wszystkie zdarzenia
+webhooks-event-created = Zarezerwowano (potwierdzone)
+webhooks-event-requested = Zgłoszono (czeka na zatwierdzenie)
+webhooks-event-confirmed = Zatwierdzono
+webhooks-event-declined = Odrzucono
+webhooks-event-expired = Wygasło bez odpowiedzi
+webhooks-event-cancelled = Anulowano
+webhooks-event-rescheduled = Przeniesiono
+webhooks-error-events = Wybierz co najmniej jedno zdarzenie.
+webhooks-error-test-limit = Zbyt wiele testów w krótkim czasie. Odczekaj kilka minut i spróbuj ponownie.
+webhooks-added-by-former = Dodane przez byłego członka
+webhooks-signature-help = Każde żądanie jest podpisane: <code>X-Calrs-Signature: sha256=&lt;hex&gt;</code> to HMAC-SHA256 surowej treści z sekretem podpisu jako kluczem. Treść i kontrole po stronie odbiorcy opisuje strona Webhooki w dokumentacji calrs.
+webhooks-state-suspended = Wstrzymany: osoba, która go dodała, nie może już zarządzać tym typem wydarzenia. Przejmij go, aby go wznowić.
+webhooks-adopt = Przejmij
+webhooks-notice-adopted = Przejęto i wznowiono webhook.
+webhooks-event-claimed = Przejęta przez obserwatora
+webhooks-error-address = Tego adresu nie można użyć: calrs wysyła tylko na publiczne adresy internetowe, chyba że host jest na liście dozwolonych hostów prywatnych.
+webhooks-adopt-help = Przejęcie sprawia, że webhook staje się Twój i zostaje wznowiony. Potwierdź adres, na który wysyła, i ustaw nowy sekret podpisu: osoba, która go dodała, może znać poprzedni. Oczekujące doręczenia zostaną odrzucone.
+webhooks-error-not-suspended = Przejąć można tylko wstrzymany webhook.
+webhooks-error-new-secret = Adres URL wskazuje teraz na inny host: podaj też nowy sekret podpisu.
+webhooks-url-masked-hint = (pełny adres URL widzi tylko osoba, która go dodała: wpisz go ponownie, aby zapisać)

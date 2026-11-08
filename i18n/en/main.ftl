@@ -2083,3 +2083,87 @@ sources-destinations-saved = Saved. New bookings go to the calendars chosen here
 write-destination-not-yours = Nothing was saved: choose one of your own calendars, for an event type you host.
 write-destination-unavailable = { $name } (unavailable)
 write-destination-refused = This calendar refused the last booking ({ $error }), which went to the source setting instead. The next booking tries it again.
+# Booking webhooks (templates/webhooks.html, admin card, #168)
+webhooks-title = Webhooks
+webhooks-back = Back to event types
+webhooks-subtitle = calrs sends a signed JSON message to these addresses when a booking is made, requested, approved, declined, expires, is cancelled or moves.
+webhooks-not-allowed = Webhooks are limited to administrators on this instance.
+webhooks-endpoints = Endpoints
+webhooks-empty = No webhooks yet. Add one below to have calrs notify another system of your bookings.
+webhooks-scope = Send events for
+webhooks-scope-personal = All my personal event types
+webhooks-scope-event-type = Event type: { $title }
+webhooks-scope-team-event-type = Event type: { $title } ({ $team })
+webhooks-added-by = Added by { $name }
+webhooks-state-off = Switched off
+webhooks-never-sent = Nothing sent yet
+webhooks-state-ok = Last delivery succeeded
+webhooks-state-failing = Last delivery failed
+webhooks-queued =
+    { $count ->
+        [one] 1 delivery waiting for a retry
+       *[other] { $count } deliveries waiting for a retry
+    }
+webhooks-gave-up =
+    { $count ->
+        [one] 1 delivery given up after every retry
+       *[other] { $count } deliveries given up after every retry
+    }
+webhooks-send-test = Send test
+webhooks-enable = Switch on
+webhooks-disable = Switch off
+webhooks-delete = Remove
+webhooks-delete-confirm = Remove this webhook? Deliveries still waiting for it are dropped.
+webhooks-edit = Edit
+webhooks-url = URL
+webhooks-url-hint = (https)
+webhooks-secret = Signing secret
+webhooks-secret-hint = (at least { $min } characters, signs every request, never shown again)
+webhooks-save = Save
+webhooks-add = Add a webhook
+webhooks-add-submit = Add webhook
+webhooks-privacy-note = Each message contains the guest's name, email, phone number and notes. Only send it to a system you trust with that data.
+webhooks-notice-created = Webhook added. Use "Send test" to check that it arrives.
+webhooks-notice-updated = Webhook saved.
+webhooks-notice-deleted = Webhook removed.
+webhooks-notice-enabled = Webhook switched on.
+webhooks-notice-disabled = Webhook switched off. Deliveries still waiting for it were dropped.
+webhooks-notice-test-ok = Test delivered: the endpoint answered with a 2xx status.
+webhooks-error-url = Enter a full URL, such as https://hooks.example.com/calrs.
+webhooks-error-https = The URL must start with https://. Plain http only works for a host on the private-host allowlist.
+webhooks-error-credentials = Remove the user name and password from the URL: the signing secret authenticates calrs.
+webhooks-error-secret = The signing secret must be 16 to 256 characters long.
+webhooks-error-scope = You cannot add a webhook to that event type.
+webhooks-error-limit = This scope already has the maximum of 10 webhooks.
+webhooks-error-test = The test was not delivered. The reason is shown with the webhook.
+admin-webhooks = Booking webhooks
+admin-webhooks-help =
+    { $count ->
+        [one] 1 webhook is configured on this instance.
+       *[other] { $count } webhooks are configured on this instance.
+    }
+admin-webhooks-allow-all = Let any user add webhooks
+admin-webhooks-allow-all-help = Off by default: a webhook sends guest names, emails and phone numbers to an address of the user's choosing, so only admins may add one. Turning this off stops the webhooks other users added.
+admin-webhooks-manage = Manage your webhooks
+webhooks-events = Events
+webhooks-events-all = All events
+webhooks-event-created = Booked (confirmed)
+webhooks-event-requested = Requested (waiting for approval)
+webhooks-event-confirmed = Approved
+webhooks-event-declined = Declined
+webhooks-event-expired = Expired unanswered
+webhooks-event-cancelled = Cancelled
+webhooks-event-rescheduled = Rescheduled
+webhooks-error-events = Pick at least one event.
+webhooks-error-test-limit = Too many tests in a short time. Wait a few minutes and try again.
+webhooks-added-by-former = Added by a former member
+webhooks-signature-help = Each request is signed: <code>X-Calrs-Signature: sha256=&lt;hex&gt;</code> is an HMAC-SHA256 of the raw body, keyed with the signing secret. The body and the checks a receiver should make are described on the Webhooks page of the calrs documentation.
+webhooks-state-suspended = Suspended: the person who added it can no longer manage this event type. Take it over to resume it.
+webhooks-adopt = Take over
+webhooks-notice-adopted = Webhook taken over and resumed.
+webhooks-event-claimed = Claimed by a watcher
+webhooks-error-address = This address cannot be used: calrs only sends to public internet addresses, unless the host is on the private-host allowlist.
+webhooks-adopt-help = Taking it over makes it yours and resumes it. Confirm the address it sends to and set a new signing secret: the previous one may be known to the person who added it. Deliveries still waiting are dropped.
+webhooks-error-not-suspended = Only a suspended webhook can be taken over.
+webhooks-error-new-secret = The URL now points to another host: enter a new signing secret too.
+webhooks-url-masked-hint = (only the person who added it sees the full URL: enter it again to save)

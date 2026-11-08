@@ -36,6 +36,9 @@ Every user-facing string goes through Fluent (`i18n/`).
    session cleanup, pending sweep (web/pending.rs), reminders,
    write-back retries (web/writeback.rs), sync of the stalest source
    (commands/sync.rs)
+
+ webhook task (run_webhook_loop in web/webhooks.rs)
+   delivers queued booking webhooks when woken and every 30 s
 ```
 
 ## Where things live
@@ -91,6 +94,8 @@ Every user-facing string goes through Fluent (`i18n/`).
 | `pending.rs` | Pending requests: expiry deadline, sweep (expire and nudge), pending settings on event types |
 | `notify.rs` | `spawn_emails` / `drain_emails`, new-booking notifications, reminders, watchers, SMS on new booking, the background loop |
 | `meeting.rs` | Auto-generated meeting links (Jitsi, webhook, Google Meet) |
+| `webhooks.rs` | Outgoing booking webhooks (#168): `enqueue` (called by every path that changes a booking, after it commits), payload, URL checks (SSRF), signed delivery with retries (`run_webhook_loop`, spawned by `src/main.rs`) |
+| `webhook_pages.rs` | The webhooks page (`/dashboard/webhooks`): add, edit, test, switch off, remove; who may manage which endpoint; the admin switch handler |
 | `captcha.rs` | Cap captcha config and server-side verification |
 | `ews_admin.rs` | Global Exchange impersonation: admin card, its save, confirm-address and remove-all handlers, the lock on user sources, guards on managed sources |
 | `dashboard.rs` | Dashboard overview, event types and bookings lists, host cancel/confirm, settings, avatar |
@@ -119,8 +124,7 @@ with `use super::*` and sees those fixtures and every item of `web`:
 `hosts`, `event_types`, `invites`, `booking`, `public_pages`,
 `booking_actions`, `booking_notes`, `dashboard`, `sources`, `admin`, `emails`,
 `ews_global`, `page_language`, `guards`, plus `booking_time`, `pending_hold`,
-`writeback_failures`, `write_destinations`, `organizer`, `duplicate_event_type`
-and `time_off`.
+`writeback_failures`, `write_destinations`, `organizer`, `duplicate_event_type`, `time_off` and `webhooks`.
 
 ### `src/email/`
 
@@ -243,6 +247,10 @@ Call sites use `crate::email::name` whatever file `name` lives in.
 - **Background loop** (`run_reminder_loop` in `src/web/notify.rs`, spawned by
   `src/main.rs`): session cleanup, pending sweep, reminders, write-back
   retries, sync of the stalest source.
+- **Booking webhooks** (`src/web/webhooks.rs`, page in
+  `src/web/webhook_pages.rs`). A new path that changes a booking's status or
+  time calls `webhooks::enqueue` after its change commits; delivery happens
+  in `run_webhook_loop`, never in the request.
 
 ## Where to add things
 

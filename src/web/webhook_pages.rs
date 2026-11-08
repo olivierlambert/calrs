@@ -1,0 +1,680 @@
+//! The webhooks page (`/dashboard/webhooks`, #168): add, edit, test, switch
+//! off and remove the endpoints a user may manage. Delivery itself lives in
+//! `webhooks.rs`.
+//!
+//! Who manages what:
+//! - an endpoint for "all my event types" belongs to the user who added it,
+//!   and only they see it;
+//! - an endpoint for one event type is managed by whoever may manage that
+//!   event type (`can_manage_event_type`: its owner, the team's admins, the
+//!   instance admins), whoever added it.
+//!
+//! Non-admins only get here when the admin allowed it
+//! (`auth_config.webhooks_allow_all_users`).
+
+use super::webhooks::{
+    check_target, Attempt, MAX_ENDPOINTS_PER_SCOPE, SECRET_MAX_LEN, SECRET_MIN_LEN,
+};
+use super::*;
+
+/// Scope value of the "all my event types" option.
+const SCOPE_PERSONAL: &str = "personal";
+
+/// Messages a redirect may name, so the page never renders an arbitrary key.
+const NOTICES: &[&str] = &[
+    "webhooks-notice-created",
+    "webhooks-notice-updated",
+    "webhooks-notice-deleted",
+    "webhooks-notice-enabled",
+    "webhooks-notice-disabled",
+    "webhooks-notice-test-ok",
+    "webhooks-notice-adopted",
+];
+const ERRORS: &[&str] = &[
+    "webhooks-error-url",
+    "webhooks-error-https",
+    "webhooks-error-credentials",
+    "webhooks-error-address",
+    "webhooks-error-secret",
+    "webhooks-error-scope",
+    "webhooks-error-limit",
+    "webhooks-error-test",
+    "webhooks-error-test-limit",
+    "webhooks-error-events",
+    "webhooks-error-not-suspended",
+    "webhooks-error-new-secret",
+];
+
+/// Whether this user may add and manage webhooks at all: admins always,
+/// everyone else when the admin allowed it.
+pub(super) async fn can_use_webhooks(pool: &SqlitePool, user: &crate::models::User) -> bool {
+    if user.role == "admin" {
+        return true;
+    }
+    sqlx::query_scalar::<_, bool>(
+        "SELECT webhooks_allow_all_users FROM auth_config WHERE id = 'singleton'",
+    )
+    .fetch_optional(pool)
+    .await
+    .unwrap_or(None)
+    .unwrap_or(false)
+}
+
+/// Event types a user may attach an endpoint to: their personal ones and
+/// those of the teams they administer. (id, title, team name)
+async fn attachable_event_types(
+    pool: &SqlitePool,
+    user_id: &str,
+) -> Vec<(String, String, Option<String>)> {
+    sqlx::query_as(
+        "SELECT et.id, et.title, NULL FROM event_types et
+         JOIN accounts a ON a.id = et.account_id
+         WHERE a.user_id = ?1 AND et.team_id IS NULL
+         UNION ALL
+         SELECT et.id, et.title, t.name FROM event_types et
+         JOIN teams t ON t.id = et.team_id
+         JOIN team_members tm ON tm.team_id = et.team_id
+         WHERE tm.user_id = ?1 AND tm.role = 'admin'
+         ORDER BY 3, 2",
+    )
+    .bind(user_id)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default()
+}
+
+/// Whether `user` may see and change this endpoint.
+async fn may_manage_webhook(
+    pool: &SqlitePool,
+    user: &crate::models::User,
+    webhook_id: &str,
+) -> bool {
+    let row: Option<(Option<String>, Option<String>)> =
+        sqlx::query_as("SELECT user_id, event_type_id FROM webhooks WHERE id = ?")
+            .bind(webhook_id)
+            .fetch_optional(pool)
+            .await
+            .unwrap_or(None);
+    match row {
+        Some((Some(owner), None)) => owner == user.id,
+        Some((_, Some(et_id))) => can_manage_event_type(pool, user, &et_id).await,
+        _ => false,
+    }
+}
+
+/// The checks every POST shares: CSRF, the admin switch, and for an existing
+/// endpoint the right to manage it.
+#[allow(clippy::result_large_err)]
+async fn guard(
+    state: &AppState,
+    headers: &HeaderMap,
+    csrf: &Option<String>,
+    user: &crate::models::User,
+    webhook_id: Option<&str>,
+) -> Result<(), Response> {
+    verify_csrf_token(headers, csrf)?;
+    if !can_use_webhooks(&state.pool, user).await {
+        return Err(Redirect::to("/dashboard/webhooks").into_response());
+    }
+    if let Some(id) = webhook_id {
+        if !may_manage_webhook(&state.pool, user, id).await {
+            return Err(Redirect::to("/dashboard/webhooks").into_response());
+        }
+    }
+    Ok(())
+}
+
+fn back(param: &str, key: &str) -> Response {
+    Redirect::to(&format!("/dashboard/webhooks?{param}={key}")).into_response()
+}
+
+fn secret_ok(secret: &str) -> bool {
+    let n = secret.chars().count();
+    (SECRET_MIN_LEN..=SECRET_MAX_LEN).contains(&n) && !secret.chars().any(char::is_control)
+}
+
+#[derive(Deserialize)]
+pub(super) struct WebhooksQuery {
+    notice: Option<String>,
+    error: Option<String>,
+}
+
+#[allow(clippy::type_complexity)]
+pub(super) async fn webhooks_page(
+    State(state): State<Arc<AppState>>,
+    auth_user: crate::auth::AuthUser,
+    Query(query): Query<WebhooksQuery>,
+) -> impl IntoResponse {
+    let user = &auth_user.user;
+    let allowed = can_use_webhooks(&state.pool, user).await;
+
+    let mut endpoints_ctx = Vec::new();
+    let mut scopes_ctx = Vec::new();
+    if allowed {
+        let rows: Vec<(
+            String,
+            String,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            bool,
+            Option<String>,
+            Option<i64>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            bool,
+            i64,
+            i64,
+        )> = sqlx::query_as(&format!(
+            "SELECT w.id, w.url, w.event_type_id, et.title, t.name, w.enabled,
+                    w.last_attempt_at, w.last_status, w.last_error, u.name, w.events, w.user_id,
+                    {managed},
+                    (SELECT COUNT(*) FROM webhook_deliveries d WHERE d.webhook_id = w.id AND d.state = 'pending'),
+                    (SELECT COUNT(*) FROM webhook_deliveries d WHERE d.webhook_id = w.id AND d.state = 'failed')
+             FROM webhooks w
+             LEFT JOIN users u ON u.id = w.user_id
+             LEFT JOIN event_types et ON et.id = w.event_type_id
+             LEFT JOIN teams t ON t.id = et.team_id
+             WHERE (w.event_type_id IS NULL AND w.user_id = ?1)
+                OR w.event_type_id IN (
+                    SELECT et2.id FROM event_types et2 JOIN accounts a ON a.id = et2.account_id
+                    WHERE a.user_id = ?1 AND et2.team_id IS NULL
+                    UNION
+                    SELECT et3.id FROM event_types et3 JOIN team_members tm ON tm.team_id = et3.team_id
+                    WHERE tm.user_id = ?1 AND tm.role = 'admin')
+             ORDER BY w.created_at, w.id",
+            managed = super::webhooks::MANAGED,
+        ))
+        .bind(&user.id)
+        .fetch_all(&state.pool)
+        .await
+        .unwrap_or_default();
+        for (
+            id,
+            url,
+            et_id,
+            et_title,
+            team_name,
+            enabled,
+            last_attempt_at,
+            last_status,
+            last_error,
+            added_by,
+            events,
+            owner,
+            managed,
+            queued,
+            failed,
+        ) in rows
+        {
+            let mine = owner.as_deref() == Some(user.id.as_str());
+            endpoints_ctx.push(context! {
+                id => id,
+                url => if mine { url.clone() } else { String::new() },
+                url_display => if mine { url } else { masked_url(&url) },
+                mine => mine,
+                personal => et_id.is_none(),
+                event_type_title => et_title,
+                team_name => team_name,
+                enabled => enabled,
+                last_attempt_at => last_attempt_at
+                    .as_deref()
+                    .map(|s| s.trim_end_matches('Z').replace('T', " ")),
+                last_attempt_iso => last_attempt_at,
+                last_status => last_status,
+                last_error => last_error,
+                added_by => added_by,
+                events => event_choices(events.as_deref()),
+                all_events => events.is_none(),
+                suspended => !managed,
+                queued => queued,
+                failed => failed,
+            });
+        }
+        for (id, title, team) in attachable_event_types(&state.pool, &user.id).await {
+            scopes_ctx.push(context! { id => id, title => title, team => team });
+        }
+    }
+
+    let notice = query
+        .notice
+        .filter(|k| NOTICES.contains(&k.as_str()))
+        .map(|k| crate::i18n::translate(auth_user.lang, &k, None));
+    let error = query
+        .error
+        .filter(|k| ERRORS.contains(&k.as_str()))
+        .map(|k| crate::i18n::translate(auth_user.lang, &k, None));
+
+    let tmpl = match state.templates.get_template("webhooks.html") {
+        Ok(t) => t,
+        Err(e) => return internal_error_response("template render", &e),
+    };
+    let (impersonating, impersonating_name, _) = impersonation_ctx(&auth_user);
+    Html(
+        tmpl.render(context! {
+            sidebar => sidebar_context(&auth_user, "event-types"),
+            lang => auth_user.lang,
+            allowed => allowed,
+            endpoints => endpoints_ctx,
+            scopes => scopes_ctx,
+            notice => notice,
+            error => error,
+            secret_min => SECRET_MIN_LEN,
+            new_events => event_choices(None),
+            impersonating => impersonating,
+            impersonating_name => impersonating_name,
+        })
+        .unwrap_or_default(),
+    )
+    .into_response()
+}
+
+/// One checkbox per event, ticked when `column` subscribes to it.
+fn event_choices(column: Option<&str>) -> Vec<minijinja::Value> {
+    let on = super::webhooks::subscribed(column);
+    super::webhooks::ALL_EVENTS
+        .iter()
+        .map(|e| {
+            context! {
+                name => e.name(),
+                label_key => e.label_key(),
+                checked => on.contains(e),
+            }
+        })
+        .collect()
+}
+
+/// Repeated `events` fields, one per ticked box: parsed with
+/// `axum_extra`'s form extractor, as the source calendars form is.
+#[derive(Deserialize)]
+pub(super) struct CreateWebhookForm {
+    _csrf: Option<String>,
+    scope: String,
+    url: String,
+    secret: String,
+    #[serde(default)]
+    events: Vec<String>,
+}
+
+pub(super) async fn create_webhook(
+    State(state): State<Arc<AppState>>,
+    auth_user: crate::auth::AuthUser,
+    headers: HeaderMap,
+    axum_extra::extract::Form(form): axum_extra::extract::Form<CreateWebhookForm>,
+) -> impl IntoResponse {
+    let user = &auth_user.user;
+    if let Err(resp) = guard(&state, &headers, &form._csrf, user, None).await {
+        return resp;
+    }
+    let event_type_id = if form.scope == SCOPE_PERSONAL {
+        None
+    } else if can_manage_event_type(&state.pool, user, &form.scope).await
+        // Instance admins pass the check for any id, so make sure it is one.
+        && sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM event_types WHERE id = ?)")
+            .bind(&form.scope)
+            .fetch_one(&state.pool)
+            .await
+            .unwrap_or(false)
+    {
+        Some(form.scope.clone())
+    } else {
+        return back("error", "webhooks-error-scope");
+    };
+    if !secret_ok(&form.secret) {
+        return back("error", "webhooks-error-secret");
+    }
+    let Ok(events) = super::webhooks::events_column(&form.events) else {
+        return back("error", "webhooks-error-events");
+    };
+    let allowlist = crate::settings::private_host_allowlist();
+    if let Err(e) = check_target(&form.url, &allowlist).await {
+        tracing::info!(user = %user.email, error = %e, "webhook URL refused");
+        return back("error", e.key());
+    }
+    let existing: i64 = match &event_type_id {
+        Some(et) => sqlx::query_scalar("SELECT COUNT(*) FROM webhooks WHERE event_type_id = ?")
+            .bind(et)
+            .fetch_one(&state.pool)
+            .await
+            .unwrap_or(0),
+        None => sqlx::query_scalar(
+            "SELECT COUNT(*) FROM webhooks WHERE event_type_id IS NULL AND user_id = ?",
+        )
+        .bind(&user.id)
+        .fetch_one(&state.pool)
+        .await
+        .unwrap_or(0),
+    };
+    if existing >= MAX_ENDPOINTS_PER_SCOPE {
+        return back("error", "webhooks-error-limit");
+    }
+    let secret_enc = match crate::crypto::encrypt_value(&state.secret_key, &form.secret) {
+        Ok(v) => v,
+        Err(e) => return internal_error_response("encrypt webhook secret", &e),
+    };
+    let id = uuid::Uuid::new_v4().to_string();
+    if let Err(e) = sqlx::query(
+        "INSERT INTO webhooks (id, user_id, event_type_id, url, secret_enc, events) VALUES (?, ?, ?, ?, ?, ?)",
+    )
+    .bind(&id)
+    .bind(&user.id)
+    .bind(&event_type_id)
+    .bind(form.url.trim())
+    .bind(&secret_enc)
+    .bind(&events)
+    .execute(&state.pool)
+    .await
+    {
+        return internal_error_response("save webhook", &e);
+    }
+    tracing::info!(webhook = %id, user = %user.email, event_type = ?event_type_id, "webhook added");
+    back("notice", "webhooks-notice-created")
+}
+
+#[derive(Deserialize)]
+pub(super) struct UpdateWebhookForm {
+    _csrf: Option<String>,
+    url: String,
+    #[serde(default)]
+    secret: String,
+    #[serde(default)]
+    events: Vec<String>,
+}
+
+/// Change the URL, and the secret when a new one is typed (an empty field
+/// keeps the stored one).
+pub(super) async fn update_webhook(
+    State(state): State<Arc<AppState>>,
+    auth_user: crate::auth::AuthUser,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    axum_extra::extract::Form(form): axum_extra::extract::Form<UpdateWebhookForm>,
+) -> impl IntoResponse {
+    let user = &auth_user.user;
+    if let Err(resp) = guard(&state, &headers, &form._csrf, user, Some(&id)).await {
+        return resp;
+    }
+    let Ok(events) = super::webhooks::events_column(&form.events) else {
+        return back("error", "webhooks-error-events");
+    };
+    let old_url: String = sqlx::query_scalar("SELECT url FROM webhooks WHERE id = ?")
+        .bind(&id)
+        .fetch_optional(&state.pool)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_default();
+    let url_changed = old_url != form.url.trim();
+    // Another host is another receiver: the secret it would be signed with
+    // must be one its new owner chose, not the old one carried over.
+    if url_changed && form.secret.is_empty() && origin(&old_url) != origin(&form.url) {
+        return back("error", "webhooks-error-new-secret");
+    }
+    let allowlist = crate::settings::private_host_allowlist();
+    if let Err(e) = check_target(&form.url, &allowlist).await {
+        tracing::info!(user = %user.email, error = %e, "webhook URL refused");
+        return back("error", e.key());
+    }
+    let secret_enc = if form.secret.is_empty() {
+        None
+    } else if secret_ok(&form.secret) {
+        match crate::crypto::encrypt_value(&state.secret_key, &form.secret) {
+            Ok(v) => Some(v),
+            Err(e) => return internal_error_response("encrypt webhook secret", &e),
+        }
+    } else {
+        return back("error", "webhooks-error-secret");
+    };
+    if let Err(e) = sqlx::query(
+        // A new URL is a new receiver: the last result was someone else's.
+        "UPDATE webhooks SET
+             last_attempt_at = CASE WHEN url = ?1 THEN last_attempt_at END,
+             last_status = CASE WHEN url = ?1 THEN last_status END,
+             last_error = CASE WHEN url = ?1 THEN last_error END,
+             last_success_at = CASE WHEN url = ?1 THEN last_success_at END,
+             url = ?1, secret_enc = COALESCE(?2, secret_enc), events = ?3
+         WHERE id = ?4",
+    )
+    .bind(form.url.trim())
+    .bind(&secret_enc)
+    .bind(&events)
+    .bind(&id)
+    .execute(&state.pool)
+    .await
+    {
+        return internal_error_response("update webhook", &e);
+    }
+    if url_changed {
+        // What was queued was meant for the old receiver.
+        drop_queue(&state.pool, &id).await;
+    }
+    tracing::info!(webhook = %id, user = %user.email, secret_changed = secret_enc.is_some(), "webhook updated");
+    back("notice", "webhooks-notice-updated")
+}
+
+#[derive(Deserialize)]
+pub(super) struct WebhookActionForm {
+    _csrf: Option<String>,
+}
+
+/// Switch an endpoint on or off. Switching it off drops what is still
+/// queued for it: switched back on, it starts from new events rather than
+/// replaying stale ones.
+pub(super) async fn toggle_webhook(
+    State(state): State<Arc<AppState>>,
+    auth_user: crate::auth::AuthUser,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Form(form): Form<WebhookActionForm>,
+) -> impl IntoResponse {
+    let user = &auth_user.user;
+    if let Err(resp) = guard(&state, &headers, &form._csrf, user, Some(&id)).await {
+        return resp;
+    }
+    let enabled: bool = sqlx::query_scalar(
+        "UPDATE webhooks SET enabled = 1 - enabled WHERE id = ? RETURNING enabled",
+    )
+    .bind(&id)
+    .fetch_one(&state.pool)
+    .await
+    .unwrap_or(false);
+    if !enabled {
+        let _ = sqlx::query("DELETE FROM webhook_deliveries WHERE webhook_id = ?")
+            .bind(&id)
+            .execute(&state.pool)
+            .await;
+    }
+    tracing::info!(webhook = %id, user = %user.email, enabled, "webhook toggled");
+    back(
+        "notice",
+        if enabled {
+            "webhooks-notice-enabled"
+        } else {
+            "webhooks-notice-disabled"
+        },
+    )
+}
+
+pub(super) async fn delete_webhook(
+    State(state): State<Arc<AppState>>,
+    auth_user: crate::auth::AuthUser,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Form(form): Form<WebhookActionForm>,
+) -> impl IntoResponse {
+    let user = &auth_user.user;
+    if let Err(resp) = guard(&state, &headers, &form._csrf, user, Some(&id)).await {
+        return resp;
+    }
+    if let Err(e) = sqlx::query("DELETE FROM webhooks WHERE id = ?")
+        .bind(&id)
+        .execute(&state.pool)
+        .await
+    {
+        return internal_error_response("delete webhook", &e);
+    }
+    tracing::info!(webhook = %id, user = %user.email, "webhook removed");
+    back("notice", "webhooks-notice-deleted")
+}
+
+/// "Send test": one signed `ping` now. The outcome is shown in the
+/// endpoint's row, which the redirect lands on.
+pub(super) async fn test_webhook(
+    State(state): State<Arc<AppState>>,
+    auth_user: crate::auth::AuthUser,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Form(form): Form<WebhookActionForm>,
+) -> impl IntoResponse {
+    let user = &auth_user.user;
+    if let Err(resp) = guard(&state, &headers, &form._csrf, user, Some(&id)).await {
+        return resp;
+    }
+    // Each test is a real request to a URL of the user's choosing.
+    if state.webhook_test_limiter.check_limited(&user.id).await {
+        return back("error", "webhooks-error-test-limit");
+    }
+    let allowlist = crate::settings::private_host_allowlist();
+    let attempt =
+        super::webhooks::send_test_with(&state.pool, &state.secret_key, &id, &allowlist).await;
+    match attempt {
+        Some(Attempt { error: None, .. }) => back("notice", "webhooks-notice-test-ok"),
+        _ => back("error", "webhooks-error-test"),
+    }
+}
+
+#[derive(Deserialize)]
+pub(super) struct AdoptWebhookForm {
+    _csrf: Option<String>,
+    url: String,
+    secret: String,
+}
+
+/// Take over a suspended event type webhook: the person who added it can no
+/// longer manage the event type (or is gone). A current manager confirms
+/// the URL and sets a new secret (the old one may be known to that person),
+/// and the webhook becomes theirs and resumes, with its queue dropped. Only
+/// a suspended event type webhook: a personal one always belongs to its
+/// user, and an active one is not anyone's to take.
+pub(super) async fn adopt_webhook(
+    State(state): State<Arc<AppState>>,
+    auth_user: crate::auth::AuthUser,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Form(form): Form<AdoptWebhookForm>,
+) -> impl IntoResponse {
+    let user = &auth_user.user;
+    if let Err(resp) = guard(&state, &headers, &form._csrf, user, Some(&id)).await {
+        return resp;
+    }
+    if !secret_ok(&form.secret) {
+        return back("error", "webhooks-error-secret");
+    }
+    let allowlist = crate::settings::private_host_allowlist();
+    if let Err(e) = check_target(&form.url, &allowlist).await {
+        tracing::info!(user = %user.email, error = %e, "webhook URL refused");
+        return back("error", e.key());
+    }
+    let secret_enc = match crate::crypto::encrypt_value(&state.secret_key, &form.secret) {
+        Ok(v) => v,
+        Err(e) => return internal_error_response("encrypt webhook secret", &e),
+    };
+    let taken = sqlx::query(&format!(
+        "UPDATE webhooks SET user_id = ?1, url = ?2, secret_enc = ?3,
+                last_attempt_at = NULL, last_status = NULL, last_error = NULL, last_success_at = NULL
+         WHERE id = ?4 AND event_type_id IS NOT NULL AND id IN (
+             SELECT w.id FROM webhooks w LEFT JOIN users u ON u.id = w.user_id
+             WHERE NOT {managed})",
+        managed = super::webhooks::MANAGED,
+    ))
+    .bind(&user.id)
+    .bind(form.url.trim())
+    .bind(&secret_enc)
+    .bind(&id)
+    .execute(&state.pool)
+    .await;
+    match taken {
+        Ok(r) if r.rows_affected() == 1 => {}
+        Ok(_) => return back("error", "webhooks-error-not-suspended"),
+        Err(e) => return internal_error_response("take over webhook", &e),
+    }
+    drop_queue(&state.pool, &id).await;
+    tracing::info!(webhook = %id, user = %user.email, "webhook taken over");
+    back("notice", "webhooks-notice-adopted")
+}
+
+/// Delete what is queued for a webhook: it goes to another receiver now.
+async fn drop_queue(pool: &SqlitePool, webhook_id: &str) {
+    let _ = sqlx::query(
+        "DELETE FROM webhook_deliveries WHERE webhook_id = ? AND state IN ('pending', 'reserved')",
+    )
+    .bind(webhook_id)
+    .execute(pool)
+    .await;
+}
+
+/// `scheme://host[:port]` of a URL, the part every manager may see: the path
+/// and query often carry a token, shown only to the webhook's own user.
+fn masked_url(url: &str) -> String {
+    match reqwest::Url::parse(url) {
+        Ok(u) => {
+            let port = u.port().map(|p| format!(":{p}")).unwrap_or_default();
+            let rest = if u.path() == "/" && u.query().is_none() {
+                ""
+            } else {
+                "/..."
+            };
+            format!(
+                "{}://{}{}{}",
+                u.scheme(),
+                u.host_str().unwrap_or(""),
+                port,
+                rest
+            )
+        }
+        Err(_) => String::new(),
+    }
+}
+
+/// Scheme, host and port, to tell whether a new URL is another receiver.
+fn origin(url: &str) -> Option<(String, String, Option<u16>)> {
+    let u = reqwest::Url::parse(url.trim()).ok()?;
+    Some((
+        u.scheme().to_string(),
+        u.host_str()?.to_ascii_lowercase(),
+        u.port_or_known_default(),
+    ))
+}
+
+/// Admin panel: whether non-admins may add webhooks.
+#[derive(Deserialize)]
+pub(super) struct AdminWebhookPolicyForm {
+    _csrf: Option<String>,
+    allow_all_users: Option<String>,
+}
+
+pub(super) async fn admin_update_webhook_policy(
+    State(state): State<Arc<AppState>>,
+    admin: crate::auth::AdminUser,
+    headers: HeaderMap,
+    Form(form): Form<AdminWebhookPolicyForm>,
+) -> impl IntoResponse {
+    if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
+        return resp;
+    }
+    let allow_all = form.allow_all_users.is_some();
+    if let Err(e) =
+        sqlx::query("UPDATE auth_config SET webhooks_allow_all_users = ? WHERE id = 'singleton'")
+            .bind(allow_all)
+            .execute(&state.pool)
+            .await
+    {
+        return internal_error_response("save webhook policy", &e);
+    }
+    // Turned off: what is queued for non-admins' webhooks goes now.
+    super::webhooks::drop_inactive_queues(&state.pool).await;
+    tracing::info!(admin = %admin.user.email, allow_all, "admin: webhook policy updated");
+    Redirect::to("/dashboard/admin#panel-notifications").into_response()
+}
