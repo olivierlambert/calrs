@@ -1970,3 +1970,6 @@ webhooks-error-events = Vali vähemalt üks sündmus.
 webhooks-error-test-limit = Liiga palju teste lühikese aja jooksul. Oota paar minutit ja proovi uuesti.
 webhooks-added-by-former = Lisas endine liige
 webhooks-signature-help = Iga päring on allkirjastatud: <code>X-Calrs-Signature: sha256=&lt;hex&gt;</code> on töötlemata sisu HMAC-SHA256, mille võti on allkirja saladus. Sisu ja vastuvõtja kontrolle kirjeldab calrsi dokumentatsiooni leht Webhooks.
+webhooks-state-suspended = Peatatud: selle lisaja ei saa enam seda sündmuse tüüpi hallata. Võta see üle, et seda jätkata.
+webhooks-adopt = Võta üle
+webhooks-notice-adopted = Veebihaak üle võetud ja jätkatud.

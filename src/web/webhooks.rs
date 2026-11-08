@@ -68,15 +68,37 @@ const PER_ENDPOINT: i64 = 5;
 /// pass, so a backlog cannot keep an endpoint task alive for ever.
 const ENDPOINT_BUDGET: Duration = Duration::from_secs(30);
 
-/// SQL condition for an endpoint that may receive deliveries. Expects the
-/// aliases `w` (webhooks) and `u` (the user who added it, `LEFT JOIN`ed:
-/// NULL once that user is deleted). The admin switch is read live, so
-/// turning it off stops every non-admin endpoint at once, queued deliveries
-/// included. An event type's webhook outlives the user who added it, and
-/// is then judged by the role they had when deleted (`creator_was_admin`).
-const ACTIVE_ENDPOINT: &str = "w.enabled = 1 AND (
-    (u.id IS NOT NULL AND u.enabled = 1 AND (u.role = 'admin' OR COALESCE((SELECT webhooks_allow_all_users FROM auth_config WHERE id = 'singleton'), 0) = 1))
-    OR (w.user_id IS NULL AND w.event_type_id IS NOT NULL AND (w.creator_was_admin = 1 OR COALESCE((SELECT webhooks_allow_all_users FROM auth_config WHERE id = 'singleton'), 0) = 1)))";
+/// SQL condition: the user behind a webhook (`u`, `LEFT JOIN`ed on
+/// `w.user_id`) still exists, is enabled, and can still manage the
+/// webhook's scope: an instance admin, the owner of a personal event type,
+/// an admin of the event type's team. A personal-scope webhook only ever
+/// matches its user's own event types (see [`enqueue`]). Losing this
+/// (removed from the team, team deleted, user deleted) suspends the webhook
+/// until someone who manages the event type takes it over.
+macro_rules! managed_sql {
+    () => {
+        "(u.id IS NOT NULL AND u.enabled = 1 AND (
+            w.event_type_id IS NULL
+            OR u.role = 'admin'
+            OR EXISTS (SELECT 1 FROM event_types met JOIN accounts ma ON ma.id = met.account_id
+                       WHERE met.id = w.event_type_id AND met.team_id IS NULL AND ma.user_id = w.user_id)
+            OR EXISTS (SELECT 1 FROM event_types met JOIN team_members mtm ON mtm.team_id = met.team_id
+                       WHERE met.id = w.event_type_id AND mtm.user_id = w.user_id AND mtm.role = 'admin')))"
+    };
+}
+pub(crate) const MANAGED: &str = managed_sql!();
+
+/// SQL condition for a webhook that may send: switched on, managed, and its
+/// user an admin or the admin switch on. Expects the aliases `w` and `u`.
+/// Everything is read live, so a change stops queued deliveries too.
+const ACTIVE_ENDPOINT: &str = concat!(
+    "w.enabled = 1 AND ",
+    managed_sql!(),
+    " AND (u.role = 'admin' OR COALESCE((SELECT webhooks_allow_all_users FROM auth_config WHERE id = 'singleton'), 0) = 1)"
+);
+
+/// Pending deliveries are given up after this long, whatever their attempts.
+const PENDING_MAX_HOURS: i64 = 24;
 
 /// What happened to the booking.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1002,6 +1024,7 @@ pub(crate) async fn start_pass(
     now: DateTime<Utc>,
     allowlist: &[String],
 ) -> Vec<tokio::task::JoinHandle<usize>> {
+    drop_inactive_queues(pool).await;
     let mut by_endpoint: Vec<(String, Vec<Due>)> = Vec::new();
     for d in due_rows(pool, now, None).await {
         match by_endpoint.iter_mut().find(|(w, _)| *w == d.webhook_id) {
@@ -1037,13 +1060,40 @@ pub(crate) async fn deliver_due_with(
     delivered
 }
 
-/// Drop deliveries that ran out of attempts a week ago.
+/// Drop the queue of every webhook that may not send any more (switched
+/// off, suspended, its user disabled, or the admin switch off for it): its
+/// guest data must not sit here, nor be replayed if it comes back.
+pub(crate) async fn drop_inactive_queues(pool: &SqlitePool) {
+    let dropped = sqlx::query(&format!(
+        "DELETE FROM webhook_deliveries WHERE state = 'pending' AND webhook_id IN (
+             SELECT w.id FROM webhooks w LEFT JOIN users u ON u.id = w.user_id
+             WHERE NOT ({ACTIVE_ENDPOINT}))"
+    ))
+    .execute(pool)
+    .await
+    .map(|r| r.rows_affected())
+    .unwrap_or(0);
+    if dropped > 0 {
+        tracing::info!(
+            dropped,
+            "webhook deliveries dropped: their webhook no longer sends"
+        );
+    }
+}
+
+/// Give up deliveries still pending after [`PENDING_MAX_HOURS`], and drop
+/// failed ones a week old.
 pub(crate) async fn prune(pool: &SqlitePool, now: DateTime<Utc>) {
-    let cutoff = (now - chrono::Duration::days(FAILED_RETENTION_DAYS))
-        .format("%Y-%m-%d %H:%M:%S")
-        .to_string();
+    let stamp = |t: DateTime<Utc>| t.format("%Y-%m-%d %H:%M:%S").to_string();
+    let _ = sqlx::query(
+        "UPDATE webhook_deliveries SET state = 'failed', last_error = 'not delivered within 24 hours'
+         WHERE state = 'pending' AND created_at < ?",
+    )
+    .bind(stamp(now - chrono::Duration::hours(PENDING_MAX_HOURS)))
+    .execute(pool)
+    .await;
     let _ = sqlx::query("DELETE FROM webhook_deliveries WHERE state = 'failed' AND created_at < ?")
-        .bind(cutoff)
+        .bind(stamp(now - chrono::Duration::days(FAILED_RETENTION_DAYS)))
         .execute(pool)
         .await;
 }
@@ -1061,7 +1111,7 @@ pub async fn run_webhook_loop(pool: SqlitePool, key: [u8; 32]) {
         let allowlist = crate::settings::private_host_allowlist();
         // Not awaited: endpoint tasks run on their own.
         drop(start_pass(&pool, &key, Utc::now(), &allowlist).await);
-        if last_prune.elapsed() >= Duration::from_secs(3600) {
+        if last_prune.elapsed() >= Duration::from_secs(600) {
             prune(&pool, Utc::now()).await;
             last_prune = std::time::Instant::now();
         }

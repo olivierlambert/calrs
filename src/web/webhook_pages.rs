@@ -28,6 +28,7 @@ const NOTICES: &[&str] = &[
     "webhooks-notice-enabled",
     "webhooks-notice-disabled",
     "webhooks-notice-test-ok",
+    "webhooks-notice-adopted",
 ];
 const ERRORS: &[&str] = &[
     "webhooks-error-url",
@@ -160,15 +161,17 @@ pub(super) async fn webhooks_page(
             Option<String>,
             Option<String>,
             Option<String>,
+            bool,
             i64,
             i64,
-        )> = sqlx::query_as(
+        )> = sqlx::query_as(&format!(
             "SELECT w.id, w.url, w.event_type_id, et.title, t.name, w.enabled,
-                    w.last_attempt_at, w.last_status, w.last_error, cu.name, w.events,
+                    w.last_attempt_at, w.last_status, w.last_error, u.name, w.events,
+                    {managed},
                     (SELECT COUNT(*) FROM webhook_deliveries d WHERE d.webhook_id = w.id AND d.state = 'pending'),
                     (SELECT COUNT(*) FROM webhook_deliveries d WHERE d.webhook_id = w.id AND d.state = 'failed')
              FROM webhooks w
-             LEFT JOIN users cu ON cu.id = w.user_id
+             LEFT JOIN users u ON u.id = w.user_id
              LEFT JOIN event_types et ON et.id = w.event_type_id
              LEFT JOIN teams t ON t.id = et.team_id
              WHERE (w.event_type_id IS NULL AND w.user_id = ?1)
@@ -179,7 +182,8 @@ pub(super) async fn webhooks_page(
                     SELECT et3.id FROM event_types et3 JOIN team_members tm ON tm.team_id = et3.team_id
                     WHERE tm.user_id = ?1 AND tm.role = 'admin')
              ORDER BY w.created_at, w.id",
-        )
+            managed = super::webhooks::MANAGED,
+        ))
         .bind(&user.id)
         .fetch_all(&state.pool)
         .await
@@ -196,6 +200,7 @@ pub(super) async fn webhooks_page(
             last_error,
             added_by,
             events,
+            managed,
             queued,
             failed,
         ) in rows
@@ -216,6 +221,7 @@ pub(super) async fn webhooks_page(
                 added_by => added_by,
                 events => event_choices(events.as_deref()),
                 all_events => events.is_none(),
+                suspended => !managed,
                 queued => queued,
                 failed => failed,
             });
@@ -506,6 +512,34 @@ pub(super) async fn test_webhook(
     }
 }
 
+/// Take over a suspended event type webhook: the person who added it can no
+/// longer manage the event type (or is gone), and a current manager makes
+/// it theirs, which resumes it. Only event type webhooks: a personal one
+/// always belongs to its user.
+pub(super) async fn adopt_webhook(
+    State(state): State<Arc<AppState>>,
+    auth_user: crate::auth::AuthUser,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Form(form): Form<WebhookActionForm>,
+) -> impl IntoResponse {
+    let user = &auth_user.user;
+    if let Err(resp) = guard(&state, &headers, &form._csrf, user, Some(&id)).await {
+        return resp;
+    }
+    if let Err(e) =
+        sqlx::query("UPDATE webhooks SET user_id = ? WHERE id = ? AND event_type_id IS NOT NULL")
+            .bind(&user.id)
+            .bind(&id)
+            .execute(&state.pool)
+            .await
+    {
+        return internal_error_response("take over webhook", &e);
+    }
+    tracing::info!(webhook = %id, user = %user.email, "webhook taken over");
+    back("notice", "webhooks-notice-adopted")
+}
+
 /// Admin panel: whether non-admins may add webhooks.
 #[derive(Deserialize)]
 pub(super) struct AdminWebhookPolicyForm {
@@ -531,6 +565,8 @@ pub(super) async fn admin_update_webhook_policy(
     {
         return internal_error_response("save webhook policy", &e);
     }
+    // Turned off: what is queued for non-admins' webhooks goes now.
+    super::webhooks::drop_inactive_queues(&state.pool).await;
     tracing::info!(admin = %admin.user.email, allow_all, "admin: webhook policy updated");
     Redirect::to("/dashboard/admin#panel-notifications").into_response()
 }

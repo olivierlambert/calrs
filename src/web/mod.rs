@@ -881,6 +881,7 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
         .route("/dashboard/webhooks/{id}/toggle", post(toggle_webhook))
         .route("/dashboard/webhooks/{id}/delete", post(delete_webhook))
         .route("/dashboard/webhooks/{id}/test", post(test_webhook))
+        .route("/dashboard/webhooks/{id}/adopt", post(adopt_webhook))
         .route("/dashboard/admin/jitsi", post(admin_update_jitsi))
         .route(
             "/dashboard/admin/meeting-webhook",

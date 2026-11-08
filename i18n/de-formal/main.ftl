@@ -432,3 +432,4 @@ webhooks-error-scope = Sie können dieser Terminart keinen Webhook hinzufügen.
 admin-webhooks-manage = Ihre Webhooks verwalten
 webhooks-error-events = Wählen Sie mindestens ein Ereignis aus.
 webhooks-error-test-limit = Zu viele Tests in kurzer Zeit. Warten Sie ein paar Minuten und versuchen Sie es erneut.
+webhooks-state-suspended = Ausgesetzt: Die Person, die ihn hinzugefügt hat, kann diese Terminart nicht mehr verwalten. Übernehmen Sie ihn, um ihn fortzusetzen.

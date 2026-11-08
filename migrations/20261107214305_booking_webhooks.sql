@@ -3,11 +3,13 @@
 -- Outgoing webhooks for booking events (#168). An endpoint belongs either to
 -- one event type (`event_type_id` set: managed by whoever may manage that
 -- event type) or to a user (`event_type_id` NULL: every personal event type
--- of `user_id`). `user_id` is the user who added it; it becomes NULL when
--- that user is deleted, and an event type's webhook lives on (the trigger
--- below removes a user's own "all my event types" webhooks with them).
--- `creator_was_admin` records, at that moment, whether the user was an
--- admin, so the admin switch keeps judging the webhook as before. `events`
+-- of `user_id`). `user_id` is the user who added it, or who took it over.
+-- A webhook only sends while that user can still manage its scope (checked
+-- live, see ACTIVE_ENDPOINT in src/web/webhooks.rs); otherwise it is
+-- suspended until a current manager takes it over. When the user is
+-- deleted it becomes NULL and an event type's webhook stays, suspended (the
+-- trigger below removes a user's own "all my event types" webhooks with
+-- them). `events`
 -- lists the events sent, comma separated; NULL means all of them. The
 -- secret signs every request (HMAC-SHA256, the meeting webhook's scheme)
 -- and is stored encrypted with the instance key, like every other
@@ -20,7 +22,6 @@ CREATE TABLE webhooks (
     secret_enc        TEXT NOT NULL,
     events            TEXT,
     enabled           INTEGER NOT NULL DEFAULT 1,
-    creator_was_admin INTEGER NOT NULL DEFAULT 0,
     last_attempt_at   TEXT,
     last_status       INTEGER,
     last_error        TEXT,
@@ -34,14 +35,16 @@ CREATE INDEX idx_webhooks_user ON webhooks(user_id);
 CREATE TRIGGER webhooks_follow_deleted_user BEFORE DELETE ON users
 BEGIN
     DELETE FROM webhooks WHERE user_id = OLD.id AND event_type_id IS NULL;
-    UPDATE webhooks SET creator_was_admin = (OLD.role = 'admin') WHERE user_id = OLD.id;
 END;
 
 -- The delivery queue. A row is written after the booking change commits and
 -- delivered by the background webhook task. `id` is the idempotency id sent
 -- with every attempt; `seq` keeps the deliveries of one booking in order.
--- A delivered row is deleted; one that ran out of attempts is kept a week as
--- `failed`, then pruned, so guest data does not pile up here.
+-- A delivered row is deleted. One that ran out of attempts, or was still
+-- not delivered after 24 hours, is kept a week as `failed`, then pruned.
+-- The pending rows of a webhook that stops sending (switched off,
+-- suspended, its user disabled, or the admin switch turned off) are
+-- deleted, so guest data neither piles up here nor replays weeks later.
 CREATE TABLE webhook_deliveries (
     seq               INTEGER PRIMARY KEY AUTOINCREMENT,
     id                TEXT NOT NULL UNIQUE,

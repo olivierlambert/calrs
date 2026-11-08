@@ -15,8 +15,8 @@ By default only administrators can. A webhook sends guest names, email
 addresses, phone numbers and notes to an address of the user's choosing, so
 letting every user do that is a decision for the operator: **Admin panel →
 Email and SMS → Booking webhooks → Let any user add webhooks**. Turning the
-switch back off stops the webhooks other users added at once, deliveries
-already queued for them included. Their configuration is kept.
+switch back off stops the webhooks other users added at once and drops the
+deliveries queued for them. Their configuration is kept.
 
 ## Scope
 
@@ -31,9 +31,13 @@ Each webhook covers one of:
 
 Up to 10 webhooks per scope.
 
-A webhook on an event type stays when the user who added it is deleted; the
-page then says it was added by a former member. A webhook for "all my
-personal event types" is deleted with its user.
+A webhook only sends while the person who added it can still manage its
+event type. When they cannot any more (removed from the team or no longer
+one of its admins, the team deleted, their account disabled or deleted), the
+webhook is **suspended**: kept, shown as suspended to the event type's
+managers, and its queued deliveries dropped. A current manager can **Take
+over** the webhook, which makes it theirs and resumes it. A webhook for "all
+my personal event types" is deleted with its user.
 
 ## Choosing events
 
@@ -189,7 +193,9 @@ within a second.
 - Any 2xx answer counts as delivered. Anything else, a timeout (10 seconds)
   or a connection error is retried after 1, 5, 15 and 60 minutes, then 4 and
   12 hours: 7 attempts over about 17 hours. After that the delivery is given
-  up and kept for a week, shown on the webhook's row, then deleted.
+  up and kept for a week, shown on the webhook's row, then deleted. A
+  delivery still not sent after 24 hours (held back behind an earlier one,
+  say) is given up the same way.
 - The events of one booking are delivered in order: a later event waits until
   the earlier one is delivered or given up.
 - Each webhook is served on its own: a slow or unreachable receiver never
@@ -201,7 +207,9 @@ within a second.
 - **Send test** sends a `ping` straight away and shows the result, whatever
   events are ticked. Each user can send 10 tests per 10 minutes.
 - **Switch off** stops deliveries and drops what is still queued, so switching
-  back on starts from new events rather than replaying old ones.
+  back on starts from new events rather than replaying old ones. The same
+  happens when a webhook is suspended, when its user is disabled, and, for
+  webhooks added by non-admins, when the admin turns the switch off.
 
 ## Network rules
 

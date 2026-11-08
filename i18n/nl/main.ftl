@@ -1972,3 +1972,6 @@ webhooks-error-events = Kies minstens één gebeurtenis.
 webhooks-error-test-limit = Te veel tests in korte tijd. Wacht een paar minuten en probeer het opnieuw.
 webhooks-added-by-former = Toegevoegd door een voormalig lid
 webhooks-signature-help = Elk verzoek is ondertekend: <code>X-Calrs-Signature: sha256=&lt;hex&gt;</code> is een HMAC-SHA256 van de ruwe inhoud met het ondertekeningsgeheim als sleutel. De inhoud en de controles aan ontvangende kant staan op de pagina Webhooks van de calrs-documentatie.
+webhooks-state-suspended = Opgeschort: wie hem heeft toegevoegd, kan dit afspraaktype niet meer beheren. Neem hem over om hem te hervatten.
+webhooks-adopt = Overnemen
+webhooks-notice-adopted = Webhook overgenomen en hervat.

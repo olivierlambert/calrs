@@ -477,11 +477,8 @@ async fn scope_and_admin_switch_decide_who_receives() {
         wh::deliver_due_with(&pool, &[0u8; 32], Utc::now(), &local()).await,
         0
     );
-    let attempts: i64 = sqlx::query_scalar("SELECT attempts FROM webhook_deliveries")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    assert_eq!(attempts, 0);
+    // ...and the pass drops it rather than keep the guest data.
+    assert!(deliveries(&pool).await.is_empty());
 }
 
 #[tokio::test]
@@ -1117,39 +1114,66 @@ async fn unticked_events_are_not_queued() {
     assert!(page.contains(r#"value="booking.rescheduled" checked"#));
 }
 
-#[tokio::test]
-async fn an_event_type_webhook_outlives_the_user_who_added_it() {
-    let (app, pool, admin_session, admin_et) = setup_test_app().await;
-    let admin_id = test_user_id(&pool).await;
-    let (team_id, team_et) =
-        insert_team_with_et(&pool, "keep-team", "keep-call", &[(&admin_id, "admin")]).await;
-    // A second team admin adds a webhook on the team event type, and one
-    // for their own event types, then leaves.
+/// A team with the test admin and a second team admin, `leaver`, who adds
+/// a webhook on the team event type. Returns (team id, team et, leaver,
+/// webhook id).
+async fn team_webhook_by_second_admin(pool: &SqlitePool) -> (String, String, String, String) {
+    let admin_id = test_user_id(pool).await;
     let (leaver, _) =
-        insert_test_user_with_session(&pool, "Leaver", "leaver@example.com", "leaver").await;
-    sqlx::query("INSERT INTO team_members (team_id, user_id, role, source) VALUES (?, ?, 'admin', 'direct')")
-        .bind(&team_id)
-        .bind(&leaver)
-        .execute(&pool)
+        insert_test_user_with_session(pool, "Leaver", "leaver@example.com", "leaver").await;
+    let (team_id, team_et) = insert_team_with_et(
+        pool,
+        "keep-team",
+        "keep-call",
+        &[(&admin_id, "admin"), (&leaver, "admin")],
+    )
+    .await;
+    let wid = insert_webhook(pool, &leaver, Some(&team_et), "https://93.184.215.14/team").await;
+    sqlx::query("UPDATE auth_config SET webhooks_allow_all_users = 1 WHERE id = 'singleton'")
+        .execute(pool)
         .await
         .unwrap();
-    let on_team =
-        insert_webhook(&pool, &leaver, Some(&team_et), "https://93.184.215.14/team").await;
+    (team_id, team_et, leaver, wid)
+}
+
+async fn queue_one(pool: &SqlitePool, et_id: &str) -> usize {
+    // A new slot each time: one event type cannot hold two bookings at once.
+    let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM bookings")
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    let start = Utc::now() + Duration::days(10 + n);
+    let booking_id =
+        insert_v1_booking(pool, et_id, "q@example.com", start, 30, "confirmed", &[]).await;
+    let before = deliveries(pool).await.len();
+    wh::enqueue(pool, &booking_id, Event::Created, Context::default()).await;
+    deliveries(pool).await.len() - before
+}
+
+#[tokio::test]
+async fn an_event_type_webhook_outlives_the_user_who_added_it_suspended() {
+    let (app, pool, admin_session, _) = setup_test_app().await;
+    let (_, team_et, leaver, wid) = team_webhook_by_second_admin(&pool).await;
     insert_webhook(&pool, &leaver, None, "https://93.184.215.14/mine").await;
-    let _ = admin_et;
+    assert_eq!(queue_one(&pool, &team_et).await, 1);
     crate::auth::delete_user(&pool, &leaver, None, None)
         .await
         .unwrap();
 
+    // The team webhook stays, the personal one went with its user.
     let rows: Vec<(String, Option<String>)> = sqlx::query_as("SELECT id, user_id FROM webhooks")
         .fetch_all(&pool)
         .await
         .unwrap();
-    assert_eq!(rows, [(on_team.clone(), None)]);
+    assert_eq!(rows, [(wid.clone(), None)]);
+    // Suspended: nothing new is queued, and what was queued is dropped.
+    assert_eq!(queue_one(&pool, &team_et).await, 0);
+    wh::deliver_due_with(&pool, &[0u8; 32], Utc::now(), &local()).await;
+    assert!(deliveries(&pool).await.is_empty());
 
-    // Shown to the team's admins as added by a former member.
     let page = body_string(
-        app.oneshot(get_authed("/dashboard/webhooks", &admin_session))
+        app.clone()
+            .oneshot(get_authed("/dashboard/webhooks", &admin_session))
             .await
             .unwrap(),
     )
@@ -1159,60 +1183,132 @@ async fn an_event_type_webhook_outlives_the_user_who_added_it() {
         "webhooks-added-by-former",
         None
     )));
+    assert!(page.contains(&format!("/dashboard/webhooks/{wid}/adopt")));
 
-    // The leaver was not an admin: with the switch off it stays quiet, with
-    // it on it delivers again.
-    let (booking_id, _, _) = insert_test_booking(
-        &pool,
-        &team_et,
-        "2030-01-07T10:00:00",
-        "2030-01-07T10:30:00",
-        "confirmed",
-    )
-    .await;
-    wh::enqueue(&pool, &booking_id, Event::Created, Context::default()).await;
-    assert!(deliveries(&pool).await.is_empty());
+    // A team admin takes it over and it sends again.
+    let csrf = "csrf-wh-adopt";
+    let response = app
+        .oneshot(post_form(
+            &format!("/dashboard/webhooks/{wid}/adopt"),
+            &admin_session,
+            csrf,
+            &format!("_csrf={csrf}"),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        response.headers()["location"],
+        "/dashboard/webhooks?notice=webhooks-notice-adopted"
+    );
+    assert_eq!(queue_one(&pool, &team_et).await, 1);
+}
+
+#[tokio::test]
+async fn leaving_the_team_suspends_the_webhook() {
+    let (_, pool, _, _) = setup_test_app().await;
+    let (team_id, team_et, leaver, _) = team_webhook_by_second_admin(&pool).await;
+    // Demoted to member: no longer manages the event type.
+    sqlx::query("UPDATE team_members SET role = 'member' WHERE team_id = ? AND user_id = ?")
+        .bind(&team_id)
+        .bind(&leaver)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(queue_one(&pool, &team_et).await, 0);
+    // Removed from the team altogether: same.
+    sqlx::query("DELETE FROM team_members WHERE team_id = ? AND user_id = ?")
+        .bind(&team_id)
+        .bind(&leaver)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(queue_one(&pool, &team_et).await, 0);
+    // The team gone, its event type turns personal: still not theirs.
+    sqlx::query("UPDATE event_types SET team_id = NULL WHERE id = ?")
+        .bind(&team_et)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(queue_one(&pool, &team_et).await, 0);
+}
+
+#[tokio::test]
+async fn the_take_over_is_for_managers_only() {
+    let (app, pool, _, _) = setup_test_app().await;
+    let (_, _, leaver, wid) = team_webhook_by_second_admin(&pool).await;
+    crate::auth::delete_user(&pool, &leaver, None, None)
+        .await
+        .unwrap();
+    let (_, outsider) =
+        insert_test_user_with_session(&pool, "Out", "out@example.com", "outsider").await;
+    let csrf = "csrf-wh-adopt-out";
+    app.oneshot(post_form(
+        &format!("/dashboard/webhooks/{wid}/adopt"),
+        &outsider,
+        csrf,
+        &format!("_csrf={csrf}"),
+    ))
+    .await
+    .unwrap();
+    let owner: Option<String> = sqlx::query_scalar("SELECT user_id FROM webhooks")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(owner.is_none());
+}
+
+#[tokio::test]
+async fn queues_of_webhooks_that_stop_sending_are_dropped() {
+    let (app, pool, admin_session, _) = setup_test_app().await;
+    let member = insert_role_user(&pool, "member@example.com", "user").await;
+    let member_et = insert_personal_et(&pool, &member, "member-meeting").await;
     sqlx::query("UPDATE auth_config SET webhooks_allow_all_users = 1 WHERE id = 'singleton'")
         .execute(&pool)
         .await
         .unwrap();
-    wh::enqueue(&pool, &booking_id, Event::Created, Context::default()).await;
-    assert_eq!(deliveries(&pool).await.len(), 1);
+    insert_webhook(&pool, &member, None, "https://93.184.215.14/m").await;
+    assert_eq!(queue_one(&pool, &member_et).await, 1);
+
+    // The admin switch goes off: the member's queue goes at once.
+    let csrf = "csrf-wh-policy";
+    app.oneshot(post_form(
+        "/dashboard/admin/webhooks/policy",
+        &admin_session,
+        csrf,
+        &format!("_csrf={csrf}"),
+    ))
+    .await
+    .unwrap();
+    assert!(deliveries(&pool).await.is_empty());
+
+    // The member is disabled: dropped at the next pass.
+    sqlx::query("UPDATE auth_config SET webhooks_allow_all_users = 1 WHERE id = 'singleton'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(queue_one(&pool, &member_et).await, 1);
+    sqlx::query("UPDATE users SET enabled = 0 WHERE id = ?")
+        .bind(&member)
+        .execute(&pool)
+        .await
+        .unwrap();
+    wh::start_pass(&pool, &[0u8; 32], Utc::now(), &local()).await;
+    assert!(deliveries(&pool).await.is_empty());
 }
 
 #[tokio::test]
-async fn an_admins_event_type_webhook_keeps_working_after_they_are_deleted() {
+async fn deliveries_are_given_up_after_a_day() {
     let pool = setup_test_db().await;
-    let (owner, _, _) = seed_test_data(&pool).await;
-    let second_admin = insert_role_user(&pool, "admin2@example.com", "admin").await;
-    let (_, team_et) = insert_team_with_et(
-        &pool,
-        "admin-team",
-        "admin-call",
-        &[(&owner, "admin"), (&second_admin, "admin")],
-    )
-    .await;
-    insert_webhook(
-        &pool,
-        &second_admin,
-        Some(&team_et),
-        "https://93.184.215.14/t",
-    )
-    .await;
-    crate::auth::delete_user(&pool, &second_admin, None, None)
-        .await
-        .unwrap();
-    let (booking_id, _, _) = insert_test_booking(
-        &pool,
-        &team_et,
-        "2030-01-07T10:00:00",
-        "2030-01-07T10:30:00",
-        "confirmed",
-    )
-    .await;
-    // Switch off (the default): still delivered, as before the deletion.
-    wh::enqueue(&pool, &booking_id, Event::Created, Context::default()).await;
-    assert_eq!(deliveries(&pool).await.len(), 1);
+    let (user_id, _, et_id) = seed_test_data(&pool).await;
+    insert_webhook(&pool, &user_id, None, "https://93.184.215.14/hook").await;
+    assert_eq!(queue_one(&pool, &et_id).await, 1);
+    // A day later, still pending (held back, say): given up, then pruned.
+    wh::prune(&pool, Utc::now()).await;
+    assert_eq!(deliveries(&pool).await[0].2, "pending");
+    wh::prune(&pool, Utc::now() + Duration::hours(25)).await;
+    assert_eq!(deliveries(&pool).await[0].2, "failed");
+    wh::prune(&pool, Utc::now() + Duration::days(8)).await;
+    assert!(deliveries(&pool).await.is_empty());
 }
 
 #[tokio::test]

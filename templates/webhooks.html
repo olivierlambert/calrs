@@ -66,6 +66,8 @@
             <br>{% if w.all_events %}{{ t("webhooks-events-all") }}{% else %}{{ t("webhooks-events") }}: {% for e in w.events if e.checked %}{{ t(e.label_key) }}{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}
           </div>
           <div class="wh-meta">
+            {% if w.suspended %}<span class="wh-state is-error">{{ t("webhooks-state-suspended") }}</span><br>
+            {% endif %}
             {% if not w.enabled %}<span class="wh-state">{{ t("webhooks-state-off") }}</span>
             {% elif not w.last_attempt_at %}{{ t("webhooks-never-sent") }}
             {% elif w.last_error %}<span class="wh-state is-error">{{ t("webhooks-state-failing") }}</span> <time class="tabular" datetime="{{ w.last_attempt_iso }}">{{ w.last_attempt_at }} UTC</time>
@@ -77,6 +79,11 @@
           {% if w.enabled and w.last_error %}<div class="wh-error">{{ w.last_error }}</div>{% endif %}
         </div>
         <div class="wh-actions">
+          {% if w.suspended and not w.personal %}
+          <form method="post" action="/dashboard/webhooks/{{ w.id }}/adopt">
+            <button type="submit" class="ui-btn ui-btn--sm ui-btn--primary">{{ t("webhooks-adopt") }}</button>
+          </form>
+          {% endif %}
           <form method="post" action="/dashboard/webhooks/{{ w.id }}/test">
             <button type="submit" class="ui-btn ui-btn--sm">{{ t("webhooks-send-test") }}</button>
           </form>

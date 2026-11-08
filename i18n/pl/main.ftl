@@ -2047,3 +2047,6 @@ webhooks-error-events = Wybierz co najmniej jedno zdarzenie.
 webhooks-error-test-limit = Zbyt wiele testów w krótkim czasie. Odczekaj kilka minut i spróbuj ponownie.
 webhooks-added-by-former = Dodane przez byłego członka
 webhooks-signature-help = Każde żądanie jest podpisane: <code>X-Calrs-Signature: sha256=&lt;hex&gt;</code> to HMAC-SHA256 surowej treści z sekretem podpisu jako kluczem. Treść i kontrole po stronie odbiorcy opisuje strona Webhooki w dokumentacji calrs.
+webhooks-state-suspended = Wstrzymany: osoba, która go dodała, nie może już zarządzać tym typem wydarzenia. Przejmij go, aby go wznowić.
+webhooks-adopt = Przejmij
+webhooks-notice-adopted = Przejęto i wznowiono webhook.
