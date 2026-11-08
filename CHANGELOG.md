@@ -191,6 +191,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 ### Changed
 
 - **Booking directory scales to large instances** (#340) - The directory's visibility rules, search and favorites filter now run in SQL, 50 meetings to a page with Previous and Next links once there are more, and the host search only reads the members of the meetings on the page. Search stays literal, case blind in every alphabet, and multi-word. The dashboard shows the first 12 favorites and links to the rest. A favorite still never grants access: every query applies the same checks. A directory that fits on one page looks exactly as before.
+- **Admin Users tab and overview on large instances** (#343) - Past 100 users, the Users tab searches, filters, sorts and pages on the server (25 rows per page, state in the URL), so 2,000 users no longer mean megabytes of HTML; promote, disable and delete return to the same page. The overview's booking figures (totals, weekly chart, rankings) are kept for a minute when they are slow to compute, with a note saying how old they are; user counts, calendar health and the attention list stay live. Smaller instances behave as before.
 
 ## [2.0.0-beta.2] - 2026-11-07
 

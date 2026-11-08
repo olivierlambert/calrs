@@ -1897,3 +1897,5 @@ pager-label = Páginas
 pager-range = { $from } a { $to } de { $total }
 pager-previous = Anterior
 pager-next = Próxima
+admin-users-search = Buscar
+admin-figures-cached = Números de agendamentos calculados há { $seconds } s.

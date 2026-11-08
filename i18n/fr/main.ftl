@@ -1897,3 +1897,5 @@ pager-label = Pages
 pager-range = { $from } à { $to } sur { $total }
 pager-previous = Précédent
 pager-next = Suivant
+admin-users-search = Rechercher
+admin-figures-cached = Chiffres des réservations calculés il y a { $seconds } s.

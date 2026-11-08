@@ -163,6 +163,9 @@ pub struct AppState {
     /// than "du" (`auth_config.german_formal`). Applied to each request by
     /// `german_formal_middleware`; updated on admin save.
     pub german_formal: std::sync::atomic::AtomicBool,
+    /// The admin overview's booking-wide figures, kept for a minute on
+    /// instances where they are slow to compute (#343).
+    pub(crate) admin_figures: admin_stats::FiguresCache,
 }
 
 // --- CSRF protection (double-submit cookie pattern) ---
@@ -674,6 +677,7 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
         csp: tokio::sync::RwLock::new(initial_csp),
         csp_baseline: build_csp(&None),
         german_formal: std::sync::atomic::AtomicBool::new(initial_german_formal),
+        admin_figures: admin_stats::FiguresCache::default(),
     });
 
     Router::new()

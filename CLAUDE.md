@@ -153,7 +153,7 @@ Files: `src/web/` (see `ARCHITECTURE.md` for which file owns which page), templa
 - `/dashboard/teams` — Teams listing (create/edit/manage members/delete)
 - `/dashboard/invite-links` — Internal event types (personal + team) visible to authenticated users, with quick invite link generation (renamed from `/dashboard/organization`)
 
-**Admin panel** (`/dashboard/admin`): User management (promote/demote, enable/disable), auth settings (registration toggle, allowed domains), OIDC config, SMTP status, groups overview, impersonation. Requires `AdminUser`.
+**Admin panel** (`/dashboard/admin`): User management (promote/demote, enable/disable), auth settings (registration toggle, allowed domains), OIDC config, SMTP status, groups overview, impersonation. Requires `AdminUser`. Past `USERS_INLINE_MAX` (100) users the Users tab is paged on the server (`UserListState` in `admin.rs`, params `uq`/`uf`/`us`/`ud`/`up`, 25 rows); below it every user is rendered and the browser filters, as before. User actions post a `back` field that is parsed and rebuilt, never echoed. The overview's booking-wide figures are cached for 60 s in `AppState.admin_figures` (`admin_stats::FiguresCache`) only when computing them took at least 40 ms, so small instances stay live (#343).
 
 **Public pages:** User profile (`/u/{username}`), team profile (`/team/{slug}`), time slot picker (Cal.com-style 3-panel layout with switchable month/week/column views), booking form (with optional additional attendees), confirmation page. Event types support location (video link, phone, in-person, custom). Dark/light theme toggle on all public pages. Legacy `/g/{group-slug}` URLs redirect to `/team/{slug}`.
 

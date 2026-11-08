@@ -1897,3 +1897,5 @@ pager-label = Lehed
 pager-range = { $from } kuni { $to }, kokku { $total }
 pager-previous = Eelmine
 pager-next = Järgmine
+admin-users-search = Otsi
+admin-figures-cached = Broneeringute arvud arvutati { $seconds } s tagasi.

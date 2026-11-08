@@ -1897,3 +1897,5 @@ pager-label = Seiten
 pager-range = { $from } bis { $to } von { $total }
 pager-previous = Zurück
 pager-next = Weiter
+admin-users-search = Suchen
+admin-figures-cached = Buchungszahlen vor { $seconds } s berechnet.

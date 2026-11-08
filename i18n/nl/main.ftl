@@ -1899,3 +1899,5 @@ pager-label = Pagina’s
 pager-range = { $from } tot { $to } van { $total }
 pager-previous = Vorige
 pager-next = Volgende
+admin-users-search = Zoeken
+admin-figures-cached = Boekingscijfers { $seconds } s geleden berekend.

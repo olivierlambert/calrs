@@ -1,7 +1,9 @@
 //! Admin overview: usage and health figures, attention items, last sign-in.
 
 use super::*;
-use crate::web::admin_stats::{iso_utc, load, nice_ceiling, week_axis_labels, week_starts};
+use crate::web::admin_stats::{
+    iso_utc, load, load_cached, nice_ceiling, week_axis_labels, week_starts, FiguresCache,
+};
 
 fn at(y: i32, m: u32, d: u32, h: u32) -> chrono::DateTime<Utc> {
     Utc.with_ymd_and_hms(y, m, d, h, 0, 0).unwrap()
@@ -647,4 +649,47 @@ async fn overview_renders_for_admins_without_secrets() {
     let body = body_string(response).await;
     assert!(!body.contains("Bookings per week"));
     assert!(!body.contains("PROPFIND returned 401"));
+}
+
+#[tokio::test]
+async fn booking_figures_are_cached_for_a_minute_when_costly_and_users_stay_live() {
+    let pool = setup_test_db().await;
+    let (_, _, et) = seed_test_data(&pool).await;
+    let now = at(2026, 11, 7, 12);
+    insert_booking(&pool, &et, None, dt(2026, 11, 9, 10, 0), "confirmed").await;
+    let std_secs = std::time::Duration::from_secs;
+
+    // Cached whatever the cost: the second read serves the first figures.
+    let cache = FiguresCache::new(std_secs(60), std_secs(0));
+    let (s, age) = load_cached(&pool, &cache, now, WeekStart::Mon, "en").await;
+    assert_eq!((s.bookings.total, age), (1, None));
+    insert_booking(&pool, &et, None, dt(2026, 11, 9, 11, 0), "confirmed").await;
+    add_user(&pool, "late@example.com", "user", "local", true).await;
+    let (s, age) = load_cached(&pool, &cache, now, WeekStart::Mon, "en").await;
+    assert_eq!(s.bookings.total, 1);
+    assert!(age.is_some());
+    // The user figures (Users tab chips, attention) are never cached.
+    assert_eq!(
+        s.users.total,
+        load(&pool, now, WeekStart::Mon, "en").await.users.total
+    );
+    // Another language or week start has its own labels: recomputed.
+    let (s, age) = load_cached(&pool, &cache, now, WeekStart::Sun, "en").await;
+    assert_eq!((s.bookings.total, age), (2, None));
+    let (s, age) = load_cached(&pool, &cache, now, WeekStart::Sun, "fr").await;
+    assert_eq!((s.bookings.total, age), (2, None));
+
+    // Expired figures are recomputed.
+    let cache = FiguresCache::new(std_secs(0), std_secs(0));
+    load_cached(&pool, &cache, now, WeekStart::Mon, "en").await;
+    insert_booking(&pool, &et, None, dt(2026, 11, 9, 12, 0), "confirmed").await;
+    let (s, age) = load_cached(&pool, &cache, now, WeekStart::Mon, "en").await;
+    assert_eq!((s.bookings.total, age), (3, None));
+
+    // Cheap figures (a small instance) are never cached: always live.
+    let cache = FiguresCache::new(std_secs(60), std_secs(3600));
+    load_cached(&pool, &cache, now, WeekStart::Mon, "en").await;
+    insert_booking(&pool, &et, None, dt(2026, 11, 9, 13, 0), "confirmed").await;
+    let (s, age) = load_cached(&pool, &cache, now, WeekStart::Mon, "en").await;
+    assert_eq!((s.bookings.total, age), (4, None));
 }

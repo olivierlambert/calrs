@@ -1968,3 +1968,5 @@ pager-label = Strony
 pager-range = Od { $from } do { $to } z { $total }
 pager-previous = Poprzednia
 pager-next = Następna
+admin-users-search = Szukaj
+admin-figures-cached = Dane o rezerwacjach obliczone { $seconds } s temu.
