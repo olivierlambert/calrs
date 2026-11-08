@@ -250,9 +250,9 @@ Discovery and endpoints:
 | `POST /oauth/token` | Code exchange and refresh |
 | `POST /oauth/revoke` | Revoke a grant |
 
-The OAuth server is implemented separately from MCP, so its grant/token machinery
-can be extended to other first-party resources later. Currently `/mcp` is the
-only supported resource.
+The OAuth server is implemented separately from MCP. It serves two resources:
+`/mcp` and the [REST API](./api.md) (`/api/v1`, with its own scopes). A grant
+is bound to one resource, so a token for one never opens the other.
 
 ## Transport details
 

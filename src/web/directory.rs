@@ -498,3 +498,74 @@ pub(super) async fn set_directory_favorite(
     }
     axum::Json(serde_json::json!({"favorite": form.favorite})).into_response()
 }
+
+/// An event type an integration may see (`distributable_event_types`).
+pub(super) struct DistributableEventType {
+    pub(super) id: String,
+    pub(super) slug: String,
+    pub(super) title: String,
+    pub(super) duration_min: i32,
+    pub(super) visibility: String,
+    pub(super) team_id: Option<String>,
+    /// The user owns it (personal) or administers its team. No global admin
+    /// bypass: an admin's integration reaches what the admin manages.
+    pub(super) manages: bool,
+}
+
+/// One page of the enabled event types `user_id` may hand out from an
+/// integration (MCP `list_event_types`, the REST API): those they manage,
+/// and the internal ones the booking directory offers them. Pages over
+/// stable ids, 100 candidates at a time, so a page can be short, or empty,
+/// and still have a next cursor. Two queries per page plus one indexed
+/// directory lookup per unmanaged internal candidate.
+pub(super) async fn distributable_event_types(
+    pool: &SqlitePool,
+    user_id: &str,
+    cursor: Option<&str>,
+) -> Result<(Vec<DistributableEventType>, Option<String>), sqlx::Error> {
+    #[allow(clippy::type_complexity)]
+    let rows: Vec<(String, String, String, i32, String, Option<String>, bool)> = sqlx::query_as(&format!(
+        "SELECT et.id, et.slug, et.title, et.duration_min, et.visibility, et.team_id, {MANAGES_EVENT_TYPE}
+         FROM event_types et LEFT JOIN accounts a ON a.id = et.account_id
+         WHERE et.enabled = 1 AND et.id > ? ORDER BY et.id LIMIT 101"
+    ))
+    .bind(user_id)
+    .bind(user_id)
+    .bind(cursor.unwrap_or(""))
+    .fetch_all(pool)
+    .await?;
+    // Internal types the user does not manage: only this page's candidates
+    // are checked against the directory (is_listed), never the whole of it.
+    let mut offered = std::collections::HashSet::new();
+    for row in rows.iter().take(100).filter(|r| r.4 == "internal" && !r.6) {
+        if is_listed(pool, user_id, &row.0).await? {
+            offered.insert(row.0.clone());
+        }
+    }
+    let next = (rows.len() > 100).then(|| rows[99].0.clone());
+    let events = rows
+        .into_iter()
+        .take(100)
+        .filter(|r| r.6 || (r.4 == "internal" && offered.contains(&r.0)))
+        .map(
+            |(id, slug, title, duration_min, visibility, team_id, manages)| {
+                DistributableEventType {
+                    id,
+                    slug,
+                    title,
+                    duration_min,
+                    visibility,
+                    team_id,
+                    manages,
+                }
+            },
+        )
+        .collect();
+    Ok((events, next))
+}
+
+/// Whether user `?` manages event type `et`: owns it (personal, through
+/// its account `a`) or administers its team. Binds the user id twice.
+pub(super) const MANAGES_EVENT_TYPE: &str = "((et.team_id IS NULL AND a.user_id = ?)
+    OR (et.team_id IS NOT NULL AND EXISTS (SELECT 1 FROM team_members tm
+        WHERE tm.team_id = et.team_id AND tm.user_id = ? AND tm.role = 'admin')))";

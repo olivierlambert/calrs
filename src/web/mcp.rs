@@ -263,41 +263,13 @@ async fn call_tool(
             if args.cursor.as_ref().is_some_and(|s| s.len() > 64) {
                 return Err("Invalid cursor.".into());
             }
-            // Page over stable IDs. Whether the user manages each row (owner
-            // or team admin, no global admin bypass, as create_invite_link)
-            // comes from the same query; internal types they do not manage are
-            // listed when the directory offers them. Two queries per page.
-            // Sparse pages still advance next_cursor.
-            #[allow(clippy::type_complexity)]
-            let rows: Vec<(String, String, String, i32, String, Option<String>, bool)> = sqlx::query_as(
-                "SELECT et.id, et.slug, et.title, et.duration_min, et.visibility, et.team_id,
-                        ((et.team_id IS NULL AND a.user_id = ?)
-                         OR (et.team_id IS NOT NULL AND EXISTS (SELECT 1 FROM team_members tm
-                             WHERE tm.team_id = et.team_id AND tm.user_id = ? AND tm.role = 'admin')))
-                 FROM event_types et LEFT JOIN accounts a ON a.id = et.account_id
-                 WHERE et.enabled = 1 AND et.id > ? ORDER BY et.id LIMIT 101")
-                .bind(&user.id).bind(&user.id).bind(args.cursor.as_deref().unwrap_or("")).fetch_all(pool).await.map_err(db_error)?;
-            // Internal types the user does not manage: only this page's
-            // candidates are checked against the directory (is_listed, one
-            // indexed lookup each), never the whole directory.
-            let mut offered = std::collections::HashSet::new();
-            for row in rows.iter().take(100).filter(|r| r.4 == "internal" && !r.6) {
-                if is_listed(pool, &user.id, &row.0).await.map_err(db_error)? {
-                    offered.insert(row.0.clone());
-                }
-            }
-            let next = if rows.len() > 100 {
-                Some(rows[99].0.clone())
-            } else {
-                None
-            };
-            let mut events = Vec::new();
-            for (id, slug, title, duration, visibility, team, manages) in rows.into_iter().take(100)
-            {
-                if manages || (visibility == "internal" && offered.contains(&id)) {
-                    events.push(json!({"id":id,"slug":slug,"title":title,"duration_min":duration,"visibility":visibility,"team_id":team}));
-                }
-            }
+            let (listed, next) = distributable_event_types(pool, &user.id, args.cursor.as_deref())
+                .await
+                .map_err(db_error)?;
+            let events: Vec<Value> = listed
+                .into_iter()
+                .map(|e| json!({"id":e.id,"slug":e.slug,"title":e.title,"duration_min":e.duration_min,"visibility":e.visibility,"team_id":e.team_id}))
+                .collect();
             Ok(json!({"event_types":events,"next_cursor":next}))
         }
         "create_invite_link" => {

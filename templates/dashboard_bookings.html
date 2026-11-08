@@ -138,6 +138,10 @@
         {{ notes_link(b, " booking-action-btn") }}
         {% if not (b.awaiting_reschedule is defined and b.awaiting_reschedule) %}
         <a href="/dashboard/bookings/{{ b.id }}/reschedule" class="ui-btn ui-btn--sm booking-action-btn">{{ t("bookings-reschedule") }}</a>
+        {% else %}
+        <form method="post" action="/dashboard/bookings/{{ b.id }}/reschedule/resend" class="booking-action-btn" style="margin: 0;">
+          <button type="submit" class="ui-btn ui-btn--sm" title="{{ t('bookings-resend-reschedule-hint') }}">{{ t("bookings-resend-reschedule") }}</button>
+        </form>
         {% endif %}
         <button type="button" class="ui-btn ui-btn--sm ui-btn--danger booking-action-btn" onclick="var p=this.parentElement; p.querySelectorAll('.booking-action-btn').forEach(function(b){b.hidden=true}); var f=p.querySelector('.cancel-form'); f.classList.add('is-open'); f.querySelector('input').focus();">{{ t("bookings-cancel") }}</button>
         <form method="post" action="/dashboard/bookings/{{ b.id }}/cancel" class="cancel-form">
