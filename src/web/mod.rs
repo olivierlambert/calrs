@@ -25,6 +25,7 @@ mod time_off;
 mod webhook_pages;
 pub(crate) mod webhooks;
 mod week_start;
+mod write_targets;
 pub(crate) mod writeback;
 
 use crate::booking_window::{
@@ -87,6 +88,7 @@ use teams::*;
 use time_off::*;
 use webhook_pages::*;
 pub use webhooks::run_webhook_loop;
+use write_targets::*;
 
 /// Simple per-IP rate limiter for login attempts.
 /// Tracks (attempt_count, window_start) per IP.
@@ -804,6 +806,10 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
         .route(
             "/dashboard/sources/{id}/calendars",
             get(source_calendars_form).post(update_source_calendars),
+        )
+        .route(
+            "/dashboard/sources/destinations",
+            post(save_write_destinations),
         )
         // Settings & avatar
         .route(

@@ -1974,6 +1974,18 @@ pager-previous = Précédent
 pager-next = Suivant
 admin-users-search = Rechercher
 admin-figures-cached = Chiffres des réservations calculés il y a { $seconds } s.
+
+# Write destination per event type (#47)
+etf-write-destination = Écrire les réservations confirmées dans
+etf-write-destination-default = Par défaut (réglage de la source)
+etf-write-destination-help = Pour ce type d'événement uniquement. Par défaut, elles sont écrites dans l'agenda d'écriture de chacune de vos sources. Sur un type d'événement d'équipe, ce choix ne concerne que les réservations dont vous êtes l'hôte.
+etf-write-destination-team = Chaque membre choisit où sont écrites les réservations dont il est l'hôte, dans { $link }.
+sources-destinations-heading = Réservations par type d'événement
+sources-destinations-help = Choisissez l'agenda dans lequel sont écrites les réservations confirmées de chaque type d'événement. Sur un type d'événement d'équipe, ce choix concerne les réservations dont vous êtes l'hôte ; les autres membres choisissent le leur. Les réservations déjà écrites suivent à leur prochaine écriture : report, approbation, nouvelle tentative ou prise en charge.
+sources-destinations-saved = Enregistré. Les nouvelles réservations vont dans les agendas choisis ici.
+write-destination-not-yours = Rien n'a été enregistré : choisissez l'un de vos propres agendas, pour un type d'événement dont vous êtes l'hôte.
+write-destination-unavailable = { $name } (indisponible)
+write-destination-refused = Cet agenda a refusé la dernière réservation ({ $error }), qui a été écrite selon le réglage de la source. La prochaine réservation le réessaiera.
 # Booking webhooks (templates/webhooks.html, admin card, #168)
 webhooks-title = Webhooks
 webhooks-back = Retour aux types d'événement

@@ -64,6 +64,31 @@ fn summarize(failures: &[(String, String)]) -> String {
     }
 }
 
+/// The lock serialising pushes of one booking, created on first use and
+/// dropped once nobody holds it.
+fn booking_push_lock(booking_uid: &str) -> std::sync::Arc<tokio::sync::Mutex<()>> {
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex, OnceLock, Weak};
+    static LOCKS: OnceLock<Mutex<HashMap<String, Weak<tokio::sync::Mutex<()>>>>> = OnceLock::new();
+    let mut locks = LOCKS
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    locks.retain(|_, lock| lock.strong_count() > 0);
+    if let Some(lock) = locks.get(booking_uid).and_then(Weak::upgrade) {
+        return lock;
+    }
+    let lock = Arc::new(tokio::sync::Mutex::new(()));
+    locks.insert(booking_uid.to_string(), Arc::downgrade(&lock));
+    lock
+}
+
+/// Hold the push lock of a booking, for tests.
+#[cfg(test)]
+pub(super) async fn hold_push_lock(booking_uid: &str) -> tokio::sync::OwnedMutexGuard<()> {
+    booking_push_lock(booking_uid).lock_owned().await
+}
+
 /// Push a booking to every calendar it belongs to (see
 /// `booking_write_targets`) and record the outcome on the booking. Returns
 /// the failures as (user id, message), empty on success.
@@ -75,9 +100,28 @@ pub(super) async fn push_and_record(
     details: &crate::email::BookingDetails,
     kind: PushKind,
 ) -> Vec<(String, String)> {
+    // One push per booking at a time: two pushes racing a change of
+    // destination could each release the copy the other just wrote (#47).
+    let lock = booking_push_lock(booking_uid);
+    let _guard = lock.lock().await;
+
     let mut failures = Vec::new();
     let targets = super::booking_write_targets(pool, booking_uid, user_id).await;
+    // Read before anything is written: whether earlier copies may need to
+    // move once this push has landed (#47).
+    let was_written = super::was_written(pool, booking_uid).await;
+    let had_copies = super::copy_users(pool, booking_uid).await;
+    let mut plans = Vec::with_capacity(targets.len());
+    let mut pushed_ok = Vec::with_capacity(targets.len());
     for target in &targets {
+        let (mut sources, mut plan) = super::host_write_sources(pool, booking_uid, target).await;
+        if was_written && plan == super::WritePlan::Destination && !had_copies.contains(target) {
+            // The booking's first push to a chosen destination: what the
+            // source setting wrote before is recorded first, so it is
+            // released once this push lands, or deleted by a cancellation
+            // if it never does.
+            super::record_source_copies(pool, booking_uid, target).await;
+        }
         // The only host-language text in the event is the phone label, and
         // each copy belongs to its target: every collective member reads it
         // in their own language, and a caller that left `host_language`
@@ -93,15 +137,109 @@ pub(super) async fn push_and_record(
             details
         };
         let owner = super::CopyOwner::Host;
-        for msg in
-            super::caldav_push_booking_for_user(pool, key, target, booking_uid, details, owner, &[])
-                .await
-        {
-            failures.push((target.clone(), msg));
+        let mut pushed = super::push_to_sources(
+            pool,
+            key,
+            target,
+            booking_uid,
+            details,
+            owner,
+            &[],
+            &sources,
+            plan,
+        )
+        .await;
+        if plan == super::WritePlan::Destination {
+            let refusal = match pushed.as_slice() {
+                [only] => only.refusal.clone(),
+                _ => None,
+            };
+            if let Some(refusal) = refusal {
+                // The chosen calendar is gone or read-only: tell the host on
+                // the sources page, and write to the source setting instead
+                // when there is one. With none, the refusal stays a failure,
+                // so the badge and the alert still reach the host.
+                super::note_refusal(pool, booking_uid, target, &refusal).await;
+                let fallback = super::default_write_sources(pool, target).await;
+                if fallback.is_empty() {
+                    tracing::warn!(uid = %booking_uid, user_id = %target, refusal = %refusal, "chosen write calendar refused the booking and there is no source write calendar to fall back to");
+                } else {
+                    tracing::warn!(uid = %booking_uid, user_id = %target, refusal = %refusal, "chosen write calendar refused the booking; writing it to the source setting");
+                    sources = fallback;
+                    plan = super::WritePlan::Source;
+                    pushed = super::push_to_sources(
+                        pool,
+                        key,
+                        target,
+                        booking_uid,
+                        details,
+                        owner,
+                        &[],
+                        &sources,
+                        plan,
+                    )
+                    .await;
+                }
+            } else if pushed.is_empty() {
+                super::clear_refusal(pool, booking_uid, target).await;
+            }
+        }
+        pushed_ok.push(pushed.is_empty());
+        for failure in pushed {
+            failures.push((target.clone(), failure.message));
+        }
+        plans.push((sources, plan));
+    }
+    // Every collection this push wrote to (or tried to), for every host.
+    let host_collections: Vec<super::Collection> = plans
+        .iter()
+        .flat_map(|(rows, _)| rows.iter().map(super::row_collection))
+        .collect();
+
+    // Only now, with the new copies written, release the copies no longer
+    // where the booking goes, and only for hosts whose write landed: a
+    // failed write keeps the old copy, which the orphan sweep still sees.
+    let mut released = Vec::new();
+    if was_written {
+        for ((target, (_, plan)), ok) in targets.iter().zip(&plans).zip(&pushed_ok) {
+            if *ok {
+                released.extend(
+                    super::release_moved_copies(
+                        pool,
+                        key,
+                        booking_uid,
+                        target,
+                        *plan,
+                        &host_collections,
+                    )
+                    .await,
+                );
+            }
+        }
+        // Former hosts' copies go only once every current host's copy landed.
+        if pushed_ok.iter().all(|ok| *ok) {
+            released.extend(
+                super::release_former_hosts(pool, key, booking_uid, &targets, &host_collections)
+                    .await,
+            );
         }
     }
+    if !released.is_empty() {
+        let written: Vec<super::CopyPlace> = plans
+            .iter()
+            .zip(&pushed_ok)
+            .filter(|(_, ok)| **ok)
+            .flat_map(|((rows, _), _)| rows.iter().map(|row| (row.0.clone(), row.4.clone())))
+            .collect();
+        super::repoint_href(pool, booking_uid, &released, &written).await;
+    }
+
+    // A released copy may have been the one a claimant shared with a host,
+    // and a retry writes no claimant copy otherwise: write it again then.
+    if kind == PushKind::Fresh || !released.is_empty() {
+        push_claimant_copy(pool, key, booking_uid, details, &targets, &host_collections).await;
+    }
     if kind == PushKind::Fresh {
-        push_claimant_copy(pool, key, booking_uid, details, &targets).await;
         // The booking may have ended while it was being written (a claim
         // racing a cancellation), after the cancellation looked for the
         // events: do not leave them behind. The retry sweep does the same
@@ -135,6 +273,7 @@ async fn push_claimant_copy(
     booking_uid: &str,
     details: &crate::email::BookingDetails,
     targets: &[String],
+    host_collections: &[super::Collection],
 ) {
     // A claimant who is also a host already has the host's copy.
     let Some(claimant) = super::booking_claimant(pool, booking_uid)
@@ -145,11 +284,8 @@ async fn push_claimant_copy(
     };
     // A collection the claimant shares with a host (a team calendar) already
     // holds the host's event: a second PUT of the uid would replace it,
-    // phone included, with the claimant's copy.
-    let mut host_collections = Vec::new();
-    for target in targets {
-        host_collections.extend(super::write_collections(pool, target).await);
-    }
+    // phone included, with the claimant's copy. `host_collections` is where
+    // the hosts' copies went, their chosen destinations included (#47).
     let details = crate::email::BookingDetails {
         guest_phone: None,
         ..details.clone()
@@ -162,7 +298,7 @@ async fn push_claimant_copy(
         booking_uid,
         &details,
         owner,
-        &host_collections,
+        host_collections,
     )
     .await
     {

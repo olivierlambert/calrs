@@ -2204,7 +2204,7 @@ pub(super) async fn guest_reschedule_booking(
             // event sits on the owner's calendar. Must run before the href
             // is cleared below, which drops the only pointer to it.
             caldav_delete_booking(&state.pool, &state.secret_key, &host_user_id, &uid).await;
-            let _ = sqlx::query("UPDATE bookings SET caldav_calendar_href = NULL WHERE id = ?")
+            let _ = sqlx::query("UPDATE bookings SET caldav_calendar_href = NULL, caldav_source_id = NULL WHERE id = ?")
                 .bind(&booking_id)
                 .execute(&state.pool)
                 .await;

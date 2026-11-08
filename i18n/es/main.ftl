@@ -1974,6 +1974,18 @@ pager-previous = Anterior
 pager-next = Siguiente
 admin-users-search = Buscar
 admin-figures-cached = Cifras de reservas calculadas hace { $seconds } s.
+
+# Write destination per event type (#47)
+etf-write-destination = Escribir las reservas confirmadas en
+etf-write-destination-default = Predeterminado (ajuste de la fuente)
+etf-write-destination-help = Solo para este tipo de evento. De forma predeterminada se escriben en el calendario de escritura de cada una de tus fuentes. En un tipo de evento de equipo, solo afecta a las reservas que atiendes tú.
+etf-write-destination-team = Cada miembro elige dónde se escriben las reservas que atiende, en { $link }.
+sources-destinations-heading = Reservas por tipo de evento
+sources-destinations-help = Elige el calendario en el que se escriben las reservas confirmadas de cada tipo de evento. En un tipo de evento de equipo afecta a las reservas que atiendes tú; los demás miembros eligen el suyo. Las reservas ya escritas se mueven en su próxima escritura: una reprogramación, una aprobación, un reintento o una asignación.
+sources-destinations-saved = Guardado. Las nuevas reservas van a los calendarios elegidos aquí.
+write-destination-not-yours = No se guardó nada: elige uno de tus propios calendarios, para un tipo de evento que atiendas.
+write-destination-unavailable = { $name } (no disponible)
+write-destination-refused = Este calendario rechazó la última reserva ({ $error }), que se escribió según el ajuste de la fuente. La próxima reserva lo volverá a intentar.
 # Booking webhooks (templates/webhooks.html, admin card, #168)
 webhooks-title = Webhooks
 webhooks-back = Volver a los tipos de evento
