@@ -585,7 +585,7 @@ pub(super) async fn new_event_type_form(
             teams => groups_ctx,
             calendars => calendars_ctx,
             selected_calendar_ids => "",
-            write_destination => destination_form_ctx(&state.pool, &user.id, "").await,
+            write_destination => destination_form_ctx(&state.pool, &user.id, auth_user.lang, None, "").await,
             resources_all => resources_all,
             can_manage_resources => auth_user.user.role == "admin",
             can_enable_sms => can_enable_sms(&state.pool, &auth_user.user).await,
@@ -718,9 +718,10 @@ pub(super) async fn create_event_type(
         .into_response();
     }
 
-    if !is_destination_choice(
+    if !acceptable_destination(
         &state.pool,
         &user.id,
+        None,
         form.write_calendar_id.as_deref().unwrap_or("").trim(),
     )
     .await
@@ -1193,6 +1194,8 @@ pub(super) async fn edit_event_type_form(
             write_destination => destination_form_ctx(
                 &state.pool,
                 &user.id,
+                auth_user.lang,
+                Some(&et_id),
                 &stored_destination(&state.pool, &et_id, &user.id).await.unwrap_or_default(),
             )
             .await,
@@ -1380,9 +1383,10 @@ pub(super) async fn update_event_type(
         .into_response();
     }
 
-    if !is_destination_choice(
+    if !acceptable_destination(
         &state.pool,
         &user.id,
+        Some(&et_id),
         form.write_calendar_id.as_deref().unwrap_or("").trim(),
     )
     .await
@@ -2177,10 +2181,22 @@ async fn render_event_type_form_error(
     };
     // The destination the form posted, so a resubmit keeps it.
     let write_destination = match target {
-        FormTarget::NewPersonal | FormTarget::EditPersonal { .. } => {
+        FormTarget::NewPersonal => {
             destination_form_ctx(
                 pool,
                 &user.id,
+                auth_user.lang,
+                None,
+                form.write_calendar_id.as_deref().unwrap_or(""),
+            )
+            .await
+        }
+        FormTarget::EditPersonal { et_id, .. } => {
+            destination_form_ctx(
+                pool,
+                &user.id,
+                auth_user.lang,
+                Some(et_id),
                 form.write_calendar_id.as_deref().unwrap_or(""),
             )
             .await

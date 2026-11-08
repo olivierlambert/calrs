@@ -4,6 +4,7 @@
 
 use super::writeback_failures::{push_fresh, spawn_mock_dav, writeback_state, DavMode, MockDav};
 use super::*;
+use crate::commands::sync::cancel_orphaned_bookings;
 
 /// A calendar row under `source_id` with `href`. Returns its id.
 async fn insert_calendar(pool: &SqlitePool, source_id: &str, href: &str, name: &str) -> String {
@@ -47,6 +48,40 @@ async fn choose(pool: &SqlitePool, et_id: &str, user_id: &str, calendar_id: &str
     .execute(pool)
     .await
     .unwrap();
+}
+
+/// The booking's event as a sync of `calendar_id` would have cached it.
+async fn cache_event(pool: &SqlitePool, calendar_id: &str, uid: &str) {
+    sqlx::query(
+        "INSERT INTO events (id, calendar_id, uid, summary, start_at, end_at, all_day, timezone, status, transp) \
+         VALUES (?, ?, ?, 'Booking', '20990101T100000', '20990101T103000', 0, 'UTC', 'CONFIRMED', 'OPAQUE')",
+    )
+    .bind(uuid::Uuid::new_v4().to_string())
+    .bind(calendar_id)
+    .bind(uid)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+/// A second source of `user_id` on its own mock server, with one calendar
+/// `href`. Returns (server, source id, calendar id).
+async fn second_source(
+    pool: &SqlitePool,
+    user_id: &str,
+    mode: DavMode,
+    href: &str,
+) -> (Arc<MockDav>, String, String) {
+    let (base, dav) = spawn_mock_dav(mode).await;
+    let source = seed_write_source(pool, user_id, &base).await;
+    // Its write calendar is elsewhere: only the chosen calendar is written.
+    sqlx::query("UPDATE caldav_sources SET write_calendar_href = NULL WHERE id = ?")
+        .bind(&source)
+        .execute(pool)
+        .await
+        .unwrap();
+    let cal = insert_calendar(pool, &source, href, "Chosen").await;
+    (dav, source, cal)
 }
 
 async fn copies(pool: &SqlitePool, uid: &str) -> Vec<(String, String)> {
@@ -675,4 +710,436 @@ async fn the_event_type_form_saves_the_destination() {
         .unwrap();
     let body = body_string(response).await;
     assert_eq!(selected_options(&body, "write_calendar_id"), vec![cal]);
+}
+
+// --- Review fixes ---
+
+/// The blocker: a booking already on the source write calendar W must stay
+/// there, cached and pointed at, until its write to the new destination has
+/// landed. A failed write leaves it all in place, so the orphan sweep of W
+/// keeps the booking; a write that lands moves it, and the sweep of W no
+/// longer looks at it.
+#[tokio::test]
+async fn a_failed_move_keeps_the_old_copy_and_the_orphan_sweep_keeps_the_booking() {
+    let p = personal_fixture().await;
+    push_fresh(&p.pool, &p.host, &p.uid).await;
+    cache_event(&p.pool, &p.work_cal, &p.uid).await;
+    let (dest_dav, dest_source, dest_cal) =
+        second_source(&p.pool, &p.host, DavMode::Reject, "/dav/chosen/").await;
+    choose(&p.pool, &p.et_id, &p.host, &dest_cal).await;
+
+    push_fresh(&p.pool, &p.host, &p.uid).await;
+    assert_eq!(p.dav.paths(), vec![format!("/dav/cal/{}.ics", p.uid)]);
+    assert_eq!(dest_dav.stored(), 0);
+    let (error, _, _, href, _) = writeback_state(&p.pool, &p.id).await;
+    assert!(error.is_some());
+    assert_eq!(href.as_deref(), Some("/dav/cal/"));
+    let cached: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM events WHERE uid = ?")
+        .bind(&p.uid)
+        .fetch_one(&p.pool)
+        .await
+        .unwrap();
+    assert_eq!(cached, 1);
+    cancel_orphaned_bookings(&p.pool, &[0u8; 32], None, &p.source_id).await;
+    assert_eq!(booking_status(&p.pool, &p.id).await, "confirmed");
+
+    // The destination comes back: the next push lands there, then W goes.
+    dest_dav.set_mode(DavMode::Ok);
+    push_fresh(&p.pool, &p.host, &p.uid).await;
+    assert_eq!(dest_dav.paths(), vec![format!("/dav/chosen/{}.ics", p.uid)]);
+    assert_eq!(p.dav.stored(), 0);
+    let (_, _, _, href, _) = writeback_state(&p.pool, &p.id).await;
+    assert_eq!(href.as_deref(), Some("/dav/chosen/"));
+    cancel_orphaned_bookings(&p.pool, &[0u8; 32], None, &p.source_id).await;
+    assert_eq!(booking_status(&p.pool, &p.id).await, "confirmed");
+    cache_event(&p.pool, &dest_cal, &p.uid).await;
+    cancel_orphaned_bookings(&p.pool, &[0u8; 32], None, &dest_source).await;
+    assert_eq!(booking_status(&p.pool, &p.id).await, "confirmed");
+
+    // Deleted from the destination by the host: the sweep of its source
+    // matches the recorded copy and cancels.
+    sqlx::query("DELETE FROM events WHERE uid = ?")
+        .bind(&p.uid)
+        .execute(&p.pool)
+        .await
+        .unwrap();
+    cancel_orphaned_bookings(&p.pool, &[0u8; 32], None, &dest_source).await;
+    assert_eq!(booking_status(&p.pool, &p.id).await, "cancelled");
+}
+
+/// A delete that fails keeps the copy recorded; the next attempt (here the
+/// background sweep, the booking being cancelled) removes it.
+#[tokio::test]
+async fn a_failed_delete_is_retried_by_the_background_sweep() {
+    let p = personal_fixture().await;
+    choose(&p.pool, &p.et_id, &p.host, &p.coaching_cal).await;
+    push_fresh(&p.pool, &p.host, &p.uid).await;
+    sqlx::query("UPDATE bookings SET status = 'cancelled' WHERE id = ?")
+        .bind(&p.id)
+        .execute(&p.pool)
+        .await
+        .unwrap();
+    p.dav.fail_deletes(true);
+    caldav_delete_booking(&p.pool, &[0u8; 32], &p.host, &p.uid).await;
+    assert_eq!(p.dav.stored(), 1);
+    assert_eq!(copies(&p.pool, &p.uid).await.len(), 1);
+
+    p.dav.fail_deletes(false);
+    assert_eq!(
+        sweep_leftover_copies(&p.pool, &[0u8; 32], Utc::now()).await,
+        1
+    );
+    assert_eq!(p.dav.stored(), 0);
+    assert!(copies(&p.pool, &p.uid).await.is_empty());
+    assert_eq!(
+        sweep_leftover_copies(&p.pool, &[0u8; 32], Utc::now()).await,
+        0
+    );
+}
+
+/// A collective member removed from the team after the booking was written
+/// keeps no copy: a cancellation and a push both find theirs.
+#[tokio::test]
+async fn a_removed_members_copy_is_deleted() {
+    let pool = setup_test_db().await;
+    let alice = insert_role_user(&pool, "alice@former.test", "user").await;
+    let bob = insert_role_user(&pool, "bob@former.test", "user").await;
+    for user in [&alice, &bob] {
+        insert_account(&pool, user).await;
+    }
+    let (team_id, et_id) = insert_team_with_et(
+        &pool,
+        "former",
+        "sync",
+        &[(&alice, "admin"), (&bob, "member")],
+    )
+    .await;
+    sqlx::query("UPDATE event_types SET scheduling_mode = 'collective' WHERE id = ?")
+        .bind(&et_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (alice_base, _alice_dav) = spawn_mock_dav(DavMode::Ok).await;
+    seed_write_source(&pool, &alice, &alice_base).await;
+    let (bob_dav, _, bob_cal) = second_source(&pool, &bob, DavMode::Ok, "/dav/bob/").await;
+    choose(&pool, &et_id, &bob, &bob_cal).await;
+    let mut uids = Vec::new();
+    for days in [10, 11] {
+        let id = insert_v1_booking(
+            &pool,
+            &et_id,
+            "guest@former.test",
+            Utc::now() + Duration::days(days),
+            30,
+            "confirmed",
+            &[],
+        )
+        .await;
+        let uid = format!("uid-{id}");
+        push_fresh(&pool, &alice, &uid).await;
+        uids.push(uid);
+    }
+    assert_eq!(bob_dav.stored(), 2);
+    sqlx::query("DELETE FROM team_members WHERE team_id = ? AND user_id = ?")
+        .bind(&team_id)
+        .bind(&bob)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    caldav_delete_booking(&pool, &[0u8; 32], &alice, &uids[0]).await;
+    push_fresh(&pool, &alice, &uids[1]).await;
+    assert_eq!(bob_dav.stored(), 0);
+    assert!(copies(&pool, &uids[1]).await.is_empty());
+}
+
+/// A host whose only Google calendar to write to is the one chosen for the
+/// event type still gets the Meet.
+#[tokio::test]
+async fn a_google_destination_makes_its_host_the_meet_owner() {
+    let pool = setup_test_db().await;
+    let alice = insert_role_user(&pool, "alice@meetowner.test", "user").await;
+    let et_id = insert_personal_et(&pool, &alice, "meet-owner").await;
+    sqlx::query("UPDATE event_types SET location_type = 'google_meet' WHERE id = ?")
+        .bind(&et_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let account_id: String = sqlx::query_scalar("SELECT id FROM accounts WHERE user_id = ?")
+        .bind(&alice)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let source_id = uuid::Uuid::new_v4().to_string();
+    sqlx::query(
+        "INSERT INTO caldav_sources (id, account_id, name, url, username, enabled, \
+             auth_type, oauth2_provider, access_token_enc, token_expires_at) \
+             VALUES (?, ?, 'Google', 'https://apidata.example.test/dav/', 'alice', 1, \
+             'oauth2', 'google', 'unopenable', '2099-01-01T00:00:00')",
+    )
+    .bind(&source_id)
+    .bind(&account_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let cal = insert_calendar(
+        &pool,
+        &source_id,
+        "https://apidata.example.test/dav/c/",
+        "C",
+    )
+    .await;
+    let start = NaiveDate::from_ymd_opt(2026, 3, 17)
+        .unwrap()
+        .and_hms_opt(10, 0, 0)
+        .unwrap();
+    insert_booking(&pool, &et_id, None, start, "confirmed").await;
+    let booking_id: String = sqlx::query_scalar("SELECT id FROM bookings LIMIT 1")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        crate::google_meet::elect_meet_owner(&pool, &booking_id).await,
+        None
+    );
+    assert!(
+        crate::google_meet::google_meet_prereq_error(&pool, Some(&alice), None, Some(&et_id))
+            .await
+            .is_some()
+    );
+    choose(&pool, &et_id, &alice, &cal).await;
+    assert_eq!(
+        crate::google_meet::elect_meet_owner(&pool, &booking_id).await,
+        Some(alice.clone())
+    );
+    assert_eq!(
+        crate::google_meet::google_meet_prereq_error(&pool, Some(&alice), None, Some(&et_id)).await,
+        None
+    );
+}
+
+/// A destination deleted on the server (404) or read-only (403) refuses the
+/// write for good: the booking goes to the source setting at once, without
+/// a failure or retries, and the sources page says so. A later write that
+/// lands on the destination clears the note.
+#[tokio::test]
+async fn a_destination_refusing_writes_falls_back_to_the_source_setting() {
+    let (app, pool, session, et_id) = setup_test_app().await;
+    let host: String = sqlx::query_scalar("SELECT id FROM users WHERE email = 'test@example.com'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let (base, work_dav) = spawn_mock_dav(DavMode::Ok).await;
+    seed_write_source(&pool, &host, &base).await;
+    let (dest_dav, _, dest_cal) = second_source(&pool, &host, DavMode::Gone, "/dav/gone/").await;
+    choose(&pool, &et_id, &host, &dest_cal).await;
+    let id = insert_v1_booking(
+        &pool,
+        &et_id,
+        "guest@refused.test",
+        Utc::now() + Duration::days(10),
+        30,
+        "confirmed",
+        &[],
+    )
+    .await;
+    let uid = format!("uid-{id}");
+    push_fresh(&pool, &host, &uid).await;
+    assert_eq!(work_dav.paths(), vec![format!("/dav/cal/{uid}.ics")]);
+    let (error, attempts, _, href, _) = writeback_state(&pool, &id).await;
+    assert_eq!(error, None);
+    assert_eq!(attempts, 0);
+    assert_eq!(href.as_deref(), Some("/dav/cal/"));
+    assert!(refusal(&pool, &et_id, &host).await.is_some());
+    let body = body_string(
+        app.clone()
+            .oneshot(get_authed("/dashboard/sources", &session))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(
+        body.contains("This calendar refused the last booking"),
+        "{body}"
+    );
+
+    // The calendar is back: the next push goes there and the note goes.
+    dest_dav.set_mode(DavMode::Ok);
+    push_fresh(&pool, &host, &uid).await;
+    assert_eq!(dest_dav.paths(), vec![format!("/dav/gone/{uid}.ics")]);
+    assert_eq!(work_dav.stored(), 0);
+    assert_eq!(refusal(&pool, &et_id, &host).await, None);
+    assert!(definitive_refusal(
+        "Work: PUT http://x/a.ics returned 403 Forbidden"
+    ));
+    assert!(!definitive_refusal(
+        "Work: PUT http://x/a.ics returned 503 Service Unavailable"
+    ));
+}
+
+/// A choice whose source is disabled stays selected (as unavailable) and
+/// survives saving the forms unchanged.
+#[tokio::test]
+async fn a_choice_on_a_disabled_source_survives_saving_the_forms() {
+    let (app, pool, session, et_id) = setup_test_app().await;
+    let host: String = sqlx::query_scalar("SELECT id FROM users WHERE email = 'test@example.com'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    seed_write_source(&pool, &host, "http://127.0.0.1:9/dav/").await;
+    let other = seed_write_source(&pool, &host, "http://127.0.0.1:9/dav/").await;
+    let cal = insert_calendar(&pool, &other, "/dav/off/", "Paused").await;
+    choose(&pool, &et_id, &host, &cal).await;
+    sqlx::query("UPDATE caldav_sources SET enabled = 0 WHERE id = ?")
+        .bind(&other)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let body = body_string(
+        app.clone()
+            .oneshot(get_authed("/dashboard/sources", &session))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(
+        body.contains("Paused (Work calendar) (unavailable)"),
+        "{body}"
+    );
+    assert_eq!(
+        selected_options(&body, &format!("dest-{et_id}")),
+        vec![cal.clone()]
+    );
+    let csrf = "csrf-dest-off";
+    let response = app
+        .clone()
+        .oneshot(post_form(
+            "/dashboard/sources/destinations",
+            &session,
+            csrf,
+            &format!("_csrf={csrf}&et_{et_id}={cal}"),
+        ))
+        .await
+        .unwrap();
+    assert!(response.headers()["location"]
+        .to_str()
+        .unwrap()
+        .contains("destinations=saved"));
+
+    let body = body_string(
+        app.clone()
+            .oneshot(get_authed(
+                "/dashboard/event-types/test-meeting/edit",
+                &session,
+            ))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(
+        selected_options(&body, "write_calendar_id"),
+        vec![cal.clone()]
+    );
+    let response = app
+        .oneshot(post_form(
+            "/dashboard/event-types/test-meeting/edit",
+            &session,
+            csrf,
+            &format!(
+                "_csrf={csrf}&title=Test+Meeting&slug=test-meeting&duration_min=30&location_type=link&location_value=https%3A%2F%2Fmeet.example.com&write_calendar_id={cal}"
+            ),
+        ))
+        .await
+        .unwrap();
+    assert!(response.status().is_redirection(), "{}", response.status());
+    assert_eq!(stored_destination(&pool, &et_id, &host).await, Some(cal));
+}
+
+/// The same href on two servers is two places: a recorded copy on one does
+/// not stop the delete on the other.
+#[tokio::test]
+async fn deletes_tell_apart_the_same_href_on_two_servers() {
+    let pool = setup_test_db().await;
+    let alice = insert_role_user(&pool, "alice@twohref.test", "user").await;
+    let bob = insert_role_user(&pool, "bob@twohref.test", "user").await;
+    for user in [&alice, &bob] {
+        insert_account(&pool, user).await;
+    }
+    let (_, et_id) = insert_team_with_et(
+        &pool,
+        "twohref",
+        "sync",
+        &[(&alice, "admin"), (&bob, "member")],
+    )
+    .await;
+    sqlx::query("UPDATE event_types SET scheduling_mode = 'collective' WHERE id = ?")
+        .bind(&et_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (base_a, dav_a) = spawn_mock_dav(DavMode::Ok).await;
+    let source_a = seed_write_source(&pool, &alice, &base_a).await;
+    let (base_b, dav_b) = spawn_mock_dav(DavMode::Ok).await;
+    seed_write_source(&pool, &alice, &base_b).await;
+    let id = insert_v1_booking(
+        &pool,
+        &et_id,
+        "guest@twohref.test",
+        Utc::now() + Duration::days(10),
+        30,
+        "confirmed",
+        &[],
+    )
+    .await;
+    let uid = format!("uid-{id}");
+    push_fresh(&pool, &alice, &uid).await;
+    assert_eq!((dav_a.stored(), dav_b.stored()), (1, 1));
+    record_copy(&pool, &uid, &alice, &source_a, "/dav/cal/").await;
+    caldav_delete_booking(&pool, &[0u8; 32], &alice, &uid).await;
+    assert_eq!((dav_a.stored(), dav_b.stored()), (0, 0));
+}
+
+/// Moving a host's copy off a calendar the claimant shares with them, by a
+/// retry, writes the claimant's copy back there.
+#[tokio::test]
+async fn a_retry_that_moves_the_hosts_copy_rewrites_the_claimants() {
+    let p = personal_fixture().await;
+    push_fresh(&p.pool, &p.host, &p.uid).await;
+    let watcher = insert_role_user(&p.pool, "watcher@dest.test", "user").await;
+    insert_account(&p.pool, &watcher).await;
+    // The claimant writes to the host's own collection (a shared calendar).
+    let base: String = sqlx::query_scalar("SELECT url FROM caldav_sources WHERE id = ?")
+        .bind(&p.source_id)
+        .fetch_one(&p.pool)
+        .await
+        .unwrap();
+    seed_write_source(&p.pool, &watcher, &base).await;
+    sqlx::query("UPDATE bookings SET claimed_by_user_id = ? WHERE id = ?")
+        .bind(&watcher)
+        .bind(&p.id)
+        .execute(&p.pool)
+        .await
+        .unwrap();
+    choose(&p.pool, &p.et_id, &p.host, &p.coaching_cal).await;
+    let (details, _) = writeback::writeback_details(&p.pool, &p.uid).await.unwrap();
+    writeback::push_and_record(
+        &p.pool,
+        &[0u8; 32],
+        &p.host,
+        &p.uid,
+        &details,
+        writeback::PushKind::Retry,
+    )
+    .await;
+    assert_eq!(
+        p.dav.paths(),
+        vec![
+            format!("/dav/cal/{}.ics", p.uid),
+            format!("/dav/coaching/{}.ics", p.uid)
+        ]
+    );
+    // The first write, the host's copy at the destination, and the
+    // claimant's copy written again on the shared calendar.
+    assert_eq!(p.dav.puts(), 3);
 }

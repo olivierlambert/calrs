@@ -436,7 +436,8 @@ impl CaldavClient {
         let resp = self.apply_auth(req).send().await?;
 
         let status = resp.status();
-        if !status.is_success() && status.as_u16() != 204 && status.as_u16() != 404 {
+        // Already gone counts as deleted: 404, or 410 Gone.
+        if !status.is_success() && !matches!(status.as_u16(), 204 | 404 | 410) {
             let body = resp.text().await.unwrap_or_default();
             bail!("DELETE {} returned {} — {}", url, status, body);
         }

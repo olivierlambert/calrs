@@ -439,13 +439,13 @@ pub async fn elect_meet_owner(pool: &SqlitePool, booking_id: &str) -> Option<Str
     // A multi-host booking stored its organizer at creation (#161): that
     // user, whatever the roster has become since.
     if let Some(organizer) = organizer {
-        return user_has_google_writeback(pool, &organizer)
+        return user_has_google_target(pool, &organizer, &et_id)
             .await
             .then_some(organizer);
     }
 
     if let Some(assigned) = assigned {
-        return user_has_google_writeback(pool, &assigned)
+        return user_has_google_target(pool, &assigned, &et_id)
             .await
             .then_some(assigned);
     }
@@ -457,14 +457,14 @@ pub async fn elect_meet_owner(pool: &SqlitePool, booking_id: &str) -> Option<Str
             // that would mint a Meet on someone else's calendar.
             let members = eligible_team_member_ids(pool, &team_id, Some(&et_id)).await;
             let first = members.into_iter().next()?;
-            return user_has_google_writeback(pool, &first)
+            return user_has_google_target(pool, &first, &et_id)
                 .await
                 .then_some(first);
         }
     }
 
     let owner = owner_id?;
-    user_has_google_writeback(pool, &owner)
+    user_has_google_target(pool, &owner, &et_id)
         .await
         .then_some(owner)
 }
@@ -480,6 +480,37 @@ pub async fn user_has_google_writeback(pool: &SqlitePool, user_id: &str) -> bool
            AND cs.write_calendar_href IS NOT NULL
            AND TRIM(cs.write_calendar_href) != ''",
     )
+    .bind(user_id)
+    .fetch_one(pool)
+    .await
+    .unwrap_or(0);
+    count > 0
+}
+
+/// Whether `user_id` can hold the Meet of a booking of event type `et_id`:
+/// a Google source with a write calendar, or a Google calendar they chose
+/// for this event type (#47).
+async fn user_has_google_target(pool: &SqlitePool, user_id: &str, et_id: &str) -> bool {
+    if user_has_google_writeback(pool, user_id).await {
+        return true;
+    }
+    has_google_destination(pool, user_id, et_id).await
+}
+
+/// Whether `user_id` chose a calendar of one of their enabled Google sources
+/// for event type `et_id`.
+async fn has_google_destination(pool: &SqlitePool, user_id: &str, et_id: &str) -> bool {
+    let count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM event_type_write_targets t
+         JOIN calendars c ON c.id = t.calendar_id
+         JOIN caldav_sources cs ON cs.id = c.source_id
+         JOIN accounts a ON a.id = cs.account_id AND a.user_id = t.user_id
+         WHERE t.event_type_id = ? AND t.user_id = ?
+           AND cs.enabled = 1
+           AND cs.auth_type = 'oauth2'
+           AND cs.oauth2_provider = 'google'",
+    )
+    .bind(et_id)
     .bind(user_id)
     .fetch_one(pool)
     .await
@@ -521,9 +552,14 @@ async fn eligible_team_member_ids(
     rows.into_iter().map(|(id,)| id).collect()
 }
 
-/// Names of users who do not yet have a Google OAuth2 source with write-back.
+/// Names of users who do not yet have a Google OAuth2 source with write-back
+/// (or, for event type `event_type_id`, a Google calendar they chose for it).
 /// One query for the whole set, preserving `user_ids` order.
-pub async fn users_missing_google_writeback(pool: &SqlitePool, user_ids: &[String]) -> Vec<String> {
+pub async fn users_missing_google_writeback(
+    pool: &SqlitePool,
+    user_ids: &[String],
+    event_type_id: Option<&str>,
+) -> Vec<String> {
     if user_ids.is_empty() {
         return Vec::new();
     }
@@ -540,12 +576,23 @@ pub async fn users_missing_google_writeback(pool: &SqlitePool, user_ids: &[Strin
                AND cs.oauth2_provider = 'google'
                AND cs.write_calendar_href IS NOT NULL
                AND TRIM(cs.write_calendar_href) != ''
+           )
+           AND NOT EXISTS (
+             SELECT 1 FROM event_type_write_targets t
+             JOIN calendars c ON c.id = t.calendar_id
+             JOIN caldav_sources cs ON cs.id = c.source_id
+             JOIN accounts a ON a.id = cs.account_id AND a.user_id = t.user_id
+             WHERE t.user_id = u.id AND t.event_type_id = ?
+               AND cs.enabled = 1
+               AND cs.auth_type = 'oauth2'
+               AND cs.oauth2_provider = 'google'
            )"
     );
     let mut query = sqlx::query_as::<_, (String, String)>(&sql);
     for id in user_ids {
         query = query.bind(id);
     }
+    query = query.bind(event_type_id);
     let rows = query.fetch_all(pool).await.unwrap_or_default();
     user_ids
         .iter()
@@ -599,7 +646,7 @@ pub async fn google_meet_prereq_error(
             None,
         ));
     }
-    let missing = users_missing_google_writeback(pool, &ids).await;
+    let missing = users_missing_google_writeback(pool, &ids, event_type_id).await;
     if missing.is_empty() {
         return None;
     }

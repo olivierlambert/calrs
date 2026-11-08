@@ -1181,8 +1181,8 @@ async fn cancel_orphaned_booking(
 ) -> OrphanOutcome {
     // Fetch booking details before cancelling. Scoped by source_id via the
     // caldav_sources join: the booking must have been pushed to this
-    // source's write calendar, or to a calendar of this source its host
-    // chose for the event type (#47). The host contact is the assigned member
+    // source's write calendar, or recorded as written to a synced calendar
+    // of this source its host chose for the event type (#47). The host contact is the assigned member
     // when set (#147), the event type owner otherwise.
     let booking: Option<(
         String,
@@ -1210,12 +1210,14 @@ async fn cancel_orphaned_booking(
          JOIN accounts sa ON sa.id = cs.account_id AND sa.user_id = u.id
          WHERE b.uid = ? AND b.status = 'confirmed'
            AND (b.caldav_calendar_href = cs.write_calendar_href
-                OR EXISTS (SELECT 1 FROM event_type_write_targets t
-                           JOIN calendars wc ON wc.id = t.calendar_id
-                           WHERE t.event_type_id = b.event_type_id
-                             AND t.user_id = u.id
-                             AND wc.source_id = cs.id
-                             AND wc.href = b.caldav_calendar_href))",
+                OR EXISTS (SELECT 1 FROM booking_write_copies bc
+                           JOIN calendars wc ON wc.source_id = bc.source_id
+                                            AND wc.href = bc.calendar_href
+                           WHERE bc.booking_uid = b.uid
+                             AND bc.user_id = u.id
+                             AND bc.source_id = cs.id
+                             AND bc.calendar_href = b.caldav_calendar_href
+                             AND wc.sync_enabled = 1))",
     )
     .bind(source_id)
     .bind(uid)
@@ -1411,7 +1413,7 @@ fn extract_time(dt_str: &str) -> String {
 /// not be auto-cancelled by sync — a guest-initiated reschedule that requires approval
 /// deletes the prior CalDAV event on purpose, and the orphan sweep would otherwise race
 /// the approval flow and cancel the booking before the host clicks approve.
-async fn cancel_orphaned_bookings(
+pub(crate) async fn cancel_orphaned_bookings(
     pool: &SqlitePool,
     key: &[u8; 32],
     client: Option<&CaldavClient>,
@@ -1426,9 +1428,9 @@ async fn cancel_orphaned_bookings(
     // the booking's effective host (assigned member, else owner). The uid
     // lookup stays deliberately global: confirm-before-cancel is not
     // available on every path, and a write calendar that is not among the
-    // synced ones must not read as "everything orphaned". A calendar the
-    // host chose for the event type (#47) counts like the write calendar,
-    // when it is synced.
+    // synced ones must not read as "everything orphaned". A copy recorded
+    // on a synced calendar the host chose for the event type (#47) counts
+    // like the write calendar.
     let orphans: Vec<(String,)> = sqlx::query_as(
         "SELECT b.uid FROM bookings b
          JOIN event_types et ON et.id = b.event_type_id
@@ -1443,12 +1445,13 @@ async fn cancel_orphaned_bookings(
                                  WHERE wc.source_id = cs.id
                                    AND wc.href = cs.write_calendar_href
                                    AND wc.sync_enabled = 0))
-                OR EXISTS (SELECT 1 FROM event_type_write_targets t
-                           JOIN calendars wc ON wc.id = t.calendar_id
-                           WHERE t.event_type_id = b.event_type_id
-                             AND t.user_id = sa.user_id
-                             AND wc.source_id = cs.id
-                             AND wc.href = b.caldav_calendar_href
+                OR EXISTS (SELECT 1 FROM booking_write_copies bc
+                           JOIN calendars wc ON wc.source_id = bc.source_id
+                                            AND wc.href = bc.calendar_href
+                           WHERE bc.booking_uid = b.uid
+                             AND bc.user_id = sa.user_id
+                             AND bc.source_id = cs.id
+                             AND bc.calendar_href = b.caldav_calendar_href
                              AND wc.sync_enabled = 1))
            AND b.uid NOT IN (SELECT uid FROM events)",
     )

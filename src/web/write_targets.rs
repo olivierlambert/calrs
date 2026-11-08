@@ -7,11 +7,15 @@
 //! calendar belongs to the host: on a team event type every member picks
 //! their own, read for the assigned member or for each collective member.
 //!
-//! A choice that no longer resolves (its source disabled or removed, the
-//! calendar gone) falls back to the source setting, so a booking is never
-//! refused for it. Copies written to a destination are recorded in
-//! `booking_write_copies`, so a later push, cancellation or reschedule finds
-//! them where they were actually written, even after the choice changed.
+//! A choice that no longer resolves (its source disabled or removed) falls
+//! back to the source setting, and so does a push the chosen calendar
+//! definitively refuses (HTTP 403, 404 or 405: deleted on the server, or
+//! read-only); the refusal is shown on the sources page and the next booking
+//! tries the calendar again. A booking is never refused for its destination.
+//! Copies written to a destination are recorded in `booking_write_copies`,
+//! so a later push, cancellation or reschedule finds them where they were
+//! actually written, even after the choice changed. Copies are written
+//! before older ones are released, never the other way round.
 
 use super::*;
 
@@ -210,13 +214,15 @@ async fn tracked_copies(
 }
 
 /// Delete the booking from one collection of one of the user's sources, and
-/// its cached copy there, so it stops blocking availability.
+/// its cached copy there, so it stops blocking availability. Returns whether
+/// the copy is gone: deleted, or already absent (404 and 410 count as gone).
+/// A failure leaves the cached copy alone, since the event is still there.
 pub(super) async fn delete_from(
     pool: &SqlitePool,
     key: &[u8; 32],
     row: &WriteSourceRow,
     booking_uid: &str,
-) {
+) -> bool {
     let (
         source_id,
         url,
@@ -230,7 +236,7 @@ pub(super) async fn delete_from(
         _,
         _,
     ) = row;
-    match write_provider_for_source(
+    let deleted = match write_provider_for_source(
         pool,
         key,
         source_id,
@@ -244,25 +250,31 @@ pub(super) async fn delete_from(
     )
     .await
     {
-        Ok(provider) => {
-            if let Err(e) = provider.delete_event(href, booking_uid).await {
+        Ok(provider) => match provider.delete_event(href, booking_uid).await {
+            Ok(()) => true,
+            Err(e) => {
                 tracing::error!(uid = %booking_uid, calendar = %href, error = %e, "calendar event delete failed");
+                false
             }
-        }
+        },
         Err(e) => {
             tracing::error!(uid = %booking_uid, calendar = %href, error = format!("{e:#}"), "calendar event delete failed: could not build client");
+            false
         }
+    };
+    if deleted {
+        let _ = sqlx::query(
+            "DELETE FROM events WHERE uid = ? AND calendar_id IN (
+                SELECT id FROM calendars WHERE source_id = ? AND href = ?
+            )",
+        )
+        .bind(booking_uid)
+        .bind(source_id)
+        .bind(href)
+        .execute(pool)
+        .await;
     }
-    let _ = sqlx::query(
-        "DELETE FROM events WHERE uid = ? AND calendar_id IN (
-            SELECT id FROM calendars WHERE source_id = ? AND href = ?
-        )",
-    )
-    .bind(booking_uid)
-    .bind(source_id)
-    .bind(href)
-    .execute(pool)
-    .await;
+    deleted
 }
 
 /// Forget one recorded copy.
@@ -279,34 +291,80 @@ async fn forget_copy(pool: &SqlitePool, booking_uid: &str, user_id: &str, row: &
     .await;
 }
 
-/// Delete every recorded destination copy of `user_id` for a booking and
-/// forget them. Returns the hrefs they were in.
+/// A (source id, href) pair: where one copy lives.
+pub(super) type CopyPlace = (String, String);
+
+fn place(row: &WriteSourceRow) -> CopyPlace {
+    (row.0.clone(), row.4.clone())
+}
+
+/// Delete one copy and forget its row once it is gone. A failed delete keeps
+/// the row, so a later push, cancellation or the background sweep tries again.
+async fn delete_tracked(
+    pool: &SqlitePool,
+    key: &[u8; 32],
+    booking_uid: &str,
+    user_id: &str,
+    row: &WriteSourceRow,
+) -> bool {
+    let deleted = delete_from(pool, key, row, booking_uid).await;
+    if deleted {
+        forget_copy(pool, booking_uid, user_id, row).await;
+    }
+    deleted
+}
+
+/// Delete every recorded destination copy of `user_id` for a booking.
+/// Returns where they were, deleted or not, so the caller does not try the
+/// same place twice.
 pub(super) async fn delete_tracked_copies(
     pool: &SqlitePool,
     key: &[u8; 32],
     user_id: &str,
     booking_uid: &str,
-) -> Vec<String> {
+) -> Vec<CopyPlace> {
     let rows = tracked_copies(pool, booking_uid, user_id).await;
     for row in &rows {
-        delete_from(pool, key, row, booking_uid).await;
+        delete_tracked(pool, key, booking_uid, user_id, row).await;
     }
-    // Rows whose source is no longer the user's cannot be reached: they go too.
-    let _ = sqlx::query("DELETE FROM booking_write_copies WHERE booking_uid = ? AND user_id = ?")
-        .bind(booking_uid)
-        .bind(user_id)
-        .execute(pool)
-        .await;
-    rows.into_iter().map(|row| row.4).collect()
+    // A row whose source is no longer the user's cannot be reached at all.
+    let _ = sqlx::query(
+        "DELETE FROM booking_write_copies WHERE booking_uid = ? AND user_id = ?
+           AND NOT EXISTS (SELECT 1 FROM caldav_sources cs
+                           JOIN accounts a ON a.id = cs.account_id
+                           WHERE cs.id = booking_write_copies.source_id
+                             AND a.user_id = booking_write_copies.user_id)",
+    )
+    .bind(booking_uid)
+    .bind(user_id)
+    .execute(pool)
+    .await;
+    rows.iter().map(place).collect()
 }
 
-/// Before a booking that was already written is pushed again, remove the
-/// copies of `user_id` that are no longer where it is going: the
-/// destination changed, was chosen, or was cleared since the last push.
+/// The users with a recorded copy of the booking, hosts or not any more (a
+/// collective member removed, excluded or disabled after it was written).
+pub(super) async fn copy_users(pool: &SqlitePool, booking_uid: &str) -> Vec<String> {
+    sqlx::query_scalar(
+        "SELECT DISTINCT user_id FROM booking_write_copies WHERE booking_uid = ? ORDER BY user_id",
+    )
+    .bind(booking_uid)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default()
+}
+
+/// After a push to a booking that was already written, remove the copies of
+/// `user_id` that are no longer where it went: the destination changed, was
+/// chosen, or was cleared since the last push. Only called once the user's
+/// own push succeeded, so the booking is never left without a copy on the
+/// calendar the orphan sweep watches. Returns the copies released.
 ///
-/// `keep` holds every collection this push writes to, for every host, so a
+/// `keep` holds every collection this push wrote to, for every host, so a
 /// calendar shared by two members never loses the copy the other one just
-/// wrote. A Google Meet event never moves.
+/// wrote. A Google Meet event never moves. A copy on the source write
+/// calendars that cannot be deleted is recorded, so it is tried again later.
+/// `had_copies` says whether the user had recorded copies before this push.
 pub(super) async fn release_moved_copies(
     pool: &SqlitePool,
     key: &[u8; 32],
@@ -314,31 +372,153 @@ pub(super) async fn release_moved_copies(
     user_id: &str,
     plan: WritePlan,
     keep: &[Collection],
-) {
+    had_copies: bool,
+) -> Vec<WriteSourceRow> {
     if matches!(plan, WritePlan::Meet { .. }) {
-        return;
+        return Vec::new();
     }
     let tracked = tracked_copies(pool, booking_uid, user_id).await;
-    let mut stale: Vec<WriteSourceRow> = Vec::new();
-    if plan == WritePlan::Destination && tracked.is_empty() {
+    let mut released = Vec::new();
+    // `had_copies`: whether the user had recorded copies before this push.
+    // Without any, the earlier push was under the source setting.
+    if plan == WritePlan::Destination && !had_copies {
         // First push to a destination of a booking written before under the
         // source setting: that copy sits on the source write calendars.
-        stale.extend(default_write_sources(pool, user_id).await);
+        for row in default_write_sources(pool, user_id).await {
+            if keep.contains(&row_collection(&row)) {
+                continue;
+            }
+            tracing::info!(uid = %booking_uid, user_id = %user_id, calendar = %row.4, "booking moved to another calendar: deleting the earlier copy");
+            if !delete_from(pool, key, &row, booking_uid).await {
+                record_copy(pool, booking_uid, user_id, &row.0, &row.4).await;
+            }
+            released.push(row);
+        }
     }
     for row in tracked {
         if keep.contains(&row_collection(&row)) {
             continue;
         }
-        forget_copy(pool, booking_uid, user_id, &row).await;
-        stale.push(row);
-    }
-    for row in stale
-        .iter()
-        .filter(|row| !keep.contains(&row_collection(row)))
-    {
         tracing::info!(uid = %booking_uid, user_id = %user_id, calendar = %row.4, "booking moved to another calendar: deleting the earlier copy");
-        delete_from(pool, key, row, booking_uid).await;
+        delete_tracked(pool, key, booking_uid, user_id, &row).await;
+        released.push(row);
     }
+    released
+}
+
+/// Release every recorded copy of users who no longer host the booking.
+pub(super) async fn release_former_hosts(
+    pool: &SqlitePool,
+    key: &[u8; 32],
+    booking_uid: &str,
+    targets: &[String],
+    keep: &[Collection],
+) -> Vec<WriteSourceRow> {
+    let mut released = Vec::new();
+    for user in copy_users(pool, booking_uid).await {
+        if targets.contains(&user) {
+            continue;
+        }
+        for row in tracked_copies(pool, booking_uid, &user).await {
+            if keep.contains(&row_collection(&row)) {
+                continue;
+            }
+            delete_tracked(pool, key, booking_uid, &user, &row).await;
+            released.push(row);
+        }
+    }
+    released
+}
+
+/// After copies were released, make sure `bookings.caldav_calendar_href`
+/// does not name one of them: the orphan sweep would find the event gone
+/// there and cancel a live booking. It is pointed at a collection this push
+/// wrote to, or cleared when there is none.
+pub(super) async fn repoint_href(
+    pool: &SqlitePool,
+    booking_uid: &str,
+    released: &[WriteSourceRow],
+    written: &[String],
+) {
+    let stored: Option<String> =
+        sqlx::query_scalar("SELECT caldav_calendar_href FROM bookings WHERE uid = ?")
+            .bind(booking_uid)
+            .fetch_optional(pool)
+            .await
+            .unwrap_or(None)
+            .flatten();
+    let Some(stored) = stored else {
+        return;
+    };
+    if written.contains(&stored) || !released.iter().any(|row| row.4 == stored) {
+        return;
+    }
+    let _ = sqlx::query("UPDATE bookings SET caldav_calendar_href = ? WHERE uid = ?")
+        .bind(written.first())
+        .bind(booking_uid)
+        .execute(pool)
+        .await;
+}
+
+/// Whether a write failure means the calendar itself is gone or refuses
+/// writes (HTTP 403, 404 or 405), as opposed to an outage worth retrying.
+pub(super) fn definitive_refusal(message: &str) -> bool {
+    ["returned 403", "returned 404", "returned 405"]
+        .iter()
+        .any(|status| message.contains(status))
+}
+
+/// Note on the user's choice that its calendar refused a booking, for the
+/// sources page. The booking then goes to the source setting.
+pub(super) async fn note_refusal(pool: &SqlitePool, booking_uid: &str, user_id: &str, error: &str) {
+    let error: String = error.chars().take(300).collect();
+    let _ = sqlx::query(
+        "UPDATE event_type_write_targets SET last_refused_at = datetime('now'), last_refused_error = ?
+         WHERE user_id = ? AND event_type_id = (SELECT event_type_id FROM bookings WHERE uid = ?)",
+    )
+    .bind(&error)
+    .bind(user_id)
+    .bind(booking_uid)
+    .execute(pool)
+    .await;
+}
+
+/// A write landed on the chosen calendar: forget an earlier refusal.
+pub(super) async fn clear_refusal(pool: &SqlitePool, booking_uid: &str, user_id: &str) {
+    let _ = sqlx::query(
+        "UPDATE event_type_write_targets SET last_refused_at = NULL, last_refused_error = NULL
+         WHERE user_id = ? AND last_refused_at IS NOT NULL
+           AND event_type_id = (SELECT event_type_id FROM bookings WHERE uid = ?)",
+    )
+    .bind(user_id)
+    .bind(booking_uid)
+    .execute(pool)
+    .await;
+}
+
+/// Background pass: delete the copies left behind by a delete that failed
+/// when a booking ended (cancelled or declined), for bookings still ahead.
+/// Returns how many (booking, user) pairs were tried.
+pub(crate) async fn sweep_leftover_copies(
+    pool: &SqlitePool,
+    key: &[u8; 32],
+    now: chrono::DateTime<Utc>,
+) -> usize {
+    let pairs: Vec<(String, String)> = sqlx::query_as(
+        "SELECT DISTINCT bc.booking_uid, bc.user_id FROM booking_write_copies bc
+         JOIN bookings b ON b.uid = bc.booking_uid
+         WHERE b.status IN ('cancelled', 'declined')
+           AND datetime(b.start_at) > datetime(?)
+         LIMIT 20",
+    )
+    .bind(now.to_rfc3339())
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
+    for (uid, user) in &pairs {
+        delete_tracked_copies(pool, key, user, uid).await;
+    }
+    pairs.len()
 }
 
 /// Whether the booking was written to any host calendar before: an href is
@@ -461,6 +641,15 @@ pub(super) async fn set_destination(
     if !hosts_event_type(pool, user_id, event_type_id).await {
         return Err(());
     }
+    if stored_destination(pool, event_type_id, user_id)
+        .await
+        .as_deref()
+        == Some(calendar_id)
+    {
+        // Posted back unchanged: kept as it is, even when its source is
+        // disabled for now (it then shows as unavailable).
+        return Ok(());
+    }
     if calendar_id.is_empty() {
         let _ = sqlx::query(
             "DELETE FROM event_type_write_targets WHERE event_type_id = ? AND user_id = ?",
@@ -487,33 +676,124 @@ pub(super) async fn set_destination(
     Ok(())
 }
 
-/// The destination select of the event type form for `user_id`: the choices
-/// and the selected one. `None` when they have no calendar to choose from,
-/// which hides the field (the form then posts nothing and changes nothing).
+/// Whether a posted destination may be saved: a calendar the user may
+/// choose, or the one already stored for this event type (kept even while
+/// its source is disabled).
+pub(super) async fn acceptable_destination(
+    pool: &SqlitePool,
+    user_id: &str,
+    event_type_id: Option<&str>,
+    calendar_id: &str,
+) -> bool {
+    if is_destination_choice(pool, user_id, calendar_id).await {
+        return true;
+    }
+    match event_type_id {
+        Some(et_id) => {
+            stored_destination(pool, et_id, user_id).await.as_deref() == Some(calendar_id)
+        }
+        None => false,
+    }
+}
+
+/// The name of one of the user's own calendars, whatever the state of its
+/// source, as "calendar (source)".
+async fn calendar_label(pool: &SqlitePool, user_id: &str, calendar_id: &str) -> Option<String> {
+    let (name, href, source): (Option<String>, String, String) = sqlx::query_as(
+        "SELECT c.display_name, c.href, cs.name FROM calendars c
+         JOIN caldav_sources cs ON cs.id = c.source_id
+         JOIN accounts a ON a.id = cs.account_id
+         WHERE c.id = ? AND a.user_id = ?",
+    )
+    .bind(calendar_id)
+    .bind(user_id)
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten()?;
+    let name = name.filter(|n| !n.trim().is_empty()).unwrap_or(href);
+    Some(format!("{name} ({source})"))
+}
+
+/// The option to show for a stored choice that is not among the choices
+/// (its source is disabled): kept, selected, and marked unavailable, so
+/// saving the form unchanged keeps it.
+pub(super) async fn unavailable_option(
+    pool: &SqlitePool,
+    user_id: &str,
+    lang: &str,
+    selected: &str,
+    choices: &[(String, String)],
+) -> Option<minijinja::Value> {
+    if selected.is_empty() || choices.iter().any(|(id, _)| id == selected) {
+        return None;
+    }
+    let label = calendar_label(pool, user_id, selected).await?;
+    let name = tr1(lang, "write-destination-unavailable", "name", &label);
+    Some(context! { id => selected, name => name })
+}
+
+/// The refusal noted on a choice, if its calendar refused the last booking.
+pub(super) async fn refusal(
+    pool: &SqlitePool,
+    event_type_id: &str,
+    user_id: &str,
+) -> Option<String> {
+    sqlx::query_scalar(
+        "SELECT last_refused_error FROM event_type_write_targets
+         WHERE event_type_id = ? AND user_id = ? AND last_refused_at IS NOT NULL",
+    )
+    .bind(event_type_id)
+    .bind(user_id)
+    .fetch_optional(pool)
+    .await
+    .unwrap_or(None)
+    .flatten()
+}
+
+/// The destination select of the event type form for `user_id`: the choices,
+/// the selected one, a stored choice that is unavailable, and the refusal
+/// noted on it. `None` when they have no calendar to choose from, which hides
+/// the field (the form then posts nothing and changes nothing).
 pub(super) async fn destination_form_ctx(
     pool: &SqlitePool,
     user_id: &str,
+    lang: &str,
+    event_type_id: Option<&str>,
     selected: &str,
 ) -> Option<minijinja::Value> {
     let choices = destination_choices(pool, user_id).await;
-    if choices.is_empty() {
+    let unavailable = unavailable_option(pool, user_id, lang, selected, &choices).await;
+    if choices.is_empty() && unavailable.is_none() {
         return None;
     }
     let options: Vec<minijinja::Value> = choices
         .iter()
         .map(|(id, label)| context! { id => id, name => label })
         .collect();
-    Some(context! { choices => options, selected => selected })
+    let refused = match event_type_id {
+        Some(et_id) if !selected.is_empty() => refusal(pool, et_id, user_id).await,
+        _ => None,
+    };
+    Some(context! {
+        choices => options,
+        selected => selected,
+        unavailable => unavailable,
+        refused => refused,
+    })
 }
 
 /// The event types `user_id` hosts, for the sources page: (id, title, team
-/// name for a team event type, chosen calendar id or "").
+/// name for a team event type, chosen calendar id or "", the refusal noted
+/// on the choice).
 pub(super) async fn hosted_event_types(
     pool: &SqlitePool,
     user_id: &str,
-) -> Vec<(String, String, Option<String>, String)> {
+) -> Vec<(String, String, Option<String>, String, Option<String>)> {
     sqlx::query_as(
-        "SELECT et.id, et.title, t.name, COALESCE(w.calendar_id, '') FROM event_types et
+        "SELECT et.id, et.title, t.name, COALESCE(w.calendar_id, ''),
+                CASE WHEN w.last_refused_at IS NOT NULL THEN w.last_refused_error END
+         FROM event_types et
          LEFT JOIN accounts a ON a.id = et.account_id
          LEFT JOIN teams t ON t.id = et.team_id
          LEFT JOIN event_type_write_targets w ON w.event_type_id = et.id AND w.user_id = ?

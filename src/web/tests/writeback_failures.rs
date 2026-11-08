@@ -11,6 +11,8 @@ pub(super) enum DavMode {
     Drop,
     /// Refuse writes with a 400.
     Reject,
+    /// Answer writes with a 404, as a calendar deleted on the server does.
+    Gone,
 }
 
 /// A tiny CalDAV collection on loopback: PUT, HEAD, PROPFIND and DELETE by
@@ -22,11 +24,17 @@ pub(super) struct MockDav {
     puts: std::sync::atomic::AtomicUsize,
     /// Answer every HEAD with 400, as iCloud does.
     head_bad_request: std::sync::atomic::AtomicBool,
+    /// Answer every DELETE with 503 and keep the event.
+    delete_fails: std::sync::atomic::AtomicBool,
 }
 
 impl MockDav {
     pub(super) fn set_mode(&self, mode: DavMode) {
         *self.mode.lock().unwrap() = mode;
+    }
+    pub(super) fn fail_deletes(&self, fail: bool) {
+        self.delete_fails
+            .store(fail, std::sync::atomic::Ordering::SeqCst);
     }
     fn refuse_head_with_400(&self) {
         self.head_bad_request
@@ -60,6 +68,7 @@ pub(super) async fn spawn_mock_dav(mode: DavMode) -> (String, Arc<MockDav>) {
         stored: std::sync::Mutex::new(std::collections::HashMap::new()),
         puts: std::sync::atomic::AtomicUsize::new(0),
         head_bad_request: std::sync::atomic::AtomicBool::new(false),
+        delete_fails: std::sync::atomic::AtomicBool::new(false),
     });
     let state = dav.clone();
     let app = Router::new().fallback(move |method: Method, uri: Uri, body: String| {
@@ -71,6 +80,7 @@ pub(super) async fn spawn_mock_dav(mode: DavMode) -> (String, Arc<MockDav>) {
                 let mode = *dav.mode.lock().unwrap();
                 match mode {
                     DavMode::Reject => (StatusCode::BAD_REQUEST, String::new()),
+                    DavMode::Gone => (StatusCode::NOT_FOUND, String::new()),
                     DavMode::Drop => (StatusCode::CREATED, String::new()),
                     DavMode::Ok => {
                         dav.stored.lock().unwrap().insert(path, body);
@@ -104,6 +114,9 @@ pub(super) async fn spawn_mock_dav(mode: DavMode) -> (String, Arc<MockDav>) {
                 );
                 (StatusCode::MULTI_STATUS, xml)
             } else if method == Method::DELETE {
+                if dav.delete_fails.load(std::sync::atomic::Ordering::SeqCst) {
+                    return (StatusCode::SERVICE_UNAVAILABLE, String::new());
+                }
                 dav.stored.lock().unwrap().remove(&path);
                 (StatusCode::NO_CONTENT, String::new())
             } else {

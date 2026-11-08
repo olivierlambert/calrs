@@ -112,22 +112,29 @@ pub(super) async fn dashboard_sources(
     // Bookings by meeting (#47): every event type the user hosts, with the
     // calendar its confirmed bookings go to. Shown once there is a calendar
     // to choose.
-    let destination_calendars: Vec<minijinja::Value> = destination_choices(&state.pool, &user.id)
-        .await
-        .into_iter()
+    let choices = destination_choices(&state.pool, &user.id).await;
+    let destination_calendars: Vec<minijinja::Value> = choices
+        .iter()
         .map(|(id, name)| context! { id => id, name => name })
         .collect();
-    let destinations: Vec<minijinja::Value> = if destination_calendars.is_empty() {
-        Vec::new()
-    } else {
-        hosted_event_types(&state.pool, &user.id)
-            .await
-            .into_iter()
-            .map(|(id, title, team, selected)| {
-                context! { id => id, title => title, team => team, selected => selected }
-            })
-            .collect()
-    };
+    let mut destinations: Vec<minijinja::Value> = Vec::new();
+    for (id, title, team, selected, refused) in hosted_event_types(&state.pool, &user.id).await {
+        // A stored choice whose source is disabled stays selected, marked
+        // unavailable, so saving the page unchanged keeps it.
+        let unavailable =
+            unavailable_option(&state.pool, &user.id, auth_user.lang, &selected, &choices).await;
+        if destination_calendars.is_empty() && unavailable.is_none() {
+            continue;
+        }
+        destinations.push(context! {
+            id => id,
+            title => title,
+            team => team,
+            selected => selected,
+            unavailable => unavailable,
+            refused => refused,
+        });
+    }
     let destinations_status = match query.destinations.as_deref() {
         Some("saved") => "saved",
         Some("refused") => "refused",
@@ -1304,7 +1311,7 @@ pub(super) async fn save_write_destinations(
         .collect();
     for (et_id, calendar_id) in &choices {
         if !hosts_event_type(&state.pool, user_id, et_id).await
-            || !is_destination_choice(&state.pool, user_id, calendar_id).await
+            || !acceptable_destination(&state.pool, user_id, Some(et_id), calendar_id).await
         {
             tracing::warn!(user_id = %user_id, event_type_id = %et_id, "write destination refused");
             return Redirect::to("/dashboard/sources?destinations=refused#destinations")

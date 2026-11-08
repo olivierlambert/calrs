@@ -121,8 +121,9 @@ The list offers every calendar of your own enabled sources, synced or not, like 
 
 What happens when things change:
 
-- **The choice changes** while a booking is upcoming: the booking moves at its next write (a reschedule, an approval, a retry). The copy left in the earlier calendar is deleted then. Cancelling a booking deletes it from the calendar it was actually written to.
-- **The calendar's source is disabled**: bookings go back to the source setting until it is enabled again. **The source is removed**: the choice is removed with it.
+- **The choice changes** while a booking is upcoming: the booking moves at its next write (a reschedule, an approval, a retry, a claim). The new copy is written first; the copy left in the earlier calendar is deleted only once that write has landed, so a failed write never leaves the booking without a calendar. Cancelling a booking deletes it from the calendar it was actually written to, and a delete that fails is tried again in the background.
+- **The calendar refuses the booking for good** (deleted on the server, or read-only: HTTP 403, 404 or 405): the booking is written to the source setting instead, without a failure or retries, and the Calendar sources page shows the refusal next to the event type. The next booking tries the chosen calendar again.
+- **The calendar's source is disabled**: bookings go back to the source setting until it is enabled again. The choice stays, shown as "(unavailable)", and saving the form unchanged keeps it. **The source is removed**: the choice is removed with it.
 - **Google Meet**: the Meet event is created on the chosen calendar when it is a calendar of your Google account, otherwise on your Google source's write calendar, as before. Once created it never moves, since that event holds the meeting.
 - The orphan check (a booking cancelled because its event was deleted from your calendar) also covers a chosen calendar, when it is synced.
 

@@ -390,7 +390,11 @@ async fn caldav_delete_for_user(
 ) {
     let tracked = delete_tracked_copies(pool, key, user_id, booking_uid).await;
     for row in default_write_sources(pool, user_id).await {
-        if tracked.contains(&row.4) {
+        // Same place already tried: the same href on another server is not.
+        if tracked
+            .iter()
+            .any(|(sid, href)| *sid == row.0 && *href == row.4)
+        {
             continue;
         }
         delete_from(pool, key, &row, booking_uid).await;
@@ -468,10 +472,17 @@ pub(crate) async fn caldav_delete_booking(
     let targets = booking_write_targets(pool, booking_uid, user_id).await;
 
     // Copies written to a chosen destination are found where they were
-    // written, whatever the destination is now (#47).
+    // written, whatever the destination is now (#47), including those of
+    // members who no longer host the booking (removed, excluded, disabled).
     let mut tracked = Vec::new();
-    for target in &targets {
-        tracked.extend(delete_tracked_copies(pool, key, target, booking_uid).await);
+    let mut holders = targets.clone();
+    for user in copy_users(pool, booking_uid).await {
+        if !holders.contains(&user) {
+            holders.push(user);
+        }
+    }
+    for holder in &holders {
+        tracked.extend(delete_tracked_copies(pool, key, holder, booking_uid).await);
     }
 
     let calendar_href = match info {
@@ -491,10 +502,6 @@ pub(crate) async fn caldav_delete_booking(
         return;
     }
     let target = targets.first().map(String::as_str).unwrap_or(user_id);
-    if tracked.contains(&calendar_href) {
-        // The stored href is the destination copy, deleted just above.
-        return;
-    }
 
     // Get the source credentials and provider type
     type SourceRow = (
@@ -532,6 +539,20 @@ pub(crate) async fn caldav_delete_booking(
         if source.is_some() {
             cache_user = user_id;
         }
+    }
+
+    // The stored href may be a destination copy, tried just above: the same
+    // (source, href) is not deleted twice, and an href that matches no
+    // write source but was a recorded copy needs no fallback.
+    let tried = |sid: &str| {
+        tracked
+            .iter()
+            .any(|(tracked_sid, href)| tracked_sid == sid && *href == calendar_href)
+    };
+    match &source {
+        Some(s) if tried(&s.0) => return,
+        None if tracked.iter().any(|(_, href)| *href == calendar_href) => return,
+        _ => {}
     }
 
     let (

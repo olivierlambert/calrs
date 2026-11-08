@@ -77,23 +77,14 @@ pub(super) async fn push_and_record(
 ) -> Vec<(String, String)> {
     let mut failures = Vec::new();
     let targets = super::booking_write_targets(pool, booking_uid, user_id).await;
-    // Where each host's copy goes this time (#47), resolved once: the moves
-    // below must know every collection this push writes to.
+    // Read before anything is written: whether earlier copies may need to
+    // move once this push has landed (#47).
+    let was_written = super::was_written(pool, booking_uid).await;
+    let had_copies = super::copy_users(pool, booking_uid).await;
     let mut plans = Vec::with_capacity(targets.len());
+    let mut pushed_ok = Vec::with_capacity(targets.len());
     for target in &targets {
-        plans.push(super::host_write_sources(pool, booking_uid, target).await);
-    }
-    let host_collections: Vec<super::Collection> = plans
-        .iter()
-        .flat_map(|(rows, _)| rows.iter().map(super::row_collection))
-        .collect();
-    if super::was_written(pool, booking_uid).await {
-        for (target, (_, plan)) in targets.iter().zip(&plans) {
-            super::release_moved_copies(pool, key, booking_uid, target, *plan, &host_collections)
-                .await;
-        }
-    }
-    for (target, (sources, plan)) in targets.iter().zip(&plans) {
+        let (mut sources, mut plan) = super::host_write_sources(pool, booking_uid, target).await;
         // The only host-language text in the event is the phone label, and
         // each copy belongs to its target: every collective member reads it
         // in their own language, and a caller that left `host_language`
@@ -109,7 +100,7 @@ pub(super) async fn push_and_record(
             details
         };
         let owner = super::CopyOwner::Host;
-        for msg in super::push_to_sources(
+        let mut messages = super::push_to_sources(
             pool,
             key,
             target,
@@ -117,16 +108,90 @@ pub(super) async fn push_and_record(
             details,
             owner,
             &[],
-            sources,
-            *plan,
+            &sources,
+            plan,
         )
-        .await
-        {
+        .await;
+        if plan == super::WritePlan::Destination {
+            if let [refused] = messages.as_slice() {
+                if super::definitive_refusal(refused) {
+                    // The chosen calendar is gone or read-only: write to the
+                    // source setting instead, so the booking is on a
+                    // calendar, and tell the host on the sources page.
+                    tracing::warn!(uid = %booking_uid, user_id = %target, error = %refused, "chosen write calendar refused the booking; writing it to the source setting");
+                    super::note_refusal(pool, booking_uid, target, refused).await;
+                    sources = super::default_write_sources(pool, target).await;
+                    plan = super::WritePlan::Source;
+                    messages = super::push_to_sources(
+                        pool,
+                        key,
+                        target,
+                        booking_uid,
+                        details,
+                        owner,
+                        &[],
+                        &sources,
+                        plan,
+                    )
+                    .await;
+                }
+            } else if messages.is_empty() {
+                super::clear_refusal(pool, booking_uid, target).await;
+            }
+        }
+        pushed_ok.push(messages.is_empty());
+        for msg in messages {
             failures.push((target.clone(), msg));
         }
+        plans.push((sources, plan));
+    }
+    // Every collection this push wrote to (or tried to), for every host.
+    let host_collections: Vec<super::Collection> = plans
+        .iter()
+        .flat_map(|(rows, _)| rows.iter().map(super::row_collection))
+        .collect();
+
+    // Only now, with the new copies written, release the copies no longer
+    // where the booking goes, and only for hosts whose write landed: a
+    // failed write keeps the old copy, which the orphan sweep still sees.
+    let mut released = Vec::new();
+    if was_written {
+        for ((target, (_, plan)), ok) in targets.iter().zip(&plans).zip(&pushed_ok) {
+            if *ok {
+                released.extend(
+                    super::release_moved_copies(
+                        pool,
+                        key,
+                        booking_uid,
+                        target,
+                        *plan,
+                        &host_collections,
+                        had_copies.contains(target),
+                    )
+                    .await,
+                );
+            }
+        }
+        released.extend(
+            super::release_former_hosts(pool, key, booking_uid, &targets, &host_collections).await,
+        );
+    }
+    if !released.is_empty() {
+        let written: Vec<String> = plans
+            .iter()
+            .zip(&pushed_ok)
+            .filter(|(_, ok)| **ok)
+            .flat_map(|((rows, _), _)| rows.iter().map(|row| row.4.clone()))
+            .collect();
+        super::repoint_href(pool, booking_uid, &released, &written).await;
+    }
+
+    // A released copy may have been the one a claimant shared with a host,
+    // and a retry writes no claimant copy otherwise: write it again then.
+    if kind == PushKind::Fresh || !released.is_empty() {
+        push_claimant_copy(pool, key, booking_uid, details, &targets, &host_collections).await;
     }
     if kind == PushKind::Fresh {
-        push_claimant_copy(pool, key, booking_uid, details, &targets, &host_collections).await;
         // The booking may have ended while it was being written (a claim
         // racing a cancellation), after the cancellation looked for the
         // events: do not leave them behind. The retry sweep does the same
