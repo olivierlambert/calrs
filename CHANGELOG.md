@@ -184,6 +184,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [1.23.1] - 2026-11-08
+
+Security release for the 1.23 line. It fixes three issues found while reviewing the 2.0 work; please upgrade. No migrations, no configuration change, except the note below for instances that reach calendars or resource feeds on private IPv6 or benchmark addresses.
+
+**Upgrade note:** the private-address check now also treats `64:ff9b:1::/48` (local NAT64) and `198.18.0.0/15` as private, along with every IPv6 private and link-local range. Resource feeds are re-checked on every fetch, so a feed on such an address stops until its host is on the private-host allowlist; CalDAV and EWS sources are only checked when saved.
+
 ### Security
 
 - **New users always get a scheduling account of their own** (#371) - Under certain conditions, a new user (registration, single sign-on auto-registration or `calrs user create`) could be attached to an existing user's scheduling account, with its event types, bookings and calendars. A new user now always gets a new account. At startup, an account left without a user is only linked to a user with the same address who has no account yet, and gets no new user when its address matches an existing user's except for letter case or spaces; otherwise it stays unlinked and a warning names it in the log for the administrator to review. A single sign-on login that changes a user's address now also updates the copy kept on their account. Registration also stores the email address without surrounding spaces.
