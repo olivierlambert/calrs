@@ -113,6 +113,13 @@ pub trait CalendarProvider: Send + Sync {
     async fn default_calendar(&self) -> Result<Option<String>> {
         Ok(None)
     }
+
+    /// The mailbox this client acts as through impersonation (EWS with the
+    /// global service account), `None` otherwise. A sync compares it with the
+    /// source's stored target before keeping what it fetched.
+    fn impersonated_mailbox(&self) -> Option<&str> {
+        None
+    }
 }
 
 /// Why a calendar write-back did not land (#162).

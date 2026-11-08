@@ -653,12 +653,27 @@ async fn sync_ews_calendars(
 ) -> Result<()> {
     let mut calendar_failures: Vec<String> = Vec::new();
     // A managed source reads someone's mailbox through the service account:
-    // it keeps busy times only, never what the meetings are about.
+    // it keeps busy times only, never what the meetings are about, nor the
+    // names of their calendar folders.
     let busy_only = crate::ews::global::is_managed(pool, source_id).await;
-    let calendars = provider.list_calendars().await?;
+
+    // Phase 1, network only: what the mailbox holds. Nothing is written yet,
+    // since the source may be pointed at another mailbox while this runs.
+    let mut calendars = provider.list_calendars().await?;
+    if busy_only {
+        for (n, cal) in calendars.iter_mut().enumerate() {
+            cal.display_name = Some(crate::ews::global::neutral_calendar_name(n));
+        }
+    }
+    let not_synced: Vec<String> =
+        sqlx::query_scalar("SELECT href FROM calendars WHERE source_id = ? AND sync_enabled = 0")
+            .bind(source_id)
+            .fetch_all(pool)
+            .await
+            .unwrap_or_default();
     // A source that has no calendar yet is meeting its mailbox for the first
     // time (or again, after `forget_mailbox`): the moment to pick where
-    // bookings go. Decided here and applied after the calendars exist.
+    // bookings go.
     let first_discovery: bool =
         sqlx::query_scalar("SELECT COUNT(*) = 0 FROM calendars WHERE source_id = ?")
             .bind(source_id)
@@ -674,18 +689,54 @@ async fn sync_ews_calendars(
     let since_iso = since_dt.to_rfc3339();
     let since_prefix = since_dt.format("%Y%m%d").to_string();
 
+    let mut fetched = Vec::with_capacity(calendars.len());
     for cal_info in &calendars {
+        if not_synced.contains(&cal_info.id) {
+            fetched.push(None);
+            continue;
+        }
+        fetched.push(Some(
+            provider.fetch_events_since(&cal_info.id, &since_iso).await,
+        ));
+    }
+    let default_href = if first_discovery {
+        default_write_calendar(pool, provider, source_id, &calendars).await
+    } else {
+        None
+    };
+
+    // Phase 2: keep it, under the source's mailbox lock, and only if the
+    // source still reads the mailbox this client impersonated. Otherwise the
+    // old mailbox's calendars would come back after `forget_mailbox`.
+    let lock = crate::ews::global::mailbox_lock(source_id);
+    let _guard = lock.lock().await;
+    let target: Option<String> =
+        sqlx::query_scalar("SELECT impersonate_email FROM caldav_sources WHERE id = ?")
+            .bind(source_id)
+            .fetch_optional(pool)
+            .await?
+            .flatten();
+    if target.as_deref() != provider.impersonated_mailbox() {
+        tracing::warn!(source_id = %source_id, "EWS sync discarded: the source now reads another mailbox");
+        return Ok(());
+    }
+
+    let listed: Vec<&str> = calendars.iter().map(|c| c.id.as_str()).collect();
+    for (cal_info, result) in calendars.iter().zip(fetched) {
         let (cal_id, _stored_change_marker, _stored_sync_state, sync_enabled) =
             upsert_calendar_provider(pool, source_id, cal_info).await?;
         let cal_label = cal_info.display_name.as_deref().unwrap_or(&cal_info.id);
-        if !sync_enabled {
-            tracing::debug!(calendar = %cal_label, "calendar not synced, skipping");
-            println!("  {} {}: not synced", "…".dimmed(), cal_label);
-            forget_calendar_events(pool, &cal_id).await;
-            continue;
-        }
+        let result = match result {
+            Some(r) if sync_enabled => r,
+            _ => {
+                tracing::debug!(calendar = %cal_label, "calendar not synced, skipping");
+                println!("  {} {}: not synced", "…".dimmed(), cal_label);
+                forget_calendar_events(pool, &cal_id).await;
+                continue;
+            }
+        };
 
-        match provider.fetch_events_since(&cal_info.id, &since_iso).await {
+        match result {
             Ok(raw_events) => {
                 let count = upsert_provider_events(pool, &cal_id, &raw_events, busy_only).await;
                 let deleted = remove_orphaned_ews_events(
@@ -706,7 +757,7 @@ async fn sync_ews_calendars(
                     );
                 }
                 println!(
-                    "  {} {} — {} event(s) synced{}",
+                    "  {} {}: {} event(s) synced{}",
                     "✓".green(),
                     cal_label,
                     count,
@@ -718,14 +769,48 @@ async fn sync_ews_calendars(
                 );
             }
             Err(e) => {
-                println!("  {} {} — failed: {}", "✗".red(), cal_label, e);
+                println!("  {} {}: failed: {}", "✗".red(), cal_label, e);
                 calendar_failures.push(format!("{cal_label}: {e:#}"));
             }
         }
     }
 
-    if first_discovery {
-        choose_default_write_calendar(pool, provider, source_id, &calendars).await;
+    // A folder the mailbox no longer lists is gone, with its cached events
+    // (they cascade); a write calendar pointing at it is cleared.
+    let stored: Vec<(String, String)> =
+        sqlx::query_as("SELECT id, href FROM calendars WHERE source_id = ?")
+            .bind(source_id)
+            .fetch_all(pool)
+            .await?;
+    for (id, href) in stored {
+        if !listed.contains(&href.as_str()) {
+            sqlx::query("DELETE FROM calendars WHERE id = ?")
+                .bind(&id)
+                .execute(pool)
+                .await?;
+            tracing::info!(source_id = %source_id, "EWS calendar no longer listed by the server: removed");
+        }
+    }
+    sqlx::query(
+        "UPDATE caldav_sources SET write_calendar_href = NULL WHERE id = ? \
+         AND write_calendar_href IS NOT NULL \
+         AND NOT EXISTS (SELECT 1 FROM calendars c WHERE c.source_id = caldav_sources.id \
+                         AND c.href = caldav_sources.write_calendar_href)",
+    )
+    .bind(source_id)
+    .execute(pool)
+    .await?;
+
+    if let Some(href) = default_href {
+        let _ = sqlx::query(
+            "UPDATE caldav_sources SET write_calendar_href = ? \
+             WHERE id = ? AND write_calendar_href IS NULL",
+        )
+        .bind(&href)
+        .bind(source_id)
+        .execute(pool)
+        .await;
+        tracing::info!(source_id = %source_id, "managed source writes bookings to the mailbox's default calendar");
     }
 
     let _ = sqlx::query("UPDATE caldav_sources SET last_full_sync = datetime('now') WHERE id = ?")
@@ -740,21 +825,22 @@ async fn sync_ews_calendars(
     calendar_failures_result(&calendar_failures)
 }
 
-/// Point a managed source's bookings at the mailbox's default calendar, so a
-/// user who never opens the sources page still gets their bookings written to
-/// their agenda. Only for a managed source that has no write calendar yet, and
-/// only when its calendars were just discovered: after that, "do not write" is
-/// a choice the user may have made and a later sync must not undo.
+/// The calendar a managed source's bookings should go to: the mailbox's
+/// default calendar, so a user who never opens the sources page still gets
+/// their bookings written to their agenda. Only for a managed source that has
+/// no write calendar yet, and only when its calendars were just discovered:
+/// after that, "do not write" is a choice the user may have made and a later
+/// sync must not undo. The caller applies it.
 ///
 /// The default calendar is recognised by id, never by name (it is "Calendrier"
 /// on a French mailbox). When the server cannot name it, a mailbox with a
 /// single calendar is unambiguous; with several, nothing is guessed.
-async fn choose_default_write_calendar(
+async fn default_write_calendar(
     pool: &SqlitePool,
     provider: &dyn crate::providers::CalendarProvider,
     source_id: &str,
     calendars: &[crate::providers::RemoteCalendar],
-) {
+) -> Option<String> {
     let eligible: bool = sqlx::query_scalar(
         "SELECT managed = 1 AND write_calendar_href IS NULL FROM caldav_sources WHERE id = ?",
     )
@@ -765,7 +851,7 @@ async fn choose_default_write_calendar(
     .flatten()
     .unwrap_or(false);
     if !eligible {
-        return;
+        return None;
     }
     let default = match provider.default_calendar().await {
         Ok(id) => id,
@@ -780,19 +866,10 @@ async fn choose_default_write_calendar(
             [only] => Some(only.id.clone()),
             _ => None,
         });
-    let Some(href) = chosen else {
+    if chosen.is_none() {
         tracing::info!(source_id = %source_id, calendars = calendars.len(), "no default calendar to write bookings to; the user picks one");
-        return;
-    };
-    let _ = sqlx::query(
-        "UPDATE caldav_sources SET write_calendar_href = ? \
-         WHERE id = ? AND write_calendar_href IS NULL",
-    )
-    .bind(&href)
-    .bind(source_id)
-    .execute(pool)
-    .await;
-    tracing::info!(source_id = %source_id, "managed source writes bookings to the mailbox's default calendar");
+    }
+    chosen
 }
 
 /// Provider-trait equivalent of [`upsert_calendar`]. EWS uses opaque folder
@@ -876,7 +953,12 @@ async fn upsert_provider_events(
             .unwrap_or_default();
 
             let (summary, location, description, raw_ical) = if busy_only {
-                (None, None, None, busy_only_ical(&fields, rrule.as_deref()))
+                (
+                    None,
+                    None,
+                    None,
+                    busy_only_ical(&raw.ical, rrule.as_deref()),
+                )
             } else {
                 (summary, location, description, Some(raw.ical.clone()))
             };
@@ -922,26 +1004,47 @@ async fn upsert_provider_events(
     count
 }
 
-/// What a busy-only event keeps of its iCal text: nothing, unless it recurs,
-/// in which case a bare VEVENT carrying its start and its `EXDATE` lines, the
-/// only part of the text availability reads (cancelled occurrences of the
-/// series). No title, description, location, attendees or notes.
-fn busy_only_ical(unfolded_vevent: &str, rrule: Option<&str>) -> Option<String> {
+/// What a busy-only event keeps of the iCal text of its resource: nothing,
+/// unless it recurs. Then one bare VEVENT per VEVENT of the resource, in
+/// order, carrying only what [`crate::rrule::extract_exdates`] reads: the
+/// first one's start and `EXDATE` lines (the series' cancelled occurrences),
+/// and each other one's `RECURRENCE-ID` (its moved occurrences, which the
+/// series must not block twice). No title, description, location, attendees
+/// or notes.
+fn busy_only_ical(resource: &str, rrule: Option<&str>) -> Option<String> {
     rrule.filter(|r| !r.trim().is_empty())?;
-    let mut out = String::from("BEGIN:VEVENT\r\n");
-    for line in unfolded_vevent.lines() {
+    let unfolded = crate::utils::unfold_ical(resource);
+    let mut out = String::new();
+    let mut index = 0usize;
+    let mut inside = false;
+    for line in unfolded.lines() {
         let line = line.trim_end_matches('\r');
         let name = line
             .split([':', ';'])
             .next()
             .unwrap_or("")
             .to_ascii_uppercase();
-        if name == "DTSTART" || name == "EXDATE" {
+        if line.eq_ignore_ascii_case("BEGIN:VEVENT") {
+            inside = true;
+            out.push_str("BEGIN:VEVENT\r\n");
+            continue;
+        }
+        if line.eq_ignore_ascii_case("END:VEVENT") {
+            inside = false;
+            index += 1;
+            out.push_str("END:VEVENT\r\n");
+            continue;
+        }
+        let keep = inside
+            && match index {
+                0 => name == "DTSTART" || name == "EXDATE",
+                _ => name == "RECURRENCE-ID",
+            };
+        if keep {
             out.push_str(line);
             out.push_str("\r\n");
         }
     }
-    out.push_str("END:VEVENT\r\n");
     Some(out)
 }
 
@@ -1757,23 +1860,39 @@ mod tests {
     }
 
     /// A managed source keeps busy times only: of a recurring event, the
-    /// start and the exception dates availability reads, nothing else.
+    /// series' start and exception dates and its moved occurrences'
+    /// RECURRENCE-IDs, which availability reads, nothing else.
     #[test]
     fn busy_only_ical_keeps_timing_and_drops_content() {
-        let vevent = "BEGIN:VEVENT\r\nUID:u1\r\nSUMMARY:Salary review\r\n\
-                      DESCRIPTION:Private\r\nLOCATION:Room 1\r\n\
-                      DTSTART;TZID=Europe/Paris:20300107T100000\r\n\
-                      RRULE:FREQ=WEEKLY\r\nEXDATE;TZID=Europe/Paris:20300114T100000\r\n\
-                      ATTENDEE:mailto:boss@example.com\r\nEND:VEVENT\r\n";
-        assert_eq!(busy_only_ical(vevent, None), None, "no rrule: nothing kept");
-        let kept = busy_only_ical(vevent, Some("FREQ=WEEKLY")).unwrap();
+        let resource = "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:u1\r\nSUMMARY:Salary review\r\n\
+                        DESCRIPTION:Private\r\nLOCATION:Room 1\r\n\
+                        DTSTART;TZID=Europe/Paris:20300107T100000\r\n\
+                        RRULE:FREQ=WEEKLY\r\nEXDATE;TZID=Europe/Paris:20300114T100000\r\n\
+                        ATTENDEE:mailto:boss@example.com\r\nEND:VEVENT\r\n\
+                        BEGIN:VEVENT\r\nUID:u1\r\nSUMMARY:Salary review (moved)\r\n\
+                        RECURRENCE-ID;TZID=Europe/Paris:20300121T100000\r\n\
+                        DTSTART;TZID=Europe/Paris:20300121T150000\r\nEND:VEVENT\r\n\
+                        END:VCALENDAR\r\n";
+        assert_eq!(
+            busy_only_ical(resource, None),
+            None,
+            "no rrule: nothing kept"
+        );
+        let kept = busy_only_ical(resource, Some("FREQ=WEEKLY")).unwrap();
         assert_eq!(
             kept,
             "BEGIN:VEVENT\r\nDTSTART;TZID=Europe/Paris:20300107T100000\r\n\
-             EXDATE;TZID=Europe/Paris:20300114T100000\r\nEND:VEVENT\r\n"
+             EXDATE;TZID=Europe/Paris:20300114T100000\r\nEND:VEVENT\r\n\
+             BEGIN:VEVENT\r\nRECURRENCE-ID;TZID=Europe/Paris:20300121T100000\r\n\
+             END:VEVENT\r\n"
         );
         let exdates = crate::rrule::extract_exdates(&kept, Some("Europe/Paris"));
-        assert_eq!(exdates.len(), 1, "availability still sees the exception");
+        assert_eq!(
+            exdates,
+            crate::rrule::extract_exdates(resource, Some("Europe/Paris")),
+            "availability reads the same exceptions as from the full text"
+        );
+        assert_eq!(exdates.len(), 2);
     }
 
     /// #310: the background loop only picks a source whose last attempt,

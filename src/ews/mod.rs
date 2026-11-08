@@ -99,6 +99,10 @@ impl EwsProvider {
 
 #[async_trait]
 impl CalendarProvider for EwsProvider {
+    fn impersonated_mailbox(&self) -> Option<&str> {
+        self.impersonate()
+    }
+
     async fn check_connection(&self) -> Result<bool> {
         operations::check_connection(
             &self.endpoint,

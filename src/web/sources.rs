@@ -768,7 +768,9 @@ pub(super) async fn test_source(
         match provider {
             Ok(None) => crate::i18n::translate(
                 auth_user.lang,
-                "sources-managed-global-disabled",
+                crate::ews::global::idle_reason(&state.pool, &state.secret_key, &source_id)
+                    .await
+                    .unwrap_or("sources-managed-global-disabled"),
                 None,
             ),
             Ok(Some(client)) => match client.check_connection().await {

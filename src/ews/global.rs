@@ -52,26 +52,33 @@ impl DomainOverride {
 /// lowercased. `Ok(None)` when empty; `Err` when it still holds an `@` or
 /// whitespace, or has no dot, since it then cannot be a mail domain.
 pub fn normalize_domain(raw: &str) -> Result<Option<String>, ()> {
-    let d = raw.trim().trim_start_matches('@').to_lowercase();
+    let d = raw.trim().trim_start_matches('@').to_ascii_lowercase();
     if d.is_empty() {
         return Ok(None);
     }
-    if d.contains('@') || d.chars().any(char::is_whitespace) || !d.contains('.') {
+    if !d.is_ascii() || d.contains('@') || d.chars().any(char::is_whitespace) || !d.contains('.') {
         return Err(());
     }
     Ok(Some(d))
 }
 
 /// The mailbox a calrs address impersonates, lowercased (Exchange matches
-/// SMTP addresses without regard to case). `None` unless the address has
-/// exactly one `@` with something on both sides: `ceo@x@corp.local` names no
-/// mailbox. With an override, only an address in exactly its `from` domain
-/// gets the mailbox domain; any other address is used as it is.
+/// SMTP addresses without regard to case). `None` unless the address is
+/// plain ASCII (Exchange 2019 has no SMTPUTF8, and Unicode case rules would
+/// fold `\u{212A}` (the Kelvin sign) onto `k`) and has exactly one `@` with
+/// something on both sides: `ceo@x@corp.local` names no mailbox. With an
+/// override, only an address in exactly its `from` domain gets the mailbox
+/// domain; any other address is used as it is.
 pub fn mailbox_for(addr: &str, domain_override: Option<&DomainOverride>) -> Option<String> {
-    let addr = addr.trim().to_lowercase();
-    if addr.chars().any(char::is_whitespace) {
+    let addr = addr.trim();
+    if !addr.is_ascii()
+        || addr
+            .chars()
+            .any(|c| c.is_ascii_whitespace() || c.is_ascii_control())
+    {
         return None;
     }
+    let addr = addr.to_ascii_lowercase();
     let mut parts = addr.split('@');
     let (Some(local), Some(domain), None) = (parts.next(), parts.next(), parts.next()) else {
         return None;
@@ -173,6 +180,61 @@ pub enum Provisioned {
     /// Another user's managed source already impersonates this mailbox. Any
     /// managed source this user had is gone.
     Conflict,
+    /// Nothing was written: global Exchange was switched off, or the user
+    /// suspended or no longer trusted, while this ran.
+    Inactive,
+}
+
+/// Name stored for the `n`-th (0-based) calendar of a managed source instead
+/// of its folder name, which is mailbox content too ("Salary reviews").
+pub fn neutral_calendar_name(n: usize) -> String {
+    format!("Exchange calendar {}", n + 1)
+}
+
+/// Per-source lock held while a managed source changes mailbox and while an
+/// EWS sync stores what it fetched, so a sync that started on the old
+/// mailbox can never write its calendars back after [`forget_mailbox`].
+pub fn mailbox_lock(source_id: &str) -> std::sync::Arc<tokio::sync::Mutex<()>> {
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex, OnceLock};
+    static LOCKS: OnceLock<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>> = OnceLock::new();
+    LOCKS
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .entry(source_id.to_string())
+        .or_default()
+        .clone()
+}
+
+/// Why a managed source is idle, as a message key for the sources page;
+/// `None` when it is not idle (or not managed).
+pub async fn idle_reason(
+    pool: &SqlitePool,
+    key: &[u8; 32],
+    source_id: &str,
+) -> Option<&'static str> {
+    if !is_managed(pool, source_id).await {
+        return None;
+    }
+    if load_ews_global_config(pool, key).await.is_none() {
+        return Some("sources-managed-global-disabled");
+    }
+    let user: Option<(bool, bool)> = sqlx::query_as(
+        "SELECT u.enabled, u.email_trusted FROM caldav_sources cs \
+         JOIN accounts a ON a.id = cs.account_id JOIN users u ON u.id = a.user_id \
+         WHERE cs.id = ?",
+    )
+    .bind(source_id)
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten();
+    match user {
+        Some((false, _)) | None => Some("sources-managed-user-suspended"),
+        Some((true, false)) => Some("sources-managed-user-untrusted"),
+        Some((true, true)) => None,
+    }
 }
 
 impl Provisioned {
@@ -201,12 +263,13 @@ pub async fn provision_managed_ews_source_for_user(
     cfg: &EwsGlobalConfig,
     user_id: &str,
 ) -> Result<Provisioned> {
-    let user: Option<(String, bool, bool)> =
-        sqlx::query_as("SELECT email, enabled, email_trusted FROM users WHERE id = ?")
-            .bind(user_id)
-            .fetch_optional(pool)
-            .await?;
-    let Some((email, enabled, trusted)) = user else {
+    let user: Option<(String, bool, bool, bool)> = sqlx::query_as(
+        "SELECT email, enabled, email_trusted, email_verified_by_idp FROM users WHERE id = ?",
+    )
+    .bind(user_id)
+    .fetch_optional(pool)
+    .await?;
+    let Some((email, enabled, trusted, idp_verified)) = user else {
         return Ok(Provisioned::NoAccount);
     };
     if !trusted {
@@ -233,40 +296,75 @@ pub async fn provision_managed_ews_source_for_user(
         return Ok(Provisioned::NoAccount);
     };
 
+    // An existing row may move to another mailbox below: hold its lock, so a
+    // sync of the old mailbox cannot store its results afterwards.
+    let existing: Option<String> = sqlx::query_scalar(
+        "SELECT id FROM caldav_sources \
+         WHERE account_id = ? AND managed = 1 AND provider_type = 'ews'",
+    )
+    .bind(&account_id)
+    .fetch_optional(pool)
+    .await?;
+    let lock = existing.as_deref().map(mailbox_lock);
+    let _guard = match &lock {
+        Some(l) => Some(l.lock().await),
+        None => None,
+    };
+
     // One mailbox, one user. Checked up front for a clear outcome; the
-    // unique index catches a concurrent provisioning of the same mailbox.
-    let taken: bool = sqlx::query_scalar(
-        "SELECT EXISTS (SELECT 1 FROM caldav_sources \
-         WHERE managed = 1 AND provider_type = 'ews' \
-           AND impersonate_email = ? AND account_id != ?)",
+    // unique index catches a concurrent provisioning of the same mailbox. An
+    // owner the identity provider verified outranks an account that only an
+    // admin vouched for: that account's source goes, the owner's is created.
+    let holder: Option<(String, String, bool)> = sqlx::query_as(
+        "SELECT cs.id, a.user_id, u.email_verified_by_idp FROM caldav_sources cs \
+         JOIN accounts a ON a.id = cs.account_id JOIN users u ON u.id = a.user_id \
+         WHERE cs.managed = 1 AND cs.provider_type = 'ews' \
+           AND cs.impersonate_email = ? AND cs.account_id != ?",
     )
     .bind(&mailbox)
     .bind(&account_id)
-    .fetch_one(pool)
+    .fetch_optional(pool)
     .await?;
-    if taken {
-        return conflict(pool, user_id).await;
+    if let Some((holder_source, holder_user, holder_verified)) = holder {
+        if idp_verified && !holder_verified {
+            let holder_lock = mailbox_lock(&holder_source);
+            let _holder_guard = holder_lock.lock().await;
+            delete_source(pool, &holder_source).await?;
+            tracing::warn!(
+                user_id = %user_id,
+                previous_user_id = %holder_user,
+                mailbox = %mailbox,
+                "managed EWS source taken over: the identity provider verified this owner, the previous holder was only confirmed by an admin"
+            );
+        } else {
+            return conflict(pool, user_id).await;
+        }
     }
 
     // An existing row follows the user's current mailbox, which an OIDC
     // login or a new domain override may have changed; anything else on it
-    // is left alone.
+    // is left alone. The feature and the user are checked again in the same
+    // statement, so a concurrent switch-off or suspension cannot be undone
+    // by a provisioning that read the old state.
     let id = uuid::Uuid::new_v4().to_string();
-    let touched: Result<Option<String>, sqlx::Error> = sqlx::query_scalar(
+    let touched: Result<Option<String>, sqlx::Error> = sqlx::query_scalar(&format!(
         "INSERT INTO caldav_sources \
             (id, account_id, name, url, username, password_enc, provider_type, \
              managed, impersonate_email, enabled, auth_type) \
-         VALUES (?, ?, 'Exchange (managed)', ?, ?, NULL, 'ews', 1, ?, 1, 'basic') \
+         SELECT ?, ?, 'Exchange (managed)', ?, ?, NULL, 'ews', 1, ?, 1, 'basic' \
+         WHERE {FEATURE_ON_SQL} \
+           AND EXISTS (SELECT 1 FROM users WHERE id = ? AND enabled = 1 AND email_trusted = 1) \
          ON CONFLICT (account_id) WHERE managed = 1 AND provider_type = 'ews' \
          DO UPDATE SET impersonate_email = excluded.impersonate_email \
              WHERE caldav_sources.impersonate_email IS NOT excluded.impersonate_email \
-         RETURNING id",
-    )
+         RETURNING id"
+    ))
     .bind(&id)
     .bind(&account_id)
     .bind(&cfg.url)
     .bind(&cfg.service_username)
     .bind(&mailbox)
+    .bind(user_id)
     .fetch_optional(pool)
     .await;
     let touched = match touched {
@@ -280,10 +378,24 @@ pub async fn provision_managed_ews_source_for_user(
     match touched {
         Some(existing) if existing != id => {
             tracing::info!(user_id = %user_id, source_id = %existing, "managed EWS source now impersonates the user's new address");
-            forget_mailbox(pool, &existing).await?;
+            forget_mailbox_held(pool, &existing).await?;
             Ok(Provisioned::Updated)
         }
-        None => Ok(Provisioned::Unchanged),
+        None => {
+            let current: Option<String> = sqlx::query_scalar(
+                "SELECT impersonate_email FROM caldav_sources \
+                 WHERE account_id = ? AND managed = 1 AND provider_type = 'ews'",
+            )
+            .bind(&account_id)
+            .fetch_optional(pool)
+            .await?
+            .flatten();
+            if current.as_deref() == Some(mailbox.as_str()) {
+                Ok(Provisioned::Unchanged)
+            } else {
+                Ok(Provisioned::Inactive)
+            }
+        }
         Some(_) => {
             tracing::info!(
                 user_id = %user_id,
@@ -295,6 +407,13 @@ pub async fn provision_managed_ews_source_for_user(
         }
     }
 }
+
+/// SQL condition true while global Exchange is on and complete.
+const FEATURE_ON_SQL: &str = "EXISTS (SELECT 1 FROM auth_config ac WHERE ac.id = 'singleton' \
+     AND ac.ews_global_enabled = 1 \
+     AND COALESCE(ac.ews_global_url, '') != '' \
+     AND COALESCE(ac.ews_service_username, '') != '' \
+     AND COALESCE(ac.ews_service_password_enc, '') != '')";
 
 /// The mailbox is another user's: this user keeps no managed source, since
 /// one left in place would read the mailbox of an address they no longer
@@ -438,13 +557,15 @@ pub async fn retarget_managed_sources(
         if mailbox == current {
             continue;
         }
+        let lock = mailbox_lock(&id);
+        let _guard = lock.lock().await;
         let moved = sqlx::query("UPDATE caldav_sources SET impersonate_email = ? WHERE id = ?")
             .bind(&mailbox)
             .bind(&id)
             .execute(pool)
             .await;
         match moved {
-            Ok(_) => {}
+            Ok(_) => forget_mailbox_held(pool, &id).await?,
             Err(sqlx::Error::Database(e)) if e.is_unique_violation() => {
                 tracing::warn!(source_id = %id, "managed EWS source removed: its new mailbox is already another user's");
                 delete_source(pool, &id).await?;
@@ -485,6 +606,14 @@ pub async fn remove_all_managed_sources(pool: &SqlitePool) -> Result<u64> {
 /// next sync discovers the new mailbox's calendars, and the user picks a
 /// write calendar again (the sources page already asks for one).
 pub async fn forget_mailbox(pool: &SqlitePool, source_id: &str) -> Result<()> {
+    let lock = mailbox_lock(source_id);
+    let _guard = lock.lock().await;
+    forget_mailbox_held(pool, source_id).await
+}
+
+/// [`forget_mailbox`] for a caller already holding the source's
+/// [`mailbox_lock`].
+async fn forget_mailbox_held(pool: &SqlitePool, source_id: &str) -> Result<()> {
     sqlx::query("DELETE FROM calendars WHERE source_id = ?")
         .bind(source_id)
         .execute(pool)
@@ -609,6 +738,15 @@ mod tests {
             .await
             .unwrap();
         crate::db::migrate(&pool).await.unwrap();
+        // Global Exchange on, as provisioning checks it when it writes.
+        sqlx::query(
+            "UPDATE auth_config SET ews_global_enabled = 1, \
+             ews_global_url = 'https://mail.example.com/EWS/Exchange.asmx', \
+             ews_service_username = 'svc', ews_service_password_enc = 'x' WHERE id = 'singleton'",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
         pool
     }
 
@@ -845,6 +983,23 @@ mod tests {
         ] {
             assert_eq!(cfg.impersonation_target(addr), None, "{addr:?}");
         }
+    }
+
+    /// Exchange 2019 has no SMTPUTF8, and Unicode lowercasing folds the
+    /// Kelvin sign onto `k`: a non-ASCII address names no mailbox, so it can
+    /// never map onto a real one. Spaces around it and letter case do not
+    /// matter, the same way SQLite's ASCII `lower()` sees them.
+    #[test]
+    fn a_non_ascii_address_names_no_mailbox() {
+        let cfg = cfg_with(None);
+        assert_eq!(cfg.impersonation_target("\u{212A}en@corp.com"), None);
+        assert_eq!(cfg.impersonation_target("j\u{f6}rg@corp.com"), None);
+        assert_eq!(cfg.impersonation_target("ceo@corp.com\u{0}"), None);
+        assert_eq!(
+            cfg.impersonation_target("  CEO@Corp.COM ").as_deref(),
+            Some("ceo@corp.com")
+        );
+        assert_eq!(normalize_domain("\u{212A}orp.com"), Err(()));
     }
 
     #[test]

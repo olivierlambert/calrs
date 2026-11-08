@@ -335,7 +335,7 @@ async fn self_registration_is_not_provisioned() {
             "/dashboard/admin/ews",
             &admin_session,
             csrf,
-            &format!("_csrf={csrf}&ews_global_enabled=on&ews_global_url=https%3A%2F%2Fexample.com%2FEWS%2FExchange.asmx&ews_service_username=svc&ews_auto_provision=on&provision_now=1"),
+            &format!("_csrf={csrf}&ews_global_enabled=on&ews_global_url=https%3A%2F%2Fexample.com%2FEWS%2FExchange.asmx&ews_service_username=svc%40example.com&ews_auto_provision=on&provision_now=1"),
         ))
         .await
         .unwrap();
@@ -1162,7 +1162,7 @@ async fn changing_the_mailbox_domain_resets_every_managed_source() {
             "/dashboard/admin/ews",
             &session,
             csrf,
-            &format!("_csrf={csrf}&ews_global_enabled=on&ews_global_url={url}&ews_service_username=svc&ews_impersonation_from_domain=example.com&ews_impersonation_domain=corp.example"),
+            &format!("_csrf={csrf}&ews_global_enabled=on&ews_global_url={url}&ews_service_username=svc%40example.com&ews_impersonation_from_domain=example.com&ews_impersonation_domain=corp.example"),
         ))
         .await
         .unwrap();
@@ -1767,4 +1767,398 @@ async fn removing_managed_sources_clears_them_and_the_service_password() {
     )
     .await;
     assert!(page.contains("Managed sources removed: 1."));
+}
+
+/// Log in an admin for the app built by `setup_test_db` + `seed_test_data`.
+async fn admin_app(pool: &SqlitePool, admin_id: &str) -> (Router, String) {
+    let session = uuid::Uuid::new_v4().to_string();
+    sqlx::query(
+        "INSERT INTO sessions (id, user_id, expires_at) VALUES (?, ?, datetime('now', '+1 day'))",
+    )
+    .bind(&session)
+    .bind(admin_id)
+    .execute(pool)
+    .await
+    .unwrap();
+    let data_dir = std::env::temp_dir().join(format!("calrs_test_{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&data_dir).unwrap();
+    (
+        create_router(pool.clone(), data_dir, [0u8; 32]).await,
+        session,
+    )
+}
+
+async fn stored_password(pool: &SqlitePool) -> Option<String> {
+    sqlx::query_scalar("SELECT ews_service_password_enc FROM auth_config WHERE id = 'singleton'")
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+/// The stored service password belongs to the endpoint and the account it
+/// was typed for. Pointing the card at another server or another account
+/// without typing it again clears it, so it is never sent to the new host,
+/// and the feature idles until it is entered.
+#[tokio::test]
+async fn a_new_endpoint_or_account_without_a_new_password_clears_it() {
+    for (case, url, user) in [
+        (
+            "endpoint",
+            "https%3A%2F%2Fwww.example.com%2FEWS%2FExchange.asmx",
+            "svc%40example.com",
+        ),
+        (
+            "account",
+            "https%3A%2F%2Fexample.com%2FEWS%2FExchange.asmx",
+            "other%40example.com",
+        ),
+    ] {
+        let pool = setup_test_db().await;
+        let (admin_id, _, _) = seed_test_data(&pool).await;
+        store_global_config(&pool, false, false).await;
+        let (app, session) = admin_app(&pool, &admin_id).await;
+        let csrf = "csrf-ews-move";
+
+        // Same endpoint (written differently) and account: the password stays.
+        let resp = app
+            .clone()
+            .oneshot(post_form(
+                "/dashboard/admin/ews",
+                &session,
+                csrf,
+                &format!("_csrf={csrf}&ews_global_enabled=on&ews_global_url=HTTPS%3A%2F%2FExample.com%2FEWS%2FExchange.asmx&ews_service_username=svc%40example.com"),
+            ))
+            .await
+            .unwrap();
+        let location = resp.headers()["location"].to_str().unwrap().to_string();
+        assert!(location.contains("ews=saved"), "{case}: {location}");
+        assert!(
+            stored_password(&pool).await.is_some(),
+            "{case}: unchanged target keeps it"
+        );
+
+        let resp = app
+            .clone()
+            .oneshot(post_form(
+                "/dashboard/admin/ews",
+                &session,
+                csrf,
+                &format!("_csrf={csrf}&ews_global_enabled=on&ews_global_url={url}&ews_service_username={user}"),
+            ))
+            .await
+            .unwrap();
+        let location = resp.headers()["location"].to_str().unwrap().to_string();
+        assert!(
+            location.contains("ews=password-cleared"),
+            "{case}: {location}"
+        );
+        assert_eq!(stored_password(&pool).await, None, "{case}: cleared");
+        assert!(
+            crate::ews::global::load_ews_global_config(&pool, &[0u8; 32])
+                .await
+                .is_none(),
+            "{case}: the feature idles"
+        );
+
+        // Typing it again with the new target is accepted.
+        let resp = app
+            .oneshot(post_form(
+                "/dashboard/admin/ews",
+                &session,
+                csrf,
+                &format!("_csrf={csrf}&ews_global_enabled=on&ews_global_url={url}&ews_service_username={user}&ews_service_password=new-pass"),
+            ))
+            .await
+            .unwrap();
+        let location = resp.headers()["location"].to_str().unwrap().to_string();
+        assert!(location.contains("ews=saved"), "{case}: {location}");
+        assert!(stored_password(&pool).await.is_some());
+    }
+}
+
+/// The service account's password goes out as Basic auth on every request,
+/// so the global endpoint must be https.
+#[tokio::test]
+async fn the_global_endpoint_must_be_https() {
+    let pool = setup_test_db().await;
+    let (admin_id, _, _) = seed_test_data(&pool).await;
+    let (app, session) = admin_app(&pool, &admin_id).await;
+    let csrf = "csrf-ews-http";
+    let resp = app
+        .oneshot(post_form(
+            "/dashboard/admin/ews",
+            &session,
+            csrf,
+            &format!("_csrf={csrf}&ews_global_enabled=on&ews_global_url=http%3A%2F%2Fexample.com%2FEWS%2FExchange.asmx&ews_service_username=svc&ews_service_password=pw"),
+        ))
+        .await
+        .unwrap();
+    let location = resp.headers()["location"].to_str().unwrap().to_string();
+    assert!(location.contains("ews=https-required"), "{location}");
+    let url: Option<String> =
+        sqlx::query_scalar("SELECT ews_global_url FROM auth_config WHERE id = 'singleton'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(url, None, "nothing saved");
+}
+
+/// Registration stores the address it checked (trimmed), so the duplicate
+/// check and the stored address agree; the card shows the mailbox a
+/// confirmation would open.
+#[tokio::test]
+async fn registration_stores_the_trimmed_address_and_the_card_shows_its_mailbox() {
+    let (app, pool, admin_session, _, _) = setup_with_global(false, false).await;
+    sqlx::query(
+        "UPDATE auth_config SET registration_enabled = 1, \
+         ews_impersonation_from_domain = 'example.org', ews_impersonation_domain = 'mail.example' \
+         WHERE id = 'singleton'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let csrf = "csrf-register-trim";
+    let resp = app
+        .clone()
+        .oneshot(post_form_unauthed(
+            "/auth/register",
+            csrf,
+            &format!(
+                "_csrf={csrf}&name=Bob&email=%20%20Bob%40Example.org%20&password=strongpassword123"
+            ),
+        ))
+        .await
+        .unwrap();
+    assert!(resp.status().is_redirection());
+    let stored: Vec<String> =
+        sqlx::query_scalar("SELECT email FROM users WHERE lower(email) = 'bob@example.org'")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(stored, ["Bob@Example.org"]);
+    let accounts: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM accounts WHERE email = 'Bob@Example.org'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(accounts, 1);
+
+    let page = body_string(
+        app.oneshot(get_authed("/dashboard/admin", &admin_session))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(
+        page.contains("bob@mail.example"),
+        "the derived mailbox is shown"
+    );
+}
+
+/// When an account only an admin vouched for holds a mailbox, the owner the
+/// identity provider verified takes it over instead of being refused; the
+/// other way round, the verified owner keeps it.
+#[tokio::test]
+async fn an_idp_verified_owner_takes_over_from_an_admin_confirmed_account() {
+    let pool = setup_test_db().await;
+    let (admin_id, _, _) = seed_test_data(&pool).await;
+    store_config_for(&pool, EWS_URL, None).await;
+    // The admin confirmed a local account first.
+    let local = provision(&pool, &admin_id, "ceo@example.com").await;
+    let owner = insert_role_user(&pool, "CEO@example.com", "user").await;
+    sqlx::query("INSERT INTO accounts (id, name, email, timezone, user_id) VALUES (?, 'C', 'CEO@example.com', 'UTC', ?)")
+        .bind(uuid::Uuid::new_v4().to_string())
+        .bind(&owner)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE users SET email_trusted = 1, email_verified_by_idp = 1, auth_provider = 'oidc' WHERE id = ?",
+    )
+    .bind(&owner)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let cfg = crate::ews::global::load_ews_global_config(&pool, &[0u8; 32])
+        .await
+        .unwrap();
+    assert_eq!(
+        crate::ews::global::provision_managed_ews_source_for_user(&pool, &cfg, &owner)
+            .await
+            .unwrap(),
+        crate::ews::global::Provisioned::Created
+    );
+    assert_eq!(
+        managed_source_of(&pool, &owner).await.unwrap().1.as_deref(),
+        Some("ceo@example.com")
+    );
+    assert!(managed_source_of(&pool, &admin_id).await.is_none());
+    let gone: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM caldav_sources WHERE id = ?")
+        .bind(&local)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(gone, 0);
+
+    // The admin-confirmed account cannot take it back.
+    assert_eq!(
+        crate::ews::global::provision_managed_ews_source_for_user(&pool, &cfg, &admin_id)
+            .await
+            .unwrap(),
+        crate::ews::global::Provisioned::Conflict
+    );
+    assert!(managed_source_of(&pool, &owner).await.is_some());
+}
+
+/// A provisioning that read the config before the admin switched the
+/// feature off writes nothing: the feature is checked in the same statement.
+#[tokio::test]
+async fn provisioning_rechecks_the_feature_when_it_writes() {
+    let pool = setup_test_db().await;
+    let (admin_id, _, _) = seed_test_data(&pool).await;
+    store_config_for(&pool, EWS_URL, None).await;
+    trust(&pool, &admin_id).await;
+    let cfg = crate::ews::global::load_ews_global_config(&pool, &[0u8; 32])
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE auth_config SET ews_global_enabled = 0, ews_service_password_enc = NULL \
+         WHERE id = 'singleton'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        crate::ews::global::provision_managed_ews_source_for_user(&pool, &cfg, &admin_id)
+            .await
+            .unwrap(),
+        crate::ews::global::Provisioned::Inactive
+    );
+    assert!(managed_source_of(&pool, &admin_id).await.is_none());
+}
+
+/// A sync whose client still impersonates the mailbox the source read when
+/// it started stores nothing once the source points elsewhere; a calendar
+/// the mailbox no longer lists is dropped; folder names are not stored.
+#[tokio::test]
+async fn a_sync_of_a_mailbox_the_source_left_stores_nothing() {
+    let pool = setup_test_db().await;
+    let (host_id, _, _) = seed_test_data(&pool).await;
+    let (endpoint, ews) = spawn_mock_ews().await;
+    store_config_for(&pool, &endpoint, None).await;
+    let day = (Utc::now().naive_utc().date() + Duration::days(2))
+        .format("%Y-%m-%dT08:00:00Z")
+        .to_string();
+    ews.set_busy(&day, &day.replace("T08:", "T09:"));
+    let source = provision(&pool, &host_id, "test@example.com").await;
+    let old_client =
+        crate::ews::global::provider_for_source(&pool, &[0u8; 32], &source, &endpoint, "svc", None)
+            .await
+            .unwrap()
+            .unwrap();
+
+    // Re-pointed (an address change) while the old client is still in use.
+    provision(&pool, &host_id, "t.user@example.com").await;
+    crate::commands::sync::sync_ews_source(&pool, &[0u8; 32], old_client.as_ref(), &source)
+        .await
+        .unwrap();
+    let calendars: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM calendars WHERE source_id = ?")
+        .bind(&source)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(calendars, 0, "the old mailbox's calendars do not come back");
+
+    // A folder the new mailbox does not list goes; the listed one gets a
+    // neutral name, not its folder name.
+    sqlx::query("INSERT INTO calendars (id, source_id, href, display_name) VALUES ('gone', ?, 'CAL-gone', 'Old')")
+        .bind(&source)
+        .execute(&pool)
+        .await
+        .unwrap();
+    crate::commands::sync::sync_source_by_id(&pool, &[0u8; 32], &source).await;
+    let names: Vec<(String, Option<String>)> =
+        sqlx::query_as("SELECT href, display_name FROM calendars WHERE source_id = ?")
+            .bind(&source)
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        names,
+        [(
+            "CAL-t.user".to_string(),
+            Some("Exchange calendar 1".to_string())
+        )]
+    );
+}
+
+/// An admin can remove one user's managed source from the status table;
+/// regular users cannot.
+#[tokio::test]
+async fn an_admin_can_remove_one_users_managed_source() {
+    let (app, pool, admin_session, user_id, user_session) = setup_with_global(false, false).await;
+    provision(&pool, &user_id, "alice@example.com").await;
+    let csrf = "csrf-ews-remove-user";
+    let page = body_string(
+        app.clone()
+            .oneshot(get_authed("/dashboard/admin", &admin_session))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(page.contains("/dashboard/admin/ews/remove-user"));
+    let refused = app
+        .clone()
+        .oneshot(post_form(
+            "/dashboard/admin/ews/remove-user",
+            &user_session,
+            csrf,
+            &format!("_csrf={csrf}&user_id={user_id}"),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(refused.status(), axum::http::StatusCode::FORBIDDEN);
+    assert!(managed_source_of(&pool, &user_id).await.is_some());
+    let resp = app
+        .oneshot(post_form(
+            "/dashboard/admin/ews/remove-user",
+            &admin_session,
+            csrf,
+            &format!("_csrf={csrf}&user_id={user_id}"),
+        ))
+        .await
+        .unwrap();
+    assert!(resp.headers()["location"]
+        .to_str()
+        .unwrap()
+        .contains("ews=source-removed"));
+    assert!(managed_source_of(&pool, &user_id).await.is_none());
+}
+
+/// Testing an idle managed source says why it is idle.
+#[tokio::test]
+async fn an_idle_managed_source_says_why() {
+    let pool = setup_test_db().await;
+    let (admin_id, _, _) = seed_test_data(&pool).await;
+    store_config_for(&pool, EWS_URL, None).await;
+    let source = provision(&pool, &admin_id, "test@example.com").await;
+    let reason = || crate::ews::global::idle_reason(&pool, &[0u8; 32], &source);
+    assert_eq!(reason().await, None);
+    sqlx::query("UPDATE users SET email_trusted = 0 WHERE id = ?")
+        .bind(&admin_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(reason().await, Some("sources-managed-user-untrusted"));
+    sqlx::query("UPDATE users SET email_trusted = 1, enabled = 0 WHERE id = ?")
+        .bind(&admin_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(reason().await, Some("sources-managed-user-suspended"));
+    sqlx::query("UPDATE auth_config SET ews_global_enabled = 0 WHERE id = 'singleton'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(reason().await, Some("sources-managed-global-disabled"));
 }

@@ -15,6 +15,9 @@ const NOTICES: &[&str] = &[
     "provision-failed",
     "trusted",
     "removed",
+    "https-required",
+    "password-cleared",
+    "source-removed",
 ];
 
 /// How many unconfirmed addresses the card lists at most.
@@ -73,9 +76,10 @@ pub(super) async fn admin_context(
         bool,
         bool,
         bool,
+        String,
     )> = sqlx::query_as(
         "SELECT u.email, cs.impersonate_email, cs.last_synced, cs.last_sync_error, cs.enabled, \
-                u.enabled, u.email_trusted \
+                u.enabled, u.email_trusted, u.id \
              FROM caldav_sources cs \
              JOIN accounts a ON a.id = cs.account_id \
              JOIN users u ON u.id = a.user_id \
@@ -89,7 +93,7 @@ pub(super) async fn admin_context(
     let mut sources: Vec<minijinja::Value> = rows
         .iter()
         .map(
-            |(email, mailbox, last_synced, last_error, enabled, user_enabled, trusted)| {
+            |(email, mailbox, last_synced, last_error, enabled, user_enabled, trusted, user_id)| {
                 // `status` picks the wording in the template; `error` is the
                 // server's own message, shown as-is when there is no better
                 // one. The fault code leads the message (see
@@ -107,6 +111,7 @@ pub(super) async fn admin_context(
                     ok_count += 1;
                 }
                 context! {
+                    user_id => user_id,
                     email => email,
                     // The address actually impersonated, after the override.
                     mailbox => mailbox.clone().unwrap_or_default(),
@@ -169,10 +174,21 @@ pub(super) async fn admin_context(
         .filter(|(_, email, _)| crate::auth::is_email_allowed(email, &allowed_domains))
         .collect();
     let untrusted_count = untrusted.len();
+    // The mailbox a confirmation would open, as the admin must judge it:
+    // after the domain override, or "none" for an address that names none.
+    let domain_override =
+        ews_global::DomainOverride::new(from_domain.as_deref(), domain.as_deref());
     let untrusted_users: Vec<minijinja::Value> = untrusted
         .iter()
         .take(UNTRUSTED_SHOWN)
-        .map(|(id, email, name)| context! { id => id, email => email, name => name })
+        .map(|(id, email, name)| {
+            context! {
+                id => id,
+                email => email,
+                name => name,
+                mailbox => ews_global::mailbox_for(email, domain_override.as_ref()),
+            }
+        })
         .collect();
 
     let url = url.unwrap_or_default();
@@ -211,6 +227,17 @@ pub(super) struct AdminEwsGlobalForm {
     ews_impersonation_from_domain: Option<String>,
     /// Set by the "Save & provision all users now" button.
     provision_now: Option<String>,
+}
+
+/// A URL as compared for "did the endpoint change": parsed and re-serialized
+/// (scheme and host lowercased, default port dropped), else trimmed.
+fn normalized_url(url: Option<&str>) -> Option<String> {
+    let url = url.map(str::trim).filter(|u| !u.is_empty())?;
+    Some(
+        reqwest::Url::parse(url)
+            .map(|u| u.to_string())
+            .unwrap_or_else(|_| url.to_string()),
+    )
 }
 
 fn redirect_with(notice: &str) -> Response {
@@ -259,20 +286,40 @@ pub(super) async fn admin_update_ews_global(
     // which server every managed source reads. Changing either makes what
     // they cached belong to a mailbox they no longer read, and Exchange
     // folder ids are only meaningful in the mailbox they came from.
-    let previous: Option<(Option<String>, Option<String>, Option<String>)> = sqlx::query_as(
-        "SELECT ews_global_url, ews_impersonation_domain, ews_impersonation_from_domain \
-         FROM auth_config WHERE id = 'singleton'",
+    #[allow(clippy::type_complexity)]
+    let previous: Option<(
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        bool,
+    )> = sqlx::query_as(
+        "SELECT ews_global_url, ews_impersonation_domain, ews_impersonation_from_domain, \
+                    ews_service_username, \
+                    COALESCE(ews_service_password_enc, '') != '' \
+             FROM auth_config WHERE id = 'singleton'",
     )
     .fetch_optional(&state.pool)
     .await
     .unwrap_or(None);
-    let (previous_url, previous_domain, previous_from) = previous.unwrap_or((None, None, None));
-    let same = |stored: Option<String>, new: &Option<String>| -> bool {
-        stored.filter(|s| !s.is_empty()).as_ref() == new.as_ref()
+    let (previous_url, previous_domain, previous_from, previous_username, has_stored_password) =
+        previous.unwrap_or((None, None, None, None, false));
+    let same = |stored: &Option<String>, new: &Option<String>| -> bool {
+        stored.as_ref().filter(|s| !s.is_empty()) == new.as_ref()
     };
-    let mailboxes_moved = !same(previous_url, &url)
-        || !same(previous_domain, &imp_domain)
-        || !same(previous_from, &from_domain);
+    let url_moved = normalized_url(previous_url.as_deref()) != normalized_url(url.as_deref());
+    let mailboxes_moved =
+        url_moved || !same(&previous_domain, &imp_domain) || !same(&previous_from, &from_domain);
+    // The stored password belongs to the account and the server it was typed
+    // for. Kept across a new endpoint or a new account, it would be sent to
+    // wherever the URL now points: never keep it then.
+    let username_moved = previous_username
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        != username.as_deref();
+    let password_cleared =
+        password.is_none() && has_stored_password && (url_moved || username_moved);
 
     if let Some(u) = url.as_deref() {
         if let Err(e) =
@@ -281,19 +328,15 @@ pub(super) async fn admin_update_ews_global(
             tracing::warn!(error = %e, "admin: invalid global EWS URL");
             return redirect_with("invalid-url");
         }
+        // The service account's password goes out as Basic auth on every
+        // request: never over plain http.
+        if !u.trim().to_ascii_lowercase().starts_with("https://") {
+            return redirect_with("https-required");
+        }
     }
-    if enabled {
+    if enabled && !password_cleared {
         // Switching on without everything the sync needs would save a config
         // that loads as "off": refuse it instead of pretending it worked.
-        let has_stored_password: bool = sqlx::query_scalar(
-            "SELECT ews_service_password_enc IS NOT NULL AND ews_service_password_enc != '' \
-             FROM auth_config WHERE id = 'singleton'",
-        )
-        .fetch_optional(&state.pool)
-        .await
-        .ok()
-        .flatten()
-        .unwrap_or(false);
         if url.is_none() || username.is_none() || (password.is_none() && !has_stored_password) {
             return redirect_with("incomplete");
         }
@@ -306,11 +349,14 @@ pub(super) async fn admin_update_ews_global(
         },
         None => None,
     };
-    // An empty password field keeps the stored one.
+    // An empty password field keeps the stored one, unless the endpoint or
+    // the account changed (`password_cleared`): then it is dropped, the
+    // config is incomplete and the feature idles until it is typed again.
     let write = sqlx::query(
         "UPDATE auth_config SET ews_global_enabled = ?, ews_global_url = ?, \
              ews_service_username = ?, \
-             ews_service_password_enc = COALESCE(?, ews_service_password_enc), \
+             ews_service_password_enc = CASE WHEN ? THEN NULL \
+                 ELSE COALESCE(?, ews_service_password_enc) END, \
              ews_lock_user_sources = ?, ews_auto_provision = ?, \
              ews_impersonation_domain = ?, ews_impersonation_from_domain = ?, \
              updated_at = datetime('now') \
@@ -319,6 +365,7 @@ pub(super) async fn admin_update_ews_global(
     .bind(enabled as i64)
     .bind(&url)
     .bind(&username)
+    .bind(password_cleared)
     .bind(&encrypted)
     .bind(lock as i64)
     .bind(auto_provision as i64)
@@ -397,6 +444,10 @@ pub(super) async fn admin_update_ews_global(
     *state.ews_global.write().await = new_config;
 
     tracing::info!(admin = %admin.user.email, enabled, "admin: global EWS config updated");
+    if password_cleared {
+        tracing::warn!(admin = %admin.user.email, "admin: EWS endpoint or service account changed without a new password: stored password cleared");
+        return redirect_with("password-cleared");
+    }
     if notice == "saved" {
         redirect_saved(provisioned)
     } else {
@@ -443,6 +494,44 @@ pub(super) async fn admin_trust_email(
         }
     }
     redirect_with("trusted")
+}
+
+#[derive(Deserialize)]
+pub(super) struct AdminEwsUserForm {
+    _csrf: Option<String>,
+    user_id: String,
+}
+
+/// Remove one user's managed source (its calendars and cached busy times
+/// cascade). Auto-provisioning gives it back at the next save, confirmation
+/// or SSO login; to keep someone out for good, suspend the account.
+pub(super) async fn admin_remove_user_source(
+    State(state): State<Arc<AppState>>,
+    admin: crate::auth::AdminUser,
+    headers: HeaderMap,
+    Form(form): Form<AdminEwsUserForm>,
+) -> impl IntoResponse {
+    if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
+        return resp;
+    }
+    let source: Option<String> = sqlx::query_scalar(
+        "SELECT cs.id FROM caldav_sources cs JOIN accounts a ON a.id = cs.account_id \
+         WHERE a.user_id = ? AND cs.managed = 1 AND cs.provider_type = 'ews'",
+    )
+    .bind(&form.user_id)
+    .fetch_optional(&state.pool)
+    .await
+    .unwrap_or(None);
+    let Some(source) = source else {
+        return Redirect::to("/dashboard/admin#ews-global").into_response();
+    };
+    let lock = ews_global::mailbox_lock(&source);
+    let _guard = lock.lock().await;
+    if let Err(e) = ews_global::remove_managed_source(&state.pool, &form.user_id).await {
+        return internal_error_response("remove a managed EWS source", &e);
+    }
+    tracing::warn!(admin = %admin.user.email, user_id = %form.user_id, "admin: managed Exchange source removed");
+    redirect_with("source-removed")
 }
 
 #[derive(Deserialize)]

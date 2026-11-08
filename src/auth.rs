@@ -863,7 +863,7 @@ async fn register_handler(
     }
 
     // Validate email domain
-    if !is_email_allowed(&form.email, &auth_config.allowed_email_domains) {
+    if !is_email_allowed(email, &auth_config.allowed_email_domains) {
         return render_register_error(&state, lang, "auth-error-email-domain", &auth_config);
     }
 
@@ -891,7 +891,7 @@ async fn register_handler(
     };
 
     let user_id = uuid::Uuid::new_v4().to_string();
-    let username = match generate_username(&state.pool, &form.email).await {
+    let username = match generate_username(&state.pool, email).await {
         Ok(u) => u,
         Err(_) => return render_register_error(&state, lang, "auth-error-internal", &auth_config),
     };
@@ -899,7 +899,7 @@ async fn register_handler(
     if create_local_user(
         &state.pool,
         &user_id,
-        &form.email,
+        email,
         &form.name,
         &password_hash,
         &username,
@@ -913,8 +913,8 @@ async fn register_handler(
 
     // Link to existing account or create a new one
     let existing_account: Option<(String,)> =
-        sqlx::query_as("SELECT id FROM accounts WHERE email = ?")
-            .bind(&form.email)
+        sqlx::query_as("SELECT id FROM accounts WHERE lower(email) = lower(?)")
+            .bind(email)
             .fetch_optional(&state.pool)
             .await
             .unwrap_or(None);
@@ -933,7 +933,7 @@ async fn register_handler(
         )
         .bind(&account_id)
         .bind(&form.name)
-        .bind(&form.email)
+        .bind(email)
         .bind(&user_id)
         .execute(&state.pool)
         .await;
@@ -1502,10 +1502,11 @@ async fn find_or_create_oidc_user(
         // currently empty. Whether calrs trusts the address (and so may open
         // its Exchange mailbox) follows this login's `email_verified` claim.
         sqlx::query(
-            "UPDATE users SET name = CASE WHEN name IS NULL OR name = '' THEN ? ELSE name END, email = ?, email_trusted = ?, updated_at = datetime('now') WHERE id = ?",
+            "UPDATE users SET name = CASE WHEN name IS NULL OR name = '' THEN ? ELSE name END, email = ?, email_trusted = ?, email_verified_by_idp = ?, updated_at = datetime('now') WHERE id = ?",
         )
         .bind(name)
         .bind(email)
+        .bind(email_verified)
         .bind(email_verified)
         .bind(&id)
         .execute(pool)
@@ -1517,7 +1518,7 @@ async fn find_or_create_oidc_user(
     //    email is verified. Otherwise an attacker could register at the IdP
     //    with the target's email and silently take over their local account.
     if let Some((id, _existing_provider)) = sqlx::query_as::<_, (String, String)>(
-        "SELECT id, auth_provider FROM users WHERE email = ? AND enabled = 1",
+        "SELECT id, auth_provider FROM users WHERE lower(email) = lower(trim(?)) AND enabled = 1",
     )
     .bind(email)
     .fetch_optional(pool)
@@ -1555,7 +1556,7 @@ async fn find_or_create_oidc_user(
         // MFA policy exemption or skip reauthentication for policy changes.
         let mut tx = pool.begin().await?;
         let linked = sqlx::query(
-            "UPDATE users SET oidc_subject = ?, auth_provider = 'oidc', email_trusted = 1, updated_at = datetime('now') WHERE id = ? AND enabled = 1",
+            "UPDATE users SET oidc_subject = ?, auth_provider = 'oidc', email_trusted = 1, email_verified_by_idp = 1, updated_at = datetime('now') WHERE id = ? AND enabled = 1",
         )
         .bind(subject)
         .bind(&id)
@@ -1591,10 +1592,10 @@ async fn find_or_create_oidc_user(
     // Compute the role inside the INSERT so "first user gets admin" is
     // atomic with the row creation; see create_local_user for the rationale.
     sqlx::query(
-        "INSERT INTO users (id, email, name, timezone, role, auth_provider, oidc_subject, username, email_trusted)
+        "INSERT INTO users (id, email, name, timezone, role, auth_provider, oidc_subject, username, email_trusted, email_verified_by_idp)
          VALUES (?, ?, ?, 'UTC',
                  CASE WHEN NOT EXISTS (SELECT 1 FROM users) THEN 'admin' ELSE 'user' END,
-                 'oidc', ?, ?, 1)",
+                 'oidc', ?, ?, 1, 1)",
     )
     .bind(&user_id)
     .bind(email)
@@ -3271,6 +3272,31 @@ mod tests {
         assert_eq!(oidc_subject.as_deref(), Some("alice-sub-123"));
     }
 
+    /// Linking by email ignores letter case, like Exchange: an IdP reporting
+    /// `Alice@Company.com` (verified) links the local `alice@company.com`
+    /// instead of creating a second account for the same mailbox, and marks
+    /// the address as verified by the identity provider.
+    #[tokio::test]
+    async fn oidc_link_by_email_ignores_letter_case() {
+        let pool = setup_db().await;
+        let user_id = insert_user(&pool, "alice@company.com", "Alice", "user").await;
+        let cfg = auth_config_with_oidc(&pool, true).await;
+        let linked =
+            find_or_create_oidc_user(&pool, "sub-case", " Alice@Company.com", true, "Alice", &cfg)
+                .await
+                .unwrap();
+        assert_eq!(linked, user_id);
+        let (users, by_idp): (i64, bool) = sqlx::query_as(
+            "SELECT (SELECT COUNT(*) FROM users), \
+                    (SELECT email_verified_by_idp FROM users WHERE id = ?)",
+        )
+        .bind(&user_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!((users, by_idp), (1, true));
+    }
+
     #[tokio::test]
     async fn oidc_auto_register_requires_email_verified() {
         // Squatting scenario: auto-register is on. Attacker signs in with a
@@ -3398,6 +3424,14 @@ mod tests {
             auto_provision: true,
             domain_override: None,
         };
+        sqlx::query(
+            "UPDATE auth_config SET ews_global_enabled = 1, ews_global_url = ?, \
+             ews_service_username = 'svc', ews_service_password_enc = 'x' WHERE id = 'singleton'",
+        )
+        .bind(&ews.url)
+        .execute(&pool)
+        .await
+        .unwrap();
         crate::ews::global::after_oidc_login(&pool, Some(&ews), &user_id).await;
         let source: String = sqlx::query_scalar(
             "SELECT cs.id FROM caldav_sources cs JOIN accounts a ON a.id = cs.account_id \
