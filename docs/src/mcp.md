@@ -163,8 +163,9 @@ Grants follow the same rules as browser sessions:
   authentication enrolled, or required by the admin, that means the code was
   entered; a login that stops at the code prompt resumes the approval after it.
 - A grant made before the admin required two-factor authentication, by a local
-  account that had not passed it, stops working when the requirement is turned
-  on, as that account's sessions do.
+  account that had not passed it, is deleted with its tokens when the
+  requirement is turned on, as that account's sessions are. Turning the
+  requirement off again does not bring it back.
 - Everything that signs a user out of every session also deletes their grants
   and tokens: suspending the account, `calrs user set-password`,
   `calrs user reset-mfa`, enrolling, disabling or regenerating two-factor

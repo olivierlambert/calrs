@@ -705,6 +705,35 @@ pub async fn bearer_user(
     Ok(user.map(|u| (u, scope)))
 }
 
+/// Deletes every grant a local account approved from a session that had not
+/// passed MFA, with its tokens, and the pending authorizations of local
+/// accounts without MFA. Run when the admin starts requiring MFA, in the same
+/// transaction as the session purge.
+pub(crate) async fn delete_unverified_local_grants(
+    conn: &mut SqliteConnection,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "DELETE FROM oauth_credentials WHERE grant_id IN
+             (SELECT g.id FROM oauth_grants g JOIN users u ON u.id = g.user_id
+              WHERE g.mfa_verified = 0 AND u.auth_provider = 'local')",
+    )
+    .execute(&mut *conn)
+    .await?;
+    sqlx::query(
+        "DELETE FROM oauth_grants WHERE mfa_verified = 0
+             AND user_id IN (SELECT id FROM users WHERE auth_provider = 'local')",
+    )
+    .execute(&mut *conn)
+    .await?;
+    sqlx::query(
+        "DELETE FROM oauth_requests WHERE user_id IN (SELECT id FROM users WHERE auth_provider = 'local')
+             AND NOT EXISTS (SELECT 1 FROM user_mfa m WHERE m.user_id = oauth_requests.user_id)",
+    )
+    .execute(conn)
+    .await?;
+    Ok(())
+}
+
 /// Deletes the user's grants with their tokens: one grant (Connected apps
 /// "Revoke"), or all of them (admin, and `mfa::revoke_access`). Returns how
 /// many grants went.

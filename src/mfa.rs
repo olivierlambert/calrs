@@ -787,6 +787,9 @@ async fn policy_save(
         if mandatory {
             sqlx::query("DELETE FROM sessions WHERE mfa_verified = 0 AND user_id IN (SELECT id FROM users WHERE auth_provider = 'local')")
                 .execute(&mut *tx).await?;
+            // OAuth grants approved without MFA go the same way, so turning
+            // the requirement off again does not revive their refresh tokens.
+            crate::oauth::delete_unverified_local_grants(&mut tx).await?;
         }
         tx.commit().await?;
         tracing::info!(admin = %admin.user.id, required = mandatory, "MFA policy changed");
