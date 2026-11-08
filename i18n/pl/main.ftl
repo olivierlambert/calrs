@@ -1030,6 +1030,7 @@ team-settings-description-placeholder = Opowiedz o tym zespole...
 team-settings-description-help = Widoczny na publicznej stronie rezerwacji zespołu. Obsługuje **pogrubienie**, *kursywę* i [linki](url).
 team-settings-visibility-help = Zespoły publiczne są widoczne na stronie profilu zespołu. Prywatne wymagają linku z zaproszeniem.
 team-settings-members-help = Zarządzaj składem tego zespołu. Dodaj pojedynczych użytkowników albo powiąż grupy OIDC, aby synchronizowały się automatycznie.
+team-settings-time-off-help = Zaplanowane nieobecności członków, w twojej strefie czasowej, { $timezone }. Ich notatki pozostają prywatne.
 team-settings-role-member = Członek
 team-settings-role-admin = Administrator
 team-settings-oidc-group = Grupa OIDC

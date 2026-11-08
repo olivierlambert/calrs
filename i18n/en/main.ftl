@@ -984,6 +984,7 @@ team-settings-description-placeholder = Tell people about this team...
 team-settings-description-help = Shown on the team's public booking page. Supports **bold**, *italic*, and [links](url).
 team-settings-visibility-help = Public teams are listed on the team profile page. Private teams require an invite link to access.
 team-settings-members-help = Manage who belongs to this team. Add individual users or link OIDC groups for automatic sync.
+team-settings-time-off-help = Members' planned time off, shown in your time zone, { $timezone }. Their notes stay private.
 team-settings-role-member = Member
 team-settings-role-admin = Admin
 team-settings-oidc-group = OIDC group

@@ -223,6 +223,7 @@ team-form-you = (Sie)
 team-settings-invite-link-help = Teilen Sie diesen Link, um Zugang zur Buchungsseite dieses privaten Teams zu geben.
 team-settings-description-placeholder = Beschreiben Sie dieses Team...
 team-settings-members-help = Verwalten Sie die Mitglieder dieses Teams. Fügen Sie einzelne Benutzer hinzu oder verknüpfen Sie OIDC-Gruppen für die automatische Synchronisierung.
+team-settings-time-off-help = Geplante Abwesenheiten der Mitglieder, in Ihrer Zeitzone, { $timezone }. Die Notizen bleiben privat.
 
 # Event type form (templates/event_type_form.html)
 

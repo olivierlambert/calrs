@@ -811,3 +811,74 @@ async fn dynamic_group_reschedule_and_approval_check_every_participant() {
         !approval_hosts_free(&pool, &hosts, &booking_id, &uid, &et_id, &start_at, &end_at).await
     );
 }
+
+/// The team settings page shows its admins when the members are away, as
+/// dates and times in the admin's own zone, never the private label. A
+/// member and an outsider get no section (nor the page), and the section is
+/// absent when no member has time off planned.
+#[tokio::test]
+async fn team_admins_see_the_members_time_off_without_labels() {
+    let (app, pool, _, _) = setup_test_app().await;
+    let (alice, alice_session) =
+        insert_test_user_with_session(&pool, "Alice", "alice@test.com", "alice").await;
+    let (bob, bob_session) =
+        insert_test_user_with_session(&pool, "Bob Away", "bob@test.com", "bob").await;
+    let (carol, carol_session) =
+        insert_test_user_with_session(&pool, "Carol Outside", "carol@test.com", "carol").await;
+    sqlx::query("UPDATE users SET timezone = 'America/New_York' WHERE id = ?")
+        .bind(&alice)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (team, _) =
+        insert_team_with_et(&pool, "t-off", "rr", &[(&alice, "admin"), (&bob, "member")]).await;
+    let day = monday().and_time(NaiveTime::MIN);
+    let bobs = add_off(
+        &pool,
+        &bob,
+        day,
+        day + Duration::days(1),
+        Some("Bob private label"),
+    )
+    .await;
+    add_off(
+        &pool,
+        &carol,
+        day,
+        day + Duration::days(1),
+        Some("Carol private label"),
+    )
+    .await;
+    let url = format!("/dashboard/teams/{team}/settings");
+    let page = |s: String| {
+        let (app, url) = (app.clone(), url.clone());
+        async move { body_string(app.oneshot(get_authed(&url, &s)).await.unwrap()).await }
+    };
+
+    let body = page(alice_session.clone()).await;
+    let at = body
+        .find("aria-labelledby=\"team-time-off\"")
+        .expect("section");
+    let section = &body[at..at + body[at..].find("</section>").unwrap()];
+    assert!(section.contains("Bob Away"), "{section}");
+    // Midnight UTC is 19:00 the day before in New York, both ends.
+    assert!(section.contains("19:00"), "{section}");
+    assert!(section.contains("New_York"), "{section}");
+    assert!(!section.contains("Carol Outside"), "not a member");
+    assert!(!body.contains("private label"), "a label leaked");
+
+    for (who, s) in [("member", bob_session), ("outsider", carol_session)] {
+        let body = page(s).await;
+        assert!(!body.contains("team-time-off"), "{who}: {body}");
+        assert!(!body.contains("Bob Away"), "{who}");
+        assert!(!body.contains("private label"), "{who}");
+    }
+
+    crate::time_off::delete(&pool, &bob, &bobs).await.unwrap();
+    let body = page(alice_session).await;
+    assert!(body.contains("t-off"), "the page itself renders");
+    assert!(
+        !body.contains("team-time-off"),
+        "nothing planned, no section"
+    );
+}

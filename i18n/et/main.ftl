@@ -974,6 +974,7 @@ team-settings-description-placeholder = Räägi sellest meeskonnast...
 team-settings-description-help = Kuvatakse meeskonna avalikul broneerimislehel. Toetab **rasvast**, *kaldkirja* ja [linke](url).
 team-settings-visibility-help = Avalikud meeskonnad on näha meeskonna profiililehel. Privaatsed vajavad kutselinki.
 team-settings-members-help = Halda selle meeskonna koosseisu. Lisa üksikuid kasutajaid või seo OIDC-rühmi automaatseks sünkroonimiseks.
+team-settings-time-off-help = Liikmete planeeritud eemalolekud sinu ajavööndis, { $timezone }. Nende märkmed jäävad privaatseks.
 team-settings-role-member = Liige
 team-settings-role-admin = Haldaja
 team-settings-oidc-group = OIDC-rühm

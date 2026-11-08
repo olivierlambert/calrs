@@ -975,6 +975,7 @@ team-settings-description-placeholder = Vertel mensen over dit team...
 team-settings-description-help = Wordt getoond op de openbare boekingspagina van het team. Ondersteunt **vet**, *cursief* en [links](url).
 team-settings-visibility-help = Openbare teams worden vermeld op de teamprofielpagina. Voor privéteams is een uitnodigingslink nodig.
 team-settings-members-help = Beheer wie bij dit team hoort. Voeg losse gebruikers toe of koppel OIDC-groepen voor automatische synchronisatie.
+team-settings-time-off-help = Geplande afwezigheid van de leden, in jouw tijdzone, { $timezone }. Hun notities blijven privé.
 team-settings-role-member = Lid
 team-settings-role-admin = Beheerder
 team-settings-oidc-group = OIDC-groep

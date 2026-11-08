@@ -974,6 +974,7 @@ team-settings-description-placeholder = Racconta qualcosa di questo team...
 team-settings-description-help = Compare sulla pagina di prenotazione pubblica del team. Supporta **grassetto**, *corsivo* e [link](url).
 team-settings-visibility-help = I team pubblici compaiono sulla pagina del profilo del team. Per quelli privati serve un link di invito.
 team-settings-members-help = Gestisci chi fa parte di questo team. Aggiungi singoli utenti o collega gruppi OIDC per la sincronizzazione automatica.
+team-settings-time-off-help = Assenze previste dei membri, nel tuo fuso orario, { $timezone }. Le loro note restano private.
 team-settings-role-member = Membro
 team-settings-role-admin = Amministratore
 team-settings-oidc-group = Gruppo OIDC

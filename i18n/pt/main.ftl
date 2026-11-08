@@ -974,6 +974,7 @@ team-settings-description-placeholder = Fale sobre esta equipe...
 team-settings-description-help = Aparece na página de agendamento pública da equipe. Aceita **negrito**, *itálico* e [links](url).
 team-settings-visibility-help = Equipes públicas aparecem na página de perfil da equipe. As privadas exigem um link de convite.
 team-settings-members-help = Gerencie quem faz parte desta equipe. Adicione usuários específicos ou vincule grupos OIDC para sincronização automática.
+team-settings-time-off-help = Ausências previstas dos membros, no seu fuso horário, { $timezone }. As notas deles continuam privadas.
 team-settings-role-member = Membro
 team-settings-role-admin = Administrador
 team-settings-oidc-group = Grupo OIDC
