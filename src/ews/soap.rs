@@ -71,13 +71,13 @@ pub fn envelope(body: &str, impersonate_email: Option<&str>) -> String {
     )
 }
 
-/// Build an HTTP client tuned for EWS: HTTPS only (per `validate_caldav_url`),
-/// configurable timeout, no automatic redirect (Autodiscover redirects are
-/// followed manually so we can validate them).
+/// Build an HTTP client tuned for EWS: configurable timeout, no automatic
+/// redirect, and guarded resolution (`net_guard`, #363): the endpoint's host
+/// is checked against the private-host policy at every connection and
+/// connected to at the checked address.
 pub fn http_client(timeout: Duration) -> Result<Client> {
-    Client::builder()
+    crate::net_guard::client_builder()
         .timeout(timeout)
-        .redirect(reqwest::redirect::Policy::none())
         .build()
         .context("failed to build HTTP client")
 }

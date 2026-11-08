@@ -207,8 +207,14 @@ async fn full_discovery(client: &CaldavClient) {
 
 /// GET the URL and return the body if it looks like an ICS feed.
 async fn fetch_ics_feed(url: &str, username: &str, password: &str) -> Result<Option<String>> {
-    let client = reqwest::Client::builder()
+    // The same guarded client the server uses (#363), so the probe reports
+    // what calrs itself will be able to reach.
+    let client = crate::net_guard::client_builder()
         .timeout(std::time::Duration::from_secs(30))
+        .redirect(crate::net_guard::redirects(
+            10,
+            crate::net_guard::Allowlist::Settings,
+        ))
         .build()?;
     let mut req = client.get(url);
     if !username.is_empty() {

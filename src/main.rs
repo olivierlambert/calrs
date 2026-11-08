@@ -21,6 +21,7 @@ mod i18n;
 mod mfa;
 mod microsoft_oauth;
 mod models;
+mod net_guard;
 mod oauth;
 mod oauth2_caldav;
 mod providers;
@@ -144,6 +145,10 @@ async fn main() -> Result<()> {
     db::migrate(&pool).await?;
     let secret_key = crypto::load_or_create_key(&data_dir)?;
     db::migrate_passwords(&pool, &secret_key).await?;
+    // Every command, not only `serve`: outbound calendar clients read the
+    // private-host allowlist at connection time (#363), so `calrs sync` and
+    // the probes need the DB-stored value too.
+    settings::load_from_db(&pool).await;
 
     match cli.command {
         Commands::Source { command } => commands::source::run(&pool, &secret_key, command).await?,

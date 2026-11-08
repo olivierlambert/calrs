@@ -122,9 +122,11 @@ Rate limiting is per-IP, not per-account. A distributed attack from many IPs wou
 
 ### SSRF (server-side request forgery)
 
-CalDAV source URLs are user-supplied. `validate_caldav_url()` blocks URLs whose hostname resolves to a private or reserved IP range (loopback, RFC1918, link-local, ULA, etc.) before any HTTP request is issued.
+CalDAV and EWS source URLs are user-supplied, and resource feeds, the organization-wide Exchange endpoint and booking webhooks are supplied by admins or users. When one is saved, `validate_caldav_url()` (or the webhook check) refuses a URL whose hostname resolves to a private or reserved IP range (loopback, RFC1918, link-local, CGNAT, ULA, IPv6 forms that carry such an IPv4 address, etc.).
 
-This check resolves the hostname once at validation time, so a DNS-rebinding attacker who answers the initial lookup with a public IP and a subsequent lookup (during the actual HTTP fetch) with a private IP can bypass the guard. Mitigating this purely at the application layer would require inspecting the connected socket's peer address after every TCP handshake, which is outside the scope of the current implementation. The recommended deployment posture is therefore an **egress firewall** that prevents calrs from reaching RFC1918 / link-local ranges regardless of what DNS returns.
+The requests themselves do not rely on that first lookup. Every client that fetches one of these URLs (CalDAV, EWS and Autodiscover, resource feeds and their CalDAV collections, booking webhooks, the `calrs resource probe` command) resolves the host itself at each connection, refuses the connection when any address is private or reserved, and connects only to the addresses it checked, so a DNS answer that changes between the check and the request cannot send it to an internal host. This also covers hosts a server names on its own (CalDAV hrefs on another host, redirects): a host name goes through the same check, and an IP literal that is private is refused unless it is allowlisted or is the host the URL was saved with. These clients ignore the `HTTP_PROXY`, `HTTPS_PROXY` and `ALL_PROXY` environment variables, since a proxy would resolve the host itself.
+
+Left out on purpose: the fixed Google and Microsoft endpoints (constants, not configuration), and the admin-configured captcha server, meeting webhook, SMS gateway and OIDC issuer, which were never under the private-host policy because pointing them at a service on the local network is their usual setup. An egress firewall that keeps calrs away from internal ranges remains good practice.
 
 #### Allowing private CalDAV hosts (self-hosting)
 
