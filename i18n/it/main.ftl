@@ -410,7 +410,6 @@ overview-page-title = Pannello
 overview-avail-banner-body = Il tuo orario di lavoro predefinito è stato impostato da lunedì a venerdì, 9:00–17:00. Viene usato quando altri ti includono in incontri di gruppo dinamici.
 overview-avail-banner-cta = Controlla la tua disponibilità
 overview-dismiss = Ignora
-overview-getting-started = Per iniziare
 overview-step-connect-calendar = Collega un calendario
 overview-step-first-event-type = Crea il tuo primo tipo di evento
 overview-step-share-link = Condividi il tuo link di prenotazione
@@ -421,7 +420,6 @@ overview-copy-link = Copia link di prenotazione
 overview-duration-h = { $hours } h
 overview-duration-m = { $minutes } min
 overview-duration-hm = { $hours } h { $minutes } min
-overview-percent = { $value }%
 overview-chart-title = Riunioni a settimana
 overview-chart-this-week = Questa settimana
 overview-chart-week-of = Settimana del { $date }
@@ -435,7 +433,6 @@ overview-types-other = Altri tipi
 overview-agenda-title = Prossimi
 overview-agenda-today = Oggi
 overview-agenda-tomorrow = Domani
-overview-agenda-now = In corso
 overview-agenda-join = Partecipa
 overview-agenda-empty = Nessuna riunione nei prossimi 14 giorni. Condividi il tuo link di prenotazione per riceverne.
 overview-agenda-all = Tutte le prenotazioni
@@ -457,33 +454,82 @@ overview-open-calendar = Apri il tuo calendario
 overview-week-title = Questa settimana
 overview-week-closed = chiuso
 overview-week-total = { $booked } prenotate
-overview-week-number = Settimana { $week }
 overview-week-short = S{ $week }
 overview-time-range = dalle { $from } alle { $to }
 overview-until = fino alle { $time }
 overview-expires = Scade { $when }
 overview-guest-and-more = { $name } e altri { $count }
-overview-mast-now = Ora: { $title } con { $guest }, fino alle { $time }
-overview-mast-next = Prossimo: { $title } con { $guest } alle { $time }
-overview-mast-next-day = Prossimo: { $title } con { $guest }, { $day } alle { $time }
+overview-greeting-morning = Buongiorno, { $name }
+overview-greeting-afternoon = Buon pomeriggio, { $name }
+overview-greeting-evening = Buonasera, { $name }
+overview-mast-date = { $date }, settimana { $week }
+overview-sum-now = La riunione con { $guest } è in corso fino alle { $time }.
+overview-sum-today = Oggi incontri { $guest } alle { $time }.
+overview-sum-tomorrow = Domani incontri { $guest } alle { $time }.
+overview-sum-later = La tua prossima riunione è con { $guest }, { $day }, alle { $time }.
+overview-sum-more-today = { $count ->
+    [one] Poi oggi c'è ancora una riunione.
+   *[other] Poi oggi ci sono ancora { $count } riunioni.
+}
+overview-sum-none = Niente di prenotato nei prossimi 14 giorni.
+overview-sum-pending = { $count ->
+    [one] Una richiesta attende la tua risposta.
+   *[other] { $count } richieste attendono la tua risposta.
+}
+overview-sum-guests = { $count ->
+    [one] { $name } e un'altra persona
+   *[other] { $name } e altre { $count } persone
+}
+overview-hero-title = Prossimo appuntamento
+overview-when-now = Ora, fino alle { $time }
+overview-when-minutes = { $count ->
+    [one] tra 1 minuto
+   *[other] tra { $count } minuti
+}
+overview-when-hours = { $count ->
+    [one] tra 1 ora
+   *[other] tra { $count } ore
+}
+overview-when-today-morning = stamattina
+overview-when-today-afternoon = oggi pomeriggio
+overview-when-today-evening = stasera
+overview-when-tomorrow-morning = domani mattina
+overview-when-tomorrow-afternoon = domani pomeriggio
+overview-when-tomorrow-evening = domani sera
+overview-when-weekday-morning = { $day } mattina
+overview-when-weekday-afternoon = { $day } pomeriggio
+overview-when-weekday-evening = { $day } sera
+overview-when-days = { $count ->
+    [one] tra 1 giorno
+   *[other] tra { $count } giorni
+}
+overview-pulse-held = { $count ->
+    [one] Una riunione negli ultimi 30 giorni, { $time } con gli ospiti.
+   *[other] { $count } riunioni negli ultimi 30 giorni, { $time } con gli ospiti.
+}
+overview-pulse-held-vs = { $count ->
+    [one] Una riunione negli ultimi 30 giorni, { $time } con gli ospiti, contro { $prev } nei 30 giorni precedenti.
+   *[other] { $count } riunioni negli ultimi 30 giorni, { $time } con gli ospiti, contro { $prev } nei 30 giorni precedenti.
+}
+overview-pulse-booked = { $count ->
+    [one] Nello stesso periodo è arrivata una nuova prenotazione.
+   *[other] Nello stesso periodo sono arrivate { $count } nuove prenotazioni.
+}
+overview-pulse-booked-only = { $count ->
+    [one] Negli ultimi 30 giorni è arrivata una nuova prenotazione.
+   *[other] Negli ultimi 30 giorni sono arrivate { $count } nuove prenotazioni.
+}
+overview-links-page = La tua pagina
+overview-agenda-nothing-else = Nient'altro nei prossimi 14 giorni.
+overview-setup-count = { $count ->
+    [one] 1 cosa da configurare
+   *[other] { $count } cose da configurare
+}
 overview-ruler-booked = Prenotato
 overview-ruler-pending = In attesa di una decisione
 overview-ruler-unavailable = Non disponibile (il tuo calendario)
 overview-key-open = Aperto alle prenotazioni
-overview-ruler-aria = Oggi, dalle { $from } alle { $to }
-overview-chart-now = ora
 overview-figures-title = Ultimi 30 giorni
-overview-fig-booked = Riunioni prenotate
-overview-fig-time = Tempo in riunione
-overview-fig-cancelled = Annullate
-overview-fig-notice = Preavviso medio
-overview-fig-before = { $value } nei 30 giorni precedenti
-overview-fig-prev-key = I 30 giorni precedenti
-overview-fig-days =
-    { $count ->
-        [one] 1 giorno
-       *[other] { $count } giorni
-    }
 
 # Dashboard bookings (templates/dashboard_bookings.html)
 

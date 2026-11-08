@@ -1,6 +1,7 @@
-//! Dashboard overview: the masthead sentence, the day ruler, the week list,
-//! the 12-week chart, the 30-day figures, the split by meeting type and the
-//! "coming up" ledger.
+//! Dashboard overview: the greeting and its sentence, the next meeting, the
+//! week strip, the 12-week chart, the 30-day sentence, the split by meeting
+//! type and the "coming up" ledger. Guests appear as faces: initials on a
+//! warm hue derived from their name.
 //!
 //! Every booking here is one the signed-in user takes part in, using the
 //! same rule as the slot engine (`user_busy_bookings` in `booking_time.rs`)
@@ -12,7 +13,7 @@
 //! event type's creator.
 //!
 //! calrs is the booking layer on top of the user's calendar, not a calendar:
-//! the ruler shades the hours the user is open for bookings (the
+//! the week strip marks the hours the user is open for bookings (the
 //! availability rules and overrides of their enabled event types, merged),
 //! draws calrs bookings with their title and guest, and shows events read
 //! from synced calendars only as anonymous "unavailable" blocks.
@@ -30,10 +31,6 @@ pub(super) const WEEKS: usize = 12;
 /// The "coming up" ledger: the next 14 days, at most 8 rows.
 const AGENDA_DAYS: i64 = 14;
 const AGENDA_LEN: usize = 8;
-
-/// The ruler's default span, widened to fit anything outside it.
-const RULER_FROM_HOUR: i64 = 7;
-const RULER_TO_HOUR: i64 = 20;
 
 /// Scope predicate, see the module documentation. Alias `b`. Binds the user
 /// id four times. A team member excluded from the event type (weight 0, as
@@ -180,21 +177,14 @@ pub(super) struct WeekBucket {
 
 #[derive(Debug, Clone, Default)]
 pub(super) struct OverviewStats {
+    /// Bookings made in the last 30 days.
     pub booked30: i64,
-    pub booked_prev30: i64,
-    pub minutes30: i64,
-    pub minutes_prev30: i64,
+    /// Confirmed meetings that took place in the last 30 days, and their
+    /// minutes.
     pub held30: i64,
-    pub cancelled30: i64,
+    pub minutes30: i64,
+    /// Confirmed meetings that took place in the 30 days before.
     pub held_prev30: i64,
-    pub cancelled_prev30: i64,
-    /// Sum and count of the notice (creation to start) of the bookings made
-    /// in the last 30 days, in minutes.
-    pub notice_minutes: i64,
-    pub notice_count: i64,
-    /// The same for the bookings made in the 30 days before.
-    pub notice_prev_minutes: i64,
-    pub notice_prev_count: i64,
     pub weeks: Vec<WeekBucket>,
     /// Confirmed meetings in the chart window per event type, most first.
     pub by_type: Vec<(String, i64)>,
@@ -243,7 +233,6 @@ pub(super) fn compute(
 
     for row in rows {
         let confirmed = row.status == "confirmed";
-        let cancelled = row.status == "cancelled";
         if let Some(w) = week_of(row.start) {
             let bucket = &mut s.weeks[w];
             match row.status.as_str() {
@@ -263,31 +252,14 @@ pub(super) fn compute(
                     .1 += 1;
             }
         }
-        if let Some(created) = row.created {
-            if in_range(created, d30, now) {
-                s.booked30 += 1;
-                s.notice_minutes += (row.start - created).num_minutes().max(0);
-                s.notice_count += 1;
-            } else if in_range(created, d60, d30) {
-                s.booked_prev30 += 1;
-                s.notice_prev_minutes += (row.start - created).num_minutes().max(0);
-                s.notice_prev_count += 1;
-            }
+        if row.created.is_some_and(|c| in_range(c, d30, now)) {
+            s.booked30 += 1;
         }
-        if in_range(row.start, d30, now) {
-            if confirmed {
-                s.held30 += 1;
-                s.minutes30 += minutes(row);
-            } else if cancelled {
-                s.cancelled30 += 1;
-            }
-        } else if in_range(row.start, d60, d30) {
-            if confirmed {
-                s.held_prev30 += 1;
-                s.minutes_prev30 += minutes(row);
-            } else if cancelled {
-                s.cancelled_prev30 += 1;
-            }
+        if confirmed && in_range(row.start, d30, now) {
+            s.held30 += 1;
+            s.minutes30 += minutes(row);
+        } else if confirmed && in_range(row.start, d60, d30) {
+            s.held_prev30 += 1;
         }
     }
 
@@ -298,12 +270,6 @@ pub(super) fn compute(
     types.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
     s.by_type = types;
     s
-}
-
-/// Cancelled share of the meetings that were due in a period, in percent.
-fn cancel_rate(cancelled: i64, held: i64) -> Option<i64> {
-    let total = cancelled + held;
-    (total > 0).then(|| ((cancelled as f64) * 100.0 / (total as f64)).round() as i64)
 }
 
 // --- Presentation ---
@@ -330,10 +296,6 @@ pub(super) fn duration_label(lang: &str, total_minutes: i64) -> String {
         (_, 0) => crate::i18n::translate(lang, "overview-duration-h", Some(&args)),
         _ => crate::i18n::translate(lang, "overview-duration-hm", Some(&args)),
     }
-}
-
-fn percent_label(lang: &str, value: i64) -> String {
-    tr1(lang, "overview-percent", "value", value)
 }
 
 /// Time of day on the 24-hour clock: the dashboard is a timetable, and the
@@ -453,85 +415,39 @@ fn pct(v: i64, of: i64) -> String {
     format!("{:.2}", v as f64 * 100.0 / of as f64)
 }
 
-/// The figures, chart and meeting-type table, already formatted in `lang`.
-pub(super) fn stats_context(s: &OverviewStats, lang: &str) -> minijinja::Value {
-    // Last 30 days: four figures, each with a bar pair against the 30
-    // days before (this period over the previous one, both scaled to the
-    // larger). Good or bad is for the reader to judge.
-    let before = |value: &str| {
+/// Last 30 days in a sentence or two: the meetings that took place and the
+/// time spent with guests, then the bookings that came in. A comparison with
+/// the 30 days before appears only when there were meetings then, and a part
+/// with nothing to count is left out: an empty string says nothing happened.
+pub(super) fn pulse_sentence(s: &OverviewStats, lang: &str) -> String {
+    let mut parts = Vec::new();
+    if s.held30 > 0 {
         let mut args = fluent_bundle::FluentArgs::new();
-        args.set("value", value.to_string());
-        crate::i18n::translate(lang, "overview-fig-before", Some(&args))
-    };
-    let notice_label = |sum: i64, count: i64| {
-        if count == 0 {
-            return "\u{2013}".to_string();
-        }
-        let avg = sum / count;
-        if avg < 48 * 60 {
-            duration_label(lang, avg)
+        args.set("count", crate::i18n::number(s.held30 as f64));
+        args.set("time", duration_label(lang, s.minutes30));
+        let key = if s.held_prev30 > 0 {
+            args.set("prev", crate::i18n::number(s.held_prev30 as f64));
+            "overview-pulse-held-vs"
         } else {
-            tr1(
-                lang,
-                "overview-fig-days",
-                "count",
-                (avg as f64 / 1440.0).round() as i64,
-            )
-        }
-    };
-    let rate = cancel_rate(s.cancelled30, s.held30);
-    let prev_rate = cancel_rate(s.cancelled_prev30, s.held_prev30);
-    let rate_label = |r: Option<i64>| r.map_or("\u{2013}".to_string(), |r| percent_label(lang, r));
-    let avg = |sum: i64, count: i64| if count > 0 { sum / count } else { 0 };
-    let figure = |label: &str, value: String, prev: String, cur_n: i64, prev_n: i64| {
-        let top = cur_n.max(prev_n);
-        context! {
-            label => t(lang, label),
-            cmp => before(&prev),
-            value => value,
-            prev => prev,
-            cur_pct => pct(cur_n, top),
-            prev_pct => pct(prev_n, top),
-        }
-    };
-    let figures = vec![
-        figure(
-            "overview-fig-booked",
-            s.booked30.to_string(),
-            s.booked_prev30.to_string(),
-            s.booked30,
-            s.booked_prev30,
-        ),
-        figure(
-            "overview-fig-time",
-            duration_label(lang, s.minutes30),
-            duration_label(lang, s.minutes_prev30),
-            s.minutes30,
-            s.minutes_prev30,
-        ),
-        figure(
-            "overview-fig-cancelled",
-            rate_label(rate),
-            rate_label(prev_rate),
-            rate.unwrap_or(0),
-            prev_rate.unwrap_or(0),
-        ),
-        figure(
-            "overview-fig-notice",
-            notice_label(s.notice_minutes, s.notice_count),
-            notice_label(s.notice_prev_minutes, s.notice_prev_count),
-            avg(s.notice_minutes, s.notice_count),
-            avg(s.notice_prev_minutes, s.notice_prev_count),
-        ),
-    ];
-    // Nothing booked, held or cancelled in 60 days: no row of zeros.
-    let has_figures = s.booked30
-        + s.booked_prev30
-        + s.held30
-        + s.held_prev30
-        + s.cancelled30
-        + s.cancelled_prev30
-        > 0;
+            "overview-pulse-held"
+        };
+        parts.push(crate::i18n::translate(lang, key, Some(&args)));
+    }
+    if s.booked30 > 0 {
+        let key = if parts.is_empty() {
+            "overview-pulse-booked-only"
+        } else {
+            "overview-pulse-booked"
+        };
+        parts.push(tr1(lang, key, "count", s.booked30));
+    }
+    parts.join(" ")
+}
+
+/// The pulse sentence, chart and meeting-type table, already formatted in
+/// `lang`.
+pub(super) fn stats_context(s: &OverviewStats, lang: &str) -> minijinja::Value {
+    let pulse = pulse_sentence(s, lang);
 
     // Weekly columns: confirmed and pending stacked, cancelled counted
     // under the axis.
@@ -597,8 +513,8 @@ pub(super) fn stats_context(s: &OverviewStats, lang: &str) -> minijinja::Value {
         .collect();
 
     context! {
-        figures => figures,
-        has_figures => has_figures,
+        has_pulse => !pulse.is_empty(),
+        pulse => pulse,
         columns => columns,
         axis_max => axis_max,
         axis_mid => axis_max / 2,
@@ -949,9 +865,10 @@ pub(super) fn without_time_off(
     out
 }
 
-// --- The day ruler ---
+// --- Day blocks ---
 
-/// A block on the ruler, in minutes from the viewer's midnight.
+/// A booking or unavailable time on one day, in minutes from the viewer's
+/// midnight.
 #[derive(Debug, Clone)]
 pub(super) struct RulerBlock {
     pub start: i64,
@@ -964,145 +881,9 @@ pub(super) struct RulerBlock {
     pub listed: bool,
     pub title: String,
     pub guest: String,
-}
-
-/// Lay the day out on an hour scale. `None` when there is nothing to draw
-/// (closed, no booking, nothing in the calendar).
-pub(super) fn ruler_context(
-    lang: &str,
-    open: &[(i64, i64)],
-    blocks: &[RulerBlock],
-    now_minute: i64,
-) -> Option<minijinja::Value> {
-    if open.is_empty() && blocks.is_empty() {
-        return None;
-    }
-    let lo = open
-        .iter()
-        .map(|w| w.0)
-        .chain(blocks.iter().map(|b| b.start))
-        .min()
-        .unwrap_or(RULER_FROM_HOUR * 60);
-    let hi = open
-        .iter()
-        .map(|w| w.1)
-        .chain(blocks.iter().map(|b| b.end))
-        .max()
-        .unwrap_or(RULER_TO_HOUR * 60);
-    let h0 = (lo.max(0) / 60).min(RULER_FROM_HOUR);
-    let h1 = ((hi.min(1440) + 59) / 60).clamp(RULER_TO_HOUR, 24);
-    let (from, span) = (h0 * 60, (h1 - h0) * 60);
-    let at = |m: i64| (m.clamp(from, from + span) - from) as f64 * 100.0 / span as f64;
-    let fmt = |v: f64| format!("{v:.3}");
-
-    let ticks: Vec<minijinja::Value> = (h0 * 2..=h1 * 2)
-        .map(|half| {
-            let minute = half * 30;
-            context! {
-                left => fmt(at(minute)),
-                half => half % 2 == 1,
-                label => if half % 2 == 0 { format!("{:02}", half / 2) } else { String::new() },
-                // Every other hour label is dropped on narrow screens.
-                odd_hour => (half / 2) % 2 == 1,
-            }
-        })
-        .collect();
-    let bands: Vec<minijinja::Value> = open
-        .iter()
-        .map(|(s, e)| context! { left => fmt(at(*s)), width => fmt(at(*e) - at(*s)) })
-        .collect();
-
-    let mut sorted: Vec<&RulerBlock> = blocks.iter().collect();
-    sorted.sort_by_key(|b| (b.start, b.kind == "u"));
-    // Labels go on two lanes under the track: a label moves to the second
-    // lane when the first is still taken at its start.
-    const LABEL_WIDTH: f64 = 10.0;
-    let mut lane_end = [f64::MIN, f64::MIN];
-    let mut items = Vec::new();
-    let mut labels: Vec<(usize, f64, minijinja::Value)> = Vec::new();
-    for b in &sorted {
-        let left = at(b.start);
-        let width = (at(b.end) - left).max(0.4);
-        let range = format!("{}\u{2013}{}", clock(b.start), clock(b.end));
-        let status = match b.kind {
-            "c" => t(lang, "overview-ruler-booked"),
-            "p" => t(lang, "overview-ruler-pending"),
-            _ => t(lang, "overview-ruler-unavailable"),
-        };
-        let title = if b.kind == "u" {
-            format!("{range}, {status}")
-        } else {
-            format!("{range}, {}, {}, {status}", b.title, b.guest)
-        };
-        items.push(context! {
-            kind => b.kind,
-            id => b.id,
-            listed => b.listed,
-            left => fmt(left),
-            width => fmt(width),
-            time => clock(b.start),
-            // A block under half an hour is too narrow for its time; the
-            // label lane under the track carries it.
-            show_time => b.end - b.start >= 30,
-            past => b.end <= now_minute,
-            title => title,
-        });
-        if b.kind != "u" {
-            let lane = if left >= lane_end[0] { 0 } else { 1 };
-            lane_end[lane] = left + LABEL_WIDTH;
-            labels.push((
-                lane,
-                left,
-                context! {
-                    title => b.title,
-                    guest => b.guest,
-                    past => b.end <= now_minute,
-                },
-            ));
-        }
-    }
-    // Each label may run until the next label on its lane starts.
-    let label_ctx: Vec<minijinja::Value> = labels
-        .iter()
-        .enumerate()
-        .map(|(i, (lane, left, v))| {
-            let next = labels[i + 1..]
-                .iter()
-                .find(|(l, _, _)| l == lane)
-                .map(|(_, x, _)| *x)
-                .unwrap_or(100.0);
-            // At least 4% when there is room for it, never past the end
-            // of the track; a label starting past 96% gets what is left.
-            let max = (100.0 - left).max(0.0);
-            let room = (next - left - 0.6).max(4.0).min(max);
-            context! {
-                lane => lane,
-                left => fmt(*left),
-                max_width => fmt(room),
-                title => v.get_attr("title").unwrap_or_default(),
-                guest => v.get_attr("guest").unwrap_or_default(),
-                past => v.get_attr("past").unwrap_or_default(),
-            }
-        })
-        .collect();
-    let two_lanes = labels.iter().any(|(l, _, _)| *l == 1);
-
-    let mut args = fluent_bundle::FluentArgs::new();
-    args.set("from", clock(from));
-    args.set("to", clock(from + span));
-    Some(context! {
-        aria => crate::i18n::translate(lang, "overview-ruler-aria", Some(&args)),
-        ticks => ticks,
-        bands => bands,
-        blocks => items,
-        labels => label_ctx,
-        two_lanes => two_lanes,
-        has_labels => !labels.is_empty(),
-        from_minute => from,
-        span_minutes => span,
-        now_left => (now_minute >= from && now_minute <= from + span).then(|| fmt(at(now_minute))),
-        now_label => clock(now_minute),
-    })
+    /// The guest's face: initials and hue, empty for unavailable time.
+    pub initials: String,
+    pub hue: u16,
 }
 
 /// Minutes from `day`'s midnight to `t`, clamped to the day.
@@ -1135,6 +916,8 @@ pub(super) fn day_blocks(
             listed: b.listed,
             title: b.title.clone(),
             guest: guest_label(lang, &b.guest, b.extra_guests),
+            initials: initials(&b.guest),
+            hue: face_hue(&b.guest),
         })
         .collect();
     let unavailable = merge(
@@ -1151,8 +934,49 @@ pub(super) fn day_blocks(
         listed: false,
         title: String::new(),
         guest: String::new(),
+        initials: String::new(),
+        hue: 0,
     }));
     blocks
+}
+
+// --- Faces ---
+
+/// Hues a face can take: reds, terracotta, ambers, ochre, rose and berry,
+/// so every guest reads warm. The lightness comes from the theme mode.
+const FACE_HUES: [u16; 8] = [8, 18, 28, 38, 48, 345, 330, 316];
+
+/// "NR" for "Nina Rossi", "J" for "jonas", the first and last words'
+/// initials. Letters only, so "(Guest) Ana" gives "GA" and an email gives
+/// its first letter.
+pub(super) fn initials(name: &str) -> String {
+    let words: Vec<char> = name
+        .split_whitespace()
+        .filter_map(|w| w.chars().find(|c| c.is_alphanumeric()))
+        .collect();
+    let picked: Vec<char> = match words.as_slice() {
+        [] => Vec::new(),
+        [one] => vec![*one],
+        [first, .., last] => vec![*first, *last],
+    };
+    picked.into_iter().flat_map(char::to_uppercase).collect()
+}
+
+/// A stable hue for a person: the same name (case and spacing aside) always
+/// gets the same face, on every page and every day.
+pub(super) fn face_hue(name: &str) -> u16 {
+    let key = name
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase();
+    // FNV-1a: tiny, stable across builds and platforms.
+    let mut h: u32 = 0x811c_9dc5;
+    for b in key.bytes() {
+        h ^= u32::from(b);
+        h = h.wrapping_mul(0x0100_0193);
+    }
+    FACE_HUES[(h % FACE_HUES.len() as u32) as usize]
 }
 
 /// "Anna Keller" or "Anna Keller, 2 more".
@@ -1169,8 +993,9 @@ fn guest_label(lang: &str, guest: &str, extra: i64) -> String {
 
 // --- The week view ---
 
-/// Height of one hour in the week view, in pixels, before clamping.
-const WEEK_HOUR_PX: i64 = 44;
+/// Height of a day column in the week strip, in pixels (9.5rem): every day
+/// shares it, whatever the span of hours.
+const WEEK_STRIP_PX: f64 = 152.0;
 
 /// Side-by-side lanes for overlapping bookings in one day column. `spans`
 /// is sorted by start; returns (lane, lanes in its overlap cluster).
@@ -1205,10 +1030,12 @@ pub(super) fn lanes(spans: &[(i64, i64)]) -> Vec<(usize, usize)> {
     out
 }
 
-/// The current week as seven day columns on a shared hour axis: the hours
-/// open for bookings shaded, bookings as blocks (linking to the booking),
-/// calendar busy time as anonymous blocks, today marked with the now line,
-/// and the booked time under each day. Days follow the user's week start.
+/// The current week as a strip of seven compact day columns on a shared hour
+/// axis: the hours open for bookings, bookings as bars carrying the guest's
+/// initials, calendar busy time as anonymous blocks, today marked with the
+/// now line, and the booked time under each day. A day with a confirmed
+/// booking on /dashboard/bookings links to that day there. Days follow the user's week
+/// start.
 /// `None` when the week has nothing to draw: no open hours, no booking and
 /// nothing in the calendar.
 #[allow(clippy::too_many_arguments)]
@@ -1267,8 +1094,7 @@ pub(super) fn week_context(
     }
     let (from, to) = (h0 * 60, h1 * 60);
     let span = to - from;
-    let height = ((h1 - h0) * WEEK_HOUR_PX).clamp(220, 480);
-    let px_per_minute = height as f64 / span as f64;
+    let px_per_minute = WEEK_STRIP_PX / span as f64;
     let at = |m: i64| (m.clamp(from, to) - from) as f64 * 100.0 / span as f64;
     let fmt = |v: f64| format!("{v:.3}");
 
@@ -1312,6 +1138,13 @@ pub(super) fn week_context(
             let minutes: i64 = booked.iter().map(|b| b.end - b.start).sum();
             booked_total += minutes;
             has_pending |= booked.iter().any(|b| b.kind == "p");
+            // The bookings page heads its upcoming (confirmed) list with
+            // one line per day; a pending request is listed above it, with
+            // no day line, so only a confirmed booking makes the day a link.
+            let link = booked
+                .iter()
+                .any(|b| b.listed && b.kind == "c")
+                .then(|| format!("/dashboard/bookings#d-{day}"));
             let placed = lanes(&booked.iter().map(|b| (b.start, b.end)).collect::<Vec<_>>());
             let items: Vec<minijinja::Value> = booked
                 .iter()
@@ -1328,9 +1161,11 @@ pub(super) fn week_context(
                         height => fmt(at(b.end) - top),
                         left => fmt(lane as f64 * 100.0 / of as f64),
                         width => fmt(100.0 / of as f64),
-                        // Two lines (time, title) when the block is tall
-                        // enough, one line, or none: the tooltip has it all.
-                        lines => if pixels >= 32.0 { 2 } else if pixels >= 17.0 { 1 } else { 0 },
+                        // The guest's initials when the bar has room for
+                        // them; the tooltip has it all either way.
+                        show_initials => pixels >= 13.0 && of <= 2,
+                        initials => b.initials,
+                        hue => b.hue,
                         time => clock(b.start),
                         range => range.clone(),
                         title => b.title,
@@ -1351,6 +1186,7 @@ pub(super) fn week_context(
             context! {
                 weekday => weekday_short(lang, day.weekday()),
                 day => day.day(),
+                link => link,
                 title => capitalize(&title),
                 is_today => *day == today,
                 is_past => past_day,
@@ -1369,7 +1205,6 @@ pub(super) fn week_context(
     Some(context! {
         days => columns,
         hours => hour_marks,
-        height => height,
         from_minute => from,
         span_minutes => span,
         has_pending => has_pending,
@@ -1379,37 +1214,178 @@ pub(super) fn week_context(
     })
 }
 
-// --- Masthead ---
+// --- Greeting ---
 
-/// The date headline, the week number and one line: the meeting going on,
-/// or the next one. The ruler and the week view show the rest.
-pub(super) fn masthead_context(
+/// The part of the day a wall-clock hour falls in: morning from 05:00,
+/// afternoon from 12:00, evening from 18:00 (and through the night).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Period {
+    Morning,
+    Afternoon,
+    Evening,
+}
+
+fn period(hour: u32) -> Period {
+    match hour {
+        5..=11 => Period::Morning,
+        12..=17 => Period::Afternoon,
+        _ => Period::Evening,
+    }
+}
+
+/// "Good evening, Olivier", by the hour of the user's own clock.
+pub(super) fn greeting(lang: &str, hour: u32, name: &str) -> String {
+    let key = match period(hour) {
+        Period::Morning => "overview-greeting-morning",
+        Period::Afternoon => "overview-greeting-afternoon",
+        Period::Evening => "overview-greeting-evening",
+    };
+    let mut args = fluent_bundle::FluentArgs::new();
+    args.set("name", name.to_string());
+    crate::i18n::translate(lang, key, Some(&args))
+}
+
+/// The plain sentence under the greeting: who the user meets next and
+/// when, how many more meetings follow today, and how many requests wait
+/// for an answer. `next` is the first row of [`agenda`]; `more_today`
+/// counts the confirmed meetings later today after it. Each part is its
+/// own Fluent sentence, so every language words and pluralises it whole.
+pub(super) fn day_sentence(
     lang: &str,
     today: NaiveDate,
     next: Option<&minijinja::Value>,
-) -> minijinja::Value {
-    let next_text = next.map(|a| {
-        let attr = |k: &str| a.get_attr(k).map(|v| v.to_string()).unwrap_or_default();
-        let mut args = fluent_bundle::FluentArgs::new();
-        args.set("title", attr("title"));
-        args.set("guest", attr("guest_name"));
-        if a.get_attr("ongoing").is_ok_and(|v| v.is_true()) {
-            args.set("time", attr("end_time"));
-            crate::i18n::translate(lang, "overview-mast-now", Some(&args))
-        } else if attr("day") == today.to_string() {
+    more_today: i64,
+    pending: i64,
+) -> String {
+    let mut parts = Vec::new();
+    match next {
+        None => parts.push(t(lang, "overview-sum-none")),
+        Some(a) => {
+            let attr = |k: &str| a.get_attr(k).map(|v| v.to_string()).unwrap_or_default();
+            let extra = a
+                .get_attr("extra_guests")
+                .ok()
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0);
+            let guest = if extra > 0 {
+                let mut args = fluent_bundle::FluentArgs::new();
+                args.set("name", attr("guest_name"));
+                args.set("count", crate::i18n::number(extra as f64));
+                crate::i18n::translate(lang, "overview-sum-guests", Some(&args))
+            } else {
+                attr("guest_name")
+            };
+            let day = NaiveDate::parse_from_str(&attr("day"), "%Y-%m-%d").unwrap_or(today);
+            let mut args = fluent_bundle::FluentArgs::new();
+            args.set("guest", guest);
             args.set("time", attr("time"));
-            crate::i18n::translate(lang, "overview-mast-next", Some(&args))
-        } else {
-            args.set("time", attr("time"));
-            args.set("day", attr("day_short"));
-            crate::i18n::translate(lang, "overview-mast-next-day", Some(&args))
+            let key = if a.get_attr("ongoing").is_ok_and(|v| v.is_true()) {
+                args.set("time", attr("end_time"));
+                "overview-sum-now"
+            } else if day == today {
+                "overview-sum-today"
+            } else if day == today + Duration::days(1) {
+                "overview-sum-tomorrow"
+            } else {
+                args.set("day", crate::i18n::format_day_date(day, lang));
+                "overview-sum-later"
+            };
+            parts.push(crate::i18n::translate(lang, key, Some(&args)));
+            if more_today > 0 {
+                parts.push(tr1(lang, "overview-sum-more-today", "count", more_today));
+            }
         }
-    });
-    context! {
-        date => capitalize(&crate::i18n::format_day_date(today, lang)),
-        week => tr1(lang, "overview-week-number", "week", today.iso_week().week() as i64),
-        next => next_text,
     }
+    if pending > 0 {
+        parts.push(tr1(lang, "overview-sum-pending", "count", pending));
+    }
+    parts.join(" ")
+}
+
+/// The greeting, today's date with its week number, the sentence, and the
+/// hue of the user's own face (when they have no photo).
+pub(super) fn masthead_context(
+    lang: &str,
+    now: NaiveDateTime,
+    name: &str,
+    next: Option<&minijinja::Value>,
+    more_today: i64,
+    pending: i64,
+) -> minijinja::Value {
+    let today = now.date();
+    let mut args = fluent_bundle::FluentArgs::new();
+    args.set(
+        "date",
+        capitalize(&crate::i18n::format_day_date(today, lang)),
+    );
+    args.set(
+        "week",
+        crate::i18n::number(f64::from(today.iso_week().week())),
+    );
+    context! {
+        greeting => greeting(lang, now.hour(), name),
+        date_line => crate::i18n::translate(lang, "overview-mast-date", Some(&args)),
+        sentence => day_sentence(lang, today, next, more_today, pending),
+        hue => face_hue(name),
+    }
+}
+
+/// When the next meeting starts, in words: "in 25 minutes", "in 2 hours",
+/// "this afternoon", "tomorrow morning", "Tuesday evening", "in 9 days",
+/// or "Now, until 16:00" while it is going on. `now` and the times are the
+/// user's wall clock.
+pub(super) fn when_words(
+    lang: &str,
+    start: NaiveDateTime,
+    end: NaiveDateTime,
+    now: NaiveDateTime,
+) -> String {
+    if start <= now {
+        let mut args = fluent_bundle::FluentArgs::new();
+        args.set("time", time_label(end));
+        return crate::i18n::translate(lang, "overview-when-now", Some(&args));
+    }
+    let today = now.date();
+    let minutes = (start - now).num_minutes();
+    let part = period(start.hour());
+    if start.date() == today {
+        if minutes < 60 {
+            return tr1(lang, "overview-when-minutes", "count", minutes.max(1));
+        }
+        if minutes < 4 * 60 {
+            return tr1(lang, "overview-when-hours", "count", (minutes + 30) / 60);
+        }
+        return t(
+            lang,
+            match part {
+                Period::Morning => "overview-when-today-morning",
+                Period::Afternoon => "overview-when-today-afternoon",
+                Period::Evening => "overview-when-today-evening",
+            },
+        );
+    }
+    let days = (start.date() - today).num_days();
+    if days == 1 {
+        return t(
+            lang,
+            match part {
+                Period::Morning => "overview-when-tomorrow-morning",
+                Period::Afternoon => "overview-when-tomorrow-afternoon",
+                Period::Evening => "overview-when-tomorrow-evening",
+            },
+        );
+    }
+    if days < 7 {
+        let mut args = fluent_bundle::FluentArgs::new();
+        args.set("day", weekday_long(lang, start.weekday()));
+        let key = match part {
+            Period::Morning => "overview-when-weekday-morning",
+            Period::Afternoon => "overview-when-weekday-afternoon",
+            Period::Evening => "overview-when-weekday-evening",
+        };
+        return crate::i18n::translate(lang, key, Some(&args));
+    }
+    tr1(lang, "overview-when-days", "count", days)
 }
 
 // --- Coming up ---
@@ -1481,6 +1457,19 @@ pub(super) async fn agenda(
                 } else {
                     String::new()
                 };
+                // Where it happens, for the next meeting: the video
+                // service's host for a link, else the location as written.
+                let place = if join.is_empty() {
+                    location.trim().to_string()
+                } else {
+                    reqwest::Url::parse(&join)
+                        .ok()
+                        .and_then(|u| {
+                            u.host_str()
+                                .map(|h| h.trim_start_matches("www.").to_string())
+                        })
+                        .unwrap_or_default()
+                };
                 let day = s.date();
                 let day_label = if day == today {
                     t(lang, "overview-agenda-today")
@@ -1494,8 +1483,11 @@ pub(super) async fn agenda(
                     context! {
                         id => id,
                         title => title,
-                        guest_name => guest,
+                        initials => initials(&guest),
+                        hue => face_hue(&guest),
+                        when_words => capitalize(&when_words(lang, s, e, now_local)),
                         guest_label => guest_label(lang, &guest, extra),
+                        guest_name => guest,
                         guest_email => email,
                         extra_guests => extra,
                         day => day.to_string(),
@@ -1510,6 +1502,7 @@ pub(super) async fn agenda(
                         end_utc => e_utc.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
                         ongoing => s <= now_local,
                         join_url => join,
+                        place => place,
                         // Every host in scope may read the booking's host
                         // notes (`booking_notes.rs`), so the row links to them.
                         has_host_notes => has_host_notes,

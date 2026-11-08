@@ -110,9 +110,8 @@
   .sidebar-section-label { font-size: 12px; color: var(--text-muted); padding: 0.85rem 0.6rem 0.25rem; }
   .sidebar-link {
     display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: 0.5rem;
+    align-items: center;
+    gap: 0.6rem;
     padding: 0.32rem 0.6rem;
     border: 1px solid transparent;
     border-radius: var(--r-control);
@@ -124,7 +123,13 @@
   .sidebar-link:hover { background: var(--surface-hover); color: var(--ink); }
   .sidebar-link.active { background: var(--accent-soft); border-color: transparent; color: var(--accent); font-weight: 600; }
   .sidebar-link:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-  .sidebar-hint { font-size: 12px; font-weight: 400; color: var(--text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  /* Nav icons (Phosphor, regular): one per entry, in the text colour, so
+     the active entry's icon takes the active colour. */
+  .sidebar-link .nav-ic { flex-shrink: 0; opacity: 0.82; }
+  .sidebar-link:hover .nav-ic, .sidebar-link.active .nav-ic { opacity: 1; }
+  .sidebar-link > span:not(.sidebar-hint) { flex: 1 1 auto; min-width: 0; }
+  .nav-ic { display: inline-block; vertical-align: -0.17em; }
+  .sidebar-hint { margin-left: auto; font-size: 12px; font-weight: 400; color: var(--text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
   .sidebar-hint.is-bad { color: var(--error-text); }
   .sidebar-bottom { padding: 0.75rem; border-top: 1px solid var(--rule); }
   .sidebar-bottom form { margin: 0; }
@@ -640,6 +645,7 @@
 </style>
 
 {% import "partials/icons.html" as ic %}
+{% import "partials/phosphor.html" as ph %}
 <a class="skip-link" href="#main-content">{{ t("dash-skip-to-content") }}</a>
 <div class="dashboard-layout">
   <button type="button" class="hamburger" aria-label="{{ t('dash-open-menu') }}" aria-expanded="false" aria-controls="dashboard-sidebar">{{ ic.icon("menu", 20) }}</button>
@@ -651,40 +657,40 @@
       <span class="sidebar-brand-name">cal<b>rs</b></span>
     </a>
 
-    {% macro nav_link(href, key, page, hint="", extra="") -%}
-    <a href="{{ href }}" class="sidebar-link{% if sidebar.active == page %} active{% endif %}"{% if sidebar.active == page %} aria-current="page"{% endif %}{% if extra %} {{ extra }}{% endif %}><span>{{ t(key) }}</span>{% if hint %}<span class="sidebar-hint" data-hint="{{ hint }}"></span>{% endif %}</a>
+    {% macro nav_link(href, key, page, hint="", extra="", icon="") -%}
+    <a href="{{ href }}" class="sidebar-link{% if sidebar.active == page %} active{% endif %}"{% if sidebar.active == page %} aria-current="page"{% endif %}{% if extra %} {{ extra }}{% endif %}>{% if icon %}{{ ph.icon(icon, 18) }}{% endif %}<span>{{ t(key) }}</span>{% if hint %}<span class="sidebar-hint" data-hint="{{ hint }}"></span>{% endif %}</a>
     {%- endmacro %}
     <div class="sidebar-nav">
       <div class="sidebar-section">
         <div class="sidebar-section-label">{{ t("nav-section-scheduling") }}</div>
-        {{ nav_link("/dashboard", "nav-overview", "overview") }}
-        {{ nav_link("/dashboard/bookings", "nav-bookings", "bookings", "bookings") }}
-        {{ nav_link("/dashboard/event-types", "nav-event-types", "event-types") }}
-        {{ nav_link("/dashboard/teams", "nav-teams", "teams") }}
+        {{ nav_link("/dashboard", "nav-overview", "overview", icon="house") }}
+        {{ nav_link("/dashboard/bookings", "nav-bookings", "bookings", "bookings", icon="calendar-check") }}
+        {{ nav_link("/dashboard/event-types", "nav-event-types", "event-types", icon="clock") }}
+        {{ nav_link("/dashboard/teams", "nav-teams", "teams", icon="users-three") }}
       </div>
 
       <div class="sidebar-section">
         <div class="sidebar-section-label">{{ t("nav-section-shared-links") }}</div>
-        {{ nav_link("/dashboard/directory", "directory-title", "directory") }}
-        {{ nav_link("/dashboard/invite-links", "nav-invite-links", "organization") }}
+        {{ nav_link("/dashboard/directory", "directory-title", "directory", icon="address-book") }}
+        {{ nav_link("/dashboard/invite-links", "nav-invite-links", "organization", icon="link") }}
       </div>
 
       <div class="sidebar-section">
         <div class="sidebar-section-label">{{ t("nav-section-calendars") }}</div>
-        {{ nav_link("/dashboard/sources", "nav-sources", "sources", "sources") }}
+        {{ nav_link("/dashboard/sources", "nav-sources", "sources", "sources", icon="plugs") }}
       </div>
 
       <div class="sidebar-section">
         <div class="sidebar-section-label">{{ t("nav-section-personal") }}</div>
-        {{ nav_link("/dashboard/settings", "nav-settings", "settings") }}
-        {{ nav_link("/dashboard/time-off", "nav-time-off", "time-off") }}
-        {{ nav_link("/dashboard/troubleshoot", "nav-troubleshoot", "troubleshoot", "", "data-calrs-sync") }}
+        {{ nav_link("/dashboard/settings", "nav-settings", "settings", icon="user-circle") }}
+        {{ nav_link("/dashboard/time-off", "nav-time-off", "time-off", icon="airplane") }}
+        {{ nav_link("/dashboard/troubleshoot", "nav-troubleshoot", "troubleshoot", "", "data-calrs-sync", icon="wrench") }}
       </div>
 
       {% if sidebar.user_role == "admin" %}
       <div class="sidebar-section">
         <div class="sidebar-section-label">{{ t("nav-section-admin") }}</div>
-        {{ nav_link("/dashboard/admin", "nav-admin-panel", "admin") }}
+        {{ nav_link("/dashboard/admin", "nav-admin-panel", "admin", icon="shield-check") }}
       </div>
       {% endif %}
     </div>
@@ -705,7 +711,7 @@
           </div>
         </a>
         <form method="post" action="/auth/logout" style="flex-shrink: 0;">
-          <button type="submit" class="sidebar-signout" title="{{ t('nav-sign-out') }}" aria-label="{{ t('nav-sign-out') }}">{{ ic.icon("logout") }}</button>
+          <button type="submit" class="sidebar-signout" title="{{ t('nav-sign-out') }}" aria-label="{{ t('nav-sign-out') }}">{{ ph.icon("sign-out", 18) }}</button>
         </form>
       </div>
       <div class="sidebar-meta">
@@ -717,6 +723,9 @@
 
   <main class="dashboard-main" id="main-content" tabindex="-1">
     <div class="container {% block container_class %}{% endblock %}">
+      {# The overview moves this notice into its own "To set up" strip,
+         with the same ids, so the script below drives either copy. #}
+      {% block tz_banner %}
       <div id="tz-banner" class="tz-banner" role="status">
         <div class="tz-banner-row">
           <span>{{ t("tz-banner-text", detected='<strong id="tz-detected"></strong>', current='<strong id="tz-current"></strong>') | safe }}</span>
@@ -726,6 +735,8 @@
           </span>
         </div>
       </div>
+      {% endblock %}
+      {% block dashboard_content %}{% endblock %}
       <script>
       (function() {
         var userTz = {{ sidebar.user_timezone | tojson }};
@@ -745,7 +756,7 @@
         var banner = document.getElementById('tz-banner');
         document.getElementById('tz-detected').textContent = browserTz;
         document.getElementById('tz-current').textContent = userTz;
-        banner.style.display = 'block';
+        banner.style.display = banner.dataset.display || 'block';
         document.getElementById('tz-dismiss').addEventListener('click', function() {
           banner.style.display = 'none';
           sessionStorage.setItem('calrs_tz_dismissed', browserTz + ':' + userTz);
@@ -763,7 +774,6 @@
         });
       })();
       </script>
-      {% block dashboard_content %}{% endblock %}
     </div>
   </main>
 </div>

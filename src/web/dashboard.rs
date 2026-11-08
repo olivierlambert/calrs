@@ -171,6 +171,8 @@ pub(super) async fn dashboard(
                     .map(|utc| host.from_utc_datetime(&utc).naive_local());
                 Some(context! {
                     id => id,
+                    initials => overview_stats::initials(name),
+                    hue => overview_stats::face_hue(name),
                     guest_name => name,
                     guest_email => email,
                     // Same rule as the bookings page: shown while the event
@@ -199,8 +201,8 @@ pub(super) async fn dashboard(
     let agenda = overview_stats::agenda(&state.pool, &user.id, host, now, lang).await;
     let has_bookings = overview_stats::has_any_booking(&state.pool, &user.id).await;
 
-    // Today on the ruler, this week in the week view: one query for the
-    // bookings and one for the calendar over the whole span.
+    // This week in the week strip: one query for the bookings and one for
+    // the calendar over the whole span, today included.
     let hours = overview_stats::load_event_type_hours(&state.pool, &user.id).await;
     let week_from =
         (today - Duration::days(week_start.offset(today).into())).and_time(NaiveTime::MIN);
@@ -212,17 +214,9 @@ pub(super) async fn dashboard(
         overview_stats::fetch_day_bookings(&state.pool, &user.id, host, span_from, span_to).await;
     let busy =
         overview_stats::fetch_calendar_busy(&state.pool, &user.id, host, span_from, span_to).await;
-    // Time off closes the hours it covers, on the ruler and the week (#46).
+    // Time off closes the hours it covers in the week (#46).
     let time_off =
         crate::time_off::busy_intervals(&state.pool, &user.id, span_from, span_to, host).await;
-    let open_today = overview_stats::without_time_off(
-        overview_stats::open_minutes(&hours, today, host),
-        today,
-        &time_off,
-    );
-    let blocks = overview_stats::day_blocks(lang, today, &week_bookings, &busy);
-    let now_minute = (now_local - day_from).num_minutes();
-    let ruler = overview_stats::ruler_context(lang, &open_today, &blocks, now_minute);
     let week = overview_stats::week_context(
         lang,
         &hours,
@@ -233,7 +227,31 @@ pub(super) async fn dashboard(
         now_local,
         week_start,
     );
-    let masthead = overview_stats::masthead_context(lang, today, agenda.first());
+    // Confirmed meetings later today after the next one, for the sentence
+    // under the greeting (the agenda's scope, from the week's bookings).
+    let more_today = agenda.first().map_or(0, |next| {
+        let left_today = week_bookings
+            .iter()
+            .filter(|b| !b.pending && b.start.date() == today && b.end > now_local)
+            .count() as i64;
+        let next_is_today = next.get_attr("is_today").is_ok_and(|v| v.is_true());
+        (left_today - i64::from(next_is_today)).max(0)
+    });
+    let first_name = user
+        .name
+        .split_whitespace()
+        .next()
+        .map(str::to_string)
+        .or_else(|| user.username.clone())
+        .unwrap_or_else(|| user.email.split('@').next().unwrap_or_default().to_string());
+    let masthead = overview_stats::masthead_context(
+        lang,
+        now_local,
+        &first_name,
+        agenda.first(),
+        more_today,
+        pending_count,
+    );
 
     let links_ctx: Vec<minijinja::Value> = own_links
         .iter()
@@ -273,7 +291,6 @@ pub(super) async fn dashboard(
             agenda => agenda,
             has_bookings => has_bookings,
             mast => masthead,
-            ruler => ruler,
             week => week,
             impersonating => impersonating,
             impersonating_name => impersonating_name,
