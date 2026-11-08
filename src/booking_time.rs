@@ -4,19 +4,44 @@ use chrono::{DateTime, Duration, NaiveDateTime, Offset, TimeZone, Utc};
 use chrono_tz::Tz;
 use sqlx::SqlitePool;
 
+/// SQL condition selecting the bookings one user hosts. Expects the aliases
+/// `b` (bookings), `et` (its event type) and `a` (that event type's account),
+/// and binds the user id four times.
+///
+/// A user hosts a booking when it is assigned to them, or when it is
+/// unassigned and they own the event type (personal bookings, and legacy
+/// unassigned round-robin rows), or when it is an unassigned team booking and
+/// they are a member of that team. An assigned booking must NOT mark the
+/// event type owner busy: on a round-robin team the owner stays free when
+/// another member took the booking (#146). An unassigned collective booking
+/// is its roster's, as on the collective booking path: members of the team
+/// not excluded from the event type (weight 0 or less in
+/// `event_type_member_weights`, as the slot engine and `hosts.rs` read it).
+/// Its owner hosts it only when on that roster, so an owner excluded from it
+/// or no longer in the team is free (#375). A co-host of a dynamic group
+/// booking (`booking_participants`, #46) hosts it too.
+pub const USER_HOSTS_BOOKING: &str = "(b.assigned_user_id = ?
+        OR (b.assigned_user_id IS NULL AND a.user_id = ?
+            AND NOT (et.team_id IS NOT NULL AND et.scheduling_mode = 'collective'))
+        OR (b.assigned_user_id IS NULL AND et.team_id IS NOT NULL AND EXISTS (
+              SELECT 1 FROM team_members tm
+              WHERE tm.team_id = et.team_id AND tm.user_id = ?
+                AND NOT EXISTS (SELECT 1 FROM event_type_member_weights etw
+                    WHERE etw.event_type_id = et.id AND etw.user_id = tm.user_id
+                      AND etw.weight <= 0)))
+        OR EXISTS (SELECT 1 FROM booking_participants bp
+              WHERE bp.booking_id = b.id AND bp.user_id = ?))";
+
 /// SQL condition selecting the bookings that make one user busy. Expects the
 /// aliases `b` (bookings), `et` (its event type) and `a` (that event type's
-/// account), and binds the user id four times.
+/// account), and binds the user id five times.
 ///
-/// A booking makes a user busy when it is assigned to them, or when it is
-/// unassigned and they own the event type (personal bookings), or when it is
-/// an unassigned team booking (collective mode) and they are a member of that
-/// team. An assigned booking must NOT mark the event type owner busy: on a
-/// round-robin team the owner stays free when another member took the
-/// booking (#146). A co-host of a dynamic group booking
-/// (`booking_participants`, #46) is busy during it too. Pending requests
-/// count when their own event type holds the slot (`pending_blocks_slot`,
-/// #234).
+/// The bookings the user hosts ([`USER_HOSTS_BOOKING`], four binds), plus the
+/// confirmed bookings they claimed as a watcher (`claimed_by_user_id`, one
+/// bind, #374): the claimant attends, so they are not free then either. A
+/// claimant who also hosts the booking matches it once, as one row. Pending
+/// requests count when their own event type holds the slot
+/// (`pending_blocks_slot`, #234).
 ///
 /// Shared by the web slot engine, the troubleshoot view and the CLI so the
 /// three can never disagree about who is busy. `include_pending_holds` is
@@ -29,13 +54,8 @@ pub fn user_busy_bookings(include_pending_holds: bool) -> String {
         "b.status = 'confirmed'"
     };
     format!(
-        "(b.assigned_user_id = ?
-        OR (b.assigned_user_id IS NULL AND a.user_id = ?)
-        OR (b.assigned_user_id IS NULL AND et.team_id IS NOT NULL AND EXISTS (
-              SELECT 1 FROM team_members tm
-              WHERE tm.team_id = et.team_id AND tm.user_id = ?))
-        OR EXISTS (SELECT 1 FROM booking_participants bp
-              WHERE bp.booking_id = b.id AND bp.user_id = ?))
+        "({USER_HOSTS_BOOKING}
+        OR (b.claimed_by_user_id = ? AND b.status = 'confirmed'))
    AND {status}"
     )
 }

@@ -94,7 +94,7 @@ When a booking is submitted:
 
 ### Excluding members
 
-On a **collective** event type, per-member exclusions can be set from the event type editor — useful when a team member is joining the team but shouldn't (yet) be required for a specific event. Excluded members don't gate the availability window, don't receive notifications, and don't appear on the public booking page's avatar list.
+On a **collective** event type, per-member exclusions can be set from the event type editor — useful when a team member is joining the team but shouldn't (yet) be required for a specific event. Excluded members don't gate the availability window, don't receive notifications, and don't appear on the public booking page's avatar list. The event type's bookings don't make them busy either, so their own event types stay bookable at those times.
 
 ## Booking watchers
 
@@ -106,6 +106,7 @@ When a booking lands on a watched event type:
 2. The first watcher to click the button claims the booking — a short-lived token backs each button
 3. Subsequent clicks land on an "already claimed" page; no double-assignment
 4. Claimed bookings show up on the watcher's dashboard with a "Claimed by you" badge
+5. A confirmed claimed booking makes the watcher busy: their own event types stop offering that time, and the availability troubleshooter lists it as a claimed booking
 
 **Typical setup:** a customer self-serves through a public event type, and a rotating support team watches it. Whoever has bandwidth grabs the booking — no round-robin assumptions, no manual dispatch.
 

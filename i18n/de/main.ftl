@@ -1691,6 +1691,7 @@ bookings-error-reschedule-resend-too-soon = Die Anfrage wurde dem Gast vor wenig
 bookings-resend-reschedule = Anfrage erneut senden
 bookings-resend-reschedule-hint = Dem Gast denselben Link erneut per E-Mail senden (höchstens einmal pro Stunde)
 troubleshoot-detail-pending-request = { $title } (offene Anfrage)
+troubleshoot-detail-claimed-booking = { $title } (übernommene Buchung)
 etf-pending-blocks-slot = Offene Anfragen blockieren den Termin
 etf-pending-blocks-slot-help = Solange eine Anfrage auf deine Antwort wartet, kann niemand sonst diese Zeit buchen, weder bei dieser noch bei deinen anderen Terminarten.
 etf-pending-expiry = Ablauf von Anfragen

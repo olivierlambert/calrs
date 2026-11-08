@@ -1693,6 +1693,7 @@ bookings-error-reschedule-resend-too-soon = Het verzoek is minder dan een uur ge
 bookings-resend-reschedule = Verzoek opnieuw sturen
 bookings-resend-reschedule-hint = Stuur de gast dezelfde link nog eens (hoogstens één keer per uur)
 troubleshoot-detail-pending-request = { $title } (openstaande aanvraag)
+troubleshoot-detail-claimed-booking = { $title } (overgenomen boeking)
 etf-pending-blocks-slot = Openstaande aanvragen blokkeren het tijdslot
 etf-pending-blocks-slot-help = Zolang een aanvraag op je antwoord wacht, kan niemand anders dat tijdstip boeken, bij dit en bij je andere afspraaktypes.
 etf-pending-expiry = Verloop van aanvragen
