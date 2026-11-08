@@ -925,6 +925,171 @@ async fn editing_or_deleting_a_question_keeps_past_answers() {
     assert_eq!(orphans, 4);
 }
 
+// --- The editor ---
+
+#[tokio::test]
+async fn the_editor_saves_the_questions_of_a_personal_event_type() {
+    let (app, pool, session, et_id) = setup_test_app().await;
+    let csrf = "csrf-q-edit";
+    let questions = urlencoding::encode(
+        r#"[{"kind":"single_choice","label":"How should we meet?","required":true,"options":[{"label":"In person"},{"label":"Video"}]}]"#,
+    );
+    let body = format!(
+        "_csrf={csrf}&title=Test+Meeting&slug=test-meeting&duration_min=30&location_type=link&location_value=https%3A%2F%2Fmeet.example.com&questions={questions}&notes_mode=required"
+    );
+    let response = app
+        .clone()
+        .oneshot(post_form(
+            "/dashboard/event-types/test-meeting/edit",
+            &session,
+            csrf,
+            &body,
+        ))
+        .await
+        .unwrap();
+    assert!(response.status().is_redirection(), "{}", response.status());
+    let qs = load(&pool, &et_id).await.unwrap();
+    assert_eq!(qs.len(), 1);
+    assert_eq!(qs[0].key, "how_should_we_meet");
+    assert_eq!(qs[0].options.len(), 2);
+    assert_eq!(
+        booking_form(&pool, &et_id).await.unwrap().notes_mode,
+        "required"
+    );
+
+    // The edit form hands them back to the editor, and offers a preview.
+    let page = body_string(
+        app.clone()
+            .oneshot(get_authed(
+                "/dashboard/event-types/test-meeting/edit",
+                &session,
+            ))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(page.contains("How should we meet?"));
+    assert!(page.contains(r#"href="&#x2f;u&#x2f;testuser&#x2f;test-meeting""#));
+
+    // A form posted without the editor leaves them alone.
+    let body = format!(
+        "_csrf={csrf}&title=Test+Meeting&slug=test-meeting&duration_min=30&location_type=link&location_value=https%3A%2F%2Fmeet.example.com"
+    );
+    app.clone()
+        .oneshot(post_form(
+            "/dashboard/event-types/test-meeting/edit",
+            &session,
+            csrf,
+            &body,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(load(&pool, &et_id).await.unwrap().len(), 1);
+
+    // An invalid list is refused with the form, and nothing changes.
+    let bad = urlencoding::encode(
+        r#"[{"kind":"checkbox","label":"I agree","link":"javascript:alert(1)"}]"#,
+    );
+    let body = format!(
+        "_csrf={csrf}&title=Test+Meeting&slug=test-meeting&duration_min=30&location_type=link&location_value=https%3A%2F%2Fmeet.example.com&questions={bad}"
+    );
+    let response = app
+        .oneshot(post_form(
+            "/dashboard/event-types/test-meeting/edit",
+            &session,
+            csrf,
+            &body,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let page = body_string(response).await;
+    assert!(page.contains("https://"), "the error names the link rule");
+    assert_eq!(
+        load(&pool, &et_id).await.unwrap()[0].kind,
+        Kind::SingleChoice
+    );
+}
+
+#[tokio::test]
+async fn only_a_team_admin_edits_a_team_event_types_questions() {
+    let (app, pool, _, _) = setup_test_app().await;
+    let (team_id, et_id) = seed_team_event_type(&pool).await;
+    let (member, member_session) =
+        insert_test_user_with_session(&pool, "Member", "member@example.com", "member").await;
+    sqlx::query("INSERT INTO team_members (team_id, user_id, role, source) VALUES (?, ?, 'member', 'direct')")
+        .bind(&team_id)
+        .bind(&member)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let csrf = "csrf-q-team-edit";
+    let questions = urlencoding::encode(r#"[{"kind":"short_text","label":"Company"}]"#);
+    let body = format!(
+        "_csrf={csrf}&title=Team+Sync&slug=team-sync&duration_min=30&location_type=link&location_value=https%3A%2F%2Fmeet.example.com&questions={questions}"
+    );
+    app.clone()
+        .oneshot(post_form(
+            &format!("/dashboard/group-event-types/{team_id}/team-sync/edit"),
+            &member_session,
+            csrf,
+            &body,
+        ))
+        .await
+        .unwrap();
+    assert!(
+        load(&pool, &et_id).await.unwrap().is_empty(),
+        "a plain member may not edit"
+    );
+
+    sqlx::query("UPDATE team_members SET role = 'admin' WHERE user_id = ?")
+        .bind(&member)
+        .execute(&pool)
+        .await
+        .unwrap();
+    app.oneshot(post_form(
+        &format!("/dashboard/group-event-types/{team_id}/team-sync/edit"),
+        &member_session,
+        csrf,
+        &body,
+    ))
+    .await
+    .unwrap();
+    assert_eq!(load(&pool, &et_id).await.unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn duplicate_copies_the_questions_and_the_notes_mode() {
+    let (app, pool, session, et_id) = setup_test_app().await;
+    let qs = seed_questions(&pool, &et_id).await;
+    save(&pool, &et_id, None, Some("off")).await.unwrap();
+    let response = app
+        .oneshot(post_form(
+            "/dashboard/event-types/test-meeting/duplicate",
+            &session,
+            "csrf-q-dup",
+            "_csrf=csrf-q-dup",
+        ))
+        .await
+        .unwrap();
+    assert!(response.status().is_redirection());
+    let copy: String =
+        sqlx::query_scalar("SELECT id FROM event_types WHERE slug = 'test-meeting-copy'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let copied = booking_form(&pool, &copy).await.unwrap();
+    assert_eq!(copied.notes_mode, "off");
+    assert_eq!(copied.questions.len(), qs.len());
+    for (a, b) in copied.questions.iter().zip(&qs) {
+        assert_ne!(a.id, b.id, "a copy gets its own question ids");
+        assert_eq!(
+            (&a.key, &a.label, &a.options),
+            (&b.key, &b.label, &b.options)
+        );
+    }
+}
+
 // --- Display surfaces ---
 
 #[tokio::test]
