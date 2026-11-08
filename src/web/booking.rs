@@ -398,7 +398,7 @@ pub(super) async fn handle_group_booking(
     let buf_start = check_start - Duration::minutes(buffer_before as i64);
     let buf_end = check_end + Duration::minutes(buffer_after as i64);
     let (assigned_user_id, host_name, host_email, member_contacts) = if is_collective {
-        let members: Vec<(String, String, String, Option<String>)> = sqlx::query_as(
+        let members: Vec<(String, String, String, Option<String>)> = match sqlx::query_as(
             "SELECT u.id, u.name, COALESCE(u.booking_email, u.email), u.language FROM users u
              JOIN team_members tm ON tm.user_id = u.id
              LEFT JOIN event_type_member_weights etw
@@ -410,7 +410,10 @@ pub(super) async fn handle_group_booking(
         .bind(&team_id)
         .fetch_all(&state.pool)
         .await
-        .unwrap_or_default();
+        {
+            Ok(members) => members,
+            Err(e) => return internal_error_response("booking availability check", &e),
+        };
         if members.is_empty() {
             let _ = tx.rollback().await;
             return Html(crate::i18n::translate(
@@ -423,7 +426,7 @@ pub(super) async fn handle_group_booking(
         // Submit-time re-check, mirroring pick_group_member: the slot grid
         // may be stale by the time the form is submitted.
         for (member_id, _, _, _) in &members {
-            let mut busy = fetch_busy_times_for_user(
+            let mut busy = match try_fetch_busy_times_for_user(
                 &state.pool,
                 member_id,
                 buf_start,
@@ -431,10 +434,16 @@ pub(super) async fn handle_group_booking(
                 host_tz,
                 Some(&et_id),
             )
-            .await;
-            busy.extend(
-                user_avail_as_busy(&state.pool, member_id, buf_start, buf_end, host_tz).await,
-            );
+            .await
+            {
+                Ok(busy) => busy,
+                Err(e) => return internal_error_response("booking availability check", &e),
+            };
+            match try_user_avail_as_busy(&state.pool, member_id, buf_start, buf_end, host_tz).await
+            {
+                Ok(hours) => busy.extend(hours),
+                Err(e) => return internal_error_response("booking availability check", &e),
+            }
             if has_conflict(&busy, buf_start, buf_end) {
                 let _ = tx.rollback().await;
                 return Html(crate::i18n::translate(
@@ -466,8 +475,9 @@ pub(super) async fn handle_group_booking(
         )
         .await;
         match assigned {
-            Some((member_id, name, email)) => (Some(member_id), name, email, Vec::new()),
-            None => {
+            Ok(Some((member_id, name, email))) => (Some(member_id), name, email, Vec::new()),
+            Err(e) => return internal_error_response("booking availability check", &e),
+            Ok(None) => {
                 let _ = tx.rollback().await;
                 return Html(crate::i18n::translate(
                     lang,
@@ -497,7 +507,7 @@ pub(super) async fn handle_group_booking(
     // by recomputing the page's own slots; the checks above just give the
     // common refusals their own message.
     let window = offered_slot_window(host_tz, slot_start);
-    let offered_busy = team_busy_source(
+    let offered_busy = match try_team_busy_source(
         &state.pool,
         &et_id,
         &team_id,
@@ -506,8 +516,12 @@ pub(super) async fn handle_group_booking(
         window.busy_end,
         host_tz,
     )
-    .await;
-    if !is_offered_slot(
+    .await
+    {
+        Ok(busy) => busy,
+        Err(e) => return internal_error_response("booking availability check", &e),
+    };
+    let offered = match is_offered_slot(
         &state.pool,
         &et_id,
         duration,
@@ -523,6 +537,10 @@ pub(super) async fn handle_group_booking(
     )
     .await
     {
+        Ok(offered) => offered,
+        Err(e) => return internal_error_response("booking availability check", &e),
+    };
+    if !offered {
         let _ = tx.rollback().await;
         return Html(crate::i18n::translate(lang, "error-slot-unavailable", None)).into_response();
     }
@@ -554,13 +572,14 @@ pub(super) async fn handle_group_booking(
     )
     .await
     {
-        crate::resources::ResourceCheck::Busy => {
+        Ok(crate::resources::ResourceCheck::Busy) => {
             let _ = tx.rollback().await;
             return Html(crate::i18n::translate(lang, "error-slot-unavailable", None))
                 .into_response();
         }
-        crate::resources::ResourceCheck::Free { assigned } => assigned,
-        crate::resources::ResourceCheck::NoResources => None,
+        Ok(crate::resources::ResourceCheck::Free { assigned }) => assigned,
+        Ok(crate::resources::ResourceCheck::NoResources) => None,
+        Err(e) => return internal_error_response("resource availability check", &e),
     };
 
     let sms_default_country: String = crate::sms::default_country_code(&state.pool).await;
@@ -1046,12 +1065,25 @@ async fn handle_dynamic_group_booking(
     // Check availability for ALL participants
     for (i, (uid, uname, _, _, _)) in dg_users.iter().enumerate() {
         let et_filter = if i == 0 { Some(et_id.as_str()) } else { None };
-        let mut busy =
-            fetch_busy_times_for_user(&state.pool, uid, buf_start, buf_end, host_tz, et_filter)
-                .await;
+        let mut busy = match try_fetch_busy_times_for_user(
+            &state.pool,
+            uid,
+            buf_start,
+            buf_end,
+            host_tz,
+            et_filter,
+        )
+        .await
+        {
+            Ok(busy) => busy,
+            Err(e) => return internal_error_response("booking availability check", &e),
+        };
         if i > 0 {
             ensure_user_avail_seeded(&state.pool, uid).await;
-            busy.extend(user_avail_as_busy(&state.pool, uid, buf_start, buf_end, host_tz).await);
+            match try_user_avail_as_busy(&state.pool, uid, buf_start, buf_end, host_tz).await {
+                Ok(hours) => busy.extend(hours),
+                Err(e) => return internal_error_response("booking availability check", &e),
+            }
         }
         if has_conflict(&busy, buf_start, buf_end) {
             return Html(tr1(
@@ -1082,7 +1114,7 @@ async fn handle_dynamic_group_booking(
     // common refusals their own message.
     let window = offered_slot_window(host_tz, slot_start);
     let user_ids: Vec<String> = dg_users.iter().map(|(uid, ..)| uid.clone()).collect();
-    let offered_busy = dynamic_group_busy_source(
+    let offered_busy = match try_dynamic_group_busy_source(
         &state.pool,
         &et_id,
         &user_ids,
@@ -1090,8 +1122,12 @@ async fn handle_dynamic_group_booking(
         window.busy_end,
         host_tz,
     )
-    .await;
-    if !is_offered_slot(
+    .await
+    {
+        Ok(busy) => busy,
+        Err(e) => return internal_error_response("booking availability check", &e),
+    };
+    let offered = match is_offered_slot(
         &state.pool,
         &et_id,
         duration,
@@ -1107,6 +1143,10 @@ async fn handle_dynamic_group_booking(
     )
     .await
     {
+        Ok(offered) => offered,
+        Err(e) => return internal_error_response("booking availability check", &e),
+    };
+    if !offered {
         return Html(crate::i18n::translate(lang, "error-slot-unavailable", None)).into_response();
     }
 
@@ -1159,13 +1199,14 @@ async fn handle_dynamic_group_booking(
     )
     .await
     {
-        crate::resources::ResourceCheck::Busy => {
+        Ok(crate::resources::ResourceCheck::Busy) => {
             let _ = tx.rollback().await;
             return Html(crate::i18n::translate(lang, "error-slot-unavailable", None))
                 .into_response();
         }
-        crate::resources::ResourceCheck::Free { assigned } => assigned,
-        crate::resources::ResourceCheck::NoResources => None,
+        Ok(crate::resources::ResourceCheck::Free { assigned }) => assigned,
+        Ok(crate::resources::ResourceCheck::NoResources) => None,
+        Err(e) => return internal_error_response("resource availability check", &e),
     };
 
     let sms_default_country_dg: String = crate::sms::default_country_code(&state.pool).await;
@@ -1653,7 +1694,7 @@ pub(super) async fn handle_booking_for_user(
         }
     };
 
-    let busy = fetch_busy_times_for_user(
+    let busy = match try_fetch_busy_times_for_user(
         &state.pool,
         &host_user_id,
         buf_start,
@@ -1661,7 +1702,11 @@ pub(super) async fn handle_booking_for_user(
         host_tz,
         Some(&et_id),
     )
-    .await;
+    .await
+    {
+        Ok(busy) => busy,
+        Err(e) => return internal_error_response("booking availability check", &e),
+    };
     if has_conflict(&busy, buf_start, buf_end) {
         let _ = tx.rollback().await;
         return Html(crate::i18n::translate(lang, "error-slot-unavailable", None)).into_response();
@@ -1684,18 +1729,20 @@ pub(super) async fn handle_booking_for_user(
     // by recomputing the page's own slots; the checks above just give the
     // common refusals their own message.
     let window = offered_slot_window(host_tz, slot_start);
-    let offered_busy = BusySource::Individual(
-        fetch_busy_times_for_user(
-            &state.pool,
-            &host_user_id,
-            window.busy_start,
-            window.busy_end,
-            host_tz,
-            Some(&et_id),
-        )
-        .await,
-    );
-    if !is_offered_slot(
+    let offered_busy = match try_fetch_busy_times_for_user(
+        &state.pool,
+        &host_user_id,
+        window.busy_start,
+        window.busy_end,
+        host_tz,
+        Some(&et_id),
+    )
+    .await
+    {
+        Ok(busy) => BusySource::Individual(busy),
+        Err(e) => return internal_error_response("booking availability check", &e),
+    };
+    let offered = match is_offered_slot(
         &state.pool,
         &et_id,
         duration,
@@ -1711,6 +1758,10 @@ pub(super) async fn handle_booking_for_user(
     )
     .await
     {
+        Ok(offered) => offered,
+        Err(e) => return internal_error_response("booking availability check", &e),
+    };
+    if !offered {
         let _ = tx.rollback().await;
         return Html(crate::i18n::translate(lang, "error-slot-unavailable", None)).into_response();
     }
@@ -1742,13 +1793,14 @@ pub(super) async fn handle_booking_for_user(
     )
     .await
     {
-        crate::resources::ResourceCheck::Busy => {
+        Ok(crate::resources::ResourceCheck::Busy) => {
             let _ = tx.rollback().await;
             return Html(crate::i18n::translate(lang, "error-slot-unavailable", None))
                 .into_response();
         }
-        crate::resources::ResourceCheck::Free { assigned } => assigned,
-        crate::resources::ResourceCheck::NoResources => None,
+        Ok(crate::resources::ResourceCheck::Free { assigned }) => assigned,
+        Ok(crate::resources::ResourceCheck::NoResources) => None,
+        Err(e) => return internal_error_response("resource availability check", &e),
     };
 
     match crate::booking_time::legacy_slot_taken(&state.pool, &et_id, None, &start_at, "").await {
@@ -2437,7 +2489,7 @@ pub(super) async fn handle_booking(
         }
     };
 
-    let busy = fetch_busy_times_for_user(
+    let busy = match try_fetch_busy_times_for_user(
         &state.pool,
         &host_user_id,
         buf_start,
@@ -2445,7 +2497,11 @@ pub(super) async fn handle_booking(
         host_tz,
         Some(&et_id),
     )
-    .await;
+    .await
+    {
+        Ok(busy) => busy,
+        Err(e) => return internal_error_response("booking availability check", &e),
+    };
     if has_conflict(&busy, buf_start, buf_end) {
         let _ = tx.rollback().await;
         return Html(crate::i18n::translate(lang, "error-slot-unavailable", None)).into_response();
@@ -2468,18 +2524,20 @@ pub(super) async fn handle_booking(
     // by recomputing the page's own slots; the checks above just give the
     // common refusals their own message.
     let window = offered_slot_window(host_tz, slot_start);
-    let offered_busy = BusySource::Individual(
-        fetch_busy_times_for_user(
-            &state.pool,
-            &host_user_id,
-            window.busy_start,
-            window.busy_end,
-            host_tz,
-            Some(&et_id),
-        )
-        .await,
-    );
-    if !is_offered_slot(
+    let offered_busy = match try_fetch_busy_times_for_user(
+        &state.pool,
+        &host_user_id,
+        window.busy_start,
+        window.busy_end,
+        host_tz,
+        Some(&et_id),
+    )
+    .await
+    {
+        Ok(busy) => BusySource::Individual(busy),
+        Err(e) => return internal_error_response("booking availability check", &e),
+    };
+    let offered = match is_offered_slot(
         &state.pool,
         &et_id,
         duration,
@@ -2495,6 +2553,10 @@ pub(super) async fn handle_booking(
     )
     .await
     {
+        Ok(offered) => offered,
+        Err(e) => return internal_error_response("booking availability check", &e),
+    };
+    if !offered {
         let _ = tx.rollback().await;
         return Html(crate::i18n::translate(lang, "error-slot-unavailable", None)).into_response();
     }
@@ -2526,13 +2588,14 @@ pub(super) async fn handle_booking(
     )
     .await
     {
-        crate::resources::ResourceCheck::Busy => {
+        Ok(crate::resources::ResourceCheck::Busy) => {
             let _ = tx.rollback().await;
             return Html(crate::i18n::translate(lang, "error-slot-unavailable", None))
                 .into_response();
         }
-        crate::resources::ResourceCheck::Free { assigned } => assigned,
-        crate::resources::ResourceCheck::NoResources => None,
+        Ok(crate::resources::ResourceCheck::Free { assigned }) => assigned,
+        Ok(crate::resources::ResourceCheck::NoResources) => None,
+        Err(e) => return internal_error_response("resource availability check", &e),
     };
 
     match crate::booking_time::legacy_slot_taken(&state.pool, &et_id, None, &start_at, "").await {

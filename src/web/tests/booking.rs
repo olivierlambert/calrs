@@ -1249,14 +1249,14 @@ async fn group_booking_post_rejects_beyond_horizon() {
 
 /// The four public booking routes a guest can POST to.
 #[derive(Clone, Copy, Debug)]
-enum BookRoute {
+pub(super) enum BookRoute {
     User,
     Legacy,
     Team,
     DynamicGroup,
 }
 
-const ALL_BOOK_ROUTES: [BookRoute; 4] = [
+pub(super) const ALL_BOOK_ROUTES: [BookRoute; 4] = [
     BookRoute::User,
     BookRoute::Legacy,
     BookRoute::Team,
@@ -1264,7 +1264,7 @@ const ALL_BOOK_ROUTES: [BookRoute; 4] = [
 ];
 
 /// A fresh app for `route`: (app, pool, POST uri, event type it books).
-async fn app_for_route(route: BookRoute) -> (Router, SqlitePool, &'static str, String) {
+pub(super) async fn app_for_route(route: BookRoute) -> (Router, SqlitePool, &'static str, String) {
     let (app, pool, _, et_id) = setup_test_app().await;
     match route {
         BookRoute::User => (app, pool, "/u/testuser/test-meeting/book", et_id),

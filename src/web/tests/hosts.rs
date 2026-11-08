@@ -715,3 +715,59 @@ async fn reschedule_host_profile_shows_the_booking_host() {
         "the team card lists the eligible roster"
     );
 }
+
+/// `try_reschedule_hosts` re-implements the resolution of
+/// `reschedule_hosts`/`booking_write_targets` with strict reads: both must
+/// name the same hosts for personal, round-robin assigned, round-robin
+/// unassigned and collective bookings.
+#[tokio::test]
+async fn strict_and_lenient_reschedule_hosts_agree() {
+    let pool = setup_test_db().await;
+    let alice = insert_role_user(&pool, "alice@agree.test", "user").await;
+    let bob = insert_role_user(&pool, "bob@agree.test", "user").await;
+    let (_team, rr_et) = insert_team_with_et(
+        &pool,
+        "agree-rr",
+        "agree-rr-et",
+        &[(&alice, "member"), (&bob, "member")],
+    )
+    .await;
+    let (owner, _, personal_et) = seed_test_data(&pool).await;
+    let start = NaiveDate::from_ymd_opt(2026, 3, 17)
+        .unwrap()
+        .and_hms_opt(10, 0, 0)
+        .unwrap();
+
+    for (case, et_id, assigned) in [
+        ("personal", &personal_et, None),
+        ("round robin assigned", &rr_et, Some(bob.as_str())),
+        ("round robin unassigned", &rr_et, None),
+        ("collective", &rr_et, None),
+    ] {
+        if case == "collective" {
+            sqlx::query("UPDATE event_types SET scheduling_mode = 'collective' WHERE id = ?")
+                .bind(et_id)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+        sqlx::query("DELETE FROM bookings")
+            .execute(&pool)
+            .await
+            .unwrap();
+        insert_booking(&pool, et_id, assigned, start, "confirmed").await;
+        let uid: String = sqlx::query_scalar("SELECT uid FROM bookings")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let lenient = reschedule_hosts(&pool, &uid, &owner).await;
+        let strict = try_reschedule_hosts(&pool, &uid, &owner).await.unwrap();
+        let sorted = |mut ids: Vec<String>| {
+            ids.sort();
+            ids
+        };
+        assert_eq!(sorted(strict.user_ids), sorted(lenient.user_ids), "{case}");
+        assert_eq!(strict.team_id, lenient.team_id, "{case}");
+        assert_eq!(strict.collective, lenient.collective, "{case}");
+    }
+}

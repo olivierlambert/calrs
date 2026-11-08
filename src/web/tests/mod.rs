@@ -17,6 +17,7 @@ mod directory;
 mod duplicate_event_type;
 mod emails;
 mod event_types;
+mod fail_closed;
 mod format;
 mod guards;
 mod hosts;

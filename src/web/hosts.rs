@@ -139,7 +139,7 @@ async fn eligible_collective_booking_members(
     pool: &SqlitePool,
     booking_uid: &str,
     team_id: &str,
-) -> Vec<String> {
+) -> Result<Vec<String>, sqlx::Error> {
     let members: Vec<(String,)> = sqlx::query_as(
         "SELECT u.id FROM users u
          JOIN team_members tm ON tm.user_id = u.id
@@ -152,9 +152,8 @@ async fn eligible_collective_booking_members(
     .bind(booking_uid)
     .bind(team_id)
     .fetch_all(pool)
-    .await
-    .unwrap_or_default();
-    members.into_iter().map(|(id,)| id).collect()
+    .await?;
+    Ok(members.into_iter().map(|(id,)| id).collect())
 }
 
 /// Users whose calendars this booking's write-back targets (#147): the
@@ -184,7 +183,9 @@ pub(super) async fn booking_write_targets(
         Some((None, Some(team_id), mode, owner)) if mode == "collective" => {
             // Same eligibility as the slot grid: enabled members with a
             // non-zero per-event-type weight.
-            let members = eligible_collective_booking_members(pool, booking_uid, &team_id).await;
+            let members = eligible_collective_booking_members(pool, booking_uid, &team_id)
+                .await
+                .unwrap_or_default();
             if members.is_empty() {
                 vec![owner.unwrap_or_else(|| fallback_user_id.to_string())]
             } else {
@@ -250,6 +251,7 @@ pub(super) async fn reschedule_hosts(
             team_id.as_deref().unwrap_or_default(),
         )
         .await
+        .unwrap_or_default()
     } else {
         booking_write_targets(pool, booking_uid, owner_user_id).await
     };
@@ -258,6 +260,55 @@ pub(super) async fn reschedule_hosts(
         collective,
         team_id,
     }
+}
+
+/// [`reschedule_hosts`] for booking-time checks: a failed read is an error,
+/// never a fallback to the owner (who may not be the host the booking needs
+/// free).
+pub(super) async fn try_reschedule_hosts(
+    pool: &SqlitePool,
+    booking_uid: &str,
+    owner_user_id: &str,
+) -> Result<RescheduleHosts, sqlx::Error> {
+    // Same row as `booking_write_targets`, read once and strictly.
+    let row: Option<(Option<String>, Option<String>, String, Option<String>)> = sqlx::query_as(
+        "SELECT b.assigned_user_id, et.team_id, et.scheduling_mode, a.user_id
+         FROM bookings b
+         JOIN event_types et ON et.id = b.event_type_id
+         JOIN accounts a ON a.id = et.account_id
+         WHERE b.uid = ?",
+    )
+    .bind(booking_uid)
+    .fetch_optional(pool)
+    .await?;
+    // No row means the caller's own lookup raced a delete; treat it as a
+    // personal booking on the owner, which is what happened before #166.
+    let (assigned, team_id, mode, owner) = row.unwrap_or_default();
+    // An assigned booking stays that member's even if the event type has since
+    // been switched to collective.
+    let collective = assigned.is_none() && team_id.is_some() && mode == "collective";
+    let user_ids = if collective {
+        // Do not inherit booking_write_targets' CalDAV fallback here. An empty
+        // collective roster must produce BusySource::Team(empty), which makes
+        // every slot unavailable rather than treating the owner as the host.
+        eligible_collective_booking_members(
+            pool,
+            booking_uid,
+            team_id.as_deref().unwrap_or_default(),
+        )
+        .await?
+    } else {
+        // The resolution of `booking_write_targets`: the assigned member, else
+        // the event type owner, else the caller's owner.
+        vec![assigned
+            .or(owner)
+            .unwrap_or_else(|| owner_user_id.to_string())]
+    };
+    Ok(RescheduleHosts {
+        user_ids,
+        collective,
+        team_id,
+    })
 }
 
 /// Refresh the calendars of every user a reschedule depends on. `sync_if_stale`
@@ -291,10 +342,65 @@ pub(super) async fn reschedule_busy_source(
     exclude_booking_id: &str,
     exclude_booking_uid: &str,
 ) -> BusySource {
+    // Lenient reads never fail; were one to, an empty roster is never free.
+    reschedule_busy(
+        pool,
+        hosts,
+        et_id,
+        window_start,
+        window_end,
+        host_tz,
+        exclude_booking_id,
+        exclude_booking_uid,
+        false,
+    )
+    .await
+    .unwrap_or_else(|_| BusySource::Team(HashMap::new()))
+}
+
+/// [`reschedule_busy_source`] for the reschedule submit: a failed read is an
+/// error, never a host who looks free.
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn try_reschedule_busy_source(
+    pool: &SqlitePool,
+    hosts: &RescheduleHosts,
+    et_id: &str,
+    window_start: NaiveDateTime,
+    window_end: NaiveDateTime,
+    host_tz: Tz,
+    exclude_booking_id: &str,
+    exclude_booking_uid: &str,
+) -> Result<BusySource, sqlx::Error> {
+    reschedule_busy(
+        pool,
+        hosts,
+        et_id,
+        window_start,
+        window_end,
+        host_tz,
+        exclude_booking_id,
+        exclude_booking_uid,
+        true,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn reschedule_busy(
+    pool: &SqlitePool,
+    hosts: &RescheduleHosts,
+    et_id: &str,
+    window_start: NaiveDateTime,
+    window_end: NaiveDateTime,
+    host_tz: Tz,
+    exclude_booking_id: &str,
+    exclude_booking_uid: &str,
+    strict: bool,
+) -> Result<BusySource, sqlx::Error> {
     if hosts.team_id.is_none() {
         let owner = hosts.user_ids.first().map(String::as_str).unwrap_or("");
-        return BusySource::Individual(
-            fetch_busy_times_for_user_ex(
+        return Ok(BusySource::Individual(
+            busy_times_for_user(
                 pool,
                 owner,
                 window_start,
@@ -303,13 +409,15 @@ pub(super) async fn reschedule_busy_source(
                 Some(et_id),
                 Some(exclude_booking_id),
                 Some(exclude_booking_uid),
+                true,
+                strict,
             )
-            .await,
-        );
+            .await?,
+        ));
     }
     let mut member_busy = HashMap::new();
     for user_id in &hosts.user_ids {
-        let mut busy = fetch_busy_times_for_user_ex(
+        let mut busy = busy_times_for_user(
             pool,
             user_id,
             window_start,
@@ -318,15 +426,19 @@ pub(super) async fn reschedule_busy_source(
             Some(et_id),
             Some(exclude_booking_id),
             Some(exclude_booking_uid),
+            true,
+            strict,
         )
-        .await;
+        .await?;
         // Same personal-working-hours constraint the team slot grid applies.
         // Members without explicit hours come back unconstrained, so this never
         // plants a surprise 9-17 default.
-        busy.extend(user_avail_as_busy(pool, user_id, window_start, window_end, host_tz).await);
+        busy.extend(
+            user_avail_busy(pool, user_id, window_start, window_end, host_tz, strict).await?,
+        );
         member_busy.insert(user_id.clone(), busy);
     }
-    BusySource::Team(member_busy)
+    Ok(BusySource::Team(member_busy))
 }
 
 /// Upper bound on the calendar refresh an approval does before re-checking
@@ -339,12 +451,13 @@ const APPROVAL_SYNC_TIMEOUT: std::time::Duration = std::time::Duration::from_sec
 /// owner otherwise), with their calendars refreshed when stale. The refresh
 /// is bounded by [`APPROVAL_SYNC_TIMEOUT`] overall; past it the check uses
 /// the cached events, which is what it would have done before the refresh.
+/// A failed read of who the hosts are is an error: the approval is refused.
 pub(super) async fn prepare_approval_hosts(
     state: &Arc<AppState>,
     booking_uid: &str,
     owner_user_id: &str,
-) -> RescheduleHosts {
-    let hosts = reschedule_hosts(&state.pool, booking_uid, owner_user_id).await;
+) -> Result<RescheduleHosts, sqlx::Error> {
+    let hosts = try_reschedule_hosts(&state.pool, booking_uid, owner_user_id).await?;
     if tokio::time::timeout(APPROVAL_SYNC_TIMEOUT, sync_reschedule_hosts(state, &hosts))
         .await
         .is_err()
@@ -354,7 +467,7 @@ pub(super) async fn prepare_approval_hosts(
             "calendar refresh before approval timed out; checking cached events"
         );
     }
-    hosts
+    Ok(hosts)
 }
 
 /// Whether everyone a pending booking needs is still free for it, checked
@@ -367,7 +480,7 @@ pub(super) async fn prepare_approval_hosts(
 /// each other's approval forever. Once one is approved it is confirmed, and
 /// the other is then refused. Working hours are not re-applied: the host is
 /// explicitly accepting this time. An empty collective roster is never free,
-/// as in [`reschedule_hosts`].
+/// as in [`reschedule_hosts`]. A failed busy read is an error, never free.
 pub(super) async fn approval_hosts_free(
     pool: &SqlitePool,
     hosts: &RescheduleHosts,
@@ -376,16 +489,16 @@ pub(super) async fn approval_hosts_free(
     et_id: &str,
     start_at: &str,
     end_at: &str,
-) -> bool {
+) -> Result<bool, sqlx::Error> {
     if hosts.user_ids.is_empty() {
-        return false;
+        return Ok(false);
     }
     let host_tz = get_host_tz(pool, et_id).await;
     let Some((start, end)) = crate::booking_time::busy_range(start_at, end_at, host_tz) else {
-        return true;
+        return Ok(true);
     };
     for user_id in &hosts.user_ids {
-        let busy = fetch_busy_times_for_user_opts(
+        let busy = try_fetch_busy_times_for_user_opts(
             pool,
             user_id,
             start,
@@ -396,12 +509,12 @@ pub(super) async fn approval_hosts_free(
             Some(booking_uid),
             false,
         )
-        .await;
+        .await?;
         if has_conflict(&busy, start, end) {
-            return false;
+            return Ok(false);
         }
     }
-    true
+    Ok(true)
 }
 
 /// The host profile the reschedule page shows: the person the booking is with

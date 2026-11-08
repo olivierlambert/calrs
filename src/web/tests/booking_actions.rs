@@ -1135,7 +1135,7 @@ async fn guest_reschedule_slots_page_returns_200() {
 /// event type, so the clash is only visible on her calendar: the owner is
 /// free all day, and `idx_bookings_no_overlap` (keyed by event type) does
 /// not fire either. Returns (assigned member id, reschedule token, day).
-async fn seed_round_robin_reschedule(pool: &SqlitePool) -> (String, String, NaiveDate) {
+pub(super) async fn seed_round_robin_reschedule(pool: &SqlitePool) -> (String, String, NaiveDate) {
     let (owner, account_id): (String, String) = sqlx::query_as(
         "SELECT u.id, a.id FROM users u JOIN accounts a ON a.user_id = u.id \
              WHERE u.username = 'testuser'",

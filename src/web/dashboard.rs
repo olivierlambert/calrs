@@ -1493,24 +1493,26 @@ pub(super) async fn confirm_booking(
 
     // Refresh the hosts' calendars before taking the lock below (bounded,
     // see `prepare_approval_hosts`).
-    let approval_hosts = prepare_approval_hosts(&state, &uid, &user.id).await;
+    let approval_hosts = match prepare_approval_hosts(&state, &uid, &user.id).await {
+        Ok(hosts) => hosts,
+        Err(e) => return internal_error_response("booking availability check", &e),
+    };
 
     // Pending bookings do not block shared resources, so re-verify them at
     // approval time under the process-wide lock taken below; in round-robin
     // mode the resource is re-picked (the original pick may be long stale).
     // The feeds are refreshed first, outside the lock.
-    let has_resources = {
-        let ids: Vec<String> = crate::resources::resources_for_event_type(&state.pool, &et_id)
-            .await
-            .into_iter()
-            .map(|r| r.id)
-            .collect();
-        if ids.is_empty() {
-            false
-        } else {
-            crate::resources::sync_if_stale(&state.pool, &ids).await;
-            true
-        }
+    let resources = match crate::resources::try_resources_for_event_type(&state.pool, &et_id).await
+    {
+        Ok(resources) => resources,
+        Err(e) => return internal_error_response("resource availability check", &e),
+    };
+    let has_resources = if resources.is_empty() {
+        false
+    } else {
+        let ids: Vec<String> = resources.into_iter().map(|r| r.id).collect();
+        crate::resources::sync_if_stale(&state.pool, &ids).await;
+        true
     };
 
     // One process-wide lock from the availability re-checks through the
@@ -1522,7 +1524,7 @@ pub(super) async fn confirm_booking(
     // The host may have filled the time since the request came in (another
     // meeting in their calendar, or another booking): approving would then
     // double-book them (#234).
-    if !approval_hosts_free(
+    let hosts_free = match approval_hosts_free(
         &state.pool,
         &approval_hosts,
         &bid,
@@ -1533,6 +1535,10 @@ pub(super) async fn confirm_booking(
     )
     .await
     {
+        Ok(free) => free,
+        Err(e) => return internal_error_response("booking availability check", &e),
+    };
+    if !hosts_free {
         tracing::warn!(booking_id = %bid, "approval refused: host no longer free");
         return Redirect::to("/dashboard/bookings?error=host-busy").into_response();
     }
@@ -1545,11 +1551,11 @@ pub(super) async fn confirm_booking(
             match crate::resources::check_and_pick(&state.pool, &et_id, s, e, tz_check, Some(&bid))
                 .await
             {
-                crate::resources::ResourceCheck::Busy => {
+                Ok(crate::resources::ResourceCheck::Busy) => {
                     tracing::warn!(booking_id = %bid, "approval refused: required resource no longer available");
                     return Redirect::to("/dashboard/bookings?error=resource-busy").into_response();
                 }
-                crate::resources::ResourceCheck::Free { assigned } => {
+                Ok(crate::resources::ResourceCheck::Free { assigned }) => {
                     let _ =
                         sqlx::query("UPDATE bookings SET assigned_resource_id = ? WHERE id = ?")
                             .bind(&assigned)
@@ -1557,7 +1563,8 @@ pub(super) async fn confirm_booking(
                             .execute(&state.pool)
                             .await;
                 }
-                crate::resources::ResourceCheck::NoResources => {}
+                Ok(crate::resources::ResourceCheck::NoResources) => {}
+                Err(err) => return internal_error_response("resource availability check", &err),
             }
         }
     }

@@ -488,6 +488,7 @@ async fn review_frequency_query_errors_block_slots_and_member_selection() {
         assert!(
             pick_group_member(&pool, "review-team", &et, start, end, start, 0, 0, Tz::UTC)
                 .await
+                .unwrap()
                 .is_some()
         );
         let mut days = vec![SlotDay {
@@ -516,10 +517,13 @@ async fn review_frequency_query_errors_block_slots_and_member_selection() {
         );
         apply_frequency_limit_filter(&pool, &et, &mut days).await;
         assert!(days[0].slots.is_empty(), "{broken_column}");
+        // An unreadable cap never picks a member: an error, or nobody.
         assert!(
-            pick_group_member(&pool, "review-team", &et, start, end, start, 0, 0, Tz::UTC)
-                .await
-                .is_none(),
+            !matches!(
+                pick_group_member(&pool, "review-team", &et, start, end, start, 0, 0, Tz::UTC)
+                    .await,
+                Ok(Some(_))
+            ),
             "{broken_column}"
         );
         if table == "bookings" {
