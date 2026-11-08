@@ -450,7 +450,9 @@
   // /api/lead-capture so the host can follow up if the booking is abandoned.
   // The notice block above informs the user; capture only runs when the
   // server flagged this event type as opted-in.
-  var leadIdKey = 'calrs_lead_id';
+  var leadIdKey = 'calrs_lead_id:' +
+    {% if team_slug is defined and team_slug %}{{ ("team:" ~ team_slug ~ "/") | tojson }}{% elif username is defined and username %}{{ ("u:" ~ username ~ "/") | tojson }}{% else %}''{% endif %} +
+    {{ event_type.slug | tojson }};
   // sessionStorage can throw (blocked storage, some private modes): fall back to
   // memory so the script still attaches its handlers.
   var memory = {};

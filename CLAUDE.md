@@ -369,7 +369,7 @@ Because `--surface`, `--border`, etc. are already overridden by `html.dark { ...
 
 ## Lead capture (iClosed-style)
 
-**Concept:** record what a guest types into a public booking form *before* they submit it, so the host can follow up on abandoned bookings. Off twice over: the admin switch (`auth_config.lead_capture_enabled`) and the event type's own toggle (`event_types.lead_capture`) must both be on, and the host acknowledges once per event type (`lead_capture_acknowledged_at`) that bookers are informed. Migration `081_lead_capture`.
+**Concept:** record what a guest types into a public booking form *before* they submit it, so the host can follow up on abandoned bookings. Off twice over: the admin switch (`auth_config.lead_capture_enabled`) and the event type's own toggle (`event_types.lead_capture`) must both be on, and the host acknowledges once per event type (`lead_capture_acknowledged_at`) that bookers are informed. Migration `20261109071020_lead_capture`.
 
 **Files:** storage and gating in `src/leads/` (`config.rs` flags, `db.rs` the `partial_bookings` table), HTTP in `src/web/leads/` (one file per concern, see `ARCHITECTURE.md`), the host alert in `src/email/leads.rs`, scripts in `templates/slots.html` (the blurred gate) and `templates/book.html` (debounced capture while typing), the leads page in `templates/dashboard_leads.html`.
 

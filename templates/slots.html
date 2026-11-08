@@ -1139,7 +1139,10 @@
   }
   outer.classList.add('lead-gated');
 
-  var leadIdKey = 'calrs_lead_id';
+  // One lead id per event type, so two opted-in events in the same tab do not
+  // share a lead; book.html and confirmed.html build the same key.
+  var leadIdKey = 'calrs_lead_id:' +
+    (teamSlug ? 'team:' + teamSlug + '/' : (username ? 'u:' + username + '/' : '')) + slug;
   var leadId = store.get(leadIdKey);
   if (!leadId) {
     leadId = (window.crypto && crypto.randomUUID)
@@ -1223,16 +1226,17 @@
     var email = (emailEl.value || '').trim();
     if (!name || !email) return;
     submitting = true;
-    send(name, email).finally(function() {
-      store.set(sessionKey, '1');
-      outer.classList.remove('lead-gated');
-      gate.remove();
-      // Hand off so book.html prefills these on the next step.
-      store.set('calrs_lead_name', name);
-      store.set('calrs_lead_email', email);
-      var phoneEl = document.getElementById('lead-gate-phone');
-      if (phoneEl && phoneEl.value.trim()) store.set('calrs_lead_phone', phoneEl.value.trim());
-    });
+    // Capture is best-effort: open the calendar right away and let the request
+    // finish (or fail) in the background; keepalive lets it outlive the page.
+    send(name, email).catch(function() { /* ignore */ });
+    store.set(sessionKey, '1');
+    outer.classList.remove('lead-gated');
+    gate.remove();
+    // Hand off so book.html prefills these on the next step.
+    store.set('calrs_lead_name', name);
+    store.set('calrs_lead_email', email);
+    var phoneEl = document.getElementById('lead-gate-phone');
+    if (phoneEl && phoneEl.value.trim()) store.set('calrs_lead_phone', phoneEl.value.trim());
   });
 })();
 </script>
