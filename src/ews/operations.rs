@@ -8,7 +8,7 @@
 //!
 //! All helpers take an `impersonate_email: Option<&str>`. When `Some`, the
 //! request is run against that mailbox via the `t:ExchangeImpersonation` SOAP
-//! header — the connecting `username` must be a service account holding the
+//! header: the connecting `username` must be a service account holding the
 //! `ApplicationImpersonation` RBAC role.
 
 use anyhow::{bail, Context, Result};

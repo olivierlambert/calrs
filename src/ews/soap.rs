@@ -37,7 +37,7 @@ pub const NS_MESSAGES: &str = "http://schemas.microsoft.com/exchange/services/20
 /// When `impersonate_email` is `Some`, an `<t:ExchangeImpersonation>` header is
 /// added so the request executes against that mailbox instead of the
 /// authenticating principal's. This is the admin-controlled "Global EWS via
-/// Impersonation" path — the connecting account must hold the
+/// Impersonation" path: the connecting account must hold the
 /// `ApplicationImpersonation` RBAC role on Exchange.
 ///
 /// The mailbox is named with `t:SmtpAddress`, not `t:PrimarySmtpAddress`:
@@ -91,7 +91,7 @@ pub const SOAP_FAULT_PREFIX: &str = "EWS SOAP fault: ";
 /// inner SOAP body; this function adds the envelope, headers, and basic auth.
 ///
 /// When `impersonate_email` is `Some`, the envelope carries an
-/// `<t:ExchangeImpersonation>` header — the request runs as that mailbox under
+/// `<t:ExchangeImpersonation>` header: the request runs as that mailbox under
 /// the connecting service account's RBAC `ApplicationImpersonation` grant.
 pub async fn post_soap(
     endpoint: &str,
