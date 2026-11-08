@@ -69,7 +69,7 @@ Go to **Admin dashboard → EWS** (the global impersonation section). Fields:
 | Field | Notes |
 |---|---|
 | **Enabled** | Master switch. When off, the feature is fully inert and per-user sources are used. |
-| **EWS URL** | The endpoint, e.g. `https://mail.example.com/EWS/Exchange.asmx`. Must be `https://` (the service account password goes out with every request). Validated on save: an invalid URL is rejected rather than silently stored. Enabling the feature without a URL, a service account and a password is refused too, with a message on the card. |
+| **EWS URL** | The endpoint, e.g. `https://mail.example.com/EWS/Exchange.asmx`. Must be `https://` (the service account password goes out with every request; an `http://` endpoint left in an older database leaves the feature off, except on the loopback interface for local testing). Validated on save: an invalid URL is rejected rather than silently stored. Enabling the feature without a URL, a service account and a password is refused too, with a message on the card. |
 | **Service account username** | The impersonation account, e.g. `svc-calrs@example.com`. |
 | **Service account password** | Encrypted at rest (AES-256-GCM, same scheme as CalDAV/OIDC secrets). **Keep-current**: leave blank on save to preserve the stored value, as long as the endpoint and the account stay the same. Saving a new endpoint or a new service account without typing the password clears the stored one (the card says so), so it is never sent to a server it was not typed for; the feature then idles until it is entered again. |
 | **Lock user sources** | When on, non-admin users can no longer add their own calendar sources (CalDAV, EWS or Google): their Exchange calendar is managed centrally. Admins are exempt, and sources users added before stay until deleted. The Sources page shows an explanatory notice and hides the "Add" button. |
@@ -96,9 +96,13 @@ provisions an address it can trust (`users.email_trusted`):
 - an account an admin created with `calrs user create`;
 - an SSO (OIDC) account whose email the identity provider marks verified
   (`email_verified`). This is checked again at **every login**: when the IdP
-  stops vouching for the address, or reports a new address it does not
-  verify, the account is no longer trusted and its managed source is deleted
-  on the spot, with its calendars and cached busy times;
+  sends `email_verified: false`, or reports a new address it does not verify,
+  the account is no longer trusted and its managed source is deleted on the
+  spot, with its calendars and cached busy times. Many identity providers in
+  front of Exchange 2019 (ADFS, Entra ID by default) never send the claim at
+  all: then an address an admin confirmed stays trusted as long as it is
+  unchanged (letter case aside), and a changed one is not trusted until it is
+  confirmed again;
 - an account an admin confirmed by hand, with **Confirm** on the card or
   `calrs user trust-email <email>` (which exits non-zero for an unknown
   address).
@@ -111,8 +115,9 @@ existing one only in letter case (`CEO@example.com` when `ceo@example.com`
 exists), since Exchange treats them as one mailbox.
 
 Accounts that existed before this check was added start untrusted, and any
-managed source they had was removed by the upgrade: confirm each one once
-(the card lists them), or let SSO users sign in again.
+managed source they had was removed by the upgrade. They stay untrusted until
+an admin confirms them (the card lists them), or, for SSO accounts, until a
+login where the identity provider marks the address verified.
 
 One mailbox serves at most one user. Addresses are compared without regard to
 (ASCII) letter case and surrounding spaces, and the impersonated mailbox is
@@ -124,7 +129,15 @@ only admin-confirmed (that account's managed source is removed and the event
 logged). An address that does not have exactly one `@`, or that holds a
 non-ASCII character (Exchange 2019 has no SMTPUTF8), names no mailbox and is
 never provisioned. The list of addresses to confirm shows the mailbox each
-confirmation would open.
+confirmation would open. When a new domain override changes the mailbox an
+admin-confirmed address maps to, that address must be confirmed again (an
+address the identity provider verified keeps its trust); the card says how
+many.
+
+"One mailbox, one user" holds for the exact address calrs impersonates.
+Exchange also resolves proxy addresses (aliases), so two calrs accounts whose
+addresses are two aliases of one mailbox would both read it: give users their
+mailbox's primary SMTP address in calrs (and at the identity provider).
 
 A suspended account keeps its managed source but is neither synced nor
 written to until it is enabled again.
@@ -173,11 +186,24 @@ the user picks. Choosing "do not write" afterwards is respected: a later sync
 never undoes it. Only one of the source's own calendars can be chosen.
 
 **When the mailbox a source reads changes** (an address change at the IdP, a
-new mailbox-domain override, or a new endpoint), that source is reset: Exchange
-folder ids belong to one mailbox, so the calendars and cached events of the old
-one are dropped and its write calendar is cleared. The next sync discovers the
-new mailbox, and each host picks a write calendar again (the sources page asks
-for one).
+mailbox-domain override that maps the address elsewhere, or an endpoint on
+another server), that source is reset: Exchange folder ids belong to one
+mailbox, so the calendars and cached events of the old one are dropped and its
+write calendar is cleared. Writing the same endpoint differently (another path
+case on the same server) resets nothing. Event types that had selected one of
+those calendars lose that selection: each is named in the server log, and the
+card says how many. The next sync discovers the new mailbox, and each host
+picks a write calendar again (the sources page asks for one).
+
+A calendar folder the server stops listing is only dropped once it is missing
+from **two listings in a row**, and never on a listing that is empty or that
+is not a proper EWS answer (an error page, a proxy's sign-in page), which
+fails the sync instead. Dropping it removes its cached events and the event
+types' selection of it. This applies to users' own EWS sources too.
+
+When an owner the identity provider verified takes a mailbox over from an
+account that was only admin-confirmed, the status table shows "Taken over
+from" that account, with the time, and the server log has a warning.
 
 ## Switching it off
 
