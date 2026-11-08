@@ -1905,6 +1905,13 @@ directory-manual-copy = Kopieer deze link handmatig:
 directory-empty = Geen afspraken gevonden. Probeer een andere zoekopdracht.
 directory-favorites-empty = Geen favorieten gevonden. Voeg afspraken uit de gids toe aan je favorieten om ze hier te zien.
 directory-with-hosts = Met { $names }
+directory-all-favorites = Alle favorieten
+pager-label = Pagina’s
+pager-range = { $from } tot { $to } van { $total }
+pager-previous = Vorige
+pager-next = Volgende
+admin-users-search = Zoeken
+admin-figures-cached = Boekingscijfers { $seconds } s geleden berekend.
 
 # OAuth connection consent (templates/auth/consent.html)
 oauth-title = Een toepassing verbinden

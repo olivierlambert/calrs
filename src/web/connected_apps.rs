@@ -117,9 +117,9 @@ async fn admin_revoke_apps(
     admin: crate::auth::AdminUser,
     headers: HeaderMap,
     Path(user_id): Path<String>,
-    Form(csrf): Form<CsrfForm>,
+    Form(form): Form<UserActionForm>,
 ) -> Response {
-    if let Err(resp) = verify_csrf_token(&headers, &csrf._csrf) {
+    if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
         return resp;
     }
     let result = async {
@@ -132,7 +132,8 @@ async fn admin_revoke_apps(
     match result {
         Ok(removed) => {
             tracing::info!(target_user = %user_id, grants = removed, admin = %admin.user.email, "admin: connected apps revoked");
-            Redirect::to("/dashboard/admin").into_response()
+            // Back to the list page the action was taken from.
+            Redirect::to(&admin_users_return(form.back.as_deref(), None)).into_response()
         }
         Err(e) => internal_error_response("admin revoke connected apps", &e),
     }

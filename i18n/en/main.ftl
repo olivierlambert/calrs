@@ -1914,6 +1914,13 @@ directory-manual-copy = Copy this link manually:
 directory-empty = No meetings found. Try another search.
 directory-favorites-empty = No favorites found. Star meetings in the directory to see them here.
 directory-with-hosts = With { $names }
+directory-all-favorites = All favorites
+pager-label = Pages
+pager-range = { $from } to { $to } of { $total }
+pager-previous = Previous
+pager-next = Next
+admin-users-search = Search
+admin-figures-cached = Booking figures computed { $seconds } s ago.
 
 # Connected apps (templates/dashboard_apps.html, admin user menu)
 

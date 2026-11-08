@@ -1903,6 +1903,13 @@ directory-manual-copy = Kopiere diesen Link manuell:
 directory-empty = Keine Termine gefunden. Versuche eine andere Suche.
 directory-favorites-empty = Keine Favoriten gefunden. Markiere Termine im Verzeichnis als Favoriten, um sie hier zu sehen.
 directory-with-hosts = Mit { $names }
+directory-all-favorites = Alle Favoriten
+pager-label = Seiten
+pager-range = { $from } bis { $to } von { $total }
+pager-previous = Zurück
+pager-next = Weiter
+admin-users-search = Suchen
+admin-figures-cached = Buchungszahlen vor { $seconds } s berechnet.
 
 # OAuth connection consent (templates/auth/consent.html)
 oauth-title = Eine Anwendung verbinden

@@ -1974,6 +1974,13 @@ directory-manual-copy = Skopiuj ten link ręcznie:
 directory-empty = Nie znaleziono spotkań. Spróbuj innego wyszukiwania.
 directory-favorites-empty = Nie znaleziono ulubionych. Dodaj spotkania do ulubionych w katalogu, aby zobaczyć je tutaj.
 directory-with-hosts = Prowadzący: { $names }
+directory-all-favorites = Wszystkie ulubione
+pager-label = Strony
+pager-range = Od { $from } do { $to } z { $total }
+pager-previous = Poprzednia
+pager-next = Następna
+admin-users-search = Szukaj
+admin-figures-cached = Dane o rezerwacjach obliczone { $seconds } s temu.
 
 # OAuth connection consent (templates/auth/consent.html)
 oauth-title = Połącz aplikację

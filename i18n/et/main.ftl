@@ -1903,6 +1903,13 @@ directory-manual-copy = Kopeeri see link käsitsi:
 directory-empty = Kohtumisi ei leitud. Proovi teist otsingut.
 directory-favorites-empty = Lemmikuid ei leitud. Lisa kohtumised kataloogist lemmikutesse, et neid siin näha.
 directory-with-hosts = Kellega: { $names }
+directory-all-favorites = Kõik lemmikud
+pager-label = Lehed
+pager-range = { $from } kuni { $to }, kokku { $total }
+pager-previous = Eelmine
+pager-next = Järgmine
+admin-users-search = Otsi
+admin-figures-cached = Broneeringute arvud arvutati { $seconds } s tagasi.
 
 # OAuth connection consent (templates/auth/consent.html)
 oauth-title = Ühenda rakendus

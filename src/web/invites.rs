@@ -645,12 +645,7 @@ pub(super) async fn create_quick_invite(
     // Whoever manages the type skips this, so a link can be prepared for a
     // meeting that is still disabled and works once it is enabled, as for
     // private types.
-    if visibility == "internal"
-        && !manages
-        && directory_entries(pool, &user.id, false, Some(&et_id))
-            .await?
-            .is_empty()
-    {
+    if visibility == "internal" && !manages && !is_listed(pool, &user.id, &et_id).await? {
         return Ok(QuickInviteOutcome::Unavailable);
     }
 

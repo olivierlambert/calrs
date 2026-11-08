@@ -1903,6 +1903,13 @@ directory-manual-copy = Copiez ce lien manuellement :
 directory-empty = Aucun rendez-vous trouvé. Essayez une autre recherche.
 directory-favorites-empty = Aucun favori trouvé. Ajoutez des rendez-vous aux favoris depuis l’annuaire pour les retrouver ici.
 directory-with-hosts = Avec { $names }
+directory-all-favorites = Tous les favoris
+pager-label = Pages
+pager-range = { $from } à { $to } sur { $total }
+pager-previous = Précédent
+pager-next = Suivant
+admin-users-search = Rechercher
+admin-figures-cached = Chiffres des réservations calculés il y a { $seconds } s.
 
 # OAuth connection consent (templates/auth/consent.html)
 oauth-title = Connecter une application

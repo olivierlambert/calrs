@@ -1903,6 +1903,13 @@ directory-manual-copy = Copie este link manualmente:
 directory-empty = Nenhuma reunião encontrada. Tente outra busca.
 directory-favorites-empty = Nenhum favorito encontrado. Adicione reuniões aos favoritos no diretório para vê-las aqui.
 directory-with-hosts = Com { $names }
+directory-all-favorites = Todos os favoritos
+pager-label = Páginas
+pager-range = { $from } a { $to } de { $total }
+pager-previous = Anterior
+pager-next = Próxima
+admin-users-search = Buscar
+admin-figures-cached = Números de agendamentos calculados há { $seconds } s.
 
 # OAuth connection consent (templates/auth/consent.html)
 oauth-title = Conectar um aplicativo
