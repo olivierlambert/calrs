@@ -19,6 +19,20 @@ Actions per user:
 - **Enable/Disable** — disabled users cannot log in or receive bookings
 - **Impersonate** — view the dashboard as that user (for troubleshooting)
 
+Up to 100 users, the whole list is on the page and the search box, the filter
+buttons, the column sorting and the pages of 25 react as you type. Past 100
+users, the server does the searching, filtering, sorting and paging, so the
+page only ever carries 25 rows: press Enter to search, and use **Previous** and
+**Next** under the table. Promoting, disabling or deleting a user brings you
+back to the same page of the list.
+
+On an instance with more than 20,000 bookings, the booking figures of the
+overview (totals, the weekly chart and the 90-day rankings) are kept for a
+minute rather than recomputed on every visit; the chart's note then says how
+many seconds old they are. User
+counts, calendar health and the attention list are always live. Smaller
+instances never cache them.
+
 ## Impersonation
 
 Admins can impersonate any user to troubleshoot their view:
@@ -74,6 +88,12 @@ The **SMS settings** card configures the instance's [SMS gateway](./sms.md): pic
 **Test gateway** sends a real message to a number you give it, or verifies the credentials for free when you leave the field empty and the gateway supports it.
 
 SMS spends real money on a public form, so the card also warns when SMS is configured without a captcha. See [SMS Notifications](./sms.md) for the setup steps and for keeping the bill bounded.
+
+## Guest email footer
+
+The **Guest email footer** card sets the default footer added to every email guests and additional attendees receive (never to hosts, nor to a team member who claimed the booking). It takes bold, italic and links, at most 500 characters, in one text for all languages. An event type with a footer of its own uses that instead; see [Guest email footer](./event-types.md#guest-email-footer).
+
+The checkbox on the card lets every user write footers on their own event types. It is off by default: the footer goes out under this instance's name, so only admins may write one until you turn it on.
 
 ## SMTP status
 

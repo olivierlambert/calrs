@@ -91,6 +91,10 @@ unic-langid = "0.9"
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"
+# The source guards in src/web/tests/guards.rs walk struct literals with a
+# real Rust parser; span-locations gives them line numbers.
+syn = { version = "2", features = ["full", "visit"] }
+proc-macro2 = { version = "1", features = ["span-locations"] }
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tarpaulin)'] }
