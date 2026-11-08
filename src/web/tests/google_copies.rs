@@ -355,3 +355,115 @@ async fn the_meet_owners_copy_is_the_one_with_attendees() {
         "the Meet copy must not be rewritten: {log:#?}"
     );
 }
+
+/// Clearing and the PUT landed but adding the guests back failed: the
+/// write-back keeps the href (a cancellation deletes the event), records
+/// the failure, and its retry puts the guests back.
+#[tokio::test]
+async fn a_failed_attendee_add_is_retried_by_the_write_back() {
+    let pool = setup_test_db().await;
+    let alice = insert_role_user(&pool, "alice@google.test", "user").await;
+    let et_id = insert_personal_et(&pool, &alice, "g237retry").await;
+    let google = Arc::new(FakeGoogle::failing_adds(1));
+    let (base, server) = fake::serve(google.clone()).await;
+    google_source(&pool, "src-a", &alice, &base, "alice@google.test").await;
+    insert_booking(&pool, &et_id, None, start(), "confirmed").await;
+    let uid = only_booking_uid(&pool, &et_id).await;
+
+    caldav_push_booking(&pool, &KEY, &alice, &uid, &details(&uid)).await;
+    let (error, href): (Option<String>, Option<String>) =
+        sqlx::query_as("SELECT writeback_error, caldav_calendar_href FROM bookings WHERE uid = ?")
+            .bind(&uid)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(error.is_some_and(|e| e.contains("attendees")));
+    assert_eq!(
+        href.as_deref(),
+        Some("/caldav/v2/alice%40google.test/events")
+    );
+    assert_eq!(
+        google.attendees("alice@google.test", &uid),
+        Some(Vec::new())
+    );
+
+    let failures = super::super::writeback::push_and_record(
+        &pool,
+        &KEY,
+        &alice,
+        &uid,
+        &details(&uid),
+        super::super::writeback::PushKind::Retry,
+    )
+    .await;
+    server.abort();
+    assert!(failures.is_empty(), "{failures:?}");
+    let error: Option<String> =
+        sqlx::query_scalar("SELECT writeback_error FROM bookings WHERE uid = ?")
+            .bind(&uid)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(error, None);
+    assert_eq!(google.attendees("alice@google.test", &uid), Some(guests()));
+}
+
+/// A Meet event that minting left without its guests gets them through
+/// the Calendar API on the next push, without the CalDAV rewrite that
+/// would strip its conference; while that fails, the write-back retries.
+#[tokio::test]
+async fn a_meet_copy_without_its_guests_gets_them_without_a_rewrite() {
+    let pool = setup_test_db().await;
+    let alice = insert_role_user(&pool, "alice@google.test", "user").await;
+    let et_id = insert_personal_et(&pool, &alice, "g237meetfix").await;
+    sqlx::query("UPDATE event_types SET location_type = ? WHERE id = ?")
+        .bind(crate::google_meet::LOCATION_TYPE)
+        .bind(&et_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let google = Arc::new(FakeGoogle::failing_adds(1));
+    let (base, server) = fake::serve(google.clone()).await;
+    google_source(&pool, "src-a", &alice, &base, "alice@google.test").await;
+    insert_booking(&pool, &et_id, None, start(), "confirmed").await;
+    let uid = only_booking_uid(&pool, &et_id).await;
+    sqlx::query("UPDATE bookings SET meeting_url = ? WHERE uid = ?")
+        .bind("https://meet.google.com/aaa-bbbb-ccc")
+        .bind(&uid)
+        .execute(&pool)
+        .await
+        .unwrap();
+    google.insert("alice@google.test", &uid, "ev-meet", Vec::new());
+
+    caldav_push_booking(&pool, &KEY, &alice, &uid, &details(&uid)).await;
+    let error: Option<String> =
+        sqlx::query_scalar("SELECT writeback_error FROM bookings WHERE uid = ?")
+            .bind(&uid)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(error.is_some(), "the missing guests are a failure to retry");
+    // With an href, the retry would also patch the Meet's times through
+    // the real Calendar API; this test is about the guests only.
+    sqlx::query("UPDATE bookings SET caldav_calendar_href = NULL WHERE uid = ?")
+        .bind(&uid)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let failures = super::super::writeback::push_and_record(
+        &pool,
+        &KEY,
+        &alice,
+        &uid,
+        &details(&uid),
+        super::super::writeback::PushKind::Retry,
+    )
+    .await;
+    server.abort();
+    assert!(failures.is_empty(), "{failures:?}");
+    assert_eq!(google.attendees("alice@google.test", &uid), Some(guests()));
+    let log = google.log();
+    assert_nothing_announced(&log);
+    assert!(!log.iter().any(|e| e.starts_with("PUT ")), "{log:#?}");
+}

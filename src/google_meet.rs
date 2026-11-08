@@ -717,8 +717,15 @@ pub async fn create_meet_for_booking_with_config(
         )
         .await
     {
-        tracing::warn!(error = %e, uid = %details.uid, "google meet: CalDAV PUT failed");
-        return None;
+        // Written but without its attendees: the conference can still be
+        // attached, and the write-back adds them (`ensure_google_attendees`).
+        if e.downcast_ref::<crate::providers::WrittenIncomplete>()
+            .is_none()
+        {
+            tracing::warn!(error = %e, uid = %details.uid, "google meet: CalDAV PUT failed");
+            return None;
+        }
+        tracing::warn!(error = %e, uid = %details.uid, "google meet: event written without its attendees, the write-back adds them");
     }
 
     match tokio::time::timeout(

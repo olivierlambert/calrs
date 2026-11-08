@@ -426,6 +426,30 @@ impl CaldavClient {
         self.put_event_raw(calendar_href, uid, ics_data).await
     }
 
+    /// On Google, make sure the event `uid` lists the attendees of
+    /// `ics_data` without rewriting it (`google_calendar::ensure_attendees`).
+    /// Nothing to do on any other server.
+    pub(crate) async fn ensure_google_attendees(
+        &self,
+        calendar_href: &str,
+        uid: &str,
+        ics_data: &str,
+    ) -> Result<()> {
+        let Some((api_base, token)) = self.google_calendar_api() else {
+            return Ok(());
+        };
+        let Some(calendar_id) = crate::google_meet::calendar_id_from_caldav_href(calendar_href)
+        else {
+            return Ok(());
+        };
+        crate::google_calendar::ensure_attendees(
+            &crate::google_calendar::EventsApi::new(api_base, token, &calendar_id),
+            uid,
+            ics_data,
+        )
+        .await
+    }
+
     /// Plain CalDAV PUT of `ics_data`, whatever the server.
     pub(crate) async fn put_event_raw(
         &self,

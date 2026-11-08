@@ -482,10 +482,11 @@ impl ApiFailure {
     }
 }
 
-/// Total time the Calendar API part of one booking write or delete may take,
-/// on top of the CalDAV request itself. Past it, a write gives up before its
-/// CalDAV PUT and is retried by the write-back retries; it runs inside the
-/// booking request, which must not wait on Google for minutes.
+/// Total time the Calendar API part of one booking write may take, on top
+/// of the CalDAV request itself, half before the PUT and half after; a
+/// delete's lookup and its delete get it each. Past it, a write gives up
+/// and is retried by the write-back retries; it runs inside the booking
+/// request, which must not wait on Google for minutes.
 pub(crate) const API_DEADLINE: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// The Calendar API `events` collection of one calendar.
@@ -645,9 +646,11 @@ pub(crate) fn attendees_json(attendees: &[Attendee]) -> serde_json::Value {
 /// removal. Only a Calendar API that cannot be used at all (not enabled in
 /// the Google Cloud project, a token without the scope) writes the event
 /// without attendees, and only when CalDAV shows it is new or has none.
-/// A failure of step 3 is logged and not returned: the event is on the
-/// calendar, and reporting the write as failed would keep a cancellation
-/// from deleting it.
+/// Steps 1 and 3 each get half of [`API_DEADLINE`]. A failure of step 3
+/// returns `providers::WrittenIncomplete`: the write-back records it as an
+/// event that is there but incomplete, keeps the href so a cancellation
+/// still deletes it, and its retry clears and re-adds the attendees. That
+/// rewrite resets the attendees' RSVP on the Google event, silently.
 pub(crate) async fn put_event_without_invitations(
     client: &crate::caldav::CaldavClient,
     api: &EventsApi<'_>,
@@ -656,8 +659,10 @@ pub(crate) async fn put_event_without_invitations(
     ics: &str,
 ) -> Result<()> {
     let (host_only, attendees) = split_scheduling(ics);
-    let deadline = tokio::time::Instant::now() + api.deadline;
-    let cleared = tokio::time::timeout_at(deadline, async {
+    // Each Calendar API step gets half the deadline, so a slow lookup
+    // before the write cannot leave none for the attendees after it.
+    let share = api.deadline / 2;
+    let cleared = tokio::time::timeout(share, async {
         let existing = api.find(uid).await?;
         if let Some(found) = existing.filter(|f| f.has_attendees) {
             api.set_attendees(&found.id, &[]).await?;
@@ -685,7 +690,7 @@ pub(crate) async fn put_event_without_invitations(
             tracing::warn!(uid = %uid, "google calendar: Calendar API too slow before the write, leaving the event for the write-back retry");
             bail!(
                 "Google Calendar API: no answer within {} s",
-                api.deadline.as_secs()
+                share.as_secs()
             );
         }
     }
@@ -693,33 +698,79 @@ pub(crate) async fn put_event_without_invitations(
     if attendees.is_empty() {
         return Ok(());
     }
-    let added = tokio::time::timeout_at(deadline, async {
-        // Looked up again: the PUT may have replaced the event under a new id.
-        match api.find_written(uid).await? {
-            Some(found) => match api.set_attendees(&found.id, &attendees).await {
-                // One address Google refuses fails the whole list. The guest
-                // matters most (Meet admits listed attendees without the
-                // lobby), so they go on alone and the rest are logged.
-                Err(e) if e.status == Some(400) && attendees.len() > 1 => {
-                    tracing::warn!(uid = %uid, error = %e, "google calendar: attendee list refused, adding the guest alone");
-                    api.set_attendees(&found.id, &attendees[..1])
-                        .await
-                        .map(|_| true)
-                }
-                other => other.map(|_| true),
-            },
-            None => Ok(false),
+    // Looked up again: the PUT may have replaced the event under a new id.
+    // A failure here is returned as `WrittenIncomplete`: the event is on the
+    // calendar, so a cancellation must still delete it, and the write-back
+    // retry clears and re-adds the attendees.
+    add_attendees(api, uid, &attendees, share, false)
+        .await
+        .map_err(|problem| {
+            tracing::warn!(uid = %uid, error = %problem, "google calendar: event written, but the guests could not be added as attendees");
+            anyhow::Error::new(crate::providers::WrittenIncomplete(format!(
+                "Google Calendar: event written, but the guests could not be added as attendees: {problem}"
+            )))
+        })
+}
+
+/// Set `attendees` on the event `uid` within `budget`, the guest alone when
+/// Google refuses the whole list (one address it rejects fails all of
+/// them, and the guest matters most: Meet admits listed attendees without
+/// the lobby). `only_if_missing` leaves an event that lists attendees, or
+/// that is not there, alone: the check on a Meet copy calrs never rewrites.
+async fn add_attendees(
+    api: &EventsApi<'_>,
+    uid: &str,
+    attendees: &[Attendee],
+    budget: std::time::Duration,
+    only_if_missing: bool,
+) -> std::result::Result<(), String> {
+    if attendees.is_empty() {
+        return Ok(());
+    }
+    let added = tokio::time::timeout(budget, async {
+        let found = if only_if_missing {
+            api.find(uid).await?
+        } else {
+            api.find_written(uid).await?
+        };
+        let Some(found) = found else {
+            return Ok(only_if_missing);
+        };
+        if only_if_missing && found.has_attendees {
+            return Ok(true);
+        }
+        match api.set_attendees(&found.id, attendees).await {
+            Err(e) if e.status == Some(400) && attendees.len() > 1 => {
+                tracing::warn!(uid = %uid, error = %e, "google calendar: attendee list refused, adding the guest alone");
+                api.set_attendees(&found.id, &attendees[..1])
+                    .await
+                    .map(|_| true)
+            }
+            other => other.map(|_| true),
         }
     })
     .await;
-    let problem = match added {
-        Ok(Ok(true)) => return Ok(()),
-        Ok(Ok(false)) => "event not visible through the Calendar API".to_string(),
-        Ok(Err(e)) => e.to_string(),
-        Err(_) => format!("no answer within {} s", api.deadline.as_secs()),
-    };
-    tracing::warn!(uid = %uid, error = %problem, "google calendar: event written, but the guests could not be added as attendees");
-    Ok(())
+    match added {
+        Ok(Ok(true)) => Ok(()),
+        Ok(Ok(false)) => Err("event not visible through the Calendar API".to_string()),
+        Ok(Err(e)) => Err(e.to_string()),
+        Err(_) => Err(format!("no answer within {} s", budget.as_secs())),
+    }
+}
+
+/// Make sure the Google event `uid` lists the attendees of `ics`, without
+/// rewriting it: for the Meet copy, which a CalDAV PUT would strip of its
+/// conference, when an earlier write could not add them. An event that
+/// already lists attendees is left alone.
+pub(crate) async fn ensure_attendees(api: &EventsApi<'_>, uid: &str, ics: &str) -> Result<()> {
+    let (_, attendees) = split_scheduling(ics);
+    add_attendees(api, uid, &attendees, api.deadline, true)
+        .await
+        .map_err(|problem| {
+            anyhow::anyhow!(
+                "Google Calendar: the guests could not be added as attendees: {problem}"
+            )
+        })
 }
 
 /// The one Google copy of a booking that carries its guests as attendees,
@@ -1486,6 +1537,36 @@ mod tests {
         assert_eq!(fake.attendees("/dav/team", "odd@calrs"), Some(Vec::new()));
     }
 
+    /// Clearing worked and the PUT landed, but adding the guests back
+    /// failed: the write reports an incomplete event (so the write-back
+    /// keeps the href and retries), and the retry restores them.
+    #[tokio::test]
+    async fn a_failed_attendee_add_is_reported_and_the_retry_restores_them() {
+        let fake = std::sync::Arc::new(FakeGoogle::failing_adds(1));
+        fake.insert(
+            CAL,
+            "moved@calrs",
+            "ev1",
+            vec![json!({"email": "jane@example.com"})],
+        );
+        let (client, server) = serve_fake(fake.clone()).await;
+        let error = client
+            .put_event(HREF, "moved@calrs", &booking_ics("moved@calrs"))
+            .await
+            .unwrap_err();
+        assert!(error
+            .downcast_ref::<crate::providers::WrittenIncomplete>()
+            .is_some());
+        assert_eq!(fake.attendees(CAL, "moved@calrs"), Some(Vec::new()));
+        client
+            .put_event(HREF, "moved@calrs", &booking_ics("moved@calrs"))
+            .await
+            .unwrap();
+        server.abort();
+        assert_nothing_announced(&log(&fake));
+        assert_eq!(fake.attendees(CAL, "moved@calrs").unwrap().len(), 2);
+    }
+
     /// One address Google refuses does not cost the guest their place on
     /// the event: they are added alone.
     #[tokio::test]
@@ -1575,6 +1656,8 @@ pub(crate) mod fake {
         api_delete_failure: Option<u16>,
         /// An attendee update naming this address answers 400.
         rejected_attendee: Option<&'static str>,
+        /// This many updates that add attendees answer 503 first.
+        failing_adds: AtomicU32,
     }
 
     /// Google's answer when the Calendar API is not enabled in the project.
@@ -1593,6 +1676,14 @@ pub(crate) mod fake {
         pub(crate) fn slow(delay: std::time::Duration) -> Self {
             Self {
                 api_delay: Some(delay),
+                ..Default::default()
+            }
+        }
+
+        /// A Google whose next `n` attendee additions fail with a 503.
+        pub(crate) fn failing_adds(n: u32) -> Self {
+            Self {
+                failing_adds: AtomicU32::new(n),
                 ..Default::default()
             }
         }
@@ -1755,6 +1846,14 @@ pub(crate) mod fake {
                     .is_some_and(|email| body.contains(email))
                 {
                     return StatusCode::BAD_REQUEST.into_response();
+                }
+                if body.contains("\"email\"")
+                    && fake
+                        .failing_adds
+                        .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
+                        .is_ok()
+                {
+                    return StatusCode::SERVICE_UNAVAILABLE.into_response();
                 }
                 let patch: Value = serde_json::from_str(&body).unwrap();
                 let attendees = patch["attendees"].as_array().cloned().unwrap_or_default();

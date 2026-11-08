@@ -284,6 +284,35 @@ pub(super) async fn caldav_push_booking_for_user(
             // Later PUTs to other calendars must not overwrite this: cancel
             // keys off one href, and that has to be the Meet-holding calendar.
             preserved_meet_href = true;
+            // No PUT here, so nothing else would notice that minting the
+            // Meet could not add the guests: check, and leave a failure
+            // for the write-back retry when they are still missing.
+            if attendee_source.as_deref() == Some(source_id.as_str()) {
+                let ensured = match crate::oauth2_caldav::build_client_for_source(
+                    pool,
+                    key,
+                    source_id,
+                    url,
+                    auth_type,
+                    username,
+                    password_enc.as_deref(),
+                    access_token_enc.as_deref(),
+                    token_expires_at.as_deref(),
+                )
+                .await
+                {
+                    Ok(client) => {
+                        client
+                            .ensure_google_attendees(calendar_href, booking_uid, &attendee_ics)
+                            .await
+                    }
+                    Err(e) => Err(e),
+                };
+                if let Err(e) = ensured {
+                    tracing::warn!(uid = %booking_uid, error = format!("{e:#}"), "google meet: the Meet event still lacks its attendees");
+                    failures.push(format!("{source_name}: {e:#}"));
+                }
+            }
             continue;
         }
 
