@@ -383,6 +383,8 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
                         host_language: crate::email::supported_language(host_language),
                         host_timezone: host_timezone.unwrap_or_default(),
                         guest_footer: crate::email::guest_footer(pool, &et_id).await,
+                        // The host books from the CLI: no booking questions.
+                        answers: Vec::new(),
                         ..Default::default()
                     };
 

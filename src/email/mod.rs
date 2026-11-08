@@ -206,6 +206,12 @@ pub struct BookingDetails {
     /// emails: the event type's own, else the instance default. Load it with
     /// `guest_footer`. Host emails never carry it.
     pub guest_footer: Option<String>,
+    /// The guest's answers to the booking questions (#210), in form order.
+    /// Shown in the host emails, the guest's confirmation and pending
+    /// emails, and (`in_calendar` only) the host's calendar copy; never in
+    /// a subject, an attendee copy, the emailed .ics or an SMS. Read them
+    /// with `booking_guest_input` when rebuilding from the row.
+    pub answers: Vec<BookingAnswer>,
 }
 
 /// One answer to a booking question (#210), as stored with the booking:
@@ -325,6 +331,9 @@ pub struct RescheduleDetails {
     pub additional_attendees: Vec<String>,
     /// See `BookingDetails::guest_footer`.
     pub guest_footer: Option<String>,
+    /// The answers, shown in the host's request to approve the new time as
+    /// in the first one. See `BookingDetails::answers`.
+    pub answers: Vec<BookingAnswer>,
 }
 
 #[cfg(test)]

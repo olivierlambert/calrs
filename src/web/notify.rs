@@ -451,7 +451,11 @@ pub(super) async fn send_due_reminders(pool: SqlitePool, secret_key: [u8; 32]) {
 
         let location = location_value.as_ref().filter(|v| !v.is_empty()).cloned();
 
-        let (guest_notes, guest_phone_shown) = booking_guest_input(&pool, uid).await;
+        let GuestInput {
+            notes: guest_notes,
+            phone: guest_phone_shown,
+            answers: guest_answers,
+        } = booking_guest_input(&pool, uid).await;
         let details = crate::email::BookingDetails {
             utc_times: crate::booking_time::ics_times(start_at, end_at),
             event_title: event_title.clone(),
@@ -466,6 +470,7 @@ pub(super) async fn send_due_reminders(pool: SqlitePool, secret_key: [u8; 32]) {
             uid: uid.clone(),
             notes: guest_notes,
             guest_phone: guest_phone_shown,
+            answers: guest_answers,
             location,
             reminder_minutes: None,
             additional_attendees: vec![],

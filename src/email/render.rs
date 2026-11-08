@@ -475,7 +475,14 @@ fn generate_ics_impl(
         .as_ref()
         .filter(|n| !n.trim().is_empty())
         .map(|n| sanitize_ics(n));
-    let description: Vec<String> = phone.into_iter().chain(notes).collect();
+    // The answers too, in the host's own copy only (#210): the emailed
+    // invite reaches the guest's attendees and their calendar servers.
+    let answers = if schedule_agent_client {
+        calendar_answer_lines(details)
+    } else {
+        Vec::new()
+    };
+    let description: Vec<String> = phone.into_iter().chain(notes).chain(answers).collect();
     let description_line = if description.is_empty() {
         String::new()
     } else {
@@ -651,6 +658,36 @@ pub fn answer_display(answer: &BookingAnswer, lang: &str, reader: AnswerReader) 
         (false, _, true) => t(lang, "answer-yes"),
         (false, _, false) => t(lang, "answer-no"),
     }
+}
+
+/// One detail row per answer, after the notes, labelled with the question
+/// as the guest read it.
+pub(super) fn push_answer_rows(
+    rows: &mut Vec<EmailRow>,
+    lang: &str,
+    answers: &[BookingAnswer],
+    reader: AnswerReader,
+) {
+    for a in answers {
+        rows.push(row(a.label.clone(), answer_display(a, lang, reader)));
+    }
+}
+
+/// The answers the host's calendar event carries: "Label: value" lines in
+/// the host's language, without the questions flagged to stay out of it.
+fn calendar_answer_lines(details: &BookingDetails) -> Vec<String> {
+    details
+        .answers
+        .iter()
+        .filter(|a| a.in_calendar)
+        .map(|a| {
+            sanitize_ics(&format!(
+                "{}: {}",
+                a.label,
+                answer_display(a, host_lang(details), AnswerReader::Host)
+            ))
+        })
+        .collect()
 }
 
 /// Event, date, time and guest: the rows every host-facing email opens with.

@@ -1958,3 +1958,40 @@ async fn only_the_webhooks_user_sees_its_full_url() {
     assert!(!other.contains("T0KEN"), "the path leaked");
     assert!(other.contains("hooks.example.com"));
 }
+
+/// The answers to the booking questions travel with the booking (#210),
+/// keyed by the question's stable key, with the label as the guest read it.
+#[tokio::test]
+async fn the_payload_carries_the_answers() {
+    let (app, pool, _, et_id) = setup_test_app().await;
+    let user_id = test_user_id(&pool).await;
+    insert_webhook(&pool, &user_id, None, "https://93.184.215.14/hook").await;
+    let json_qs = serde_json::json!([
+        {"kind": "single_choice", "label": "Where are the tyres", "options": [{"label": "At the shop"}, {"label": "I bring them"}]},
+        {"kind": "checkbox", "label": "Recording", "consent": true}
+    ]);
+    let qs = crate::web::questions::parse_editor(&json_qs.to_string(), &[]).unwrap();
+    crate::web::questions::save(&pool, &et_id, Some(&qs), None)
+        .await
+        .unwrap();
+    let csrf = "csrf-wh-answers";
+    let body = format!("{}&q_{}=o2", book_body(csrf), qs[0].id);
+    app.oneshot(post_form_unauthed(
+        "/u/testuser/test-meeting/book",
+        csrf,
+        &body,
+    ))
+    .await
+    .unwrap();
+    let rows = deliveries(&pool).await;
+    let v = json(&rows[0].1);
+    let answers = &v["booking"]["answers"];
+    assert_eq!(answers[0]["key"], "where_are_the_tyres");
+    assert_eq!(answers[0]["label"], "Where are the tyres");
+    assert_eq!(answers[0]["kind"], "single_choice");
+    assert_eq!(answers[0]["value"], "I bring them");
+    assert_eq!(answers[0]["option_ids"][0], "o2");
+    assert_eq!(answers[1]["value"], "no");
+    assert_eq!(answers[1]["consent"], true);
+    assert!(answers[1]["answered_at"].as_str().unwrap().ends_with('Z'));
+}

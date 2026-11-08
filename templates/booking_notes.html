@@ -25,6 +25,7 @@
       <div class="tt-title">{{ guest_name }}</div>
       <div class="tt-who"><a href="mailto:{{ guest_email }}">{{ guest_email }}</a></div>
       {% if guest_notes %}<div class="booking-notes" tabindex="0"><strong>{{ t("host-notes-from-guest") }}</strong> {{ guest_notes }}</div>{% endif %}
+      {% if answers %}<details class="booking-answers" open><summary>{{ t("bookings-answers") }}<span class="num">{{ answers | length }}</span></summary><dl>{% for a in answers %}<dt>{{ a.label }}</dt><dd>{{ a.value }}</dd>{% endfor %}</dl></details>{% endif %}
     </div>
     <div class="tt-acts"><span class="tt-due">{{ status_label }}</span></div>
   </li>

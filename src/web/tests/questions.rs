@@ -924,3 +924,179 @@ async fn editing_or_deleting_a_question_keeps_past_answers() {
             .unwrap();
     assert_eq!(orphans, 4);
 }
+
+// --- Display surfaces ---
+
+#[tokio::test]
+async fn the_bookings_page_shows_the_answers_to_the_host() {
+    let (app, pool, session, et_id) = setup_test_app().await;
+    let qs = seed_questions(&pool, &et_id).await;
+    let csrf = "csrf-q-dash";
+    app.clone()
+        .oneshot(post_form_unauthed(
+            "/u/testuser/test-meeting/book",
+            csrf,
+            &format!("{}{}", book_body(csrf), answer_fields(&qs)),
+        ))
+        .await
+        .unwrap();
+    let page = body_string(
+        app.oneshot(get_authed("/dashboard/bookings", &session))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(page.contains(r#"<details class="booking-answers">"#));
+    assert!(
+        page.contains("<dt>Licence plate</dt><dd>AB-123</dd>"),
+        "{page}"
+    );
+    // The host reads a consent as "Agreed", an unticked box as "No".
+    assert!(page.contains("<dd>Agreed</dd>"));
+    assert!(page.contains("<dd>No</dd>"));
+}
+
+#[tokio::test]
+async fn emails_carry_the_answers_to_the_host_and_the_guest_only() {
+    let (app, pool, _, et_id) = setup_test_app().await;
+    let (port, mails) = spawn_capturing_mta().await;
+    use_capturing_mta(&pool, port).await;
+    sqlx::query("UPDATE event_types SET max_additional_guests = 3 WHERE id = ?")
+        .bind(&et_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let qs = seed_questions(&pool, &et_id).await;
+    let csrf = "csrf-q-mail";
+    app.oneshot(post_form_unauthed(
+        "/u/testuser/test-meeting/book",
+        csrf,
+        &format!(
+            "{}{}&additional_guests=friend%40test.com",
+            book_body(csrf),
+            answer_fields(&qs)
+        ),
+    ))
+    .await
+    .unwrap();
+    let host = mail_to(&mails, "test@example.com").await;
+    assert!(host.contains("Licence plate"));
+    assert!(host.contains("AB-123"));
+    assert!(host.contains("Agreed"));
+    let guest = mail_to(&mails, "guest@test.com").await;
+    assert!(guest.contains("AB-123"));
+    assert!(guest.contains("You agreed"));
+    let subject = mail_header(&guest, "Subject").unwrap_or_default();
+    assert!(!subject.contains("AB-123"));
+    let attendee = mail_to(&mails, "friend@test.com").await;
+    assert!(
+        !attendee.contains("AB-123"),
+        "attendee copies carry no answers"
+    );
+    assert!(!attendee.contains("Licence plate"));
+}
+
+#[tokio::test]
+async fn an_approval_carries_the_answers_into_the_confirmed_emails() {
+    let (app, pool, _, et_id) = setup_test_app().await;
+    sqlx::query("UPDATE event_types SET requires_confirmation = 1 WHERE id = ?")
+        .bind(&et_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let qs = seed_questions(&pool, &et_id).await;
+    let csrf = "csrf-q-approve";
+    app.clone()
+        .oneshot(post_form_unauthed(
+            "/u/testuser/test-meeting/book",
+            csrf,
+            &format!("{}{}", book_body(csrf), answer_fields(&qs)),
+        ))
+        .await
+        .unwrap();
+    let uid: String = sqlx::query_scalar("SELECT uid FROM bookings WHERE event_type_id = ?")
+        .bind(&et_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    // Every rebuild of the booking reads them through `booking_guest_input`.
+    let input = crate::web::booking_guest_input(&pool, &uid).await;
+    assert_eq!(input.answers.len(), 5);
+    assert_eq!(input.answers[0].value, "AB-123");
+    assert_eq!(
+        input.answers[3].link_url.as_deref(),
+        Some("https://example.com/privacy")
+    );
+}
+
+// --- Calendar event and email attachment ---
+
+fn details_with_answers() -> crate::email::BookingDetails {
+    crate::email::BookingDetails {
+        event_title: "Tyres".into(),
+        date: "2026-12-01".into(),
+        start_time: "10:00".into(),
+        end_time: "10:30".into(),
+        guest_name: "Guest".into(),
+        guest_email: "guest@test.com".into(),
+        guest_timezone: "UTC".into(),
+        host_name: "Host".into(),
+        host_email: "host@test.com".into(),
+        uid: "u@calrs".into(),
+        answers: vec![
+            crate::email::BookingAnswer {
+                kind: "long_text".into(),
+                label: "Situation".into(),
+                value: format!("{}\nsecond line", "word ".repeat(40)),
+                in_calendar: true,
+                ..Default::default()
+            },
+            crate::email::BookingAnswer {
+                kind: "checkbox".into(),
+                label: "Recording".into(),
+                value: "yes".into(),
+                consent: true,
+                in_calendar: true,
+                ..Default::default()
+            },
+            crate::email::BookingAnswer {
+                kind: "short_text".into(),
+                label: "Area of concern".into(),
+                value: "Eviction".into(),
+                in_calendar: false,
+                ..Default::default()
+            },
+        ],
+        ..Default::default()
+    }
+}
+
+fn unfold(ics: &str) -> String {
+    ics.replace("\r\n ", "")
+}
+
+#[test]
+fn the_host_calendar_copy_carries_the_answers_flagged_for_it() {
+    let ics = crate::email::generate_ics_caldav(&details_with_answers());
+    for line in ics.split("\r\n") {
+        assert!(line.len() <= 75, "folded: {line:?}");
+    }
+    let ics = unfold(&ics);
+    assert!(ics.contains("Situation: word word"));
+    // A line break in an answer cannot break the property: a space, as for
+    // the notes.
+    assert!(ics.contains("word  second line"));
+    assert!(ics.contains("Recording: Agreed"));
+    assert!(!ics.contains("Eviction"), "kept out of the calendar event");
+    assert!(!ics.contains("Area of concern"));
+}
+
+#[test]
+fn the_emailed_invite_carries_no_answers() {
+    let ics = unfold(&crate::email::generate_ics(
+        &details_with_answers(),
+        "REQUEST",
+    ));
+    assert!(!ics.contains("Situation"));
+    assert!(!ics.contains("Recording"));
+}

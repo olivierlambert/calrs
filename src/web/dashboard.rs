@@ -717,6 +717,24 @@ pub(super) async fn dashboard_bookings(
         Err(e) => return internal_error_html("template render", &e),
     };
 
+    // The guests' answers to the booking questions (#210), one query for
+    // the page. Not for the claimable rows: a watcher reads them once the
+    // booking is theirs, as with the host notes.
+    let answer_ids: Vec<&str> = pending_bookings
+        .iter()
+        .map(|b| b.0.as_str())
+        .chain(upcoming_bookings.iter().map(|b| b.0.as_str()))
+        .chain(recent_bookings.iter().map(|b| b.0.as_str()))
+        .collect();
+    let answers = questions::answers_by_booking(&state.pool, &answer_ids).await;
+    let answer_rows = |id: &str| {
+        questions::display_rows(
+            answers.get(id).map(Vec::as_slice).unwrap_or(&[]),
+            auth_user.lang,
+            crate::email::AnswerReader::Host,
+        )
+    };
+
     let host_tz = &user.timezone;
     let claimable_ctx: Vec<minijinja::Value> = claimable_bookings
         .iter()
@@ -775,6 +793,7 @@ pub(super) async fn dashboard_bookings(
                     event_title => title,
                     resource_name => resource_name,
                     notes => notes.trim(),
+                    answers => answer_rows(id.as_str()),
                     // The owner always reads them: this page lists the
                     // bookings of their own event types (#173).
                     host_notes => host_notes.as_deref().unwrap_or(""),
@@ -821,6 +840,7 @@ pub(super) async fn dashboard_bookings(
                     awaiting_reschedule => *resched != 0,
                     resource_name => resource_name,
                     notes => notes.trim(),
+                    answers => answer_rows(id.as_str()),
                     host_notes => host_notes.as_deref().unwrap_or(""),
                 }
             },
@@ -839,6 +859,7 @@ pub(super) async fn dashboard_bookings(
                     when => dashboard_when(start, end, stored_tz, host_tz, guest_tz, auth_user.lang),
                     event_title => title,
                     notes => notes.trim(),
+                    answers => answer_rows(id.as_str()),
                     host_notes => host_notes.as_deref().unwrap_or(""),
                     status_mark => if ended { "x" } else { "c" },
                     status_label => match status.as_str() {
@@ -1935,7 +1956,11 @@ pub(super) async fn confirm_booking(
                 )
             });
 
-    let (guest_notes, guest_phone_shown) = booking_guest_input(&state.pool, &uid).await;
+    let GuestInput {
+        notes: guest_notes,
+        phone: guest_phone_shown,
+        answers: guest_answers,
+    } = booking_guest_input(&state.pool, &uid).await;
     let additional_attendees = booking_additional_attendees(&state.pool, &uid).await;
     let attendee_languages =
         booking_attendee_languages(&state.pool, &uid, &additional_attendees).await;
@@ -1953,6 +1978,7 @@ pub(super) async fn confirm_booking(
         uid: uid.clone(),
         notes: guest_notes,
         guest_phone: guest_phone_shown,
+        answers: guest_answers,
         location: location_display,
         reminder_minutes: None,
         additional_attendees,

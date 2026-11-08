@@ -174,12 +174,12 @@ pub(super) async fn push_and_record_within(
             // if it never does.
             super::record_source_copies(pool, booking_uid, target).await;
         }
-        // The only host-language text in the event is the phone label, and
-        // each copy belongs to its target: every collective member reads it
-        // in their own language, and a caller that left `host_language`
+        // The only host-language text in the event is the phone label and
+        // the written-out checkbox answers (#210), and each copy belongs to
+        // its target: every collective member reads it in their own language, and a caller that left `host_language`
         // unset (a claim) no longer falls back to English (#266).
         let localized;
-        let details = if details.guest_phone.is_some() {
+        let details = if details.guest_phone.is_some() || !details.answers.is_empty() {
             localized = crate::email::BookingDetails {
                 host_language: crate::email::user_language(pool, target).await,
                 ..details.clone()
@@ -340,7 +340,9 @@ async fn push_claimant_copy(
     // A collection the claimant shares with a host (a team calendar) already
     // holds the host's event: a second PUT of the uid would replace it,
     // phone included, with the claimant's copy. `host_collections` is where
-    // the hosts' copies went, their chosen destinations included (#47).
+    // the hosts' copies went, their chosen destinations included (#47). The
+    // answers to the booking questions stay (#210): the claimant reads them
+    // on the booking's page, as they read the notes.
     let details = crate::email::BookingDetails {
         guest_phone: None,
         ..details.clone()
@@ -555,7 +557,11 @@ pub(super) async fn writeback_details(
     // The same guest input every other push carries: without the phone, a
     // booking whose first push failed reached the host's calendar without
     // it once a retry landed (#266).
-    let (notes, guest_phone) = super::booking_guest_input(pool, booking_uid).await;
+    let super::GuestInput {
+        notes,
+        phone: guest_phone,
+        answers,
+    } = super::booking_guest_input(pool, booking_uid).await;
     let additional_attendees = super::booking_additional_attendees(pool, booking_uid).await;
 
     // The organizer the event was created with: the stored snapshot for a
@@ -586,6 +592,7 @@ pub(super) async fn writeback_details(
         uid: booking_uid.to_string(),
         notes,
         guest_phone,
+        answers,
         location: location.filter(|l| !l.is_empty()),
         reminder_minutes,
         additional_attendees,

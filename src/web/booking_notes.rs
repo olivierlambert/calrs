@@ -131,6 +131,8 @@ pub(super) struct NoteBooking {
     pub updated_by: Option<String>,
     /// The host an admin was impersonating when they saved them last.
     pub updated_as: Option<String>,
+    /// The guest's answers to the booking questions (#210).
+    pub answers: Vec<crate::email::BookingAnswer>,
 }
 
 /// The booking `booking_id` when `user_id` may read and edit its host notes,
@@ -182,7 +184,7 @@ pub(super) async fn note_booking(
         .bind(user_id)
         .fetch_optional(pool)
         .await?;
-    Ok(row.map(
+    let booking = row.map(
         |(
             id,
             status,
@@ -215,8 +217,17 @@ pub(super) async fn note_booking(
             updated_at,
             updated_by,
             updated_as,
+            answers: Vec::new(),
         },
-    ))
+    );
+    let Some(mut booking) = booking else {
+        return Ok(None);
+    };
+    booking.answers = super::questions::answers_by_booking(pool, &[booking.id.as_str()])
+        .await
+        .remove(&booking.id)
+        .unwrap_or_default();
+    Ok(Some(booking))
 }
 
 /// What a host submitted, as it is stored: line endings normalised, outer
@@ -336,6 +347,11 @@ fn render_notes_page(
             guest_name => booking.guest_name,
             guest_email => booking.guest_email,
             guest_notes => booking.guest_notes.trim(),
+            answers => super::questions::display_rows(
+                &booking.answers,
+                lang,
+                crate::email::AnswerReader::Host,
+            ),
             when => when,
             status_mark => status_mark,
             status_label => crate::i18n::translate(lang, status_key, None),

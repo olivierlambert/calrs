@@ -760,7 +760,11 @@ struct BookingRow {
 
 /// A booking as the API shows it to one of its hosts. Never its cancel,
 /// reschedule or approval tokens, nor anything about calendars.
-fn booking_json(row: BookingRow, with_host_notes: bool) -> Value {
+fn booking_json(
+    row: BookingRow,
+    with_host_notes: bool,
+    answers: &[crate::email::BookingAnswer],
+) -> Value {
     let stored_tz: Tz = row.stored_tz.parse().unwrap_or(Tz::UTC);
     let instant = |value: &str| {
         crate::booking_time::local(value, stored_tz, Tz::UTC)
@@ -784,6 +788,11 @@ fn booking_json(row: BookingRow, with_host_notes: bool) -> Value {
         "event_type": {"id": row.et_id, "slug": row.et_slug, "title": row.et_title, "team_id": row.team_id},
         "guest": {"name": row.guest_name, "email": row.guest_email, "phone": row.guest_phone,
                   "timezone": row.guest_tz, "language": row.language, "notes": row.notes},
+        "answers": answers.iter().map(|a| json!({
+            "key": a.key, "label": a.label, "kind": a.kind, "value": a.value,
+            "option_ids": a.option_ids, "consent": a.consent, "link_url": a.link_url,
+            "answered_at": a.answered_at,
+        })).collect::<Vec<_>>(),
         "attendees": attendees,
         "location": {"type": row.location_type, "value": row.location_value},
         "host_notes": host_notes,
@@ -806,7 +815,15 @@ async fn hosted_booking(
     .bind(user_id)
     .fetch_optional(pool)
     .await?;
-    Ok(row.map(|r| booking_json(r, true)))
+    let Some(row) = row else {
+        return Ok(None);
+    };
+    // The guest's answers to the booking questions (#210), as webhooks carry them.
+    let answers = super::questions::answers_by_booking(pool, &[row.id.as_str()])
+        .await
+        .remove(&row.id)
+        .unwrap_or_default();
+    Ok(Some(booking_json(row, true, &answers)))
 }
 
 fn encode_cursor(start_at: &str, id: &str) -> String {
@@ -899,9 +916,12 @@ async fn list_bookings(
     .await?;
     let next =
         (rows.len() > PAGE).then(|| encode_cursor(&rows[PAGE - 1].raw_start, &rows[PAGE - 1].id));
+    let ids: Vec<&str> = rows.iter().take(PAGE).map(|r| r.id.as_str()).collect();
+    let mut answers = super::questions::answers_by_booking(&state.pool, &ids).await;
     let mut bookings = Vec::new();
     for row in rows.into_iter().take(PAGE) {
-        let value = booking_json(row, true);
+        let row_answers = answers.remove(&row.id).unwrap_or_default();
+        let value = booking_json(row, true, &row_answers);
         let start = value["start"]
             .as_str()
             .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
@@ -1195,7 +1215,8 @@ async fn create_booking_inner(
         .await?;
     Ok((
         StatusCode::CREATED,
-        json!({"booking": booking_json(row, false)}),
+        // A manager's booking asks no booking questions (#210).
+        json!({"booking": booking_json(row, false, &[])}),
     ))
 }
 
