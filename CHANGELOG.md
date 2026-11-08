@@ -188,6 +188,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added
+
+- **Guest email footer** (#223, #350) - Admins can set a short footer (bold, italic and links, 500 characters at most, one text for all languages) added to every email a guest or an additional attendee receives: confirmation, reminder, cancellation, pending notice, decline, expiry, "pick a new time", reschedule and invite. An event type can replace it with its own. Host, watcher and claimant emails never carry it. Only admins write footers, unless an admin turns on "Let all users set a footer on their own event types" (separate from the SMS policy). Two migrations (`20261107192406_guest_email_footer`, `20261107212745_claimant_attendee`). Thanks @optimistic5.
+
 ## [2.0.0-beta.2] - 2026-11-07
 
 Second pre-release of 2.0. Its main change is for contributors: **migrations are now named by UTC timestamp** (#333), so the 2.0 features waiting in pull requests (Microsoft Graph, MCP over HTTP, Google out of office, EWS impersonation) can rebase without fighting over migration numbers, and land in the next betas. For users: **a security fix for Markdown links** on the public pages (#346) and in the dashboard preview, embeds that can fix the time format and the timezone (#347), and `--password-stdin` for scripted CLI setups (#345). No new migration. **Back up your database before upgrading**, as for any pre-release.

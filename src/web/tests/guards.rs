@@ -731,3 +731,377 @@ fn identity_guard_catches_each_tell() {
     )
     .is_empty());
 }
+// ====== Guest email footer guard (#223) ======
+
+/// Every non-test construction of the structs that carry a guest email's
+/// content must say where the guest footer comes from: set `guest_footer`
+/// (a loader result, or `None` for a host-only or calendar-only value) or copy
+/// it from another value with `..other.clone()`. `..Default::default()` alone
+/// would silently send that guest email without the footer, which is how a
+/// new send path would forget it.
+///
+/// `writeback.rs` and `calendar_push.rs` only build values to write calendar
+/// events, never to send an email.
+#[test]
+fn every_guest_email_details_literal_sets_the_guest_footer() {
+    let mut files = web_source_files();
+    for entry in std::fs::read_dir("src/commands").expect("read src/commands") {
+        let path = entry.expect("dir entry").path();
+        if path.extension().is_some_and(|e| e == "rs") {
+            files.push(path);
+        }
+    }
+
+    let mut offenders = Vec::new();
+    for path in files {
+        let name = path.file_name().unwrap().to_string_lossy().to_string();
+        if name == "writeback.rs" || name == "calendar_push.rs" {
+            continue;
+        }
+        let src = std::fs::read_to_string(&path).expect("read source");
+        for (line, ty) in details_literals_without_footer(&src) {
+            offenders.push(format!("{}:{line} ({ty})", path.display()));
+        }
+    }
+    assert!(
+        offenders.is_empty(),
+        "these literals neither set `guest_footer` nor copy it from another value: {offenders:#?}"
+    );
+}
+
+/// The structs that carry a guest email's content.
+const GUEST_EMAIL_DETAILS: [&str; 3] =
+    ["BookingDetails", "CancellationDetails", "RescheduleDetails"];
+
+/// The line and type of each `BookingDetails`, `CancellationDetails` or
+/// `RescheduleDetails` literal in `src` that neither sets `guest_footer`
+/// (`guest_footer: value`, or the shorthand `guest_footer`) nor copies
+/// another value with a struct update other than `..Default::default()`.
+///
+/// The source is parsed with `syn` rather than scanned for braces: a string,
+/// a char or a comment holding a brace, a return type naming the struct, a
+/// nested literal's own `..other` are all told apart by the grammar. A
+/// literal is matched however its type is qualified (`BookingDetails`,
+/// `email::BookingDetails`, `crate::email::BookingDetails`), also inside a
+/// macro call whose body reads as expressions or statements (`vec![...]`).
+/// Test code (`#[cfg(test)]`, `#[test]`) is skipped.
+fn details_literals_without_footer(src: &str) -> Vec<(usize, &'static str)> {
+    let file = syn::parse_file(src).expect("parse Rust source");
+    let mut finder = FooterLiterals::default();
+    syn::visit::Visit::visit_file(&mut finder, &file);
+    finder.found.sort();
+    finder.found
+}
+
+#[derive(Default)]
+struct FooterLiterals {
+    found: Vec<(usize, &'static str)>,
+}
+
+/// Test code: a test function (`#[test]`, `#[tokio::test]`, any attribute
+/// whose path ends in `test`), or an item under a `cfg` that only holds in
+/// tests (`cfg(test)`, `cfg(all(test, ...))`, but not `cfg(not(test))`).
+fn is_test_code(attrs: &[syn::Attribute]) -> bool {
+    attrs.iter().any(|attr| {
+        let path = attr.path();
+        if path.is_ident("cfg") {
+            return attr
+                .parse_args::<syn::Meta>()
+                .is_ok_and(|meta| cfg_implies_test(&meta));
+        }
+        path.segments
+            .last()
+            .is_some_and(|segment| segment.ident == "test")
+    })
+}
+
+/// Whether a `cfg` predicate can only be true when compiling tests.
+fn cfg_implies_test(meta: &syn::Meta) -> bool {
+    use syn::parse::Parser;
+    match meta {
+        syn::Meta::Path(path) => path.is_ident("test"),
+        syn::Meta::List(list) => {
+            let parts = syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated
+                .parse2(list.tokens.clone());
+            let Ok(parts) = parts else {
+                return false;
+            };
+            if list.path.is_ident("all") {
+                parts.iter().any(cfg_implies_test)
+            } else if list.path.is_ident("any") {
+                !parts.is_empty() && parts.iter().all(cfg_implies_test)
+            } else {
+                false
+            }
+        }
+        syn::Meta::NameValue(_) => false,
+    }
+}
+
+/// `expr` without the parentheses, invisible groups and single-expression
+/// blocks around it: `(X::default())` and `{ X::default() }` are the call.
+fn unwrap_expr(expr: &syn::Expr) -> &syn::Expr {
+    match expr {
+        syn::Expr::Paren(inner) => unwrap_expr(&inner.expr),
+        syn::Expr::Group(inner) => unwrap_expr(&inner.expr),
+        syn::Expr::Block(block) if block.attrs.is_empty() && block.label.is_none() => {
+            match block.block.stmts.as_slice() {
+                [syn::Stmt::Expr(inner, None)] => unwrap_expr(inner),
+                _ => expr,
+            }
+        }
+        _ => expr,
+    }
+}
+
+/// A call of some `default()` with no arguments: `Default::default()`,
+/// `BookingDetails::default()`, also wrapped in parentheses or a block. A
+/// struct update from it copies nothing.
+fn is_default_call(expr: &syn::Expr) -> bool {
+    match unwrap_expr(expr) {
+        syn::Expr::Call(call) if call.args.is_empty() => matches!(
+            &*call.func,
+            syn::Expr::Path(path) if path.path.segments.last().is_some_and(|s| s.ident == "default")
+        ),
+        _ => false,
+    }
+}
+
+/// The expressions of a `tokio::select!` body: each branch's future, its
+/// `if` precondition and its handler (`pattern = future, if cond => handler`,
+/// `else => handler`), after an optional `biased;`.
+fn select_branches(input: syn::parse::ParseStream) -> syn::Result<Vec<syn::Expr>> {
+    let mut exprs = Vec::new();
+    if input.peek(syn::Ident) && input.fork().parse::<syn::Ident>()? == "biased" {
+        input.parse::<syn::Ident>()?;
+        input.parse::<syn::Token![;]>()?;
+    }
+    while !input.is_empty() {
+        if input.peek(syn::Token![else]) {
+            input.parse::<syn::Token![else]>()?;
+        } else {
+            syn::Pat::parse_multi_with_leading_vert(input)?;
+            input.parse::<syn::Token![=]>()?;
+            exprs.push(input.parse()?);
+            if input.peek(syn::Token![,]) && input.peek2(syn::Token![if]) {
+                input.parse::<syn::Token![,]>()?;
+                input.parse::<syn::Token![if]>()?;
+                exprs.push(input.parse()?);
+            }
+        }
+        input.parse::<syn::Token![=>]>()?;
+        exprs.push(input.parse()?);
+        if input.peek(syn::Token![,]) {
+            input.parse::<syn::Token![,]>()?;
+        }
+    }
+    Ok(exprs)
+}
+
+impl<'ast> syn::visit::Visit<'ast> for FooterLiterals {
+    fn visit_item_mod(&mut self, item: &'ast syn::ItemMod) {
+        if !is_test_code(&item.attrs) {
+            syn::visit::visit_item_mod(self, item);
+        }
+    }
+
+    fn visit_item_fn(&mut self, item: &'ast syn::ItemFn) {
+        if !is_test_code(&item.attrs) {
+            syn::visit::visit_item_fn(self, item);
+        }
+    }
+
+    fn visit_item_impl(&mut self, item: &'ast syn::ItemImpl) {
+        if !is_test_code(&item.attrs) {
+            syn::visit::visit_item_impl(self, item);
+        }
+    }
+
+    fn visit_impl_item_fn(&mut self, item: &'ast syn::ImplItemFn) {
+        if !is_test_code(&item.attrs) {
+            syn::visit::visit_impl_item_fn(self, item);
+        }
+    }
+
+    fn visit_stmt(&mut self, stmt: &'ast syn::Stmt) {
+        let attrs = match stmt {
+            syn::Stmt::Local(local) => &local.attrs[..],
+            syn::Stmt::Expr(syn::Expr::Block(block), _) => &block.attrs[..],
+            _ => &[],
+        };
+        if !is_test_code(attrs) {
+            syn::visit::visit_stmt(self, stmt);
+        }
+    }
+
+    fn visit_expr_struct(&mut self, literal: &'ast syn::ExprStruct) {
+        let ty = literal
+            .path
+            .segments
+            .last()
+            .and_then(|segment| GUEST_EMAIL_DETAILS.iter().find(|ty| segment.ident == **ty));
+        if let Some(ty) = ty {
+            let sets_footer = literal.fields.iter().any(
+                |field| matches!(&field.member, syn::Member::Named(name) if name == "guest_footer"),
+            );
+            let copies_another = literal
+                .rest
+                .as_deref()
+                .is_some_and(|rest| !is_default_call(rest));
+            if !sets_footer && !copies_another {
+                let line = syn::spanned::Spanned::span(&literal.path).start().line;
+                self.found.push((line, ty));
+            }
+        }
+        // Nested literals are checked on their own, with their own update.
+        syn::visit::visit_expr_struct(self, literal);
+    }
+
+    fn visit_macro(&mut self, mac: &'ast syn::Macro) {
+        use syn::parse::Parser;
+        if mac
+            .path
+            .segments
+            .last()
+            .is_some_and(|s| s.ident == "select")
+        {
+            if let Ok(exprs) = select_branches.parse2(mac.tokens.clone()) {
+                for expr in &exprs {
+                    self.visit_expr(expr);
+                }
+                return;
+            }
+        }
+        let exprs = syn::punctuated::Punctuated::<syn::Expr, syn::Token![,]>::parse_terminated
+            .parse2(mac.tokens.clone());
+        if let Ok(exprs) = exprs {
+            for expr in &exprs {
+                self.visit_expr(expr);
+            }
+        } else if let Ok(stmts) = syn::Block::parse_within.parse2(mac.tokens.clone()) {
+            for stmt in &stmts {
+                self.visit_stmt(stmt);
+            }
+        }
+    }
+}
+
+/// The guard catches a literal however its type is written, and leaves
+/// declarations and return types alone.
+#[test]
+fn the_guest_footer_guard_matches_qualified_and_unqualified_literals() {
+    let src = r#"
+pub struct BookingDetails {
+    pub uid: String,
+}
+impl Default for CancellationDetails {
+    fn default() -> Self { todo!() }
+}
+fn build() -> RescheduleDetails {
+    RescheduleDetails { uid: x, guest_footer: None, ..Default::default() }
+}
+fn a() { let d = email::BookingDetails { uid: x, ..Default::default() }; }
+fn b() { let d = BookingDetails { uid: x, ..Default::default() }; }
+fn c() { let d = crate::email::CancellationDetails {
+    uid: x,
+    ..Default::default()
+}; }
+fn e() { let d = BookingDetails { guest_footer: None, ..Default::default() }; }
+fn f() { let d = BookingDetails { uid: x, ..other.clone() }; }
+fn g() { let d = MyBookingDetails { uid: x }; }
+fn h() { let d = BookingDetails { date: s.get(..10).into(), ..Default::default() }; }
+"#;
+    assert_eq!(
+        details_literals_without_footer(src),
+        vec![
+            (11, "BookingDetails"),
+            (12, "BookingDetails"),
+            (13, "CancellationDetails"),
+            (20, "BookingDetails"),
+        ]
+    );
+}
+
+/// What a brace scanner got wrong: a return type spelled with its path, a
+/// brace inside a string, a char or a comment, a nested literal's struct
+/// update taken for the outer one's, and the shorthand initializer. Also a
+/// literal inside a macro call, an update from `T::default()`, and test code.
+#[test]
+fn the_guest_footer_guard_reads_the_rust_grammar() {
+    let src = r#"
+fn qualified(existing: crate::email::BookingDetails) -> crate::email::BookingDetails {
+    existing
+}
+fn braces() {
+    let d = BookingDetails {
+        notes: Some("Enter } to finish".to_string()),
+        // a comment with a } in it
+        title: format!("{}", '}'),
+        guest_footer: None,
+        ..Default::default()
+    };
+}
+fn nested() {
+    let d = BookingDetails {
+        location: Inner { a: 1, ..other.clone() }.a,
+        ..Default::default()
+    };
+}
+fn shorthand(guest_footer: Option<String>) {
+    let d = CancellationDetails { guest_footer, ..Default::default() };
+}
+fn in_a_macro() { let v = vec![RescheduleDetails { uid: x, ..Default::default() }]; }
+fn from_default() { let d = BookingDetails { uid: x, ..BookingDetails::default() }; }
+#[cfg(test)]
+mod tests {
+    fn t() { let d = BookingDetails { uid: x, ..Default::default() }; }
+}
+"#;
+    assert_eq!(
+        details_literals_without_footer(src),
+        vec![
+            (15, "BookingDetails"),
+            (23, "RescheduleDetails"),
+            (24, "BookingDetails"),
+        ]
+    );
+}
+
+/// Round three of the review: async and composite-`cfg` test code is
+/// skipped (but not `cfg(not(test))`), a `default()` call wrapped in
+/// parentheses or a block copies nothing, and the branches of a
+/// `tokio::select!` are read.
+#[test]
+fn the_guest_footer_guard_skips_tests_and_reads_wrapped_defaults_and_select() {
+    let src = r#"
+#[tokio::test]
+async fn a() { let d = BookingDetails { uid: x, ..Default::default() }; }
+#[cfg(all(test, feature = "x"))]
+fn b() { let d = BookingDetails { uid: x, ..Default::default() }; }
+#[cfg(test)]
+impl Fixture { fn c() { let d = BookingDetails { uid: x, ..Default::default() }; } }
+#[cfg(not(test))]
+fn d() { let d = BookingDetails { uid: x, ..Default::default() }; }
+fn e() { let d = BookingDetails { uid: x, ..(BookingDetails::default()) }; }
+fn f() { let d = CancellationDetails { uid: x, ..{ CancellationDetails::default() } }; }
+fn g() { let d = BookingDetails { uid: x, ..{ let o = other(); o } }; }
+async fn h() {
+    tokio::select! {
+        biased;
+        _ = tick() => { send(RescheduleDetails { uid: x, ..Default::default() }) }
+        Some(v) = rx.recv(), if ready => send(BookingDetails { uid: v, guest_footer: None, ..Default::default() }),
+        else => send(CancellationDetails { uid: x, ..Default::default() }),
+    }
+}
+"#;
+    assert_eq!(
+        details_literals_without_footer(src),
+        vec![
+            (9, "BookingDetails"),
+            (10, "BookingDetails"),
+            (11, "CancellationDetails"),
+            (16, "RescheduleDetails"),
+            (18, "CancellationDetails"),
+        ]
+    );
+}
