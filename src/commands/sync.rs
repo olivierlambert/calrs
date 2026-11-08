@@ -1171,14 +1171,18 @@ async fn default_write_calendar(
 }
 
 /// What a busy-only event keeps of the iCal text of its resource: nothing,
-/// unless it recurs. Then one bare VEVENT per VEVENT of the resource, in
-/// order, carrying only what [`crate::rrule::extract_exdates`] reads: the
-/// first one's start and `EXDATE` lines (the series' cancelled occurrences),
+/// unless it recurs (an RRULE or an RDATE). Then one bare VEVENT per VEVENT
+/// of the resource, in order, carrying only what
+/// [`crate::rrule::extract_exdates`] and [`crate::rrule::extract_rdates`]
+/// read: the first one's start, `EXDATE` and `RDATE` lines (the series'
+/// cancelled occurrences and extra dates),
 /// and each other one's `RECURRENCE-ID` (its moved occurrences, which the
 /// series must not block twice). No title, description, location, attendees
 /// or notes.
-fn busy_only_ical(resource: &str, rrule: Option<&str>) -> Option<String> {
-    rrule.filter(|r| !r.trim().is_empty())?;
+fn busy_only_ical(resource: &str, recurs: bool) -> Option<String> {
+    if !recurs {
+        return None;
+    }
     let unfolded = crate::utils::unfold_ical(resource);
     let mut out = String::new();
     let mut index = 0usize;
@@ -1203,7 +1207,7 @@ fn busy_only_ical(resource: &str, rrule: Option<&str>) -> Option<String> {
         }
         let keep = inside
             && match index {
-                0 => name == "DTSTART" || name == "EXDATE",
+                0 => name == "DTSTART" || name == "EXDATE" || name == "RDATE",
                 _ => name == "RECURRENCE-ID",
             };
         if keep {
@@ -2127,7 +2131,12 @@ async fn upsert_provider_events(
             let description = extract_vevent_field(&fields, "DESCRIPTION");
             let status = extract_vevent_field(&fields, "STATUS");
             let rrule = extract_vevent_field(&fields, "RRULE");
+            if let Some(rule) = rrule.as_deref() {
+                crate::rrule::warn_if_unexpandable(rule, &start_at, &uid, cal_id);
+            }
             let recurrence_id = extract_vevent_field(&fields, "RECURRENCE-ID");
+            // Extra dates of the series (#376), never of a moved occurrence.
+            let rdate = recurrence_id.is_none() && crate::rrule::has_rdate(&fields);
             let transp = extract_vevent_field(&fields, "TRANSP");
             let timezone = zones.event_timezone(&fields);
             let end_at = crate::utils::extract_vevent_end(
@@ -2141,7 +2150,7 @@ async fn upsert_provider_events(
                     None,
                     None,
                     None,
-                    busy_only_ical(&raw.ical, rrule.as_deref()),
+                    busy_only_ical(&raw.ical, rrule.is_some() || rdate),
                 )
             } else {
                 (summary, location, description, Some(raw.ical.clone()))
@@ -2149,8 +2158,8 @@ async fn upsert_provider_events(
 
             let event_id = Uuid::new_v4().to_string();
             let written = sqlx::query(
-                "INSERT INTO events (id, calendar_id, uid, summary, start_at, end_at, location, description, status, rrule, raw_ical, recurrence_id, timezone, transp)
-                 SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                "INSERT INTO events (id, calendar_id, uid, summary, start_at, end_at, location, description, status, rrule, raw_ical, recurrence_id, timezone, transp, rdate)
+                 SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
                  WHERE ? IS NULL OR (SELECT sync_generation FROM calendars WHERE id = ?) = ?
                  ON CONFLICT(calendar_id, uid, COALESCE(recurrence_id, '')) DO UPDATE SET
                    summary = excluded.summary,
@@ -2164,6 +2173,7 @@ async fn upsert_provider_events(
                    recurrence_id = excluded.recurrence_id,
                    timezone = excluded.timezone,
                    transp = excluded.transp,
+                   rdate = excluded.rdate,
                    synced_at = datetime('now')",
             )
             .bind(&event_id)
@@ -2180,6 +2190,7 @@ async fn upsert_provider_events(
             .bind(&recurrence_id)
             .bind(&timezone)
             .bind(&transp)
+            .bind(rdate)
             .bind(generation)
             .bind(cal_id)
             .bind(generation)
@@ -2260,7 +2271,12 @@ async fn upsert_raw_events(pool: &SqlitePool, cal_id: &str, raw_events: &[RawEve
             let description = extract_vevent_field(&fields, "DESCRIPTION");
             let status = extract_vevent_field(&fields, "STATUS");
             let rrule = extract_vevent_field(&fields, "RRULE");
+            if let Some(rule) = rrule.as_deref() {
+                crate::rrule::warn_if_unexpandable(rule, &start_at, &uid, cal_id);
+            }
             let recurrence_id = extract_vevent_field(&fields, "RECURRENCE-ID");
+            // Extra dates of the series (#376), never of a moved occurrence.
+            let rdate = recurrence_id.is_none() && crate::rrule::has_rdate(&fields);
             let transp = extract_vevent_field(&fields, "TRANSP");
             let timezone = zones.event_timezone(&fields);
             let end_at = crate::utils::extract_vevent_end(
@@ -2271,8 +2287,8 @@ async fn upsert_raw_events(pool: &SqlitePool, cal_id: &str, raw_events: &[RawEve
 
             let event_id = Uuid::new_v4().to_string();
             let _ = sqlx::query(
-                "INSERT INTO events (id, calendar_id, uid, summary, start_at, end_at, location, description, status, rrule, raw_ical, recurrence_id, timezone, transp)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                "INSERT INTO events (id, calendar_id, uid, summary, start_at, end_at, location, description, status, rrule, raw_ical, recurrence_id, timezone, transp, rdate)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                  ON CONFLICT(calendar_id, uid, COALESCE(recurrence_id, '')) DO UPDATE SET
                    summary = excluded.summary,
                    start_at = excluded.start_at,
@@ -2285,6 +2301,7 @@ async fn upsert_raw_events(pool: &SqlitePool, cal_id: &str, raw_events: &[RawEve
                    recurrence_id = excluded.recurrence_id,
                    timezone = excluded.timezone,
                    transp = excluded.transp,
+                   rdate = excluded.rdate,
                    synced_at = datetime('now')",
             )
             .bind(&event_id)
@@ -2301,6 +2318,7 @@ async fn upsert_raw_events(pool: &SqlitePool, cal_id: &str, raw_events: &[RawEve
             .bind(&recurrence_id)
             .bind(&timezone)
             .bind(&transp)
+            .bind(rdate)
             .execute(pool)
             .await;
 
@@ -2972,6 +2990,52 @@ mod tests {
         (source_id, et_id)
     }
 
+    /// A series' RDATEs are flagged on its row (#376), so availability
+    /// expands it even without an RRULE; a moved occurrence never is.
+    #[tokio::test]
+    async fn sync_flags_a_series_with_extra_dates() {
+        let pool = setup_test_db().await;
+        let (source_id, _) = seed_fixtures(&pool).await;
+        sqlx::query("INSERT INTO calendars (id, source_id, href) VALUES ('c', ?, '/cal/')")
+            .bind(&source_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let raw = RawEvent {
+            href: "/cal/r.ics".into(),
+            ical_data: "BEGIN:VCALENDAR\nBEGIN:VEVENT\nUID:r\nDTSTART:20300615T120000\n\
+                        DTEND:20300615T130000\nRDATE:20300620T120000\nEND:VEVENT\n\
+                        BEGIN:VEVENT\nUID:r\nRECURRENCE-ID:20300620T120000\n\
+                        DTSTART:20300620T160000\nDTEND:20300620T170000\nEND:VEVENT\n\
+                        END:VCALENDAR"
+                .into(),
+        };
+        upsert_raw_events(&pool, "c", std::slice::from_ref(&raw)).await;
+        let rows: Vec<(Option<String>, bool)> =
+            sqlx::query_as("SELECT recurrence_id, rdate = 1 FROM events ORDER BY recurrence_id")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            rows,
+            vec![(None, true), (Some("20300620T120000".into()), false)]
+        );
+    }
+
+    #[test]
+    fn busy_only_ical_keeps_extra_dates() {
+        let resource = "BEGIN:VEVENT\r\nUID:u\r\nSUMMARY:Private\r\n\
+                        DTSTART:20300107T100000\r\nRDATE:20300109T100000,20300111T100000\r\n\
+                        END:VEVENT\r\n";
+        let kept = busy_only_ical(resource, true).unwrap();
+        assert!(!kept.contains("Private"), "{kept}");
+        assert_eq!(
+            crate::rrule::extract_rdates(&kept, None),
+            crate::rrule::extract_rdates(resource, None)
+        );
+        assert_eq!(crate::rrule::extract_rdates(&kept, None).len(), 2);
+    }
+
     #[tokio::test]
     async fn caldav_orphan_sweep_preserves_google_out_of_office_snapshot() {
         let pool = setup_test_db().await;
@@ -3084,11 +3148,11 @@ mod tests {
                         DTSTART;TZID=Europe/Paris:20300121T150000\r\nEND:VEVENT\r\n\
                         END:VCALENDAR\r\n";
         assert_eq!(
-            busy_only_ical(resource, None),
+            busy_only_ical(resource, false),
             None,
             "no rrule: nothing kept"
         );
-        let kept = busy_only_ical(resource, Some("FREQ=WEEKLY")).unwrap();
+        let kept = busy_only_ical(resource, true).unwrap();
         assert_eq!(
             kept,
             "BEGIN:VEVENT\r\nDTSTART;TZID=Europe/Paris:20300107T100000\r\n\

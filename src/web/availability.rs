@@ -529,31 +529,21 @@ pub(crate) fn expand_recurring_into_busy(
     window_end: NaiveDateTime,
     host_tz: Tz,
 ) -> Vec<(NaiveDateTime, NaiveDateTime)> {
-    let mut result = Vec::new();
-    for (s, e, rrule_str, raw_ical, event_tz) in recurring {
-        if let (Some(ev_start), Some(ev_end)) = (parse_ical_datetime(s), parse_ical_datetime(e)) {
-            let exdates = raw_ical
-                .as_deref()
-                .map(|raw| crate::rrule::extract_exdates(raw, event_tz.as_deref()))
-                .unwrap_or_default();
-            // Expand RRULE in the event's own timezone (correct for DST)
-            let occurrences = crate::rrule::expand_rrule(
-                ev_start,
-                ev_end,
+    recurring
+        .iter()
+        .flat_map(|(s, e, rrule_str, raw_ical, event_tz)| {
+            crate::rrule::occurrences_in(
+                s,
+                e,
                 rrule_str,
-                &exdates,
+                raw_ical.as_deref(),
+                event_tz.as_deref(),
                 window_start,
                 window_end,
-            );
-            // Convert each occurrence to host timezone
-            for (os, oe) in occurrences {
-                let cs = convert_event_to_tz(os, event_tz.as_deref(), host_tz);
-                let ce = convert_event_to_tz(oe, event_tz.as_deref(), host_tz);
-                result.push((cs, ce));
-            }
-        }
-    }
-    result
+                host_tz,
+            )
+        })
+        .collect()
 }
 
 /// Fetch busy times for a specific user (events from their calendars, their
@@ -754,7 +744,7 @@ async fn busy_times(
          WHERE a.user_id = ? AND c.sync_enabled = 1
            AND ((c.is_busy = 1 AND NOT EXISTS (SELECT 1 FROM event_type_calendars etc JOIN calendars sc ON sc.id = etc.calendar_id WHERE etc.event_type_id = ? AND sc.sync_enabled = 1))
                 OR c.id IN (SELECT calendar_id FROM event_type_calendars WHERE event_type_id = ?))
-           AND (e.rrule IS NULL OR e.rrule = '')
+           AND (e.rrule IS NULL OR e.rrule = '') AND e.rdate = 0
            AND (e.status IS NULL OR e.status != 'CANCELLED')
            AND (e.transp IS NULL OR e.transp != 'TRANSPARENT')
            AND (? = '' OR e.uid != ?)
@@ -787,7 +777,7 @@ async fn busy_times(
 
     let end_compact_rrule = window_end.format("%Y%m%dT235959").to_string();
     let recurring: Result<Vec<(String, String, String, Option<String>, Option<String>)>, _> = sqlx::query_as(
-        "SELECT e.start_at, e.end_at, e.rrule, e.raw_ical, e.timezone FROM events e
+        "SELECT e.start_at, e.end_at, COALESCE(e.rrule, ''), e.raw_ical, e.timezone FROM events e
          JOIN calendars c ON c.id = e.calendar_id
          JOIN caldav_sources cs ON cs.id = c.source_id
          JOIN accounts a ON a.id = cs.account_id
@@ -797,7 +787,7 @@ async fn busy_times(
            AND (e.status IS NULL OR e.status != 'CANCELLED')
            AND (e.transp IS NULL OR e.transp != 'TRANSPARENT')
            AND (? = '' OR e.uid != ?)
-           AND e.rrule IS NOT NULL AND e.rrule != '' AND (e.start_at <= ? OR e.start_at <= ?)",
+           AND ((e.rrule IS NOT NULL AND e.rrule != '') OR e.rdate = 1) AND (e.start_at <= ? OR e.start_at <= ?)",
     )
     .bind(user_id)
     .bind(et_id_for_filter)
@@ -2778,7 +2768,7 @@ pub(super) async fn troubleshoot(
          WHERE a.user_id = ? AND c.sync_enabled = 1
            AND ((c.is_busy = 1 AND NOT EXISTS (SELECT 1 FROM event_type_calendars etc JOIN calendars sc ON sc.id = etc.calendar_id WHERE etc.event_type_id = ? AND sc.sync_enabled = 1))
                 OR c.id IN (SELECT calendar_id FROM event_type_calendars WHERE event_type_id = ?))
-           AND (e.rrule IS NULL OR e.rrule = '')
+           AND (e.rrule IS NULL OR e.rrule = '') AND e.rdate = 0
            AND (e.status IS NULL OR e.status != 'CANCELLED')
            AND (e.transp IS NULL OR e.transp != 'TRANSPARENT')
            AND ((e.start_at < ? AND e.end_at > ?) OR (e.start_at < ? AND e.end_at > ?)
@@ -2835,7 +2825,7 @@ pub(super) async fn troubleshoot(
         Option<String>,
         Option<String>,
     )> = sqlx::query_as(
-        "SELECT e.start_at, e.end_at, e.rrule, e.raw_ical, e.summary, c.display_name, e.timezone
+        "SELECT e.start_at, e.end_at, COALESCE(e.rrule, ''), e.raw_ical, e.summary, c.display_name, e.timezone
          FROM events e
          JOIN calendars c ON c.id = e.calendar_id
          JOIN caldav_sources cs ON cs.id = c.source_id
@@ -2845,7 +2835,7 @@ pub(super) async fn troubleshoot(
                 OR c.id IN (SELECT calendar_id FROM event_type_calendars WHERE event_type_id = ?))
            AND (e.status IS NULL OR e.status != 'CANCELLED')
            AND (e.transp IS NULL OR e.transp != 'TRANSPARENT')
-           AND e.rrule IS NOT NULL AND e.rrule != ''
+           AND ((e.rrule IS NOT NULL AND e.rrule != '') OR e.rdate = 1)
            AND (e.start_at <= ? OR e.start_at <= ?)",
     )
     .bind(&user.id)
@@ -2864,29 +2854,34 @@ pub(super) async fn troubleshoot(
         .and_hms_opt(23, 59, 59)
         .unwrap_or(target_date.and_time(NaiveTime::MIN));
     for (s, e, rrule_str, raw_ical, summary, cal_name, event_tz) in &recurring_events {
-        if let (Some(ev_start), Some(ev_end)) = (parse_ical_datetime(s), parse_ical_datetime(e)) {
-            let exdates = raw_ical
-                .as_deref()
-                .map(|raw| crate::rrule::extract_exdates(raw, event_tz.as_deref()))
-                .unwrap_or_default();
-            let occurrences = crate::rrule::expand_rrule(
-                ev_start,
-                ev_end,
-                rrule_str,
-                &exdates,
-                ts_window_start,
-                ts_window_end,
-            );
-            for (os, oe) in occurrences {
-                let cs = convert_event_to_tz(os, event_tz.as_deref(), host_tz);
-                let ce = convert_event_to_tz(oe, event_tz.as_deref(), host_tz);
-                busy_events.push((
-                    cs.format("%Y-%m-%dT%H:%M:%S").to_string(),
-                    ce.format("%Y-%m-%dT%H:%M:%S").to_string(),
-                    summary.clone(),
-                    cal_name.clone(),
-                ));
-            }
+        // A rule calrs cannot expand is blocked as busy from its start: say
+        // so, or the host has no way to tell why the day is closed.
+        let detail = if crate::rrule::is_supported(rrule_str) {
+            cal_name.clone()
+        } else {
+            Some(tr1(
+                auth_user.lang,
+                "troubleshoot-detail-unsupported-recurrence",
+                "calendar",
+                cal_name.as_deref().unwrap_or_default(),
+            ))
+        };
+        for (cs, ce) in crate::rrule::occurrences_in(
+            s,
+            e,
+            rrule_str,
+            raw_ical.as_deref(),
+            event_tz.as_deref(),
+            ts_window_start,
+            ts_window_end,
+            host_tz,
+        ) {
+            busy_events.push((
+                cs.format("%Y-%m-%dT%H:%M:%S").to_string(),
+                ce.format("%Y-%m-%dT%H:%M:%S").to_string(),
+                summary.clone(),
+                detail.clone(),
+            ));
         }
     }
 
