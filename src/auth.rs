@@ -621,6 +621,8 @@ async fn sync_account_email(
 /// Info about an active impersonation session.
 #[derive(Clone)]
 pub struct ImpersonationInfo {
+    /// The real user, an admin, acting as the target.
+    pub admin_id: String,
     pub admin_name: String,
     pub target_name: String,
 }
@@ -640,6 +642,7 @@ async fn resolve_session_user(
             if target_id != real_user.id {
                 if let Some(target_user) = get_user_by_id(pool, &target_id).await {
                     let info = ImpersonationInfo {
+                        admin_id: real_user.id.clone(),
                         admin_name: real_user.name.clone(),
                         target_name: target_user.name.clone(),
                     };

@@ -1,0 +1,80 @@
+{% extends "dashboard_base.html" %}
+{% block title %}{{ t("host-notes-title") }}, calrs{% endblock %}
+{% block dashboard_content %}
+{% import "partials/icons.html" as ic %}
+<style>
+  .host-notes-form textarea { min-height: 10rem; resize: vertical; line-height: 1.5; }
+  .host-notes-meta { color: var(--text-muted); font-size: 12.5px; margin: 0.35rem 0 0; font-variant-numeric: tabular-nums; }
+  .host-notes-actions { display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; }
+</style>
+
+<a href="{{ back_url }}" class="page-back">{{ ic.icon("arrow-left", 14) }}{{ back_label }}</a>
+
+<header class="page-header">
+  <div class="page-header-text">
+    <h1 class="page-title">{{ event_title }}</h1>
+    {% if when %}<p class="page-subtitle">{{ when.long_date }}, {{ when.time_range }}</p>{% endif %}
+  </div>
+</header>
+
+<ol class="ledger" style="margin-bottom: 2.75rem;">
+  <li class="tt-row">
+    {% if when %}<time class="tt-time" datetime="{{ when.iso }}" title="{{ when.long_date }}">{{ when.start }}<small>{{ when.until }}</small></time>{% else %}<span class="tt-time"></span>{% endif %}
+    <i class="g {{ status_mark }}" role="img" aria-label="{{ status_label }}"></i>
+    <div class="tt-main">
+      <div class="tt-title">{{ guest_name }}</div>
+      <div class="tt-who"><a href="mailto:{{ guest_email }}">{{ guest_email }}</a></div>
+      {% if guest_notes %}<div class="booking-notes" tabindex="0"><strong>{{ t("host-notes-from-guest") }}</strong> {{ guest_notes }}</div>{% endif %}
+    </div>
+    <div class="tt-acts"><span class="tt-due">{{ status_label }}</span></div>
+  </li>
+</ol>
+
+<section class="sec" aria-labelledby="hn-notes">
+  <div class="sec-h"><h2 id="hn-notes">{{ t("host-notes-title") }}</h2></div>
+  <p class="sec-note">{{ t("host-notes-hint") }}</p>
+
+  {% if saved %}
+  <div class="notice notice--success" role="status" style="margin-top: 1rem;">{{ ic.icon("check") }}<span>{{ t("host-notes-saved") }}</span></div>
+  {% endif %}
+  {% if error %}
+  <div class="notice notice--error" role="alert" style="margin-top: 1rem;">{{ ic.icon("alert") }}<span>{{ error }}</span></div>
+  {% endif %}
+  {% if conflict_active %}
+  <div class="booking-notes host-notes-conflict" tabindex="0" style="max-height: none;"><strong>{{ t("host-notes-current") }}</strong> {% if conflict %}{{ conflict }}{% else %}{{ t("host-notes-cleared") }}{% endif %}</div>
+  {% endif %}
+
+  <form method="post" action="/dashboard/bookings/{{ booking_id }}/notes" class="host-notes-form" style="margin-top: 1rem;">
+    <input type="hidden" name="version" value="{{ version }}">
+    <input type="hidden" name="back" value="{{ back }}">
+    <div class="form-group">
+      <label for="host_notes" class="sr-only">{{ t("host-notes-title") }}</label>
+      <textarea id="host_notes" name="host_notes" rows="8" aria-describedby="host_notes_count" placeholder="{{ t('host-notes-placeholder') }}">{{ host_notes }}</textarea>
+      {#- No maxlength: browsers count UTF-16 units, the server counts characters
+          (an emoji is one). The counter counts like the server, which stays the
+          guard. #}
+      <p class="host-notes-meta"><span id="host_notes_count" data-max="{{ max_chars }}"></span>{% if last_edit %} {{ last_edit }}{% endif %}</p>
+    </div>
+    <div class="host-notes-actions">
+      <button type="submit" class="ui-btn ui-btn--primary">{{ t("host-notes-save") }}</button>
+      <a href="{{ back_url }}" class="sec-link">{{ back_label }}</a>
+    </div>
+  </form>
+</section>
+<script>
+(function () {
+  var area = document.getElementById('host_notes');
+  var out = document.getElementById('host_notes_count');
+  if (!area || !out) return;
+  var max = parseInt(out.getAttribute('data-max'), 10);
+  function update() {
+    // Code points, as the server counts once it has trimmed the text.
+    var n = Array.from(area.value.replace(/\r\n/g, '\n').trim()).length;
+    out.textContent = n + ' / ' + max + '.';
+    out.style.color = n > max ? 'var(--error-text)' : '';
+  }
+  area.addEventListener('input', update);
+  update();
+})();
+</script>
+{% endblock %}

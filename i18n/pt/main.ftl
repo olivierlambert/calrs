@@ -507,6 +507,29 @@ bookings-back = Voltar
 bookings-empty = Ainda não há agendamentos futuros.<br>Compartilhe seus { $link } para que outras pessoas possam agendar com você.
 bookings-empty-link-label = links de tipos de evento
 bookings-search-placeholder = Buscar convidados, e-mails ou reuniões
+bookings-recent = Últimos 30 dias
+
+# Host notes on a booking (templates/booking_notes.html, bookings page, overview, host emails)
+
+host-notes-title = Notas dos anfitriões
+host-notes-hint = Visíveis para os anfitriões deste agendamento, para um membro da equipe que o assumiu e para um administrador agindo como um dos anfitriões. Nunca são mostradas ao convidado nem adicionadas ao convite ou ao evento da agenda.
+host-notes-placeholder = Por exemplo: o que foi dito numa ligação, o que preparar.
+host-notes-save = Salvar notas
+host-notes-saved = Notas salvas.
+host-notes-too-long = As notas dos anfitriões podem ter no máximo { $max } caracteres.
+host-notes-conflict = Estas notas foram alteradas depois que esta página foi aberta. A versão salva aparece abaixo; salvar de novo a substitui pelo texto do campo.
+host-notes-current = Versão salva:
+host-notes-last-edit = Última edição por { $name }, { $when }
+host-notes-last-edit-anon = Última edição: { $when }
+host-notes-edit = Editar a nota
+host-notes-marker = Nota dos anfitriões
+host-notes-cleared = (apagadas)
+host-notes-last-edit-as = Última edição por { $name } (administrador, como { $host }), { $when }
+dash-not-found-title = Não encontrado
+dash-not-found-body = Esta página não existe ou esta conta não tem acesso a ela.
+host-notes-from-guest = Do convidado:
+bookings-host-notes = Notas dos anfitriões:
+email-detail-host-notes = Notas dos anfitriões:
 
 # Dashboard teams listing (templates/dashboard_teams.html)
 

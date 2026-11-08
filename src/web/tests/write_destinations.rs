@@ -1167,10 +1167,6 @@ fn only_a_definitive_refusal_counts() {
     assert!(!refused_for_good(403, "userRateLimitExceeded"));
     assert!(!refused_for_good(403, r#"{"reason":"quotaExceeded"}"#));
     assert!(!refused_for_good(403, r#"{"reason":"dailyLimitExceeded"}"#));
-    assert_eq!(
-        crate::caldav::short_reason("<html><body>\n<h1>Not  here</h1></body></html>"),
-        "Not here"
-    );
     assert!(!refused_for_good(503, ""));
     assert!(!refused_for_good(400, ""));
     let verify = crate::providers::WriteBackError::Verify(anyhow::anyhow!("returned 404"));
@@ -1358,11 +1354,10 @@ async fn a_refusal_with_no_source_write_calendar_is_a_failure() {
     .await;
     push_fresh(&pool, &host, &format!("uid-{id}")).await;
     let (error, attempts, next, _, _) = writeback_state(&pool, &id).await;
-    // A short plain reason from the body, never its markup.
+    // The status, never the server's body (#368).
     let error = error.unwrap_or_default();
     assert!(error.contains("404"), "{error}");
-    assert!(error.contains("Not here"), "{error}");
-    assert!(!error.contains('<'), "{error}");
+    assert!(!error.contains("Not here"), "{error}");
     assert_eq!(attempts, 1);
     assert!(next.is_some());
     assert!(refusal(&pool, &et_id, &host).await.is_some());

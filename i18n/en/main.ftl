@@ -508,6 +508,29 @@ bookings-back = Back
 bookings-empty = No upcoming bookings yet.<br>Share your { $link } so people can book time with you.
 bookings-empty-link-label = event type links
 bookings-search-placeholder = Search guests, emails or meetings
+bookings-recent = Last 30 days
+
+# Host notes on a booking (templates/booking_notes.html, bookings page, overview, host emails)
+
+host-notes-title = Host notes
+host-notes-hint = Seen by the hosts of this booking, a team member who claimed it, and an admin while acting as one of its hosts. Never shown to the guest, and never added to the invite or the calendar event.
+host-notes-placeholder = For example: what was said on a call, what to prepare.
+host-notes-save = Save notes
+host-notes-saved = Notes saved.
+host-notes-too-long = Host notes can be at most { $max } characters long.
+host-notes-conflict = These notes were changed after this page was opened. The saved version is shown below; saving again replaces it with the text in the field.
+host-notes-current = Saved version:
+host-notes-last-edit = Last edited by { $name }, { $when }
+host-notes-last-edit-anon = Last edited { $when }
+host-notes-edit = Edit note
+host-notes-marker = Host note
+host-notes-cleared = (cleared)
+host-notes-last-edit-as = Last edited by { $name } (admin, as { $host }), { $when }
+dash-not-found-title = Not found
+dash-not-found-body = This page does not exist, or this account cannot see it.
+host-notes-from-guest = From the guest:
+bookings-host-notes = Host notes:
+email-detail-host-notes = Host notes:
 
 # Dashboard teams listing (templates/dashboard_teams.html)
 
