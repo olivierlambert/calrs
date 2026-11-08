@@ -1,10 +1,13 @@
+{#- Whether each row also shows the coming week as seven small day
+    markers (filled on the days with a free time). Off until the owner
+    decides; flip it to true to show the strip on both landing pages. -#}
+{%- set show_week_strip = false -%}
 {#- Behaviour of the landing pages, after the content:
     - faces get the overview's per-person hue (--h), a stable hash;
     - each row asks its next-free endpoint (data-next) for the first free
       start and the free days of the coming week, then writes them in the
       guest's own timezone and time format. Nothing blocks the page; on a
-      failure the row simply shows nothing;
-    - the temporary look switcher. -#}
+      failure the row simply shows nothing. -#}
 <script>
 (function() {
   // FNV-1a over the UTF-8 bytes, as overview_stats::face_hue computes it.
@@ -47,8 +50,10 @@
     } catch (e) { return ''; }
     return p.year + '-' + p.month + '-' + p.day;
   }
+  var showWeek = {{ show_week_strip | tojson }};
   function days(el, free) {
     var box = el.querySelector('.lp-days');
+    if (!showWeek) return;
     if (!box || !Array.isArray(free)) return;
     var now = Date.now();
     for (var i = 0; i < 7; i++) {
@@ -84,37 +89,5 @@
       })
       .catch(function() {});
   });
-})();
-</script>
-{#- Temporary: lets the owner compare the looks. Remove once one is chosen. -#}
-<div class="lp-look" role="group" aria-label="look">
-  <button type="button" data-look="c">C</button><button type="button" data-dial="icon" title="dial or icon">D</button>
-</div>
-<script>
-(function() {
-  var root = document.documentElement;
-  var buttons = document.querySelectorAll('.lp-look [data-look]');
-  function sync() {
-    Array.prototype.forEach.call(buttons, function(b) {
-      b.setAttribute('aria-pressed', root.classList.contains('look-' + b.getAttribute('data-look')) ? 'true' : 'false');
-    });
-  }
-  var dialButton = document.querySelector('.lp-look [data-dial]');
-  function syncDial() { dialButton.setAttribute('aria-pressed', root.classList.contains('dial-icon') ? 'true' : 'false'); }
-  dialButton.addEventListener('click', function() {
-    root.classList.toggle('dial-icon');
-    try { localStorage.setItem('calrs_dial', root.classList.contains('dial-icon') ? 'icon' : 'stack'); } catch (e) {}
-    syncDial();
-  });
-  syncDial();
-  Array.prototype.forEach.call(buttons, function(b) {
-    b.addEventListener('click', function() {
-      root.classList.toggle('look-' + b.getAttribute('data-look'));
-      var v = root.classList.contains('look-c') ? 'c' : '';
-      try { localStorage.setItem('calrs_look', v); } catch (e) {}
-      sync();
-    });
-  });
-  sync();
 })();
 </script>

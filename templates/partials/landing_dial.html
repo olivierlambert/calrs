@@ -5,12 +5,10 @@
     with the hand at twelve; 1 h 30 is a full face and a half one; at most
     three faces, so from three hours on the label alone carries the rest.
     No trigonometry: the sector is a dash of `pathLength` 100 and the hand
-    a rotated line (6 degrees a minute). The variant `?dial=icon`
-    (temporary, see landing_head.html) shows a clock icon instead.
+    a rotated line (6 degrees a minute).
 
     Its colour (the row's --eh) comes from landing_hue.html.
     Include with `{% with d = et.duration_min %}`. -#}
-{%- import "partials/phosphor.html" as ph -%}
 {%- set hours = d // 60 -%}
 {%- set rest = d % 60 -%}
 {%- set full = [hours, 3] | min -%}
@@ -33,6 +31,5 @@
     </svg>
     {%- endfor %}
   </span>
-  <span class="lp-dur-icon" aria-hidden="true">{{ ph.icon("clock", 30) }}</span>
   <span class="lp-dur-label lp-num" aria-hidden="true">{% if d < 60 %}{{ t("overview-duration-m", minutes=d) }}{% elif rest == 0 %}{{ t("landing-duration-h", hours=hours) }}{% else %}{{ t("landing-duration-hm", hours=hours, minutes=rest) }}{% endif %}</span>
 </span>
