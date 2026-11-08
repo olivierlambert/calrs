@@ -71,7 +71,7 @@ Key tables:
 - **`smtp_config`** — SMTP server settings (host, port, credentials, sender), one per account
 - **`event_type_calendars`** — junction table linking event types to specific calendars for per-event-type calendar selection. Empty = use all `is_busy=1` calendars (backward-compatible default)
 - **`booking_invites`** — tokenized invite links for internal/private event types: `token` (unique), `event_type_id`, `guest_name`, `guest_email`, `message`, `expires_at`, `max_uses`, `used_count`, `created_by_user_id`
-- **`booking_attendees`** — additional attendees per booking: `booking_id` (FK), `email`, `created_at`
+- **`booking_attendees`** — additional attendees per booking: `booking_id` (FK), `email`, `created_at`, `added_by_claim` (the row a watcher's claim added: staff, never gets the guest footer, even after the claimant is deleted), `claimant_user_id` (whose row it is while that user exists, `ON DELETE SET NULL`)
 - **`teams`** — unified teams replacing both OIDC groups-as-scheduling-units and ad-hoc team links. Fields: `name`, `slug` (unique), `description`, `avatar_path`, `visibility` (public/private), `invite_token` (for private teams), `created_by`
 - **`team_members`** — team membership: `team_id`, `user_id`, `role` (admin/member), `source` (direct/group). Source tracks whether membership comes from direct assignment or OIDC group sync
 - **`team_groups`** — links teams to OIDC groups for automatic member sync: `team_id`, `group_id`
