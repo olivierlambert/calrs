@@ -110,8 +110,26 @@ When a booking is confirmed, calrs can automatically push it to your CalDAV cale
 - On **confirmation**: calrs generates an ICS event and PUTs it to `{calendar-href}/{booking-uid}.ics`
 - On **cancellation**: calrs DELETEs the event from the same path
 - The booking tracks which calendar it was pushed to, so cancellation always targets the right calendar
+- Each event type can send its bookings to a calendar of its own (see below)
 - If no write calendar is configured, write-back is skipped and a warning is logged (emails still work)
 - Write-back works for individual bookings, team bookings (the assigned member's calendar for round-robin, every eligible member's for collective), and pending-then-confirmed bookings
+
+### Per event type: "Write confirmed bookings to"
+
+The source setting above applies to every booking. To send one event type's bookings somewhere else (coaching into a personal calendar, team calls into a shared work calendar), choose a calendar for it:
+
+- **Personal event types**: in the event type form, under **Booking options**, pick a calendar in **"Write confirmed bookings to"**.
+- **Any event type you host, team ones included**: on the **Calendar sources** page, the **"Bookings by event type"** section lists your event types with one dropdown each. On a team event type each member chooses their own calendar, since it is the assigned member's (or, for collective, each member's) own calendar that receives the booking. The team event type form points there.
+
+The list offers every calendar of your own enabled sources, synced or not, like the source setting. **"Default (source setting)"** keeps the behaviour above. A chosen calendar receives that event type's bookings instead of the write calendar of each source, not in addition to it.
+
+What happens when things change:
+
+- **The choice changes** while a booking is upcoming: the booking moves at its next write (a reschedule, an approval, a retry, a claim). The new copy is written first; the copy left in the earlier calendar is deleted only once that write has landed, so a failed write never leaves the booking without a calendar. Cancelling a booking deletes it from the calendar it was actually written to, and a delete that fails is tried again in the background.
+- **The calendar refuses the booking for good** (deleted on the server, or read-only: HTTP 403, 404 or 405): the booking is written to the source setting instead, without a failure or retries, and the Calendar sources page shows the refusal next to the event type. The next booking tries the chosen calendar again.
+- **The calendar's source is disabled**: bookings go back to the source setting until it is enabled again. The choice stays, shown as "(unavailable)", and saving the form unchanged keeps it. **The source is removed**: the choice is removed with it.
+- **Google Meet**: the Meet event is created on the chosen calendar when it is a calendar of your Google account, otherwise on your Google source's write calendar, as before. Once created it never moves, since that event holds the meeting.
+- The orphan check (a booking cancelled because its event was deleted from your calendar) also covers a chosen calendar, when it is synced.
 
 ### When a write-back fails
 
@@ -130,6 +148,9 @@ If a source cannot be synced (server down, password changed, OAuth access revoke
 - the calendar sources page shows the error and since when the source has been failing
 - once a source has failed at least 3 times in a row over more than an hour, its owner is emailed once, in their language. They hear about it again only if it recovers and later fails again
 - a calendar that fails to fetch fails the sync of its source, so "Sync complete." means every calendar synced
+- an answer calrs cannot read counts as a failure too: an error status (a 500 or 503, even with an empty body), malformed XML, or a page that is not a WebDAV answer at all (a proxy's HTML error page). The error says which ("returned 503", "malformed XML at byte ...", "expected a WebDAV multistatus"). The calendar keeps its cached events and is fetched again on the next sync, instead of being read as an empty calendar that has not changed
+- a single answer from the server is read up to 64 MB, which covers calendars with tens of thousands of events; a bigger one, or one with more than a million XML elements, fails the sync of that calendar, to keep memory use bounded on small servers (at the limits, reading an answer takes a few hundred MB at most)
+- error messages name the HTTP status only, never the text of the server's answer, since on a shared calendar it can quote other people's events
 - slot pages retry a failing source at most every five minutes, so a dead server does not slow down every page load
 - `calrs sync` lists the sources that failed and exits with status 1
 

@@ -508,6 +508,29 @@ bookings-back = Terug
 bookings-empty = Nog geen komende boekingen.<br>Deel je { $link } zodat mensen een afspraak met je kunnen boeken.
 bookings-empty-link-label = links naar afspraaktypes
 bookings-search-placeholder = Zoek gasten, e-mails of afspraken
+bookings-recent = Afgelopen 30 dagen
+
+# Host notes on a booking (templates/booking_notes.html, bookings page, overview, host emails)
+
+host-notes-title = Notities van de organisatoren
+host-notes-hint = Zichtbaar voor de organisatoren van deze boeking, een teamlid dat de boeking heeft overgenomen en een beheerder die optreedt als een van de organisatoren. Ze worden nooit aan de gast getoond en nooit aan de uitnodiging of het agenda-item toegevoegd.
+host-notes-placeholder = Bijvoorbeeld: wat er in een gesprek is gezegd, wat er voorbereid moet worden.
+host-notes-save = Notities opslaan
+host-notes-saved = Notities opgeslagen.
+host-notes-too-long = Notities van de organisatoren mogen maximaal { $max } tekens lang zijn.
+host-notes-conflict = Deze notities zijn gewijzigd nadat deze pagina werd geopend. De opgeslagen versie staat hieronder; opnieuw opslaan vervangt die door de tekst in het veld.
+host-notes-current = Opgeslagen versie:
+host-notes-last-edit = Laatst bewerkt door { $name }, { $when }
+host-notes-last-edit-anon = Laatst bewerkt op { $when }
+host-notes-edit = Notitie bewerken
+host-notes-marker = Notitie van de organisatoren
+host-notes-cleared = (gewist)
+host-notes-last-edit-as = Laatst bewerkt door { $name } (beheerder, als { $host }), { $when }
+dash-not-found-title = Niet gevonden
+dash-not-found-body = Deze pagina bestaat niet, of dit account heeft er geen toegang toe.
+host-notes-from-guest = Van de gast:
+bookings-host-notes = Notities van de organisatoren:
+email-detail-host-notes = Notities van de organisatoren:
 
 # Dashboard teams listing (templates/dashboard_teams.html)
 
@@ -1983,3 +2006,15 @@ pager-previous = Vorige
 pager-next = Volgende
 admin-users-search = Zoeken
 admin-figures-cached = Boekingscijfers { $seconds } s geleden berekend.
+
+# Write destination per event type (#47)
+etf-write-destination = Bevestigde boekingen schrijven naar
+etf-write-destination-default = Standaard (instelling van de bron)
+etf-write-destination-help = Alleen voor dit afspraaktype. Standaard komen ze in de schrijfagenda van elk van je bronnen. Bij een teamafspraaktype geldt dit alleen voor de boekingen die je zelf begeleidt.
+etf-write-destination-team = Elk lid kiest zelf onder { $link } waar de boekingen die het begeleidt worden geschreven.
+sources-destinations-heading = Boekingen per afspraaktype
+sources-destinations-help = Kies per afspraaktype de agenda waarin de bevestigde boekingen worden geschreven. Bij een teamafspraaktype geldt dit voor de boekingen die je zelf begeleidt; de andere leden kiezen hun eigen agenda. Boekingen die al geschreven zijn, verhuizen bij de volgende schrijfactie: verzetten, goedkeuren, opnieuw proberen of claimen.
+sources-destinations-saved = Opgeslagen. Nieuwe boekingen gaan naar de hier gekozen agenda's.
+write-destination-not-yours = Er is niets opgeslagen: kies een van je eigen agenda's, voor een afspraaktype dat je begeleidt.
+write-destination-unavailable = { $name } (niet beschikbaar)
+write-destination-refused = Deze agenda weigerde de laatste boeking ({ $error }), die volgens de instelling van de bron is geschreven. De volgende boeking probeert het opnieuw.

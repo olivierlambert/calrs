@@ -81,10 +81,12 @@ pub(super) enum CopyOwner {
     Claimant,
 }
 
-/// Push a confirmed booking to ONE user's CalDAV calendar (every source
-/// with a write_calendar_href set for them). Most callers want
-/// [`caldav_push_booking`], which resolves the right user(s) first and
-/// writes the claimant's copy too.
+/// Push a confirmed booking to ONE user's calendar(s). For the host's copy
+/// (`CopyOwner::Host`) that is the calendar they chose for the booking's
+/// event type, else the write calendar of each of their sources (see
+/// [`host_write_sources`]); a claimant's copy always goes to the source
+/// setting. Most callers want [`caldav_push_booking`], which resolves the
+/// right user(s) first and writes the claimant's copy too.
 ///
 /// Returns one message per source the booking could not be written to (or
 /// written but not read back), empty when every write landed or the user
@@ -98,30 +100,54 @@ pub(super) async fn caldav_push_booking_for_user(
     owner: CopyOwner,
     skip: &[Collection],
 ) -> Vec<String> {
-    let mut failures = Vec::new();
-    // Find all sources with write_calendar_href configured for this user
-    let sources: Vec<(
-        String,
-        String,
-        String,
-        Option<String>,
-        String,
-        String,
-        Option<String>,
-        Option<String>,
-        String,
-        Option<String>,
-        String,
-    )> = sqlx::query_as(
-        "SELECT cs.id, cs.url, cs.username, cs.password_enc, cs.write_calendar_href, cs.auth_type, cs.access_token_enc, cs.token_expires_at, cs.provider_type, cs.oauth2_provider, cs.name
-         FROM caldav_sources cs
-         JOIN accounts a ON a.id = cs.account_id
-         WHERE a.user_id = ? AND cs.enabled = 1 AND cs.write_calendar_href IS NOT NULL",
+    let (sources, plan) = match owner {
+        CopyOwner::Host => host_write_sources(pool, booking_uid, user_id).await,
+        CopyOwner::Claimant => (
+            default_write_sources(pool, user_id).await,
+            WritePlan::Source,
+        ),
+    };
+    push_to_sources(
+        pool,
+        key,
+        user_id,
+        booking_uid,
+        details,
+        owner,
+        skip,
+        &sources,
+        plan,
     )
-    .bind(user_id)
-    .fetch_all(pool)
     .await
-    .unwrap_or_default();
+    .into_iter()
+    .map(|failure| failure.message)
+    .collect()
+}
+
+/// One source a push could not write to.
+pub(super) struct PushFailure {
+    /// "source name: error", as stored on the booking.
+    pub(super) message: String,
+    /// The calendar refused the write for good (see
+    /// `WriteBackError::permanent_refusal`): its short description.
+    pub(super) refusal: Option<String>,
+}
+
+/// [`caldav_push_booking_for_user`] once the sources are resolved.
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn push_to_sources(
+    pool: &SqlitePool,
+    key: &[u8; 32],
+    user_id: &str,
+    booking_uid: &str,
+    details: &crate::email::BookingDetails,
+    owner: CopyOwner,
+    skip: &[Collection],
+    sources: &[WriteSourceRow],
+    plan: WritePlan,
+) -> Vec<PushFailure> {
+    let mut failures = Vec::new();
+    let track = owner == CopyOwner::Host && plan.tracks_copies();
 
     if sources.is_empty() {
         // Distinguish "user has no sources" (debug) from "user has sources but none
@@ -167,7 +193,7 @@ pub(super) async fn caldav_push_booking_for_user(
         provider_type,
         oauth2_provider,
         source_name,
-    ) in &sources
+    ) in sources
     {
         if crate::google_meet::should_skip_caldav_put(
             pool,
@@ -238,11 +264,17 @@ pub(super) async fn caldav_push_booking_for_user(
             // all. Recorded even when the time patch failed: the patch says
             // nothing about whether the event exists.
             if owner == CopyOwner::Host {
-                let _ = sqlx::query("UPDATE bookings SET caldav_calendar_href = ? WHERE uid = ?")
-                    .bind(calendar_href)
-                    .bind(booking_uid)
-                    .execute(pool)
-                    .await;
+                let _ = sqlx::query(
+                    "UPDATE bookings SET caldav_calendar_href = ?, caldav_source_id = ? WHERE uid = ?",
+                )
+                .bind(calendar_href)
+                .bind(source_id)
+                .bind(booking_uid)
+                .execute(pool)
+                .await;
+            }
+            if track {
+                record_copy(pool, booking_uid, user_id, source_id, calendar_href).await;
             }
             // Later PUTs to other calendars must not overwrite this: cancel
             // keys off one href, and that has to be the Meet-holding calendar.
@@ -274,7 +306,10 @@ pub(super) async fn caldav_push_booking_for_user(
             Ok(p) => p,
             Err(e) => {
                 tracing::error!(url = %url, error = format!("{e:#}"), "calendar write-back failed: could not build client");
-                failures.push(format!("{source_name}: {e:#}"));
+                failures.push(PushFailure {
+                    message: format!("{source_name}: {e:#}"),
+                    refusal: None,
+                });
                 continue;
             }
         };
@@ -295,12 +330,34 @@ pub(super) async fn caldav_push_booking_for_user(
         // back: the event may still be there, and cancellation keys its
         // delete off this href. A claimant's copy must not take the host's
         // place here, or the host's delete would look in the wrong calendar.
-        if event_may_exist && !preserved_meet_href && owner == CopyOwner::Host {
-            let _ = sqlx::query("UPDATE bookings SET caldav_calendar_href = ? WHERE uid = ?")
-                .bind(calendar_href)
-                .bind(booking_uid)
-                .execute(pool)
-                .await;
+        // A write to a chosen destination that could not be verified does
+        // not take the href from a copy known to exist (#47): the copy is
+        // recorded below, so a cancellation still finds it either way.
+        let keeps_known_copy = track
+            && written.is_err()
+            && sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM bookings WHERE uid = ? AND caldav_calendar_href IS NOT NULL",
+            )
+            .bind(booking_uid)
+            .fetch_one(pool)
+            .await
+            .unwrap_or(0)
+                > 0;
+        if event_may_exist && !preserved_meet_href && owner == CopyOwner::Host && !keeps_known_copy
+        {
+            let _ = sqlx::query(
+                "UPDATE bookings SET caldav_calendar_href = ?, caldav_source_id = ? WHERE uid = ?",
+            )
+            .bind(calendar_href)
+            .bind(source_id)
+            .bind(booking_uid)
+            .execute(pool)
+            .await;
+        }
+        // A copy written to a chosen destination is recorded, so a later
+        // push, cancellation or reschedule finds it there (#47).
+        if event_may_exist && track {
+            record_copy(pool, booking_uid, user_id, source_id, calendar_href).await;
         }
 
         match written {
@@ -319,7 +376,10 @@ pub(super) async fn caldav_push_booking_for_user(
             }
             Err(e) => {
                 tracing::error!(uid = %booking_uid, calendar_href = %calendar_href, error = %e, "calendar write-back failed");
-                failures.push(format!("{source_name}: {e}"));
+                failures.push(PushFailure {
+                    message: format!("{source_name}: {e}"),
+                    refusal: e.permanent_refusal().map(str::to_string),
+                });
             }
         }
     }
@@ -328,7 +388,7 @@ pub(super) async fn caldav_push_booking_for_user(
 
 /// A calendar client for one of a user's sources, including OAuth token refresh.
 #[allow(clippy::too_many_arguments)]
-async fn write_provider_for_source(
+pub(super) async fn write_provider_for_source(
     pool: &SqlitePool,
     key: &[u8; 32],
     source_id: &str,
@@ -366,73 +426,27 @@ async fn write_provider_for_source(
     ))
 }
 
-/// Delete a booking by uid from every write source of a user, but
-/// `except_source`. Used for team bookings where we don't track a
-/// per-booking caldav_calendar_href, and for the copies a push wrote to a
-/// user's other write sources.
+/// Delete a booking from a user's calendars by uid: the write calendar of
+/// each of their sources, and every copy recorded at a destination they
+/// chose (#47). Used for collective bookings, where no single stored href
+/// describes every member's copy, and as the fallback when the stored href
+/// matches no source.
 async fn caldav_delete_for_user(
     pool: &SqlitePool,
     key: &[u8; 32],
     user_id: &str,
     booking_uid: &str,
-    except_source: Option<&str>,
 ) {
-    let sources: Vec<(
-        String,
-        String,
-        String,
-        Option<String>,
-        String,
-        String,
-        Option<String>,
-        Option<String>,
-        String,
-    )> = sqlx::query_as(
-        "SELECT cs.id, cs.url, cs.username, cs.password_enc, cs.write_calendar_href, cs.auth_type, cs.access_token_enc, cs.token_expires_at, cs.provider_type
-         FROM caldav_sources cs
-         JOIN accounts a ON a.id = cs.account_id
-         WHERE a.user_id = ? AND cs.enabled = 1 AND cs.write_calendar_href IS NOT NULL",
-    )
-    .bind(user_id)
-    .fetch_all(pool)
-    .await
-    .unwrap_or_default();
-
-    for (
-        source_id,
-        url,
-        username,
-        password_enc,
-        calendar_href,
-        auth_type,
-        access_token_enc,
-        token_expires_at,
-        provider_type,
-    ) in &sources
-    {
-        if except_source == Some(source_id.as_str()) {
+    let tracked = delete_tracked_copies(pool, key, user_id, booking_uid).await;
+    for row in default_write_sources(pool, user_id).await {
+        // Same place already tried: the same href on another server is not.
+        if tracked
+            .iter()
+            .any(|(sid, href)| *sid == row.0 && *href == row.4)
+        {
             continue;
         }
-        let delete_result = match write_provider_for_source(
-            pool,
-            key,
-            source_id,
-            url,
-            username,
-            password_enc.as_deref(),
-            auth_type,
-            access_token_enc.as_deref(),
-            token_expires_at.as_deref(),
-            provider_type,
-        )
-        .await
-        {
-            Ok(client) => client.delete_event(calendar_href, booking_uid).await,
-            Err(error) => Err(error),
-        };
-        if let Err(e) = delete_result {
-            tracing::error!(uid = %booking_uid, user = %user_id, calendar = %calendar_href, error = %e, "calendar event delete failed");
-        }
+        delete_from(pool, key, &row, booking_uid).await;
     }
 
     // Remove cached event
@@ -470,22 +484,6 @@ pub(super) async fn booking_claimant(pool: &SqlitePool, booking_uid: &str) -> Op
 /// A server origin (scheme, host, port) and a collection on it.
 pub(super) type Collection = (Option<(String, String, Option<u16>)>, String);
 
-/// The collections a user writes bookings to.
-pub(super) async fn write_collections(pool: &SqlitePool, user_id: &str) -> Vec<Collection> {
-    let rows: Vec<(String, String)> = sqlx::query_as(
-        "SELECT cs.url, cs.write_calendar_href FROM caldav_sources cs
-         JOIN accounts a ON a.id = cs.account_id
-         WHERE a.user_id = ? AND cs.enabled = 1 AND cs.write_calendar_href IS NOT NULL",
-    )
-    .bind(user_id)
-    .fetch_all(pool)
-    .await
-    .unwrap_or_default();
-    rows.into_iter()
-        .map(|(url, href)| (crate::resources::url_origin(&url), href))
-        .collect()
-}
-
 /// Delete the copy of a booking a watcher's claim put on the claimant's own
 /// calendar (#269), by uid from their current write sources, like the
 /// host's delete when its stored href no longer matches one. A copy left in
@@ -493,7 +491,7 @@ pub(super) async fn write_collections(pool: &SqlitePool, user_id: &str) -> Vec<C
 /// host's would. A no-op for a booking nobody claimed.
 pub(crate) async fn claimant_delete_booking(pool: &SqlitePool, key: &[u8; 32], booking_uid: &str) {
     if let Some(claimant) = booking_claimant(pool, booking_uid).await {
-        caldav_delete_for_user(pool, key, &claimant, booking_uid, None).await;
+        caldav_delete_for_user(pool, key, &claimant, booking_uid).await;
     }
 }
 
@@ -510,30 +508,45 @@ pub(crate) async fn caldav_delete_booking(
     claimant_delete_booking(pool, key, booking_uid).await;
 
     // Check if this booking was pushed to CalDAV
-    let info: Option<(String,)> = sqlx::query_as(
-        "SELECT caldav_calendar_href FROM bookings WHERE uid = ? AND caldav_calendar_href IS NOT NULL",
+    let info: Option<(String, Option<String>)> = sqlx::query_as(
+        "SELECT caldav_calendar_href, caldav_source_id FROM bookings WHERE uid = ? AND caldav_calendar_href IS NOT NULL",
     )
     .bind(booking_uid)
     .fetch_optional(pool)
     .await
     .unwrap_or(None);
 
-    let calendar_href = match info {
-        Some((href,)) => href,
+    // Resolve whose calendar the event actually lives on (#147): the
+    // assigned member's, every member's for collective, else the caller's.
+    let targets = booking_write_targets(pool, booking_uid, user_id).await;
+
+    // Copies written to a chosen destination are found where they were
+    // written, whatever the destination is now (#47), including those of
+    // members who no longer host the booking (removed, excluded, disabled).
+    let mut tracked = Vec::new();
+    let mut holders = targets.clone();
+    for user in copy_users(pool, booking_uid).await {
+        if !holders.contains(&user) {
+            holders.push(user);
+        }
+    }
+    for holder in &holders {
+        tracked.extend(delete_tracked_copies(pool, key, holder, booking_uid).await);
+    }
+
+    let (calendar_href, stored_source) = match info {
+        Some((href, source)) => (href, source),
         None => {
             tracing::debug!(uid = %booking_uid, "calendar delete skipped: booking was never pushed");
             return;
         }
     };
 
-    // Resolve whose calendar the event actually lives on (#147): the
-    // assigned member's, every member's for collective, else the caller's.
-    let targets = booking_write_targets(pool, booking_uid, user_id).await;
     if targets.len() > 1 {
         // Collective: one stored href cannot describe N member calendars;
         // delete by uid from every member's write sources instead.
         for target in &targets {
-            caldav_delete_for_user(pool, key, target, booking_uid, None).await;
+            caldav_delete_for_user(pool, key, target, booking_uid).await;
         }
         return;
     }
@@ -550,7 +563,28 @@ pub(crate) async fn caldav_delete_booking(
         Option<String>,
         String,
     );
-    async fn find_source(pool: &SqlitePool, user: &str, href: &str) -> Option<SourceRow> {
+    /// The user's enabled source the href is on: the one stored with it
+    /// (#47), else, for bookings written before, the source whose write
+    /// calendar it is.
+    async fn find_source(
+        pool: &SqlitePool,
+        user: &str,
+        href: &str,
+        source_id: Option<&str>,
+    ) -> Option<SourceRow> {
+        if let Some(source_id) = source_id {
+            return sqlx::query_as(
+                "SELECT cs.id, cs.url, cs.username, cs.password_enc, cs.auth_type, cs.access_token_enc, cs.token_expires_at, cs.provider_type
+                 FROM caldav_sources cs
+                 JOIN accounts a ON a.id = cs.account_id
+                 WHERE a.user_id = ? AND cs.enabled = 1 AND cs.id = ?",
+            )
+            .bind(user)
+            .bind(source_id)
+            .fetch_optional(pool)
+            .await
+            .unwrap_or(None);
+        }
         sqlx::query_as(
             "SELECT cs.id, cs.url, cs.username, cs.password_enc, cs.auth_type, cs.access_token_enc, cs.token_expires_at, cs.provider_type
              FROM caldav_sources cs
@@ -565,13 +599,14 @@ pub(crate) async fn caldav_delete_booking(
         .unwrap_or(None)
     }
 
+    let stored_source = stored_source.as_deref();
     let mut cache_user = target;
-    let mut source = find_source(pool, target, &calendar_href).await;
+    let mut source = find_source(pool, target, &calendar_href, stored_source).await;
     if source.is_none() && target != user_id {
         // Pre-#147 bookings were pushed to the event type owner's
         // calendar; the stored href then belongs to them, not the
         // assigned member. Clean up where the event actually is.
-        source = find_source(pool, user_id, &calendar_href).await;
+        source = find_source(pool, user_id, &calendar_href, stored_source).await;
         if source.is_some() {
             cache_user = user_id;
         }
@@ -592,8 +627,12 @@ pub(crate) async fn caldav_delete_booking(
             // The href no longer matches any write source (write calendar
             // changed since the push). Best effort: delete by uid from the
             // target's current write sources.
-            tracing::warn!(uid = %booking_uid, user_id = %target, href = %calendar_href, "calendar delete: stored href matches no write source, falling back to delete-by-uid");
-            caldav_delete_for_user(pool, key, target, booking_uid, None).await;
+            if tracked.iter().any(|(_, href)| *href == calendar_href) {
+                tracing::debug!(uid = %booking_uid, user_id = %target, href = %calendar_href, "calendar delete: the stored href was a recorded copy; deleting by uid from the source write calendars too");
+            } else {
+                tracing::warn!(uid = %booking_uid, user_id = %target, href = %calendar_href, "calendar delete: stored href matches no write source, falling back to delete-by-uid");
+            }
+            caldav_delete_for_user(pool, key, target, booking_uid).await;
             return;
         }
     };
@@ -618,10 +657,18 @@ pub(crate) async fn caldav_delete_booking(
     if let Err(e) = delete_result {
         tracing::error!(uid = %booking_uid, error = %e, "calendar event delete failed");
     }
-    // A push writes the booking to every write source of the host, not only
-    // the one the stored href names (a CalDAV source and a Microsoft one,
-    // say): delete the other copies by uid too.
-    caldav_delete_for_user(pool, key, cache_user, booking_uid, Some(&source_id)).await;
+    // A push under the source setting (no destination chosen, so no copy
+    // recorded) writes the booking to the write calendar of every source of
+    // the host, not only the one stored (a CalDAV source and a Microsoft
+    // one, say): delete those copies by uid too. Recorded copies were
+    // deleted above, where they were written.
+    if tracked.is_empty() {
+        for row in default_write_sources(pool, cache_user).await {
+            if row.0 != source_id {
+                delete_from(pool, key, &row, booking_uid).await;
+            }
+        }
+    }
 
     // Also remove the cached event from local DB so it doesn't block availability
     let _ = sqlx::query(

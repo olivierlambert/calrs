@@ -10,6 +10,7 @@ mod auth_pages;
 mod availability;
 mod booking;
 mod booking_actions;
+mod booking_notes;
 mod booking_time;
 mod branding;
 mod calendar_week_start;
@@ -32,6 +33,7 @@ mod resources;
 mod security;
 mod sources;
 mod time_off;
+mod write_destinations;
 mod writeback_failures;
 
 // --- has_conflict tests ---

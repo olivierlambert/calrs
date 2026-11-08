@@ -507,6 +507,29 @@ bookings-back = Retour
 bookings-empty = Aucune réservation à venir pour le moment.<br>Partagez vos { $link } pour que l'on puisse réserver avec vous.
 bookings-empty-link-label = liens de types d'événement
 bookings-search-placeholder = Rechercher un invité, un e-mail ou un rendez-vous
+bookings-recent = 30 derniers jours
+
+# Host notes on a booking (templates/booking_notes.html, bookings page, overview, host emails)
+
+host-notes-title = Notes des hôtes
+host-notes-hint = Visibles par les hôtes de cette réservation, par un membre d'équipe qui l'a prise en charge et par un administrateur qui agit en tant que l'un de ses hôtes. Jamais montrées à l'invité, ni ajoutées à l'invitation ou à l'événement du calendrier.
+host-notes-placeholder = Par exemple : ce qui a été dit lors d'un appel, ce qu'il faut préparer.
+host-notes-save = Enregistrer les notes
+host-notes-saved = Notes enregistrées.
+host-notes-too-long = Les notes des hôtes ne peuvent pas dépasser { $max } caractères.
+host-notes-conflict = Ces notes ont été modifiées après l'ouverture de cette page. La version enregistrée figure ci-dessous ; enregistrer à nouveau la remplace par le texte du champ.
+host-notes-current = Version enregistrée :
+host-notes-last-edit = Dernière modification par { $name }, { $when }
+host-notes-last-edit-anon = Dernière modification : { $when }
+host-notes-edit = Modifier la note
+host-notes-marker = Note des hôtes
+host-notes-cleared = (effacées)
+host-notes-last-edit-as = Dernière modification par { $name } (administrateur, en tant que { $host }), { $when }
+dash-not-found-title = Page introuvable
+dash-not-found-body = Cette page n'existe pas, ou ce compte n'y a pas accès.
+host-notes-from-guest = De l'invité :
+bookings-host-notes = Notes des hôtes :
+email-detail-host-notes = Notes des hôtes :
 
 # Dashboard teams listing (templates/dashboard_teams.html)
 
@@ -1981,3 +2004,15 @@ pager-previous = Précédent
 pager-next = Suivant
 admin-users-search = Rechercher
 admin-figures-cached = Chiffres des réservations calculés il y a { $seconds } s.
+
+# Write destination per event type (#47)
+etf-write-destination = Écrire les réservations confirmées dans
+etf-write-destination-default = Par défaut (réglage de la source)
+etf-write-destination-help = Pour ce type d'événement uniquement. Par défaut, elles sont écrites dans l'agenda d'écriture de chacune de vos sources. Sur un type d'événement d'équipe, ce choix ne concerne que les réservations dont vous êtes l'hôte.
+etf-write-destination-team = Chaque membre choisit où sont écrites les réservations dont il est l'hôte, dans { $link }.
+sources-destinations-heading = Réservations par type d'événement
+sources-destinations-help = Choisissez l'agenda dans lequel sont écrites les réservations confirmées de chaque type d'événement. Sur un type d'événement d'équipe, ce choix concerne les réservations dont vous êtes l'hôte ; les autres membres choisissent le leur. Les réservations déjà écrites suivent à leur prochaine écriture : report, approbation, nouvelle tentative ou prise en charge.
+sources-destinations-saved = Enregistré. Les nouvelles réservations vont dans les agendas choisis ici.
+write-destination-not-yours = Rien n'a été enregistré : choisissez l'un de vos propres agendas, pour un type d'événement dont vous êtes l'hôte.
+write-destination-unavailable = { $name } (indisponible)
+write-destination-refused = Cet agenda a refusé la dernière réservation ({ $error }), qui a été écrite selon le réglage de la source. La prochaine réservation le réessaiera.

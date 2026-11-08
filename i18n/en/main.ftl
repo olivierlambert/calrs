@@ -508,6 +508,29 @@ bookings-back = Back
 bookings-empty = No upcoming bookings yet.<br>Share your { $link } so people can book time with you.
 bookings-empty-link-label = event type links
 bookings-search-placeholder = Search guests, emails or meetings
+bookings-recent = Last 30 days
+
+# Host notes on a booking (templates/booking_notes.html, bookings page, overview, host emails)
+
+host-notes-title = Host notes
+host-notes-hint = Seen by the hosts of this booking, a team member who claimed it, and an admin while acting as one of its hosts. Never shown to the guest, and never added to the invite or the calendar event.
+host-notes-placeholder = For example: what was said on a call, what to prepare.
+host-notes-save = Save notes
+host-notes-saved = Notes saved.
+host-notes-too-long = Host notes can be at most { $max } characters long.
+host-notes-conflict = These notes were changed after this page was opened. The saved version is shown below; saving again replaces it with the text in the field.
+host-notes-current = Saved version:
+host-notes-last-edit = Last edited by { $name }, { $when }
+host-notes-last-edit-anon = Last edited { $when }
+host-notes-edit = Edit note
+host-notes-marker = Host note
+host-notes-cleared = (cleared)
+host-notes-last-edit-as = Last edited by { $name } (admin, as { $host }), { $when }
+dash-not-found-title = Not found
+dash-not-found-body = This page does not exist, or this account cannot see it.
+host-notes-from-guest = From the guest:
+bookings-host-notes = Host notes:
+email-detail-host-notes = Host notes:
 
 # Dashboard teams listing (templates/dashboard_teams.html)
 
@@ -1984,3 +2007,15 @@ pager-previous = Previous
 pager-next = Next
 admin-users-search = Search
 admin-figures-cached = Booking figures computed { $seconds } s ago.
+
+# Write destination per event type (#47)
+etf-write-destination = Write confirmed bookings to
+etf-write-destination-default = Default (source setting)
+etf-write-destination-help = For this event type only. The default writes them to the write calendar of each of your sources. On a team event type, this covers only the bookings you host.
+etf-write-destination-team = Each member chooses where the bookings they host are written, under { $link }.
+sources-destinations-heading = Bookings by event type
+sources-destinations-help = Choose the calendar each event type's confirmed bookings are written to. On a team event type this covers the bookings you host; the other members choose their own. Bookings already written move at their next write: a reschedule, an approval, a retry or a claim.
+sources-destinations-saved = Saved. New bookings go to the calendars chosen here.
+write-destination-not-yours = Nothing was saved: choose one of your own calendars, for an event type you host.
+write-destination-unavailable = { $name } (unavailable)
+write-destination-refused = This calendar refused the last booking ({ $error }), which went to the source setting instead. The next booking tries it again.

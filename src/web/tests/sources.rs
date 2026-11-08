@@ -339,6 +339,27 @@ async fn read_only_calendars_are_not_write_back_choices() {
     .await;
     assert!(body.contains("Calendar own"));
     assert!(!body.contains("Calendar colleague"));
+    // Nor can it be an event type's destination (#47).
+    let calendar_id = |href: &'static str| {
+        let pool = pool.clone();
+        let sid = sid.clone();
+        async move {
+            sqlx::query_scalar::<_, String>(
+                "SELECT id FROM calendars WHERE source_id = ? AND href = ?",
+            )
+            .bind(&sid)
+            .bind(href)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        }
+    };
+    let user: String = sqlx::query_scalar("SELECT id FROM users WHERE username = 'testuser'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(is_destination_choice(&pool, &user, &calendar_id("own").await).await);
+    assert!(!is_destination_choice(&pool, &user, &calendar_id("colleague").await).await);
 
     let csrf = "csrf-read-only";
     let write_target = || async {

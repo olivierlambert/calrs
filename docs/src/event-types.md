@@ -64,6 +64,8 @@ From the dashboard form, select the calendars under the **Calendars** section. E
 
 A Microsoft 365 calendar a colleague shared with you starts outside the busy calendars, and calrs has no setting that adds it: it counts only for the event types that select it (see [Microsoft Calendar](./microsoft-calendar.md#calendars-shared-by-colleagues)).
 
+The other direction, **which calendar receives the confirmed bookings**, can also be chosen per event type: **"Write confirmed bookings to"** in the same section. See [CalDAV write-back](./caldav.md#per-event-type-write-confirmed-bookings-to); for a team event type, each member chooses on the Calendar sources page.
+
 ## Required resources
 
 Event types can require [shared resources](./resources.md) (a demo lab, a meeting room). A busy resource blocks booking slots, and confirmed bookings can reserve the resource in its own CalDAV calendar.

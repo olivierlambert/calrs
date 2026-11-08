@@ -507,6 +507,29 @@ bookings-back = Tagasi
 bookings-empty = Tulevasi broneeringuid veel pole.<br>Jaga oma { $link }, et teised saaksid sinuga aja broneerida.
 bookings-empty-link-label = sündmuse tüüpide linke
 bookings-search-placeholder = Otsi külalisi, e-posti või kohtumisi
+bookings-recent = Viimased 30 päeva
+
+# Host notes on a booking (templates/booking_notes.html, bookings page, overview, host emails)
+
+host-notes-title = Korraldajate märkmed
+host-notes-hint = Neid näevad selle broneeringu korraldajad, meeskonnaliige, kes selle üle võttis, ja administraator, kui ta tegutseb ühe korraldajana. Neid ei näidata kunagi külalisele ega lisata kutsesse ega kalendrisündmusesse.
+host-notes-placeholder = Näiteks: mida kõnes räägiti, mida ette valmistada.
+host-notes-save = Salvesta märkmed
+host-notes-saved = Märkmed salvestatud.
+host-notes-too-long = Korraldajate märkmed võivad olla kuni { $max } tähemärki pikad.
+host-notes-conflict = Neid märkmeid muudeti pärast selle lehe avamist. Salvestatud versioon on näidatud allpool; uuesti salvestamine asendab selle välja tekstiga.
+host-notes-current = Salvestatud versioon:
+host-notes-last-edit = Viimati muutis { $name }, { $when }
+host-notes-last-edit-anon = Viimati muudetud { $when }
+host-notes-edit = Muuda märget
+host-notes-marker = Korraldajate märge
+host-notes-cleared = (kustutatud)
+host-notes-last-edit-as = Viimati muutis { $name } (administraator, kasutajana { $host }), { $when }
+dash-not-found-title = Ei leitud
+dash-not-found-body = Seda lehte pole olemas või sellel kontol pole sellele ligipääsu.
+host-notes-from-guest = Külaliselt:
+bookings-host-notes = Korraldajate märkmed:
+email-detail-host-notes = Korraldajate märkmed:
 
 # Dashboard teams listing (templates/dashboard_teams.html)
 
@@ -1981,3 +2004,15 @@ pager-previous = Eelmine
 pager-next = Järgmine
 admin-users-search = Otsi
 admin-figures-cached = Broneeringute arvud arvutati { $seconds } s tagasi.
+
+# Write destination per event type (#47)
+etf-write-destination = Kirjuta kinnitatud broneeringud kalendrisse
+etf-write-destination-default = Vaikimisi (allika seadistus)
+etf-write-destination-help = Ainult selle sündmuse tüübi jaoks. Vaikimisi kirjutatakse need iga sinu allika kirjutuskalendrisse. Meeskonna sündmuse tüübi puhul kehtib see ainult broneeringutele, mida sina juhid.
+etf-write-destination-team = Iga liige valib ise lehel { $link }, kuhu tema juhitavad broneeringud kirjutatakse.
+sources-destinations-heading = Broneeringud sündmuse tüübi kaupa
+sources-destinations-help = Vali iga sündmuse tüübi jaoks kalender, kuhu selle kinnitatud broneeringud kirjutatakse. Meeskonna sündmuse tüübi puhul kehtib see broneeringutele, mida sina juhid; teised liikmed valivad oma. Juba kirjutatud broneeringud liiguvad järgmisel kirjutamisel: ümberajastamisel, kinnitamisel, uuel katsel või ülevõtmisel.
+sources-destinations-saved = Salvestatud. Uued broneeringud lähevad siin valitud kalendritesse.
+write-destination-not-yours = Midagi ei salvestatud: vali üks oma kalendritest sündmuse tüübi jaoks, mida sa juhid.
+write-destination-unavailable = { $name } (pole saadaval)
+write-destination-refused = See kalender lükkas viimase broneeringu tagasi ({ $error }), mistõttu kirjutati see allika seadistuse järgi. Järgmine broneering proovib uuesti.

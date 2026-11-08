@@ -64,6 +64,8 @@ Every user-facing string goes through Fluent (`i18n/`).
 | `src/oauth2_caldav.rs` | Google OAuth2 tokens for CalDAV access |
 | `src/microsoft_oauth.rs` | Microsoft OAuth configuration, account-bound single-use state and PKCE, encrypted tokens, compare-and-swap token refresh (HTTP outside transactions), token-aware Graph provider construction (a Graph 401 refreshes once and retries; a refused refresh token is dropped until reconnect) |
 | `src/caldav/mod.rs` | CalDAV client: discovery, fetch, sync-collection, PUT/DELETE |
+| `src/caldav/multistatus.rs` | Reading WebDAV multistatus answers by namespace: calendar listing, events, sync deltas, principal and home discovery (tests in `src/caldav/multistatus/tests.rs`) |
+| `src/xml.rs` | Bounded, namespace-aware XML tree over `quick-xml`, used by the CalDAV client |
 | `src/ews/` | Exchange Web Services client (SOAP, autodiscover, parsing) |
 | `src/providers/` | `CalendarProvider` trait (`mod.rs`), CalDAV and Graph adapters, password-backed provider dispatch in `src/providers/factory.rs` |
 | `src/sms/` | `SmsProvider` trait, gateway adapters, phone normalisation, message bodies |
@@ -84,11 +86,13 @@ Every user-facing string goes through Fluent (`i18n/`).
 | `hosts.rs` | Who hosts a booking: host identity, collective members, write targets, reschedule and approval hosts |
 | `calendar_push.rs` | Pushing and deleting booking events on host calendars and resource collections |
 | `writeback.rs` | Write-back failure recording and retry (#162) |
+| `write_targets.rs` | Write destination per event type (#47): which of a host's calendars a booking is written to, moving and deleting the copies written there, the choices offered in the event type form and on the sources page |
 | `pending.rs` | Pending requests: expiry deadline, sweep (expire and nudge), pending settings on event types |
 | `notify.rs` | `spawn_emails` / `drain_emails`, new-booking notifications, reminders, watchers, SMS on new booking, the background loop |
 | `meeting.rs` | Auto-generated meeting links (Jitsi, webhook, Google Meet) |
 | `captcha.rs` | Cap captcha config and server-side verification |
 | `dashboard.rs` | Dashboard overview, event types and bookings lists, host cancel/confirm, settings, avatar |
+| `booking_notes.rs` | Host notes on a booking (#173): who may read and edit them (`note_booking`, the one gate), the notes page and its POST |
 | `overview_stats.rs` | Dashboard overview data: masthead sentence, the day ruler (bookable hours from event type rules and overrides, calrs bookings, anonymous calendar busy time), the week list, the 12-week chart, the 30-day figures (tests in `tests/overview_stats.rs`). The dashboard identity (tokens, timetable rows, status marks) lives in `templates/dashboard_base.html`; `tests/guards.rs` fails if its tells come back |
 | `directory.rs` | Searchable booking directory, visibility checks, personal meeting favorites and dashboard shortcuts |
 | `event_types.rs` | Event type forms (personal and team), availability overrides, form parsing helpers |
@@ -110,9 +114,9 @@ Every user-facing string goes through Fluent (`i18n/`).
 with `use super::*` and sees those fixtures and every item of `web`:
 `security`, `auth_pages`, `branding`, `format`, `availability`, `resources`,
 `hosts`, `event_types`, `invites`, `booking`, `public_pages`,
-`booking_actions`, `dashboard`, `sources`, `admin`, `emails`,
+`booking_actions`, `booking_notes`, `dashboard`, `sources`, `admin`, `emails`,
 `page_language`, `guards`, plus `booking_time`, `pending_hold`,
-`writeback_failures`, `organizer`, `duplicate_event_type` and `time_off`.
+`writeback_failures`, `write_destinations`, `organizer`, `duplicate_event_type` and `time_off`.
 
 ### `src/email/`
 
@@ -167,10 +171,12 @@ Call sites use `crate::email::name` whatever file `name` lives in.
   `CalendarProvider` is the trait. `src/providers/factory.rs` builds password-backed
   providers from a `caldav_sources` row; `microsoft_oauth::build_provider_for_source`
   refreshes Microsoft credentials before constructing the Graph adapter.
-  Confirmed bookings are pushed to the host calendar, verified, and failures
-  are recorded and retried by the background loop. Graph retains the booking
-  UID in an extended property and updates the same remote event when rescheduled.
-  It does not send Graph attendee invitations: calrs owns the email lifecycle.
+  Confirmed bookings are pushed to the host calendar (the one chosen for the
+  event type, `src/web/write_targets.rs`, else each source's write calendar),
+  verified, and failures are recorded and retried by the background loop.
+  Graph retains the booking UID in an extended property and updates the same
+  remote event when rescheduled. It does not send Graph attendee invitations:
+  calrs owns the email lifecycle.
   Sync lives in `src/commands/sync.rs` (`sync_if_stale` on page loads) and
   `src/commands/sync_health.rs` (failure tracking).
   Snapshot providers (EWS, Microsoft Graph) reconcile a full snapshot:

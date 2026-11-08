@@ -4,42 +4,56 @@
 use super::*;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum DavMode {
+pub(super) enum DavMode {
     /// Accept writes and keep them.
     Ok,
     /// Answer 201 to a PUT and keep nothing: the Yandex case from #162.
     Drop,
     /// Refuse writes with a 400.
     Reject,
+    /// Answer writes with a 404, as a calendar deleted on the server does.
+    Gone,
 }
 
 /// A tiny CalDAV collection on loopback: PUT, HEAD, PROPFIND and DELETE by
 /// path. Keeps each stored event's body so a test can read what the calendar
 /// got.
-struct MockDav {
+pub(super) struct MockDav {
     mode: std::sync::Mutex<DavMode>,
     stored: std::sync::Mutex<std::collections::HashMap<String, String>>,
     puts: std::sync::atomic::AtomicUsize,
     /// Answer every HEAD with 400, as iCloud does.
     head_bad_request: std::sync::atomic::AtomicBool,
+    /// Answer every DELETE with 503 and keep the event.
+    delete_fails: std::sync::atomic::AtomicBool,
 }
 
 impl MockDav {
-    fn set_mode(&self, mode: DavMode) {
+    pub(super) fn set_mode(&self, mode: DavMode) {
         *self.mode.lock().unwrap() = mode;
+    }
+    pub(super) fn fail_deletes(&self, fail: bool) {
+        self.delete_fails
+            .store(fail, std::sync::atomic::Ordering::SeqCst);
     }
     fn refuse_head_with_400(&self) {
         self.head_bad_request
             .store(true, std::sync::atomic::Ordering::SeqCst);
     }
-    fn puts(&self) -> usize {
+    pub(super) fn puts(&self) -> usize {
         self.puts.load(std::sync::atomic::Ordering::SeqCst)
     }
-    fn stored(&self) -> usize {
+    pub(super) fn stored(&self) -> usize {
         self.stored.lock().unwrap().len()
     }
+    /// The paths of the events the server holds, sorted.
+    pub(super) fn paths(&self) -> Vec<String> {
+        let mut paths: Vec<String> = self.stored.lock().unwrap().keys().cloned().collect();
+        paths.sort();
+        paths
+    }
     /// The body of the one event the collection holds.
-    fn only_event(&self) -> String {
+    pub(super) fn only_event(&self) -> String {
         let stored = self.stored.lock().unwrap();
         assert_eq!(stored.len(), 1, "expected one stored event");
         stored.values().next().unwrap().clone()
@@ -47,13 +61,14 @@ impl MockDav {
 }
 
 /// Start a mock CalDAV server and return its base URL.
-async fn spawn_mock_dav(mode: DavMode) -> (String, Arc<MockDav>) {
+pub(super) async fn spawn_mock_dav(mode: DavMode) -> (String, Arc<MockDav>) {
     use axum::http::{Method, StatusCode, Uri};
     let dav = Arc::new(MockDav {
         mode: std::sync::Mutex::new(mode),
         stored: std::sync::Mutex::new(std::collections::HashMap::new()),
         puts: std::sync::atomic::AtomicUsize::new(0),
         head_bad_request: std::sync::atomic::AtomicBool::new(false),
+        delete_fails: std::sync::atomic::AtomicBool::new(false),
     });
     let state = dav.clone();
     let app = Router::new().fallback(move |method: Method, uri: Uri, body: String| {
@@ -65,6 +80,10 @@ async fn spawn_mock_dav(mode: DavMode) -> (String, Arc<MockDav>) {
                 let mode = *dav.mode.lock().unwrap();
                 match mode {
                     DavMode::Reject => (StatusCode::BAD_REQUEST, String::new()),
+                    DavMode::Gone => (
+                        StatusCode::NOT_FOUND,
+                        "<html><body><h1>Not here</h1></body></html>".to_string(),
+                    ),
                     DavMode::Drop => (StatusCode::CREATED, String::new()),
                     DavMode::Ok => {
                         dav.stored.lock().unwrap().insert(path, body);
@@ -98,6 +117,9 @@ async fn spawn_mock_dav(mode: DavMode) -> (String, Arc<MockDav>) {
                 );
                 (StatusCode::MULTI_STATUS, xml)
             } else if method == Method::DELETE {
+                if dav.delete_fails.load(std::sync::atomic::Ordering::SeqCst) {
+                    return (StatusCode::SERVICE_UNAVAILABLE, String::new());
+                }
                 dav.stored.lock().unwrap().remove(&path);
                 (StatusCode::NO_CONTENT, String::new())
             } else {
@@ -136,7 +158,7 @@ async fn writeback_fixture(mode: DavMode) -> (SqlitePool, Arc<MockDav>, String, 
 }
 
 #[allow(clippy::type_complexity)]
-async fn writeback_state(
+pub(super) async fn writeback_state(
     pool: &SqlitePool,
     id: &str,
 ) -> (Option<String>, i64, Option<String>, Option<String>, String) {
@@ -151,7 +173,7 @@ async fn writeback_state(
 }
 
 /// Push the booking the way a booking handler does.
-async fn push_fresh(pool: &SqlitePool, host: &str, uid: &str) {
+pub(super) async fn push_fresh(pool: &SqlitePool, host: &str, uid: &str) {
     let (details, _) = writeback::writeback_details(pool, uid).await.unwrap();
     caldav_push_booking(pool, &[0u8; 32], host, uid, &details).await;
 }

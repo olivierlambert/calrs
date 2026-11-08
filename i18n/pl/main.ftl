@@ -551,6 +551,29 @@ bookings-back = Wstecz
 bookings-empty = Nie ma jeszcze nadchodzących rezerwacji.<br>Udostępnij swoje { $link }, aby inni mogli rezerwować czas u ciebie.
 bookings-empty-link-label = linki do typów wydarzeń
 bookings-search-placeholder = Szukaj gości, e-maili lub spotkań
+bookings-recent = Ostatnie 30 dni
+
+# Host notes on a booking (templates/booking_notes.html, bookings page, overview, host emails)
+
+host-notes-title = Notatki organizatorów
+host-notes-hint = Widzą je organizatorzy tej rezerwacji, członek zespołu, który ją przejął, oraz administrator działający jako jeden z jej organizatorów. Nigdy nie są pokazywane gościowi ani dodawane do zaproszenia czy wydarzenia w kalendarzu.
+host-notes-placeholder = Na przykład: co padło podczas rozmowy, co trzeba przygotować.
+host-notes-save = Zapisz notatki
+host-notes-saved = Notatki zapisane.
+host-notes-too-long = Notatki organizatorów mogą mieć najwyżej { $max } znaków.
+host-notes-conflict = Te notatki zmieniono po otwarciu tej strony. Zapisana wersja jest pokazana poniżej; ponowne zapisanie zastąpi ją tekstem z pola.
+host-notes-current = Zapisana wersja:
+host-notes-last-edit = Ostatnia zmiana: { $name }, { $when }
+host-notes-last-edit-anon = Ostatnia zmiana: { $when }
+host-notes-edit = Edytuj notatkę
+host-notes-marker = Notatka organizatorów
+host-notes-cleared = (usunięte)
+host-notes-last-edit-as = Ostatnia zmiana: { $name } (administrator, jako { $host }), { $when }
+dash-not-found-title = Nie znaleziono
+dash-not-found-body = Ta strona nie istnieje albo to konto nie ma do niej dostępu.
+host-notes-from-guest = Od gościa:
+bookings-host-notes = Notatki organizatorów:
+email-detail-host-notes = Notatki organizatorów:
 
 # Dashboard teams listing (templates/dashboard_teams.html)
 
@@ -2052,3 +2075,15 @@ pager-previous = Poprzednia
 pager-next = Następna
 admin-users-search = Szukaj
 admin-figures-cached = Dane o rezerwacjach obliczone { $seconds } s temu.
+
+# Write destination per event type (#47)
+etf-write-destination = Zapisuj potwierdzone rezerwacje w
+etf-write-destination-default = Domyślnie (ustawienie źródła)
+etf-write-destination-help = Tylko dla tego typu wydarzenia. Domyślnie trafiają do kalendarza zapisu każdego z twoich źródeł. W typie wydarzenia zespołu dotyczy to tylko rezerwacji, które prowadzisz.
+etf-write-destination-team = Każdy członek sam wybiera, gdzie zapisywane są prowadzone przez niego rezerwacje (strona { $link }).
+sources-destinations-heading = Rezerwacje według typu wydarzenia
+sources-destinations-help = Wybierz kalendarz, w którym zapisywane są potwierdzone rezerwacje każdego typu wydarzenia. W typie wydarzenia zespołu dotyczy to rezerwacji, które prowadzisz; pozostali członkowie wybierają własny. Rezerwacje już zapisane przenoszą się przy następnym zapisie: przełożeniu, zatwierdzeniu, ponownej próbie lub przejęciu.
+sources-destinations-saved = Zapisano. Nowe rezerwacje trafiają do wybranych tutaj kalendarzy.
+write-destination-not-yours = Nic nie zapisano: wybierz jeden z własnych kalendarzy, dla typu wydarzenia, który prowadzisz.
+write-destination-unavailable = { $name } (niedostępny)
+write-destination-refused = Ten kalendarz odrzucił ostatnią rezerwację ({ $error }), więc zapisano ją według ustawienia źródła. Następna rezerwacja spróbuje ponownie.

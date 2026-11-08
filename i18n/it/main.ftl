@@ -507,6 +507,29 @@ bookings-back = Indietro
 bookings-empty = Ancora nessuna prenotazione in arrivo.<br>Condividi i tuoi { $link } così gli altri possono prenotare con te.
 bookings-empty-link-label = link ai tipi di evento
 bookings-search-placeholder = Cerca ospiti, email o incontri
+bookings-recent = Ultimi 30 giorni
+
+# Host notes on a booking (templates/booking_notes.html, bookings page, overview, host emails)
+
+host-notes-title = Note degli organizzatori
+host-notes-hint = Le vedono gli organizzatori di questa prenotazione, un membro del team che l'ha presa in carico e un amministratore mentre agisce come uno dei suoi organizzatori. Non vengono mai mostrate all'ospite né aggiunte all'invito o all'evento del calendario.
+host-notes-placeholder = Per esempio: cosa è stato detto in una chiamata, cosa preparare.
+host-notes-save = Salva le note
+host-notes-saved = Note salvate.
+host-notes-too-long = Le note degli organizzatori possono contenere al massimo { $max } caratteri.
+host-notes-conflict = Queste note sono state modificate dopo l'apertura di questa pagina. La versione salvata è mostrata sotto; salvando di nuovo viene sostituita dal testo del campo.
+host-notes-current = Versione salvata:
+host-notes-last-edit = Ultima modifica di { $name }, { $when }
+host-notes-last-edit-anon = Ultima modifica: { $when }
+host-notes-edit = Modifica la nota
+host-notes-marker = Nota degli organizzatori
+host-notes-cleared = (cancellate)
+host-notes-last-edit-as = Ultima modifica di { $name } (amministratore, come { $host }), { $when }
+dash-not-found-title = Non trovato
+dash-not-found-body = Questa pagina non esiste, oppure questo account non può vederla.
+host-notes-from-guest = Dall'ospite:
+bookings-host-notes = Note degli organizzatori:
+email-detail-host-notes = Note degli organizzatori:
 
 # Dashboard teams listing (templates/dashboard_teams.html)
 
@@ -1981,3 +2004,15 @@ pager-previous = Precedente
 pager-next = Successiva
 admin-users-search = Cerca
 admin-figures-cached = Dati delle prenotazioni calcolati { $seconds } s fa.
+
+# Write destination per event type (#47)
+etf-write-destination = Scrivi le prenotazioni confermate in
+etf-write-destination-default = Predefinito (impostazione dell'origine)
+etf-write-destination-help = Solo per questo tipo di evento. Per impostazione predefinita vengono scritte nel calendario di scrittura di ciascuna delle tue origini. Su un tipo di evento del team, vale solo per le prenotazioni che gestisci tu.
+etf-write-destination-team = Ogni membro sceglie dove vengono scritte le prenotazioni che gestisce, in { $link }.
+sources-destinations-heading = Prenotazioni per tipo di evento
+sources-destinations-help = Scegli il calendario in cui vengono scritte le prenotazioni confermate di ogni tipo di evento. Su un tipo di evento del team vale per le prenotazioni che gestisci tu; gli altri membri scelgono il proprio. Le prenotazioni già scritte si spostano alla scrittura successiva: una riprogrammazione, un'approvazione, un nuovo tentativo o una presa in carico.
+sources-destinations-saved = Salvato. Le nuove prenotazioni vanno nei calendari scelti qui.
+write-destination-not-yours = Non è stato salvato nulla: scegli uno dei tuoi calendari, per un tipo di evento che gestisci.
+write-destination-unavailable = { $name } (non disponibile)
+write-destination-refused = Questo calendario ha rifiutato l'ultima prenotazione ({ $error }), che è stata scritta secondo l'impostazione dell'origine. La prossima prenotazione riproverà.

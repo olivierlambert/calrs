@@ -507,6 +507,29 @@ bookings-back = Zurück
 bookings-empty = Noch keine anstehenden Buchungen.<br>Teile deine { $link }, damit andere Zeit mit dir buchen können.
 bookings-empty-link-label = Terminart-Links
 bookings-search-placeholder = Gäste, E-Mails oder Termine suchen
+bookings-recent = Letzte 30 Tage
+
+# Host notes on a booking (templates/booking_notes.html, bookings page, overview, host emails)
+
+host-notes-title = Notizen der Gastgeber
+host-notes-hint = Sichtbar für die Gastgeber dieser Buchung, ein Teammitglied, das sie übernommen hat, und einen Admin, der als einer ihrer Gastgeber handelt. Dem Gast werden sie nie angezeigt, und sie landen nie in der Einladung oder im Kalendertermin.
+host-notes-placeholder = Zum Beispiel: was in einem Telefonat gesagt wurde, was vorzubereiten ist.
+host-notes-save = Notizen speichern
+host-notes-saved = Notizen gespeichert.
+host-notes-too-long = Notizen der Gastgeber dürfen höchstens { $max } Zeichen lang sein.
+host-notes-conflict = Diese Notizen wurden geändert, nachdem diese Seite geöffnet wurde. Die gespeicherte Fassung steht unten; erneutes Speichern ersetzt sie durch den Text im Feld.
+host-notes-current = Gespeicherte Fassung:
+host-notes-last-edit = Zuletzt bearbeitet von { $name }, { $when }
+host-notes-last-edit-anon = Zuletzt bearbeitet am { $when }
+host-notes-edit = Notiz bearbeiten
+host-notes-marker = Notiz der Gastgeber
+host-notes-cleared = (gelöscht)
+host-notes-last-edit-as = Zuletzt bearbeitet von { $name } (Admin, als { $host }), { $when }
+dash-not-found-title = Nicht gefunden
+dash-not-found-body = Diese Seite existiert nicht, oder dieses Konto hat keinen Zugriff darauf.
+host-notes-from-guest = Vom Gast:
+bookings-host-notes = Notizen der Gastgeber:
+email-detail-host-notes = Notizen der Gastgeber:
 
 # Dashboard teams listing (templates/dashboard_teams.html)
 
@@ -1981,3 +2004,15 @@ pager-previous = Zurück
 pager-next = Weiter
 admin-users-search = Suchen
 admin-figures-cached = Buchungszahlen vor { $seconds } s berechnet.
+
+# Write destination per event type (#47)
+etf-write-destination = Bestätigte Buchungen schreiben nach
+etf-write-destination-default = Standard (Einstellung der Quelle)
+etf-write-destination-help = Nur für diese Terminart. Standardmäßig landen sie im Schreibkalender jeder deiner Quellen. Bei einer Team-Terminart gilt das nur für die Buchungen, die du übernimmst.
+etf-write-destination-team = Jedes Mitglied wählt unter { $link }, wohin die Buchungen geschrieben werden, die es übernimmt.
+sources-destinations-heading = Buchungen nach Terminart
+sources-destinations-help = Wähle für jede Terminart den Kalender, in den ihre bestätigten Buchungen geschrieben werden. Bei einer Team-Terminart gilt das für die Buchungen, die du übernimmst; die anderen Mitglieder wählen ihren eigenen. Bereits geschriebene Buchungen ziehen beim nächsten Schreiben um: bei einer Verschiebung, Freigabe, Wiederholung oder Übernahme.
+sources-destinations-saved = Gespeichert. Neue Buchungen landen in den hier gewählten Kalendern.
+write-destination-not-yours = Nichts wurde gespeichert: Wähle einen deiner eigenen Kalender, für eine Terminart, die du übernimmst.
+write-destination-unavailable = { $name } (nicht verfügbar)
+write-destination-refused = Dieser Kalender hat die letzte Buchung abgelehnt ({ $error }); sie wurde stattdessen nach der Einstellung der Quelle geschrieben. Die nächste Buchung versucht es erneut.
