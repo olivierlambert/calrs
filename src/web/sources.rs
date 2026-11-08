@@ -987,7 +987,11 @@ async fn run_sync_for_source(
     // Same dispatch as the background and CLI syncs, so a failure here
     // (including credentials that no longer work) is recorded on the source
     // too. A calendar that failed to fetch fails the sync, so "Sync
-    // complete." is only shown when every calendar synced (#162).
+    // complete." is only shown when every calendar synced (#162). It waits
+    // for a background or on-demand sync of the same source to finish rather
+    // than running alongside it (#388).
+    let lock = crate::commands::sync::source_lock(source_id).await;
+    let _guard = lock.lock().await;
     match crate::commands::sync::sync_one_source(
         pool,
         key,

@@ -149,11 +149,16 @@ cal.example.com {
 | `CALRS_DATA_DIR` | SQLite database directory | `/var/lib/calrs` (Docker/systemd) or XDG (dev) |
 | `CALRS_BASE_URL` | Public URL (required for OIDC callbacks and email action links) | `http://localhost:3000` |
 | `CALRS_ALLOW_PRIVATE_HOSTS` | Comma-separated hostnames allowed to resolve to private IPs for CalDAV/EWS (SSRF opt-out) | _(none)_ |
-| `CALRS_SYNC_MIN_AGE` | Minimum time in seconds between two background syncs of the same calendar source, e.g. `900` for every 15 minutes. Booking pages still refresh a host's calendars on demand once they are 5 minutes old. Capped at `86400` (one day). A failing source is retried at this interval too, so the email warning its owner (sent after three failures) comes later: after about 30 minutes at `900` | `0` (the stalest source every minute) |
+| `CALRS_SYNC_MIN_AGE` | Minimum time in seconds between two background syncs of the same calendar source, e.g. `900` for every 15 minutes. Booking pages still refresh a host's calendars on demand once they are 5 minutes old, and a source due its daily full resync is synced anyway. Capped at `86400` (one day). A failing source is retried at this interval too, so the email warning its owner (sent after three failures) comes later: after about 30 minutes at `900` | `0` (no minimum: each source about once an hour, see below) |
+| `CALRS_SYNC_CONCURRENCY` | How many calendar sources the background sync may sync at once, never more than one per server. Capped at `16`; the database has five connections, shared with web requests | `4` |
 | `RUST_LOG` | Log level filter | `calrs=info,tower_http=info` |
 | `CALRS_SMS_*` | SMS gateway configuration, overriding the admin panel; see [SMS Notifications](./sms.md#environment-variables) | _(none)_ |
 
 `CALRS_BASE_URL` and `CALRS_ALLOW_PRIVATE_HOSTS` can also be set without environment variables — from the admin panel (**System settings**) or the CLI (`calrs config general`). The stored value is persisted in the database; when the matching environment variable is set it takes precedence at runtime. The other variables (`CALRS_DATA_DIR`, `RUST_LOG`, and `CALRS_SECRET_KEY`) are bootstrap settings and remain environment-only.
+
+### Background calendar sync
+
+Besides the on-demand refresh of booking pages, `calrs serve` syncs calendar sources in the background. Once a minute it syncs enough sources for every one to come round about once an hour: one per minute up to 60 sources (as in earlier versions), then the number of sources divided by 60 (24 per minute for 1,440 sources). Sources due their daily full resync go first; then the ones synced longest ago. Up to `CALRS_SYNC_CONCURRENCY` syncs run at once, but never two against the same server (scheme, host and port), so one CalDAV or Exchange server sees one background sync at a time; [managed Exchange sources](./ews-impersonation.md) count against the server of the global Exchange endpoint. No new sync starts after 50 seconds, so a slow server delays the next round rather than piling up, and reminders, request expiry and write-back retries run in a task of their own and never wait for it. A source being synced already is not synced twice: a booking page that finds its host's source being synced shows the cached times without waiting, and the **Sync** button waits for that sync to finish. The `calrs sync` CLI is a separate process and is not coordinated with a running server.
 
 ## Observability
 

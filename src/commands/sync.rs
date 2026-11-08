@@ -503,6 +503,7 @@ async fn sync_caldav_calendars(
 /// source. A source that failed within the last `STALE_SECS` is not retried
 /// on demand, so a dead server costs a guest page one timeout every five
 /// minutes rather than one per page load.
+/// A source another task is syncing right now is skipped, not waited for.
 pub async fn sync_if_stale(pool: &SqlitePool, key: &[u8; 32], user_id: &str) {
     let cutoff = Utc::now() - chrono::Duration::seconds(STALE_SECS);
     // Must match SQLite datetime('now') format: "YYYY-MM-DD HH:MM:SS" (space, not T)
@@ -541,11 +542,18 @@ pub async fn sync_if_stale(pool: &SqlitePool, key: &[u8; 32], user_id: &str) {
         provider_type,
     ) in &stale_sources
     {
-        // Serialize on-demand syncs per source. If another task is already
-        // syncing this source, we wait, then re-check staleness — almost
-        // always the winner bumped last_synced and we can skip.
+        // One sync per source at a time. If another task (a booking page,
+        // the background sync, the dashboard's Sync button) is syncing this
+        // source, skip it and serve the cache, which that sync is about to
+        // refresh: a guest page never waits for someone else's sync (#388).
         let lock = source_lock(source_id).await;
-        let _guard = lock.lock().await;
+        let Ok(_guard) = lock.try_lock() else {
+            tracing::debug!(
+                source_id = %source_id,
+                "skipping on-demand sync, the source is being synced"
+            );
+            continue;
+        };
 
         // MAX() of the two: whichever of the last success and the last
         // failure is more recent says whether the source was just tried.
@@ -585,50 +593,217 @@ pub async fn sync_if_stale(pool: &SqlitePool, key: &[u8; 32], user_id: &str) {
     }
 }
 
-/// The enabled source the background loop syncs next: the one whose last
-/// attempt (success or failure) is oldest, provided that attempt is at least
-/// `min_age_secs` old (`CALRS_SYNC_MIN_AGE`, #310). With 0 the stalest source
-/// is always picked, as before the setting existed. `None` when every source
-/// is fresher than that.
+/// A source the background sync is due to sync, as picked by
+/// [`due_background_sources`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DueSource {
+    pub id: String,
+    /// The server a sync of the source talks to (scheme, host and port), so
+    /// the background sync never runs two syncs against one server at once
+    /// (#388). A managed Exchange source talks to the global endpoint, with
+    /// the service account every managed source shares.
+    pub origin: String,
+    /// The source's last attempt when it was picked, to tell whether another
+    /// sync ran it in the meantime.
+    pub last_attempt: String,
+}
+
+/// How long after the background sync started a forced full resync of a
+/// source it may jump the queue for one again, when that resync succeeded
+/// without completing a full snapshot (see [`due_background_sources`]).
+pub const FULL_RESYNC_RETRY_HOURS: i64 = 6;
+
+/// Hours after which a source is due its daily full resync.
+pub const FULL_RESYNC_HOURS: i64 = 24;
+
+/// The enabled sources the background sync is due to sync, at most `limit`,
+/// in the order to sync them: the ones whose last attempt (success or
+/// failure) is oldest first, provided that attempt is at least `min_age_secs`
+/// old (`CALRS_SYNC_MIN_AGE`, #310). With 0 every source is a candidate, as
+/// before the setting existed. Empty when every source is fresher than that.
 ///
 /// A healthy source due its daily full resync (`last_full_sync` unset or over
-/// 24h old) is picked whatever its age: on-demand syncs from booking pages
-/// keep `last_synced` fresh but only fetch the delta, and this loop is the
-/// only place the full resync runs, so a busy host's source would otherwise
-/// never get one. A failing source still waits the minimum age.
+/// 24h old) is picked whatever its age, and ahead of the others (#388):
+/// on-demand syncs from booking pages keep `last_synced` fresh but only fetch
+/// the delta, and the background sync is the only place the full resync runs,
+/// so a busy host's source would otherwise never get one, and with thousands
+/// of sources the others would wait their turn for more than a day. It jumps
+/// the queue at most once every [`FULL_RESYNC_RETRY_HOURS`]
+/// (`last_full_attempt_at`), since a sync can succeed without completing a
+/// full snapshot. A failing source is never put first, and waits the minimum
+/// age like any other, so the failure backoff is the same as before.
 ///
 /// A managed Exchange source is left out while it has nothing to do (global
 /// Exchange off or incomplete, its user suspended or not trusted, see
 /// [`crate::ews::global::ACTIVE_SOURCE_SQL`]): its sync is skipped without
 /// recording an attempt, so it would stay the stalest candidate and be picked
 /// on every tick, starving the other sources.
-pub async fn next_background_source(pool: &SqlitePool, min_age_secs: u64) -> Option<String> {
-    sqlx::query_scalar(&format!(
-        "SELECT id FROM (
-             SELECT cs.id, cs.last_full_sync, cs.last_sync_error_at,
-                    MAX(COALESCE(cs.last_synced, '2000-01-01'),
-                        COALESCE(cs.last_sync_error_at, '2000-01-01')) AS last_attempt
-             FROM caldav_sources cs
-             WHERE cs.enabled = 1 AND {} AND {NOT_SUSPENDED_MICROSOFT}
-         )
-         WHERE ?1 = 0
-            OR last_attempt <= datetime('now', ?2)
-            OR ((last_full_sync IS NULL OR last_full_sync < datetime('now', '-24 hours'))
-                AND (last_sync_error_at IS NULL OR last_sync_error_at <= datetime('now', ?2)))
-         ORDER BY last_attempt ASC
-         LIMIT 1",
+pub async fn due_background_sources(
+    pool: &SqlitePool,
+    now: chrono::DateTime<Utc>,
+    min_age_secs: u64,
+    limit: usize,
+) -> Vec<DueSource> {
+    let rows: Vec<SourceSyncState> = sqlx::query_as(&format!(
+        "SELECT cs.id,
+                CASE WHEN cs.managed = 1
+                     THEN (SELECT ac.ews_global_url FROM auth_config ac WHERE ac.id = 'singleton')
+                     ELSE cs.url END AS sync_url,
+                cs.last_synced, cs.last_sync_error_at, cs.last_full_sync, cs.last_full_attempt_at
+         FROM caldav_sources cs
+         WHERE cs.enabled = 1 AND {} AND {NOT_SUSPENDED_MICROSOFT}",
         crate::ews::global::ACTIVE_SOURCE_SQL
     ))
-    .bind(min_age_secs as i64)
-    .bind(format!("-{min_age_secs} seconds"))
-    .fetch_optional(pool)
+    .fetch_all(pool)
     .await
-    .unwrap_or(None)
+    .unwrap_or_else(|e| {
+        tracing::warn!(error = %e, "could not list the sources due a background sync");
+        Vec::new()
+    });
+    pick_due_sources(&rows, now, min_age_secs, limit)
 }
 
-/// Sync a single source by ID (for background sync loop).
+/// What [`pick_due_sources`] needs to know of a source: its id, the URL its
+/// sync talks to, and its sync timestamps (`datetime('now')` text).
+#[derive(Debug, Clone, Default, PartialEq, Eq, sqlx::FromRow)]
+pub struct SourceSyncState {
+    pub id: String,
+    pub sync_url: Option<String>,
+    pub last_synced: Option<String>,
+    pub last_sync_error_at: Option<String>,
+    pub last_full_sync: Option<String>,
+    pub last_full_attempt_at: Option<String>,
+}
+
+impl SourceSyncState {
+    /// The later of the last success and the last failure.
+    pub fn last_attempt(&self) -> String {
+        last_attempt_of(
+            self.last_synced.as_deref(),
+            self.last_sync_error_at.as_deref(),
+        )
+    }
+}
+
+/// The later of a last success and a last failure, `2000-01-01` standing for
+/// never. Compared as text, as SQLite does: both hold `datetime('now')`
+/// values.
+fn last_attempt_of(last_synced: Option<&str>, last_error: Option<&str>) -> String {
+    let synced = last_synced.unwrap_or("2000-01-01");
+    let failed = last_error.unwrap_or("2000-01-01");
+    synced.max(failed).to_string()
+}
+
+/// The selection rules of [`due_background_sources`] over sources already
+/// known to be enabled and active, as a pure function.
+pub fn pick_due_sources(
+    rows: &[SourceSyncState],
+    now: chrono::DateTime<Utc>,
+    min_age_secs: u64,
+    limit: usize,
+) -> Vec<DueSource> {
+    let at = |t: chrono::DateTime<Utc>| t.format("%Y-%m-%d %H:%M:%S").to_string();
+    let full_cutoff = at(now - chrono::Duration::hours(FULL_RESYNC_HOURS));
+    let retry_cutoff = at(now - chrono::Duration::hours(FULL_RESYNC_RETRY_HOURS));
+    let age_cutoff = at(now - chrono::Duration::seconds(min_age_secs as i64));
+    let mut due: Vec<(bool, String, &SourceSyncState)> = rows
+        .iter()
+        .filter_map(|row| {
+            let full_due = row.last_sync_error_at.is_none()
+                && row
+                    .last_full_sync
+                    .as_deref()
+                    .is_none_or(|t| t < full_cutoff.as_str())
+                && row
+                    .last_full_attempt_at
+                    .as_deref()
+                    .is_none_or(|t| t <= retry_cutoff.as_str());
+            let last_attempt = row.last_attempt();
+            (min_age_secs == 0 || last_attempt.as_str() <= age_cutoff.as_str() || full_due)
+                .then_some((full_due, last_attempt, row))
+        })
+        .collect();
+    // Full resyncs due first, then the stalest, then by id for a stable order.
+    let order = |a: &(bool, String, &SourceSyncState), b: &(bool, String, &SourceSyncState)| {
+        b.0.cmp(&a.0)
+            .then_with(|| a.1.cmp(&b.1))
+            .then_with(|| a.2.id.cmp(&b.2.id))
+    };
+    if due.len() > limit {
+        if limit == 0 {
+            return Vec::new();
+        }
+        due.select_nth_unstable_by(limit - 1, order);
+        due.truncate(limit);
+    }
+    due.sort_unstable_by(order);
+    due.into_iter()
+        .map(|(_, last_attempt, row)| DueSource {
+            id: row.id.clone(),
+            origin: sync_origin(row.sync_url.as_deref().unwrap_or_default()),
+            last_attempt,
+        })
+        .collect()
+}
+
+/// The first source [`due_background_sources`] would sync now.
+#[cfg(test)]
+pub async fn next_background_source(pool: &SqlitePool, min_age_secs: u64) -> Option<String> {
+    due_background_sources(pool, Utc::now(), min_age_secs, 1)
+        .await
+        .into_iter()
+        .next()
+        .map(|source| source.id)
+}
+
+/// The number of sources the background sync looks after: enabled, and not
+/// left out for having nothing to do (see [`due_background_sources`]).
+pub async fn background_source_count(pool: &SqlitePool) -> i64 {
+    sqlx::query_scalar(&format!(
+        "SELECT COUNT(*) FROM caldav_sources cs
+         WHERE cs.enabled = 1 AND {} AND {NOT_SUSPENDED_MICROSOFT}",
+        crate::ews::global::ACTIVE_SOURCE_SQL
+    ))
+    .fetch_one(pool)
+    .await
+    .unwrap_or(0)
+}
+
+/// A source's last attempt, in the form [`DueSource::last_attempt`] holds it.
+/// `None` when the source is gone.
+pub async fn source_last_attempt(pool: &SqlitePool, source_id: &str) -> Option<String> {
+    let row: Option<(Option<String>, Option<String>)> =
+        sqlx::query_as("SELECT last_synced, last_sync_error_at FROM caldav_sources WHERE id = ?")
+            .bind(source_id)
+            .fetch_optional(pool)
+            .await
+            .unwrap_or(None);
+    row.map(|(synced, failed)| last_attempt_of(synced.as_deref(), failed.as_deref()))
+}
+
+/// The key under which the background sync limits syncs to one per server:
+/// the origin (scheme, host, port) of the URL a sync talks to, and the URL
+/// itself when it has no usable origin.
+pub fn sync_origin(url: &str) -> String {
+    let url = url.trim();
+    match reqwest::Url::parse(url) {
+        Ok(parsed) if parsed.origin().is_tuple() => parsed.origin().ascii_serialization(),
+        _ => url.to_ascii_lowercase(),
+    }
+}
+
+/// Sync a single source by ID (for the background sync, and a Microsoft
+/// source's first sync), waiting for any sync of it already running.
 /// Forces a full resync if last_full_sync is >24h ago (catches orphaned events).
 pub async fn sync_source_by_id(pool: &SqlitePool, key: &[u8; 32], source_id: &str) {
+    let lock = source_lock(source_id).await;
+    let _guard = lock.lock().await;
+    sync_source_by_id_locked(pool, key, source_id).await;
+}
+
+/// [`sync_source_by_id`] for a caller already holding the source's
+/// [`source_lock`].
+pub(crate) async fn sync_source_by_id_locked(pool: &SqlitePool, key: &[u8; 32], source_id: &str) {
     let source: Option<(String, String, Option<String>, Option<String>, String, Option<String>, Option<String>, String)> = sqlx::query_as(
         &format!("SELECT url, username, password_enc, last_full_sync, auth_type, access_token_enc, token_expires_at, provider_type FROM caldav_sources cs WHERE id = ? AND enabled = 1 AND {NOT_SUSPENDED_MICROSOFT}"),
     )
@@ -651,22 +826,20 @@ pub async fn sync_source_by_id(pool: &SqlitePool, key: &[u8; 32], source_id: &st
         return;
     };
 
-    // Force full resync if last_full_sync is >24h ago or never done
-    let needs_full = match &last_full_sync {
-        None => true,
-        Some(ts) => {
-            let cutoff = Utc::now() - chrono::Duration::hours(24);
-            let cutoff_str = cutoff.format("%Y-%m-%d %H:%M:%S").to_string();
-            ts < &cutoff_str
-        }
-    };
-    if needs_full {
+    if needs_full_resync(last_full_sync.as_deref(), Utc::now()) {
         tracing::info!(source_id = %source_id, "forcing full resync (>24h since last full sync)");
         let _ =
             sqlx::query("UPDATE calendars SET sync_token = NULL, ctag = NULL WHERE source_id = ?")
                 .bind(source_id)
                 .execute(pool)
                 .await;
+        // #388: a source due its full resync goes first in line, once.
+        let _ = sqlx::query(
+            "UPDATE caldav_sources SET last_full_attempt_at = datetime('now') WHERE id = ?",
+        )
+        .bind(source_id)
+        .execute(pool)
+        .await;
     }
 
     let _ = sync_one_source(
@@ -682,6 +855,18 @@ pub async fn sync_source_by_id(pool: &SqlitePool, key: &[u8; 32], source_id: &st
         &provider_type,
     )
     .await;
+}
+
+/// Whether a source whose last full sync is `last_full_sync` (a
+/// `datetime('now')` value, `None` if never) is due its daily full resync.
+pub fn needs_full_resync(last_full_sync: Option<&str>, now: chrono::DateTime<Utc>) -> bool {
+    match last_full_sync {
+        None => true,
+        Some(ts) => {
+            let cutoff = now - chrono::Duration::hours(FULL_RESYNC_HOURS);
+            ts < cutoff.format("%Y-%m-%d %H:%M:%S").to_string().as_str()
+        }
+    }
 }
 
 /// EWS-specific sync path using the [`crate::providers::CalendarProvider`]
@@ -4952,18 +5137,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn sync_if_stale_serializes_on_per_source_lock() {
-        // Dedup regression: while one task holds the per-source lock (the
-        // "winner" of a race), a second sync_if_stale call for the same
-        // source must wait. After the winner bumps last_synced and releases,
-        // the waiter re-checks, sees a fresh timestamp, and skips without
-        // attempting to hit CalDAV.
+    async fn sync_if_stale_skips_a_source_being_synced() {
+        // While another task holds the per-source lock (the background
+        // sync, another booking page), sync_if_stale neither waits for it
+        // nor syncs the source a second time: it returns at once and the
+        // page is served from the cache (#388).
         let pool = setup_test_db().await;
         let (source_id, _et_id) = seed_fixtures(&pool).await;
 
-        // Mark stale and give the source a non-null password_enc so the
-        // stale_sources SELECT deserializes successfully (the value itself
-        // doesn't matter — decrypt would fail but we never reach it).
+        // Stale, with a password_enc that cannot be decrypted: a sync
+        // attempt would fail and record an error.
         sqlx::query(
             "UPDATE caldav_sources SET last_synced = '2000-01-01 00:00:00', password_enc = 'deadbeef' WHERE id = ?",
         )
@@ -4980,39 +5163,32 @@ mod tests {
         .await
         .unwrap();
 
-        // Acquire the per-source lock before spawning the waiter.
         let lock = source_lock(&source_id).await;
         let guard = lock.lock().await;
+        tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            sync_if_stale(&pool, &[0u8; 32], &user_id),
+        )
+        .await
+        .expect("sync_if_stale waited for the lock");
+        let error: Option<String> =
+            sqlx::query_scalar("SELECT last_sync_error_at FROM caldav_sources WHERE id = ?")
+                .bind(&source_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(error, None, "no second sync was attempted");
 
-        let pool_clone = pool.clone();
-        let uid_clone = user_id.clone();
-        let key = [0u8; 32];
-        let waiter = tokio::spawn(async move {
-            sync_if_stale(&pool_clone, &key, &uid_clone).await;
-        });
-
-        // Give the waiter a chance to reach the lock acquisition.
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-        assert!(
-            !waiter.is_finished(),
-            "sync_if_stale must block while the per-source mutex is held"
-        );
-
-        // Simulate the winner completing its sync: bump last_synced to now.
-        sqlx::query("UPDATE caldav_sources SET last_synced = datetime('now') WHERE id = ?")
-            .bind(&source_id)
-            .execute(&pool)
-            .await
-            .unwrap();
-
-        // Release the lock. The waiter re-checks, sees fresh state, and
-        // returns quickly without doing any network work.
+        // Once released, the next page load syncs it (and fails here).
         drop(guard);
-
-        tokio::time::timeout(std::time::Duration::from_secs(2), waiter)
-            .await
-            .expect("sync_if_stale did not return after the lock was released")
-            .expect("sync_if_stale task panicked");
+        sync_if_stale(&pool, &[0u8; 32], &user_id).await;
+        let error: Option<String> =
+            sqlx::query_scalar("SELECT last_sync_error_at FROM caldav_sources WHERE id = ?")
+                .bind(&source_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(error.is_some());
     }
 
     // --- #324: calendars the owner does not sync ---

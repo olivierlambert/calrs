@@ -353,8 +353,9 @@ pub(super) async fn reschedule_hosts(
 }
 
 /// Refresh the calendars of every user a reschedule depends on. `sync_if_stale`
-/// holds a per-source mutex and re-checks staleness inside it, so even with
-/// this fan-out at most one CalDAV fetch per source is in flight.
+/// takes a per-source mutex (skipping a source another task is syncing) and
+/// re-checks staleness inside it, so even with this fan-out at most one
+/// CalDAV fetch per source is in flight.
 pub(super) async fn sync_reschedule_hosts(state: &Arc<AppState>, hosts: &RescheduleHosts) {
     let mut sync_tasks = tokio::task::JoinSet::new();
     for user_id in hosts

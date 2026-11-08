@@ -1303,3 +1303,79 @@ async fn troubleshoot_marks_days_past_the_366_day_cap() {
     let body = body_string(response).await;
     assert!(body.contains("Beyond booking horizon (366 days)"), "{body}");
 }
+
+/// #388: calendar sync left the reminder loop. While the background sync is
+/// stuck on a slow calendar server, a tick of the reminder loop still runs
+/// at once, expires the overdue request, and syncs nothing itself.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_slow_calendar_server_does_not_hold_up_the_reminder_loop() {
+    use crate::commands::sync_scheduler::{run_tick, SchedulerConfig, SyncFn};
+    let pool = setup_test_db_with(5).await;
+    let (_, account_id, et_id) = seed_test_data(&pool).await;
+    sqlx::query(
+        "UPDATE event_types SET requires_confirmation = 1, pending_expiry_hours = 24 WHERE id = ?",
+    )
+    .bind(&et_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let past = Some(utc_stamp(Utc::now() - Duration::hours(1)));
+    let id = insert_v1_booking(
+        &pool,
+        &et_id,
+        "slow-server@test.com",
+        Utc::now() + Duration::days(2),
+        30,
+        "pending",
+        &[
+            ("pending_expires_at", past.clone()),
+            ("pending_since", past),
+        ],
+    )
+    .await;
+    let source = uuid::Uuid::new_v4().to_string();
+    sqlx::query("INSERT INTO caldav_sources (id, account_id, name, url, username) VALUES (?, ?, 'slow', 'https://dav.invalid/', 'u')")
+        .bind(&source).bind(&account_id).execute(&pool).await.unwrap();
+
+    // The background sync, waiting on a server that does not answer.
+    let started = std::sync::Arc::new(tokio::sync::Notify::new());
+    let sync_fn: SyncFn = {
+        let started = started.clone();
+        std::sync::Arc::new(move |_id: String| {
+            let started = started.clone();
+            Box::pin(async move {
+                started.notify_one();
+                tokio::time::sleep(std::time::Duration::from_secs(600)).await;
+            })
+        })
+    };
+    let cfg = SchedulerConfig {
+        min_age_secs: 0,
+        concurrency: 1,
+        budget: std::time::Duration::from_secs(50),
+    };
+    let background = {
+        let pool = pool.clone();
+        tokio::spawn(async move { run_tick(&pool, &cfg, Utc::now(), 1, sync_fn).await })
+    };
+    tokio::time::timeout(std::time::Duration::from_secs(10), started.notified())
+        .await
+        .expect("the background sync started");
+
+    tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        crate::web::notify::reminder_tick(&pool, &[0u8; 32]),
+    )
+    .await
+    .expect("the reminder tick waits on no calendar server");
+    assert_eq!(booking_status(&pool, &id).await, "declined");
+    let attempt: (Option<String>, Option<String>) =
+        sqlx::query_as("SELECT last_synced, last_sync_error_at FROM caldav_sources WHERE id = ?")
+            .bind(&source)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(attempt, (None, None), "the reminder tick synced nothing");
+    assert!(!background.is_finished());
+    background.abort();
+}
