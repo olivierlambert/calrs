@@ -86,7 +86,9 @@ pub struct SmsConfig {
     pub sender: String,
     pub base_url: String,
     pub default_country_code: String,
-    /// Messages per day across the whole instance, 0 meaning no limit.
+    /// Billed segments per day across the whole instance, 0 meaning no limit.
+    /// Segments, not messages, because that is what gateways charge for: one
+    /// message can bill two (see `message::estimate_segments`).
     pub daily_cap: i64,
 }
 
@@ -523,34 +525,83 @@ pub async fn notify_guest(pool: &SqlitePool, key: &[u8; 32], event: SmsEvent, ct
     // runaway event type or an SMS pumping attempt would otherwise bill the
     // operator without bound. Over the cap, email carries on alone: a booking
     // must never fail because the SMS budget ran out.
-    if over_daily_cap(pool, &config).await {
-        tracing::warn!(
+    let body = message::compose(event, &ctx);
+    match send_metered(pool, &config, event.as_str(), ctx.phone, &body).await {
+        Ok(receipt) => tracing::info!(
+            event = event.as_str(),
+            provider = %config.provider,
+            message_id = receipt.message_id.as_deref().unwrap_or(""),
+            segments = receipt.segments.unwrap_or(0),
+            "SMS sent"
+        ),
+        Err(MeteredSendError::OverCap) => tracing::warn!(
             event = event.as_str(),
             cap = config.daily_cap,
-            "daily SMS cap reached; skipping SMS (email is unaffected)"
-        );
-        return;
-    }
-
-    let body = message::compose(event, &ctx);
-    match send(&config, ctx.phone, &body).await {
-        Ok(receipt) => {
-            tracing::info!(
-                event = event.as_str(),
-                provider = %config.provider,
-                message_id = receipt.message_id.as_deref().unwrap_or(""),
-                segments = receipt.segments.unwrap_or(0),
-                "SMS sent"
-            );
-            record_usage(pool, &config.provider, event.as_str(), &receipt).await;
-        }
-        Err(e) => tracing::warn!(
+            "daily SMS segment cap reached; skipping SMS (email is unaffected)"
+        ),
+        Err(MeteredSendError::Ledger(e)) => tracing::warn!(
+            event = event.as_str(),
+            error = %e,
+            "could not reserve SMS usage; skipping SMS (email is unaffected)"
+        ),
+        Err(MeteredSendError::Gateway(e)) => tracing::warn!(
             event = event.as_str(),
             provider = %config.provider,
             kind = e.kind(),
             error = %e,
             "SMS send failed"
         ),
+    }
+}
+
+/// Why [`send_metered`] did not deliver a message.
+#[derive(Debug)]
+pub enum MeteredSendError {
+    /// Sending would take today's billed segments past `daily_cap`. Nothing
+    /// was sent.
+    OverCap,
+    /// The usage ledger could not be written, so the cap could not be
+    /// enforced. Nothing was sent: an unmetered send is the one thing the cap
+    /// exists to prevent.
+    Ledger(sqlx::Error),
+    /// The gateway refused the message or could not be reached.
+    Gateway(SmsError),
+}
+
+/// Send one message, metered against the daily cap.
+///
+/// The cap and the ledger are one thing: before the network call, a row
+/// holding the message's estimated segments is inserted only if today's total
+/// plus that estimate still fits the cap (one `INSERT ... SELECT`, which SQLite
+/// runs under its write lock, so concurrent sends cannot all pass a check none
+/// of them has recorded yet). The gateway is then called with no connection
+/// held, and the row is settled with what the gateway reported, or deleted
+/// when the gateway refused the message.
+///
+/// Used by [`notify_guest`] and by the admin panel's test button (event
+/// `test`), so test messages are counted and capped like any other.
+pub async fn send_metered(
+    pool: &SqlitePool,
+    config: &SmsConfig,
+    event: &str,
+    to: &str,
+    body: &str,
+) -> Result<SendReceipt, MeteredSendError> {
+    let estimate = message::estimate_segments(body);
+    let reservation = reserve_usage(pool, config, event, estimate)
+        .await
+        .map_err(MeteredSendError::Ledger)?
+        .ok_or(MeteredSendError::OverCap)?;
+
+    match send(config, to, body).await {
+        Ok(receipt) => {
+            settle_usage(pool, &reservation, estimate, &receipt).await;
+            Ok(receipt)
+        }
+        Err(e) => {
+            release_usage(pool, &reservation).await;
+            Err(MeteredSendError::Gateway(e))
+        }
     }
 }
 
@@ -561,6 +612,19 @@ pub async fn sent_today(pool: &SqlitePool) -> i64 {
         .fetch_one(pool)
         .await
         .unwrap_or(0)
+}
+
+/// Billed segments since midnight (UTC): what the daily cap counts. A row
+/// with no segment count (written before sends were metered, or by a gateway
+/// that reports none) counts as one.
+pub async fn segments_today(pool: &SqlitePool) -> i64 {
+    sqlx::query_scalar::<_, i64>(
+        "SELECT COALESCE(SUM(COALESCE(segments, 1)), 0) FROM sms_usage \
+         WHERE sent_at >= date('now')",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap_or(0)
 }
 
 /// Total cost reported by the gateway since midnight, and its currency.
@@ -579,41 +643,97 @@ pub async fn cost_today(pool: &SqlitePool) -> (f64, String) {
     }
 }
 
-/// Whether the instance has already sent its allowance for today. A cap of 0
-/// means no limit, which is the default.
-async fn over_daily_cap(pool: &SqlitePool, config: &SmsConfig) -> bool {
-    if config.daily_cap <= 0 {
-        return false;
-    }
-    sent_today(pool).await >= config.daily_cap
+/// Reserve `segments` of today's allowance in the usage ledger, returning the
+/// reservation's id, or `None` when it does not fit. A cap of 0 means no
+/// limit, which is the default, and always reserves.
+///
+/// One statement on purpose: SQLite takes the write lock before an `INSERT`
+/// reads anything, so the sum and the insert are atomic across connections,
+/// and no connection is held once it returns (never across the network send).
+async fn reserve_usage(
+    pool: &SqlitePool,
+    config: &SmsConfig,
+    event: &str,
+    segments: u32,
+) -> Result<Option<String>, sqlx::Error> {
+    let id = uuid::Uuid::new_v4().to_string();
+    let segments = i64::from(segments);
+    let inserted = sqlx::query(
+        "INSERT INTO sms_usage (id, event, provider, segments) \
+         SELECT ?, ?, ?, ? \
+         WHERE ? <= 0 \
+            OR (SELECT COALESCE(SUM(COALESCE(segments, 1)), 0) FROM sms_usage \
+                WHERE sent_at >= date('now')) + ? <= ?",
+    )
+    .bind(&id)
+    .bind(event)
+    .bind(&config.provider)
+    .bind(segments)
+    .bind(config.daily_cap)
+    .bind(segments)
+    .bind(config.daily_cap)
+    .execute(pool)
+    .await?
+    .rows_affected();
+    Ok((inserted == 1).then_some(id))
 }
 
-/// Append to the usage ledger the cap counts and the admin panel reports from.
-/// Deliberately records no recipient: this is metering, not a message log.
-async fn record_usage(pool: &SqlitePool, provider: &str, event: &str, receipt: &SendReceipt) {
-    let result = sqlx::query(
-        "INSERT INTO sms_usage (id, event, provider, segments, cost, currency) \
-         VALUES (?, ?, ?, ?, ?, ?)",
-    )
-    .bind(uuid::Uuid::new_v4().to_string())
-    .bind(event)
-    .bind(provider)
-    .bind(receipt.segments.map(|s| s as i64))
-    .bind(receipt.cost)
-    .bind(receipt.currency.as_deref())
-    .execute(pool)
-    .await;
+/// Replace a reservation's estimate with what the gateway reported. Keeps the
+/// estimate when the gateway gives no segment count (a webhook receiver), so
+/// the cap still counts the message. Deliberately records no recipient: this
+/// is metering, not a message log.
+async fn settle_usage(pool: &SqlitePool, id: &str, estimate: u32, receipt: &SendReceipt) {
+    let result =
+        sqlx::query("UPDATE sms_usage SET segments = ?, cost = ?, currency = ? WHERE id = ?")
+            .bind(i64::from(receipt.segments.unwrap_or(estimate)))
+            .bind(receipt.cost)
+            .bind(receipt.currency.as_deref())
+            .bind(id)
+            .execute(pool)
+            .await;
 
     if let Err(e) = result {
+        // The reservation stays, with its estimate: still counted.
         tracing::warn!(error = %e, "could not record SMS usage");
     }
 }
 
-/// Send one message through the configured gateway. Used by [`notify_guest`]
-/// and by the admin panel's test button.
+/// Give a reservation back after the gateway refused the message.
+async fn release_usage(pool: &SqlitePool, id: &str) {
+    if let Err(e) = sqlx::query("DELETE FROM sms_usage WHERE id = ?")
+        .bind(id)
+        .execute(pool)
+        .await
+    {
+        // Failing closed: the message stays counted against today's cap.
+        tracing::warn!(error = %e, "could not release an SMS usage reservation");
+    }
+}
+
+/// Send one message through the configured gateway, unmetered. Callers that
+/// spend money go through [`send_metered`].
 pub async fn send(config: &SmsConfig, to: &str, body: &str) -> Result<SendReceipt, SmsError> {
     let provider = factory::build_provider(config)?;
     provider.send(to, body).await
+}
+
+/// At startup, with `CALRS_SMS_TWILIO_TRIAL` set and Twilio configured, fetch
+/// the account once, so a flag left on a full account shows in the log right
+/// away rather than at the first booking. Sends nothing and only logs: the
+/// send-time guard in `twilio.rs` is what actually refuses.
+pub async fn check_twilio_trial_at_startup(pool: &SqlitePool, key: &[u8; 32]) {
+    if !twilio::trial_mode_enabled() {
+        return;
+    }
+    let Ok(Some(config)) = load_config(pool, key).await else {
+        return;
+    };
+    if config.provider != kinds::TWILIO {
+        return;
+    }
+    if let Err(e) = check(&config).await {
+        tracing::error!(error = %e, "Twilio trial mode check failed at startup");
+    }
 }
 
 /// Verify the stored credentials without sending a message.

@@ -40,7 +40,7 @@ Go to **Dashboard > Admin > SMS settings**. Pick a gateway and the form relabels
 Two settings apply whichever gateway you pick:
 
 - **Default country code** normalises phone numbers guests type in local form. A French guest typing `06 12 34 56 78` on an instance set to `+33` is stored as `+33612345678`. Numbers starting with `+` or `00` are taken as written, whatever this is set to.
-- **Daily limit** caps messages per day across the whole instance. `0` means no limit. See [Keeping the bill bounded](#keeping-the-bill-bounded).
+- **Daily limit** caps billed segments per day across the whole instance, test messages included. `0` means no limit. See [Keeping the bill bounded](#keeping-the-bill-bounded) and [Message content and cost](#message-content-and-cost).
 
 The secret is encrypted at rest (AES-256-GCM), like every other stored credential. It is never displayed again: leaving the field empty when saving keeps the current value. Switching to a different gateway does require entering that gateway's own credential, since the stored one belongs to the previous vendor.
 
@@ -48,7 +48,7 @@ The secret is encrypted at rest (AES-256-GCM), like every other stored credentia
 
 **Test gateway** does one of two things:
 
-- With a phone number, it sends a real message to it, which costs what a message costs.
+- With a phone number, it sends a real message to it, which costs what a message costs. It is counted in today's figures and against the daily limit like any other message, and refused once the limit is reached.
 - With the field left empty, it verifies your credentials without sending anything, for gateways that offer a way to do that (Twilio and seven.io do; GatewayAPI and the webhook do not, and will tell you to send a real test instead).
 
 Failures report what the gateway actually said, normalised across vendors: rejected credentials, a refused recipient, a refused sender, insufficient credit, or rate limiting.
@@ -65,7 +65,7 @@ Like SMTP, the whole configuration can come from the environment instead, which 
 | `CALRS_SMS_SENDER` | From-number or sender ID |
 | `CALRS_SMS_BASE_URL` | Region or self-hosted endpoint; the target URL for the webhook provider |
 | `CALRS_SMS_DEFAULT_COUNTRY_CODE` | e.g. `+33` |
-| `CALRS_SMS_DAILY_CAP` | Messages per day, `0` for no limit |
+| `CALRS_SMS_DAILY_CAP` | Billed segments per day, `0` for no limit |
 
 The block is all-or-nothing: an incomplete set is ignored with a warning in the logs and calrs falls back to the database configuration, so a typo in a deployment unit cannot half-configure the gateway.
 
@@ -80,7 +80,7 @@ This is a testing aid, not a deployment option:
 - It is read from the environment only. There is no database column and no admin field, so it cannot be switched on from the panel and left on by accident.
 - It sits outside the all-or-nothing `CALRS_SMS_*` block and is read on its own, so it works with a database-stored configuration too.
 - The admin SMS card shows a warning while it is active, and every send logs one. All four events look identical on the handset once the template is substituted, so the log is the only place to tell them apart.
-- **Test gateway** with the recipient left empty refuses outright if the variable is set on a full account. That is the one way this can cost money rather than save it: on a paid account the template name is just text, so a flag left set after an upgrade would text every guest the literal string `sms_appointment_reminders` at full price.
+- calrs refuses to send the template to a full account. That is the one way this can cost money rather than save it: on a paid account the template name is just text, so a flag left set after an upgrade would text every guest the literal string `sms_appointment_reminders` at full price. Before its first send, and again every hour or when the configuration changes, calrs reads the account type (a free request) and, on a full account, sends nothing and logs an error; bookings and their emails go on. The same check runs at startup, so the error is in the log at once, and **Test gateway** with the recipient left empty reports it too. If the account cannot be read, nothing is sent either.
 - Trial accounts only reach numbers verified in the Twilio console, up to five of them.
 
 Unset the variable, or set it to anything other than `1`/`true`/`yes`/`on`, to go back to real message bodies.
@@ -143,7 +143,7 @@ Four controls, and you want all of them:
 
 1. **Restrict destination countries at your gateway.** Twilio calls this Messaging Geo Permissions; disable every country you do not serve. GatewayAPI and seven.io have equivalent destination controls. This is free, it happens before calrs is involved, and it removes the expensive-route incentive entirely.
 2. **Keep the gateway account prepaid, without auto-recharge.** Whatever goes wrong then costs at most the float on the account.
-3. **Set a daily limit** in the admin SMS card. Past it, calrs stops texting and keeps sending email, so bookings keep working while the spend stops. Today's count and cost are shown in the same card.
+3. **Set a daily limit** in the admin SMS card, in billed segments. Past it, calrs stops texting and keeps sending email, so bookings keep working while the spend stops. Each message reserves its estimated segments before it is sent, so a burst of bookings cannot overshoot the limit, and the reservation is corrected to what the gateway reports, or given back if the gateway refuses the message. Today's messages, segments and cost are shown in the same card, test messages included.
 4. **Leave the captcha on.** An SMS-enabled booking form without a captcha is an open relay someone else pays for. The admin panel warns you when SMS is configured and the captcha is not.
 
 Booking endpoints are also rate limited per IP (10 requests per 5 minutes), which bounds the rate but not a distributed attempt, so it is not a substitute for the four above.
@@ -152,7 +152,7 @@ Booking endpoints are also rate limited per IP (10 requests per 5 minutes), whic
 
 Messages are billed per segment: 160 characters for the GSM-7 alphabet, but only 70 if the text contains a single character outside it, which includes most accented letters. calrs keeps its messages inside two segments in every shipped language, and shortens long event titles so the date and time always survive.
 
-The gateway reports segments and cost where it can, and calrs records them so the admin panel can show today's spend. That usage ledger stores no phone numbers.
+The daily limit counts segments, not messages, because segments are what you pay for: a limit of 100 allows 100 short messages but only 50 that run to two segments. The gateway reports segments and cost where it can, and calrs records them so the admin panel can show today's spend; when the gateway reports no segment count (the webhook), calrs records its own estimate. That usage ledger stores no phone numbers.
 
 ## Using the generic webhook
 
@@ -174,7 +174,7 @@ The webhook URL is deliberately not subject to the private-host protection used 
 
 ## Troubleshooting
 
-**Nothing is sent.** Check, in order: the gateway is configured and enabled, the event type is not in **Off** mode, the guest actually left a number, and today's count is below the daily limit. Each of these is logged when it stops a message.
+**Nothing is sent.** Check, in order: the gateway is configured and enabled, the event type is not in **Off** mode, the guest actually left a number, and today's billed segments leave room for the message under the daily limit. Each of these is logged when it stops a message.
 
 **"Switching SMS gateway requires entering that gateway's credential."** You changed the gateway in the dropdown but left the secret field empty. The stored secret belongs to the previous vendor, so it cannot be carried over.
 

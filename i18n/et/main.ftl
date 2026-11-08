@@ -1332,6 +1332,7 @@ admin-sms-test-checked = Pääsuandmed aktsepteeritud.
 admin-sms-test-error = SMS-lüüs lükkas päringu tagasi.
 admin-sms-captcha-warning = Broneerimisvorm on avalik ja saaja numbri annab külaline, seega on captchata SMS avatud edastuskanal, mille eest võib arve tulla sinule. Seadista ülal captcha ja piira sihtriike oma lüüsi enda seadetes.
 admin-sms-sent-today = Täna saadetud:
+admin-sms-segments-today = Täna arveldatud segmente:
 admin-sms-of-cap = { $cap }-st
 admin-sms-config-error = Viga SMS-i seadistuses:
 admin-sms-gateway = Lüüs:
@@ -1344,8 +1345,8 @@ admin-sms-docs = { $provider } API dokumentatsioon
 admin-sms-country = Vaikimisi riigi suunakood
 admin-sms-country-hint = (kasutatakse, kui külalised sisestavad kohaliku numbri)
 admin-sms-daily-cap = Päevalimiit
-admin-sms-daily-cap-hint = (sõnumeid päevas kogu paigalduse kohta, 0 tähendab piiranguta)
-admin-sms-daily-cap-help = Limiidi ületamisel lõpetab calrs lühisõnumite saatmise ja jätkab e-kirjadega, nii et ükski broneering ei ebaõnnestu otsa saanud SMS-eelarve tõttu.
+admin-sms-daily-cap-hint = (arveldatavaid SMS-segmente päevas kogu paigalduse kohta, 0 tähendab piiranguta)
+admin-sms-daily-cap-help = Sõnumi eest arveldatakse üks segment iga 160 märgi kohta või iga 70 märgi kohta, kui selles on GSM-tähestikku mittekuuluv märk; ka testsõnumid lähevad arvesse. Limiidi ületamisel lõpetab calrs lühisõnumite saatmise ja jätkab e-kirjadega, nii et ükski broneering ei ebaõnnestu otsa saanud SMS-eelarve tõttu.
 admin-save-sms = Salvesta SMS-i seaded
 admin-send-test-sms = Saada testsõnum numbrile
 admin-send-test-sms-hint-check = (jäta tühjaks, et kontrollida ainult pääsuandmeid)
@@ -1885,6 +1886,8 @@ admin-sms-check-accepted = Lüüs aktsepteeris mandaadid.
 admin-sms-bad-number = See telefoninumber ei ole kasutatav.
 admin-sms-test-body = calrs-i testsõnum. Sinu SMS-lüüs töötab.
 admin-sms-test-accepted = Lüüs võttis testsõnumi vastu.
+admin-sms-test-over-cap = Tänane SMS-limiit on täis, seega testsõnumit ei saadetud. Testsõnumid lähevad päevalimiidi sisse nagu kõik teised.
+admin-sms-test-ledger-failed = SMS-ide kasutust ei õnnestunud salvestada, seega testsõnumit ei saadetud.
 
 ## Local multi-factor authentication
 

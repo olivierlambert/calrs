@@ -197,6 +197,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Changed
+
+- **The SMS daily limit counts billed segments, not messages** (#399) - Gateways charge per segment (160 characters, or 70 once the text holds a character outside the GSM alphabet), and a calrs message can run to two, so a limit of N messages could bill about 2N segments. The admin card now labels the limit in segments and shows today's segments next to today's messages. A message is sent only if its estimated segments fit what is left of the day, and its ledger row is then corrected to the gateway's own count.
+
+### Fixed
+
+- **SMS limit could be overshot by concurrent bookings** (#399) - The limit was read before each send and the message recorded after it, so bookings arriving together all passed the check. Each message now reserves its segments in the usage ledger in one atomic statement before calrs calls the gateway, and gives them back if the gateway refuses it. A ledger that cannot be written sends nothing.
+- **SMS test messages were not counted** (#399) - **Test gateway** with a phone number sent a message that appeared nowhere in today's count or cost and ignored the daily limit. Test messages are now recorded (event `test`), counted in today's figures and against the limit, and refused once it is reached, with a message saying so. The free credential check (empty recipient) records nothing.
+- **Twilio trial mode on a full account texted guests the template name** (#399) - With `CALRS_SMS_TWILIO_TRIAL` left set after the Twilio account was upgraded, only the admin's credential check noticed; every guest was texted the literal `sms_appointment_reminders` at full price. calrs now reads the account type before the first trial-mode send (again every hour, or when the configuration changes) and refuses to send to a full account, logging an error, and checks it once when `calrs serve` starts. Bookings and emails are unaffected.
+
+### Upgrade notes
+
+- **An existing SMS daily limit now counts segments.** A limit of 100 used to allow 100 messages; it now allows 100 segments, which is 100 short messages but only 50 that run to two segments (often the case in languages with accented letters, where one character outside the GSM alphabet halves the segment size). Raise the limit if you sized it in messages. `CALRS_SMS_DAILY_CAP` changes meaning the same way. Test messages also count against it now. No migration.
+
 ## [2.0.0-beta.3] - 2026-11-08
 
 The 2.0 features that waited in pull requests land: native Microsoft 365 and Outlook.com calendars through Microsoft Graph (#229, PR #290; thanks to @adeg, who wrote it and offered to maintain the provider), organization-wide Exchange calendars through impersonation (#138), Google out of office (#240), MCP over HTTP with OAuth (#273), a REST API with an OpenAPI reference (#169), booking webhooks (#168), booking questions (#210), host notes (#173), time off (#46), a write calendar per event type (#47) and a guest email footer (#223). Bookings are now checked one after the other under a lock, and an availability check that fails refuses the booking instead of treating the host as free. Twenty-three migrations, and a few changes of behaviour: read the upgrade notes below. **Back up your database before upgrading**, as for any pre-release.
