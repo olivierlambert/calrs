@@ -65,14 +65,18 @@ impl WritePlan {
 }
 
 /// The source setting: every enabled source of `user_id` with a write
-/// calendar.
+/// calendar. A managed Exchange source with nothing to do (global Exchange
+/// off or incomplete, its user suspended or not trusted) is left out here
+/// and in every query below: writing or deleting there is skipped, never a
+/// failure to retry or alert about.
 pub(super) async fn default_write_sources(pool: &SqlitePool, user_id: &str) -> Vec<WriteSourceRow> {
-    sqlx::query_as(
+    sqlx::query_as(&format!(
         "SELECT cs.id, cs.url, cs.username, cs.password_enc, cs.write_calendar_href, cs.auth_type, cs.access_token_enc, cs.token_expires_at, cs.provider_type, cs.oauth2_provider, cs.name
          FROM caldav_sources cs
          JOIN accounts a ON a.id = cs.account_id
-         WHERE a.user_id = ? AND cs.enabled = 1 AND cs.write_calendar_href IS NOT NULL",
-    )
+         WHERE a.user_id = ? AND cs.enabled = 1 AND cs.write_calendar_href IS NOT NULL AND {ACTIVE}",
+        ACTIVE = crate::ews::global::ACTIVE_SOURCE_SQL
+    ))
     .bind(user_id)
     .fetch_all(pool)
     .await
@@ -87,14 +91,15 @@ pub(super) async fn destination_source(
     event_type_id: &str,
     user_id: &str,
 ) -> Option<WriteSourceRow> {
-    sqlx::query_as(
+    sqlx::query_as(&format!(
         "SELECT cs.id, cs.url, cs.username, cs.password_enc, c.href, cs.auth_type, cs.access_token_enc, cs.token_expires_at, cs.provider_type, cs.oauth2_provider, cs.name
          FROM event_type_write_targets t
          JOIN calendars c ON c.id = t.calendar_id
          JOIN caldav_sources cs ON cs.id = c.source_id
          JOIN accounts a ON a.id = cs.account_id AND a.user_id = t.user_id
-         WHERE t.event_type_id = ? AND t.user_id = ? AND cs.enabled = 1",
-    )
+         WHERE t.event_type_id = ? AND t.user_id = ? AND cs.enabled = 1 AND {ACTIVE}",
+        ACTIVE = crate::ews::global::ACTIVE_SOURCE_SQL
+    ))
     .bind(event_type_id)
     .bind(user_id)
     .fetch_optional(pool)
@@ -109,12 +114,13 @@ async fn source_row(
     source_id: &str,
     href: &str,
 ) -> Option<WriteSourceRow> {
-    sqlx::query_as(
+    sqlx::query_as(&format!(
         "SELECT cs.id, cs.url, cs.username, cs.password_enc, ?, cs.auth_type, cs.access_token_enc, cs.token_expires_at, cs.provider_type, cs.oauth2_provider, cs.name
          FROM caldav_sources cs
          JOIN accounts a ON a.id = cs.account_id
-         WHERE cs.id = ? AND a.user_id = ? AND cs.enabled = 1",
-    )
+         WHERE cs.id = ? AND a.user_id = ? AND cs.enabled = 1 AND {ACTIVE}",
+        ACTIVE = crate::ews::global::ACTIVE_SOURCE_SQL
+    ))
     .bind(href)
     .bind(source_id)
     .bind(user_id)
@@ -251,7 +257,10 @@ pub(super) async fn delete_from(
     )
     .await
     {
-        Ok(provider) => match provider.delete_event(href, booking_uid).await {
+        // An idle managed Exchange source: nothing to reach, nothing failed.
+        // The copy stays recorded until the source is active again.
+        Ok(None) => false,
+        Ok(Some(provider)) => match provider.delete_event(href, booking_uid).await {
             Ok(()) => true,
             Err(e) => {
                 tracing::error!(uid = %booking_uid, calendar = %href, error = %e, "calendar event delete failed");
@@ -516,17 +525,18 @@ pub(crate) async fn sweep_leftover_copies(
     .execute(pool)
     .await;
     let stamp = now.format("%Y-%m-%d %H:%M:%S").to_string();
-    let due: Vec<(String, String, String, String, i64)> = sqlx::query_as(
+    let due: Vec<(String, String, String, String, i64)> = sqlx::query_as(&format!(
         "SELECT bc.booking_uid, bc.user_id, bc.source_id, bc.calendar_href, bc.delete_attempts
          FROM booking_write_copies bc
          JOIN bookings b ON b.uid = bc.booking_uid
          JOIN caldav_sources cs ON cs.id = bc.source_id AND cs.enabled = 1
          JOIN accounts a ON a.id = cs.account_id AND a.user_id = bc.user_id
-         WHERE b.status IN ('cancelled', 'declined')
+         WHERE b.status IN ('cancelled', 'declined') AND {ACTIVE}
            AND (bc.next_delete_at IS NULL OR bc.next_delete_at <= ?)
          ORDER BY bc.next_delete_at IS NOT NULL, bc.next_delete_at
          LIMIT ?",
-    )
+        ACTIVE = crate::ews::global::ACTIVE_SOURCE_SQL
+    ))
     .bind(&stamp)
     .bind(SWEEP_BATCH)
     .fetch_all(pool)
@@ -618,15 +628,18 @@ pub(super) async fn hosts_event_type(
 /// their own enabled sources, synced or not, as a source's write calendar
 /// can be (#324). Each as (calendar id, "calendar (source)").
 pub(super) async fn destination_choices(pool: &SqlitePool, user_id: &str) -> Vec<(String, String)> {
-    let rows: Vec<(String, Option<String>, String, String)> = sqlx::query_as(
+    // A calendar of a managed Exchange source only while that source is
+    // active: its owner enabled and trusted, global Exchange on.
+    let rows: Vec<(String, Option<String>, String, String)> = sqlx::query_as(&format!(
         "SELECT c.id, c.display_name, c.href, cs.name FROM calendars c
          JOIN caldav_sources cs ON cs.id = c.source_id
          JOIN accounts a ON a.id = cs.account_id
          -- A calendar the account cannot write to (Graph canEdit false)
          -- cannot receive bookings.
-         WHERE a.user_id = ? AND cs.enabled = 1 AND c.read_only = 0
+         WHERE a.user_id = ? AND cs.enabled = 1 AND c.read_only = 0 AND {ACTIVE}
          ORDER BY cs.name, c.display_name, c.href",
-    )
+        ACTIVE = crate::ews::global::ACTIVE_SOURCE_SQL
+    ))
     .bind(user_id)
     .fetch_all(pool)
     .await
@@ -650,12 +663,13 @@ pub(super) async fn is_destination_choice(
     if calendar_id.is_empty() {
         return true;
     }
-    sqlx::query_scalar::<_, i64>(
+    sqlx::query_scalar::<_, i64>(&format!(
         "SELECT COUNT(*) FROM calendars c
          JOIN caldav_sources cs ON cs.id = c.source_id
          JOIN accounts a ON a.id = cs.account_id
-         WHERE c.id = ? AND a.user_id = ? AND cs.enabled = 1 AND c.read_only = 0",
-    )
+         WHERE c.id = ? AND a.user_id = ? AND cs.enabled = 1 AND c.read_only = 0 AND {ACTIVE}",
+        ACTIVE = crate::ews::global::ACTIVE_SOURCE_SQL
+    ))
     .bind(calendar_id)
     .bind(user_id)
     .fetch_one(pool)

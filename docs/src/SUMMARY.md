@@ -14,11 +14,13 @@
 - [Shared Resources](./resources.md)
 - [SMS Notifications](./sms.md)
 - [Authentication](./authentication.md)
+- [MCP Integration](./mcp.md)
 - [Authentik (OIDC SSO)](./authentik.md)
 
 # Administration
 
 - [Admin Dashboard](./admin.md)
+- [EWS Impersonation](./ews-impersonation.md)
 - [Deployment](./deployment.md)
 
 # Reference

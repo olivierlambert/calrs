@@ -49,6 +49,7 @@ Every user-facing string goes through Fluent (`i18n/`).
 | `src/models.rs` | Domain structs (mostly documentation; queries use tuples) |
 | `src/auth.rs` | Passwords, sessions, OIDC, extractors (`AuthUser`, `AdminUser`, `OptionalAuthUser`), login/register handlers |
 | `src/mfa.rs` | Local TOTP two-factor authentication: enrollment, login challenges, recovery codes, the admin policy, `/auth/mfa` and `/dashboard/settings/mfa` routes (tests in `src/mfa/tests.rs`) |
+| `src/oauth.rs` | First-party OAuth server: discovery, public client registration, PKCE/consent, token rotation/revocation, bearer validation and cleanup |
 | `src/crypto.rs` | AES-256-GCM for stored credentials, secret key management |
 | `src/settings.rs` | Runtime settings (base URL, private-host policy): env overrides DB |
 | `src/i18n.rs` | Fluent loader, language detection, the `t()` template global, i18n guard tests |
@@ -66,7 +67,7 @@ Every user-facing string goes through Fluent (`i18n/`).
 | `src/caldav/mod.rs` | CalDAV client: discovery, fetch, sync-collection, PUT/DELETE |
 | `src/caldav/multistatus.rs` | Reading WebDAV multistatus answers by namespace: calendar listing, events, sync deltas, principal and home discovery (tests in `src/caldav/multistatus/tests.rs`) |
 | `src/xml.rs` | Bounded, namespace-aware XML tree over `quick-xml`, used by the CalDAV client |
-| `src/ews/` | Exchange Web Services client (SOAP, autodiscover, parsing) |
+| `src/ews/` | Exchange Web Services client (SOAP, autodiscover, parsing); `global.rs` holds the admin's global impersonation config, provisioning of managed sources, and the client for a managed source |
 | `src/providers/` | `CalendarProvider` trait (`mod.rs`), CalDAV and Graph adapters, password-backed provider dispatch in `src/providers/factory.rs` |
 | `src/sms/` | `SmsProvider` trait, gateway adapters, phone normalisation, message bodies |
 | `src/email/` | Every email calrs sends (see below) |
@@ -91,12 +92,15 @@ Every user-facing string goes through Fluent (`i18n/`).
 | `notify.rs` | `spawn_emails` / `drain_emails`, new-booking notifications, reminders, watchers, SMS on new booking, the background loop |
 | `meeting.rs` | Auto-generated meeting links (Jitsi, webhook, Google Meet) |
 | `captcha.rs` | Cap captcha config and server-side verification |
+| `ews_admin.rs` | Global Exchange impersonation: admin card, its save, confirm-address and remove-all handlers, the lock on user sources, guards on managed sources |
 | `dashboard.rs` | Dashboard overview, event types and bookings lists, host cancel/confirm, settings, avatar |
 | `booking_notes.rs` | Host notes on a booking (#173): who may read and edit them (`note_booking`, the one gate), the notes page and its POST |
 | `overview_stats.rs` | Dashboard overview data: masthead sentence, the day ruler (bookable hours from event type rules and overrides, calrs bookings, anonymous calendar busy time), the week list, the 12-week chart, the 30-day figures (tests in `tests/overview_stats.rs`). The dashboard identity (tokens, timetable rows, status marks) lives in `templates/dashboard_base.html`; `tests/guards.rs` fails if its tells come back |
 | `directory.rs` | Searchable booking directory, visibility checks, personal meeting favorites and dashboard shortcuts |
 | `event_types.rs` | Event type forms (personal and team), availability overrides, form parsing helpers |
 | `invites.rs` | Invite Links page, invite management, bulk invites, quick links |
+| `connected_apps.rs` | Connected apps page (`/dashboard/settings/apps`): the user's OAuth grants with revoke, and the admin's revoke-all for a user |
+| `mcp.rs` | Stateless Streamable HTTP `/mcp`, JSON-RPC lifecycle, three scoped tools; reuses invites and availability services |
 | `teams.rs` | Teams listing, creation, settings, avatars |
 | `sources.rs` | Calendar sources: add, edit, test, sync, remove, write-back setup, calendars to sync, Google connect |
 | `microsoft.rs` | Microsoft calendar consent, callback (calendar discovery, then the first sync in the background), reconnect, and admin configuration handlers; the write-calendar choice is the shared setup-write page in `sources.rs` |
@@ -115,8 +119,9 @@ with `use super::*` and sees those fixtures and every item of `web`:
 `security`, `auth_pages`, `branding`, `format`, `availability`, `resources`,
 `hosts`, `event_types`, `invites`, `booking`, `public_pages`,
 `booking_actions`, `booking_notes`, `dashboard`, `sources`, `admin`, `emails`,
-`page_language`, `guards`, plus `booking_time`, `pending_hold`,
-`writeback_failures`, `write_destinations`, `organizer`, `duplicate_event_type` and `time_off`.
+`ews_global`, `page_language`, `guards`, plus `booking_time`, `pending_hold`,
+`writeback_failures`, `write_destinations`, `organizer`, `duplicate_event_type`
+and `time_off`.
 
 ### `src/email/`
 
@@ -151,6 +156,19 @@ Call sites use `crate::email::name` whatever file `name` lives in.
   `csp_middleware` (CSP rebuilt from captcha settings, relaxed for embeds and
   booking forms). Booking POSTs are rate limited per client IP
   (`client_ip_for_rate_limit`, rightmost `X-Forwarded-For`).
+- **OAuth integrations** (`src/oauth.rs`, migrations `20261108044050_oauth_server.sql` and `20261108044051_oauth_credential_scope.sql`).
+  Clients register automatically. Authorization uses the real browser session
+  (never admin impersonation), explicit translated consent and S256 PKCE. An
+  opaque, short-lived cookie resumes consent after local/SSO login. Credentials
+  are random, stored hashed, bound to a user/client/resource/scope grant. Access
+  tokens live one hour; rotating refresh tokens share a fixed 30-day deadline;
+  replay or revocation invalidates the grant. `bearer_user` validates the audience
+  and enabled user each request. Grants carry the consenting session's
+  `mfa_verified` and `GRANT_MFA_POLICY` applies `validate_session`'s MFA rule
+  to every token use; `mfa::revoke_access` deletes a user's grants with their
+  sessions. Cleanup joins the hourly session sweep.
+  MCP has no session state or SSE tasks and adds no dependencies. Tests:
+  `src/web/tests/oauth.rs` and `src/web/tests/mcp.rs`.
 - **Auth extractors** (`src/auth.rs`). `AuthUser` redirects to login,
   `AdminUser` returns 403, `OptionalAuthUser` for public pages. Each resolves
   the viewer's language once.
@@ -179,17 +197,17 @@ Call sites use `crate::email::name` whatever file `name` lives in.
   calrs owns the email lifecycle.
   Sync lives in `src/commands/sync.rs` (`sync_if_stale` on page loads) and
   `src/commands/sync_health.rs` (failure tracking).
-  Snapshot providers (EWS, Microsoft Graph) reconcile a full snapshot:
-  events starting inside the fetched window and missing from it are removed,
-  and a vanished event cancels its booking only on the source's write
-  calendar, once the provider confirms it is gone. Graph alone is held to
-  stricter rules (`strict_snapshots` in `src/commands/sync.rs`): only the
-  readable items of a snapshot are cached and one holding an unreadable item
-  removes nothing and fails the sync, an empty snapshot removes cached
-  events, and a calendar Graph no longer lists is deleted with its events,
-  except the source's write calendar. EWS keeps the rules it was field-tested
-  with: every item is cached, an empty snapshot removes nothing, and no
-  calendar is ever deleted. Calendars the user turned off (`sync_enabled = 0`,
+  Snapshot providers reconcile a full snapshot, each through its own path.
+  EWS goes through `sync_ews_source` (busy-only storage for managed
+  sources, a folder removed only after two listings miss it, #362).
+  Microsoft Graph goes through `sync_provider_source`, held to stricter
+  rules (`strict_snapshots`): events starting inside the fetched window and
+  missing from it are removed, only the readable items of a snapshot are
+  cached and one holding an unreadable item removes nothing and fails the
+  sync, an empty snapshot removes cached events, a calendar Graph no longer
+  lists is deleted with its events except the source's write calendar, and a
+  vanished event cancels its booking only on the calendar it was written
+  to, once Graph confirms it is gone. Calendars the user turned off (`sync_enabled = 0`,
   #324) are never fetched, on every provider, and keep their row and setting
   while listed. A suspended user's Microsoft sources are neither synced nor
   refreshed (`NOT_SUSPENDED_MICROSOFT`).
@@ -228,6 +246,15 @@ Call sites use `crate::email::name` whatever file `name` lives in.
   action handlers, admin card in `src/web/admin.rs`).
 - **Captcha** (`src/web/captcha.rs`, CSP in `src/web/mod.rs`, widget in
   `templates/book.html`).
+- **Global Exchange impersonation** (`src/ews/global.rs`, web side in
+  `src/web/ews_admin.rs`, admin guide in `docs/src/ews-impersonation.md`). A
+  managed source (`caldav_sources.managed = 1`) has no credentials of its own:
+  every client for an EWS source goes through `ews::global::provider_for_source`,
+  which picks the service account and impersonated mailbox for managed rows
+  and rechecks the user (enabled, `users.email_trusted`, current address)
+  every time. Only `provision_managed_ews_source_for_user` creates or moves a
+  managed row; `ACTIVE_SOURCE_SQL` keeps idle managed rows out of sync and
+  write-back queries; their events are stored busy-only.
 - **Migrations** (`migrations/`, `build.rs`, `src/db.rs`). `build.rs` embeds
   every `.sql` file, sorted by name, and `migrate()` applies those not yet in
   `_migrations`. That table records the file stem, so a shipped migration is

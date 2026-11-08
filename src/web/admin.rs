@@ -299,7 +299,7 @@ async fn user_list_page(
 
 /// Where a user action returns: the server-side list page it was taken
 /// from (rebuilt from its parsed parameters, never echoed), else the panel.
-fn admin_users_return(back: Option<&str>, error: Option<&str>) -> String {
+pub(super) fn admin_users_return(back: Option<&str>, error: Option<&str>) -> String {
     let error = error.map(|e| format!("error={}", urlencoding::encode(e)));
     // No field at all: the browser-side list, which keeps its own tab. An
     // empty one is the server-side list in its default state.
@@ -325,10 +325,10 @@ fn admin_users_return(back: Option<&str>, error: Option<&str>) -> String {
 
 #[derive(Deserialize)]
 pub(super) struct UserActionForm {
-    _csrf: Option<String>,
+    pub(super) _csrf: Option<String>,
     /// The server-side list state the action was taken from.
     #[serde(default)]
-    back: Option<String>,
+    pub(super) back: Option<String>,
 }
 
 // --- Admin dashboard ---
@@ -521,6 +521,20 @@ pub(super) async fn admin_dashboard(
     .await
     .unwrap_or_default();
 
+    // Connected apps (OAuth grants) of the listed users only.
+    let user_apps: std::collections::HashMap<String, i64> = sqlx::query_as(
+        "SELECT user_id, COUNT(*) FROM oauth_grants
+         WHERE user_id IN (SELECT value FROM json_each(?))
+           AND revoked = 0 AND expires_at > CAST(strftime('%s', 'now') AS INTEGER)
+         GROUP BY user_id",
+    )
+    .bind(serde_json::to_string(&user_ids).unwrap_or_else(|_| "[]".to_string()))
+    .fetch_all(&state.pool)
+    .await
+    .unwrap_or_default()
+    .into_iter()
+    .collect();
+
     // Build a map of user_id -> comma-separated group names
     let mut user_groups_map: std::collections::HashMap<String, Vec<String>> =
         std::collections::HashMap::new();
@@ -536,6 +550,7 @@ pub(super) async fn admin_dashboard(
         .map(
             |(id, name, email, role, auth_provider, enabled, last_login_at, created_at, mfa)| {
                 let groups = user_groups_map.get(id).cloned().unwrap_or_default();
+                let apps = user_apps.get(id).copied().unwrap_or(0);
                 context! {
                     id => id,
                     name => name,
@@ -550,6 +565,7 @@ pub(super) async fn admin_dashboard(
                         .unwrap_or_default(),
                     created_at => admin_stats::iso_utc(created_at),
                     mfa => mfa,
+                    apps => apps,
                 }
             },
         )
@@ -856,6 +872,8 @@ pub(super) async fn admin_dashboard(
         wasm_url: captcha_wasm_url,
     } = captcha::load_captcha_form_values(&state.pool).await;
 
+    let ews_ctx = ews_admin::admin_context(&state, &query).await;
+
     let meeting_cfg = state.meeting_config.read().await;
     let jitsi_configured = meeting_cfg.jitsi.is_some();
     let jitsi_base_url = meeting_cfg
@@ -1011,6 +1029,7 @@ pub(super) async fn admin_dashboard(
             base_url_set => base_url_set,
             logo_max_bytes => LOGO_MAX_BYTES,
             favicon_max_bytes => FAVICON_MAX_BYTES,
+            ..ews_ctx
         })
         .unwrap_or_else(|e| internal_error_body("template render", &e)),
     )

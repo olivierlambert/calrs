@@ -149,6 +149,22 @@ pub trait CalendarProvider: Send + Sync {
     async fn event_exists_anywhere(&self, calendar_id: &str, uid: &str) -> Result<bool> {
         self.event_exists(calendar_id, uid).await
     }
+
+    /// The id (as `list_calendars` reports it) of the account's default
+    /// calendar, when the backend has such a notion. Only EWS does today: the
+    /// well-known "calendar" folder, whose display name follows the mailbox's
+    /// language ("Calendar", "Calendrier", ...) and so cannot be matched by
+    /// name. `Ok(None)` means there is no default to point at.
+    async fn default_calendar(&self) -> Result<Option<String>> {
+        Ok(None)
+    }
+
+    /// The mailbox this client acts as through impersonation (EWS with the
+    /// global service account), `None` otherwise. A sync compares it with the
+    /// source's stored target before keeping what it fetched.
+    fn impersonated_mailbox(&self) -> Option<&str> {
+        None
+    }
 }
 
 /// Why a calendar write-back did not land (#162).

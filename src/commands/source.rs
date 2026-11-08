@@ -376,6 +376,8 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: SourceCommands) -> Resu
             }
 
             let url_or_username_changed = url.is_some() || username.is_some();
+            let previous_url = current_url.clone();
+            let previous_username = current_username.clone();
             let new_name = name.unwrap_or(current_name);
             let new_url = url.unwrap_or(current_url);
             let new_username = username.unwrap_or(current_username);
@@ -409,6 +411,24 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: SourceCommands) -> Resu
             }
 
             println!("{} Source updated: {}", "✓".green(), new_name);
+
+            // An EWS source pointed at another account or server reads
+            // another mailbox, whose folder ids are not the old one's: what
+            // it cached goes now rather than at the next sync.
+            let provider_type: String =
+                sqlx::query_scalar("SELECT provider_type FROM caldav_sources WHERE id = ?")
+                    .bind(&full_id)
+                    .fetch_one(pool)
+                    .await?;
+            if provider_type == factory::kinds::EWS
+                && (!previous_username
+                    .trim()
+                    .eq_ignore_ascii_case(new_username.trim())
+                    || crate::resources::url_origin(&previous_url)
+                        != crate::resources::url_origin(&new_url))
+            {
+                crate::ews::global::forget_mailbox(pool, &full_id).await?;
+            }
 
             if url_or_username_changed {
                 println!(

@@ -1887,6 +1887,7 @@ mfa-restart = Retour à la connexion
 mfa-manage = Gérer l’authentification à deux facteurs
 mfa-recovery-help = Conservez ces codes de récupération en lieu sûr. Ils ne sont affichés qu’une fois. Chaque code remplace un code de votre application pour une seule utilisation. Les nouveaux codes remplacent tous les anciens.
 mfa-continue = Continuer vers le tableau de bord
+mfa-continue-consent = Continuer vers la page d'autorisation
 mfa-enabled = L’authentification à deux facteurs est activée.
 mfa-disabled = L’authentification à deux facteurs est désactivée.
 mfa-required-help = Votre administrateur impose l’authentification à deux facteurs aux comptes locaux. Vous ne pouvez pas la désactiver.
@@ -1957,6 +1958,78 @@ source-test-microsoft-failed = La connexion au calendrier Microsoft a échoué. 
 source-test-microsoft-credentials = Les identifiants du calendrier Microsoft n'ont pas pu être chargés. Reconnectez votre compte.
 microsoft-callback-needs-https = Définissez comme URL publique de base une origine HTTPS, sans chemin, pour afficher l'URL de rappel à enregistrer.
 source-form-backend-ews = Microsoft Exchange sur site (EWS)
+
+# Global Exchange (EWS) impersonation: admin card and managed sources
+sources-admin-managed = Géré par l'admin
+sources-admin-managed-title = Provisionné par l'administrateur
+sources-locked-notice = Votre administrateur gère Exchange de façon centralisée. L'ajout d'autres sources de calendrier est désactivé.
+sources-locked-by-admin = L'ajout de sources de calendrier personnelles est désactivé par l'administrateur. Votre calendrier Exchange est géré de façon centralisée.
+sources-managed-no-edit = Cette source de calendrier est provisionnée par l'administrateur et ne peut pas être modifiée.
+sources-managed-no-remove = Cette source de calendrier est provisionnée par l'administrateur et ne peut pas être supprimée.
+sources-managed-global-disabled = Cette source est gérée par l'administrateur, mais Exchange global est désactivé.
+admin-ews-title = Exchange (EWS) : usurpation d'identité globale
+admin-ews-help = Configurez un seul point d'accès Exchange Web Services et un compte de service disposant du rôle RBAC <code>ApplicationImpersonation</code>. Le calendrier de chaque utilisateur est alors lu par usurpation d'identité, sans qu'il ait à saisir d'identifiants. PowerShell sur Exchange : <code>New-ManagementRoleAssignment -Name CalrsImpersonation -Role ApplicationImpersonation -User svc-calrs@votredomaine</code>.
+admin-ews-endpoint = Point d'accès
+admin-ews-managed-count = Sources gérées :
+admin-ews-enable = Activer Exchange global par usurpation d'identité
+admin-ews-url = URL du point d'accès EWS
+admin-ews-username = Nom d'utilisateur du compte de service
+admin-ews-password = Mot de passe du compte de service
+admin-ews-password-keep = (laisser vide pour conserver l'actuel)
+admin-ews-password-unchanged = (inchangé)
+admin-ews-password-placeholder = mot de passe du compte de service
+admin-ews-domain = Domaine des boîtes
+admin-ews-optional = (facultatif)
+admin-ews-domain-help = Renseignez les deux lorsque les adresses connues de calrs (UPN AD, e-mail OIDC) sont sur un autre domaine que les boîtes Exchange. Seule une adresse dans exactement le domaine des utilisateurs est réécrite, en gardant sa partie locale : <code>alice@example.local</code> → <code>alice@example.com</code>. Les adresses de tout autre domaine sont utilisées telles quelles. Laissez les deux vides pour usurper l'adresse calrs de chaque utilisateur telle quelle.
+admin-ews-auto = Provisionner pour tous les utilisateurs (existants + futurs)
+admin-ews-auto-help = Si cochée, chaque utilisateur actif dont l'adresse est de confiance reçoit une source Exchange gérée : comptes créés avec calrs user create, comptes SSO dont le fournisseur d'identité a vérifié l'e-mail, et adresses confirmées ci-dessous. L'enregistrement lance immédiatement le traitement.
+admin-ews-lock = Empêcher les utilisateurs standard d'ajouter leurs propres sources de calendrier
+admin-ews-lock-help = Les administrateurs ne sont pas concernés. Les sources déjà ajoutées par les utilisateurs restent jusqu'à leur suppression.
+admin-ews-disable-note = Tant que la fonctionnalité est désactivée, les sources gérées sont conservées mais ne sont plus synchronisées, et aucune réservation n'y est écrite. La réactiver les relance.
+admin-ews-remove = Supprimer les sources gérées et effacer le mot de passe du compte de service
+admin-ews-remove-confirm = Supprimer toutes les sources Exchange gérées, avec les calendriers et les plages occupées que calrs en a gardés, ainsi que le mot de passe du compte de service enregistré ? Exchange global est désactivé. Les réservations déjà écrites dans les boîtes aux lettres y restent.
+admin-ews-notice-removed = Sources gérées supprimées : { $count }. Le mot de passe du compte de service est effacé et Exchange global est désactivé. Les réservations déjà écrites dans les boîtes aux lettres y restent.
+admin-ews-notice-https-required = Le point de terminaison EWS doit utiliser https:// : le mot de passe du compte de service est envoyé à chaque requête. Rien n'a été enregistré.
+admin-ews-notice-password-cleared = Paramètres enregistrés. Le point de terminaison ou le compte de service a changé, le mot de passe enregistré a donc été effacé : il doit être saisi à nouveau pour qu'Exchange global fonctionne.
+admin-ews-notice-source-removed = Source gérée supprimée, avec ses calendriers et plages occupées en cache.
+admin-ews-row-remove = Supprimer
+admin-ews-row-remove-confirm = Supprimer la source Exchange gérée de { $email }, avec ses calendriers et plages occupées en cache ? Le provisionnement automatique la recrée au prochain enregistrement, à la prochaine confirmation ou connexion SSO ; suspendre le compte l'en empêche.
+admin-ews-trust-no-mailbox = aucune (l'adresse ne désigne aucune boîte aux lettres)
+admin-ews-notice-selections-reset = La boîte aux lettres lue par certaines sources gérées a changé, leurs calendriers sont donc redécouverts. Types d'événement dont la sélection de calendriers a été réinitialisée : { $count } (liste dans le journal du serveur).
+admin-ews-notice-reconfirm = Le remplacement de domaine associe désormais certaines adresses confirmées à une autre boîte aux lettres. Adresses à confirmer de nouveau : { $count } (voir la liste ci-dessous).
+admin-ews-row-taken-over = Reprise de { $user } le { $when }
+admin-ews-notice-trust-changed = Rien n'a été confirmé : l'adresse de ce compte, ou la boîte aux lettres qu'elle ouvre, a changé depuis l'affichage de la page. Vérifiez de nouveau la liste.
+sources-managed-user-untrusted = Cette source est gérée par l'administrateur, mais l'adresse du compte n'est pas encore confirmée : elle n'est donc pas synchronisée.
+sources-managed-user-suspended = Cette source est gérée par l'administrateur, mais le compte est désactivé : elle n'est donc pas synchronisée.
+admin-ews-save = Enregistrer les paramètres EWS
+admin-ews-save-provision = Enregistrer &amp; provisionner tous les utilisateurs maintenant
+admin-ews-status-title = État de synchronisation par utilisateur
+admin-ews-status-summary = { $ok } boîtes gérées sur { $total } se synchronisent. Un utilisateur sans boîte Exchange (par ex. un compte admin local) affichera toujours une erreur. C'est normal.
+admin-ews-col-user = Utilisateur
+admin-ews-col-mailbox = Boîte aux lettres
+admin-ews-col-last-sync = Dernière synchro
+admin-ews-col-status = Statut
+admin-ews-row-disabled = désactivé
+admin-ews-row-synced = Synchronisé
+admin-ews-row-never = Jamais synchronisé
+admin-ews-row-no-mailbox = Aucune boîte Exchange
+admin-ews-notice-saved = Paramètres Exchange enregistrés.
+admin-ews-notice-provisioned = Paramètres Exchange enregistrés. Sources gérées créées : { $count }.
+admin-ews-notice-invalid-url = L'URL du point d'accès EWS n'est pas valide (http(s) uniquement, pas d'adresse privée hors liste autorisée). Rien n'a été enregistré.
+admin-ews-notice-incomplete = Pour activer Exchange global, renseignez l'URL du point d'accès, le compte de service et son mot de passe. Rien n'a été enregistré.
+admin-ews-notice-provision-failed = Paramètres enregistrés, mais le provisionnement des sources gérées a échoué. Consultez le journal du serveur.
+admin-ews-registration-warning = L'inscription libre est ouverte. Les comptes créés ainsi ne reçoivent jamais de source Exchange gérée, pas même avec « provisionner tous les utilisateurs maintenant » : rien ne prouve qu'ils possèdent leur adresse. Pour donner une boîte à l'un d'eux, confirmez son adresse ci-dessous, ou lancez calrs user trust-email, une fois certain qu'elle appartient à cette personne.
+admin-ews-from-domain = Domaine des utilisateurs
+admin-ews-notice-override-domains = Le remplacement de domaine a besoin des deux domaines, chacun un simple domaine comme example.com : celui avec lequel vos utilisateurs se connectent et celui de leurs boîtes. Rien n'a été enregistré.
+admin-ews-notice-trusted = Adresse confirmée. Tant qu'Exchange global est actif, la source gérée de l'utilisateur est créée maintenant : voir le tableau d'état.
+admin-ews-row-suspended = Compte désactivé : non synchronisé
+admin-ews-row-untrusted = Adresse non confirmée : non synchronisée
+admin-ews-row-conflict = Non provisionné : la source d'un autre utilisateur lit déjà cette boîte
+admin-ews-trust-title = Adresses à confirmer
+admin-ews-trust-help = Ces comptes actifs des domaines autorisés ont une adresse que personne n'a garantie (inscription libre, ou création avant cette vérification) : ils ne reçoivent donc aucune source Exchange gérée. Ne confirmez une adresse que si vous savez qu'elle appartient à cette personne : la confirmer permet à calrs de lire pour elle le calendrier de cette boîte.
+admin-ews-trust-confirm = Confirmer
+admin-ews-trust-more = { $shown } affichées sur { $total }.
+admin-ews-http-warning = Le point de terminaison utilise http:// : le mot de passe du compte de service circule en clair. Préférez https://.
 # Time off (templates/time_off.html, src/web/time_off.rs, troubleshoot view)
 
 nav-time-off = Absences
@@ -2004,6 +2077,29 @@ pager-previous = Précédent
 pager-next = Suivant
 admin-users-search = Rechercher
 admin-figures-cached = Chiffres des réservations calculés il y a { $seconds } s.
+
+# OAuth connection consent (templates/auth/consent.html)
+oauth-title = Connecter une application
+oauth-intro = Autoriser cette application à accéder à calrs en tant que { $email } ? Le nom de l'application est fourni par son développeur. Vérifiez l'adresse de retour avant d'autoriser l'accès.
+oauth-events = Consulter les types d'événements auxquels vous avez accès
+oauth-blocks = Consulter vos plages occupées
+oauth-invites = Créer des liens d'invitation avec vos autorisations
+oauth-allow = Autoriser l'accès
+oauth-deny = Refuser
+
+# Connected apps (templates/dashboard_apps.html, admin user menu)
+
+apps-page-title = Applications connectées
+apps-heading = Applications connectées
+apps-subtitle = Les applications que vous avez autorisées à agir en votre nom, comme les assistants IA connectés par MCP. En révoquer une coupe son accès immédiatement.
+apps-approved = Autorisée le { $date }
+apps-last-used = Dernière utilisation le { $date }
+apps-never-used = Pas encore utilisée
+apps-revoke = Révoquer
+apps-revoke-confirm = Révoquer l'accès de { $name } ? L'application devra être autorisée à nouveau pour se reconnecter.
+apps-revoked = Accès révoqué.
+apps-empty = Aucune application connectée. Un client MCP demande votre autorisation la première fois qu'il se connecte.
+admin-revoke-apps = Révoquer les applications connectées ({ $count })
 
 # Write destination per event type (#47)
 etf-write-destination = Écrire les réservations confirmées dans

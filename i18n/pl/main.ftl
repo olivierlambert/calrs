@@ -1958,6 +1958,7 @@ mfa-restart = Wróć do logowania
 mfa-manage = Zarządzaj uwierzytelnianiem dwuskładnikowym
 mfa-recovery-help = Zapisz te kody odzyskiwania w bezpiecznym miejscu. Są wyświetlane tylko raz. Każdy kod jednorazowo zastępuje kod z aplikacji. Nowe kody zastępują wszystkie poprzednie.
 mfa-continue = Przejdź do panelu
+mfa-continue-consent = Przejdź do strony zatwierdzenia
 mfa-enabled = Uwierzytelnianie dwuskładnikowe jest włączone.
 mfa-disabled = Uwierzytelnianie dwuskładnikowe jest wyłączone.
 mfa-required-help = Twój administrator wymaga uwierzytelniania dwuskładnikowego dla kont lokalnych. Nie możesz go wyłączyć.
@@ -2028,6 +2029,78 @@ source-test-microsoft-failed = Nie udało się połączyć z kalendarzem Microso
 source-test-microsoft-credentials = Nie udało się wczytać danych logowania kalendarza Microsoft. Połącz ponownie swoje konto.
 microsoft-callback-needs-https = Ustaw publiczny bazowy adres URL na źródło HTTPS bez ścieżki, aby zobaczyć adres zwrotny do zarejestrowania.
 source-form-backend-ews = Microsoft Exchange lokalny (EWS)
+
+# Global Exchange (EWS) impersonation: admin card and managed sources
+sources-admin-managed = Zarządzane przez admina
+sources-admin-managed-title = Udostępnione przez administratora
+sources-locked-notice = Administrator zarządza Exchange centralnie. Dodawanie kolejnych źródeł kalendarza jest wyłączone.
+sources-locked-by-admin = Administrator wyłączył dodawanie osobistych źródeł kalendarza. Twój kalendarz Exchange jest zarządzany centralnie.
+sources-managed-no-edit = To źródło kalendarza zostało udostępnione przez administratora i nie można go edytować.
+sources-managed-no-remove = To źródło kalendarza zostało udostępnione przez administratora i nie można go usunąć.
+sources-managed-global-disabled = To źródło jest zarządzane przez administratora, ale globalny Exchange jest wyłączony.
+admin-ews-title = Exchange (EWS): globalne podszywanie się (impersonation)
+admin-ews-help = Skonfiguruj jeden punkt końcowy Exchange Web Services oraz konto usługi z rolą RBAC <code>ApplicationImpersonation</code>. Kalendarz każdego użytkownika jest wtedy odczytywany przez podszywanie się, bez podawania poświadczeń. PowerShell w Exchange: <code>New-ManagementRoleAssignment -Name CalrsImpersonation -Role ApplicationImpersonation -User svc-calrs@twojadomena</code>.
+admin-ews-endpoint = Punkt końcowy
+admin-ews-managed-count = Zarządzane źródła:
+admin-ews-enable = Włącz globalny Exchange z podszywaniem się
+admin-ews-url = Adres URL punktu końcowego EWS
+admin-ews-username = Nazwa użytkownika konta usługi
+admin-ews-password = Hasło konta usługi
+admin-ews-password-keep = (zostaw puste, aby zachować obecne)
+admin-ews-password-unchanged = (bez zmian)
+admin-ews-password-placeholder = hasło konta usługi
+admin-ews-domain = Domena skrzynek
+admin-ews-optional = (opcjonalnie)
+admin-ews-domain-help = Wypełnij oba pola, gdy adresy znane calrs (UPN w AD, e-mail z OIDC) są w innej domenie niż skrzynki Exchange. Przepisywany jest tylko adres dokładnie w domenie użytkowników, z zachowaniem części lokalnej: <code>alice@example.local</code> → <code>alice@example.com</code>. Adresy z każdej innej domeny są używane bez zmian. Zostaw oba puste, aby używać adresu calrs każdego użytkownika bez zmian.
+admin-ews-auto = Automatycznie udostępnij wszystkim użytkownikom (obecnym + przyszłym)
+admin-ews-auto-help = Po zaznaczeniu każdy aktywny użytkownik z zaufanym adresem otrzymuje zarządzane źródło Exchange: konta utworzone przez calrs user create, konta SSO, których e-mail zweryfikował dostawca tożsamości, oraz adresy potwierdzone poniżej. Zapis uruchamia operację od razu.
+admin-ews-lock = Zablokuj zwykłym użytkownikom dodawanie własnych źródeł kalendarza
+admin-ews-lock-help = Administratorów blokada nie dotyczy. Źródła dodane już przez użytkowników pozostają, dopóki ich nie usuniesz.
+admin-ews-disable-note = Gdy funkcja jest wyłączona, źródła zarządzane zostają, ale nie są synchronizowane i żadna rezerwacja nie jest do nich zapisywana. Ponowne włączenie je wznawia.
+admin-ews-remove = Usuń źródła zarządzane i wyczyść hasło konta usługi
+admin-ews-remove-confirm = Usunąć wszystkie zarządzane źródła Exchange, wraz z kalendarzami i zajętymi terminami zapisanymi z nich przez calrs, oraz zapisane hasło konta usługi? Globalny Exchange zostanie wyłączony. Rezerwacje już zapisane w skrzynkach pocztowych pozostaną tam.
+admin-ews-notice-removed = Usunięte źródła zarządzane: { $count }. Hasło konta usługi zostało wyczyszczone, a globalny Exchange jest wyłączony. Rezerwacje już zapisane w skrzynkach pocztowych pozostają tam.
+admin-ews-notice-https-required = Punkt końcowy EWS musi używać https://: hasło konta usługi jest wysyłane z każdym żądaniem. Nic nie zostało zapisane.
+admin-ews-notice-password-cleared = Ustawienia zapisane. Zmienił się punkt końcowy lub konto usługi, więc zapisane hasło zostało wyczyszczone: trzeba je wpisać ponownie, aby globalny Exchange działał.
+admin-ews-notice-source-removed = Źródło zarządzane usunięte wraz z zapisanymi kalendarzami i zajętymi terminami.
+admin-ews-row-remove = Usuń
+admin-ews-row-remove-confirm = Usunąć zarządzane źródło Exchange użytkownika { $email } wraz z zapisanymi kalendarzami i zajętymi terminami? Automatyczne udostępnianie utworzy je ponownie przy następnym zapisie, potwierdzeniu lub logowaniu SSO; zawieszenie konta temu zapobiega.
+admin-ews-trust-no-mailbox = brak (adres nie wskazuje żadnej skrzynki)
+admin-ews-notice-selections-reset = Skrzynka czytana przez niektóre źródła zarządzane się zmieniła, więc ich kalendarze są wykrywane ponownie. Typy wydarzeń ze zresetowanym wyborem kalendarzy: { $count } (lista w dzienniku serwera).
+admin-ews-notice-reconfirm = Zastąpienie domeny przypisuje teraz niektóre potwierdzone adresy do innej skrzynki. Adresy do ponownego potwierdzenia: { $count } (lista poniżej).
+admin-ews-row-taken-over = Przejęte od { $user } dnia { $when }
+admin-ews-notice-trust-changed = Niczego nie potwierdzono: adres tego konta lub skrzynka, którą otwiera, zmieniły się od wyświetlenia strony. Sprawdź listę ponownie.
+sources-managed-user-untrusted = To źródło jest zarządzane przez administratora, ale adres konta nie został jeszcze potwierdzony, więc nie jest synchronizowane.
+sources-managed-user-suspended = To źródło jest zarządzane przez administratora, ale konto jest wyłączone, więc nie jest synchronizowane.
+admin-ews-save = Zapisz ustawienia EWS
+admin-ews-save-provision = Zapisz i udostępnij teraz wszystkim użytkownikom
+admin-ews-status-title = Stan synchronizacji według użytkownika
+admin-ews-status-summary = Synchronizuje się { $ok } z { $total } zarządzanych skrzynek. Użytkownik bez skrzynki Exchange (np. lokalne konto administratora) zawsze będzie pokazywał błąd. To normalne.
+admin-ews-col-user = Użytkownik
+admin-ews-col-mailbox = Skrzynka
+admin-ews-col-last-sync = Ostatnia synchronizacja
+admin-ews-col-status = Stan
+admin-ews-row-disabled = wyłączone
+admin-ews-row-synced = Zsynchronizowano
+admin-ews-row-never = Nigdy nie synchronizowano
+admin-ews-row-no-mailbox = Brak skrzynki Exchange
+admin-ews-notice-saved = Ustawienia Exchange zapisane.
+admin-ews-notice-provisioned = Ustawienia Exchange zapisane. Utworzone źródła zarządzane: { $count }.
+admin-ews-notice-invalid-url = Adres URL punktu końcowego EWS jest nieprawidłowy (tylko http(s), bez adresów prywatnych spoza listy dozwolonych). Nic nie zapisano.
+admin-ews-notice-incomplete = Aby włączyć globalny Exchange, podaj adres URL punktu końcowego, konto usługi i jego hasło. Nic nie zapisano.
+admin-ews-notice-provision-failed = Ustawienia zapisane, ale udostępnianie zarządzanych źródeł nie powiodło się. Sprawdź log serwera.
+admin-ews-registration-warning = Rejestracja jest otwarta. Tak utworzone konta nigdy nie otrzymują zarządzanego źródła Exchange, nawet przez „udostępnij teraz wszystkim użytkownikom”: nic nie dowodzi, że adres należy do nich. Aby dać któremuś skrzynkę, potwierdź jego adres poniżej lub uruchom calrs user trust-email, gdy wiesz, że należy do tej osoby.
+admin-ews-from-domain = Domena użytkowników
+admin-ews-notice-override-domains = Zastąpienie domeny wymaga obu domen, każda jako zwykła domena, np. example.com: tej, którą logują się twoi użytkownicy, i domeny ich skrzynek. Nic nie zostało zapisane.
+admin-ews-notice-trusted = Adres potwierdzony. Gdy globalny Exchange jest włączony, zarządzane źródło użytkownika jest tworzone teraz: zobacz tabelę stanu.
+admin-ews-row-suspended = Konto wyłączone: bez synchronizacji
+admin-ews-row-untrusted = Adres niepotwierdzony: bez synchronizacji
+admin-ews-row-conflict = Nie udostępniono: źródło innego użytkownika już czyta tę skrzynkę
+admin-ews-trust-title = Adresy do potwierdzenia
+admin-ews-trust-help = Te aktywne konta w dozwolonych domenach mają adres, za który nikt nie poręczył (rejestracja otwarta lub konto sprzed tej kontroli), więc nie otrzymują zarządzanego źródła Exchange. Potwierdź adres tylko wtedy, gdy wiesz, że należy do tej osoby: po potwierdzeniu calrs czyta dla niej kalendarz tej skrzynki.
+admin-ews-trust-confirm = Potwierdź
+admin-ews-trust-more = Wyświetlono { $shown } z { $total }.
+admin-ews-http-warning = Punkt końcowy używa http://: hasło konta usługi jest wysyłane bez szyfrowania. Lepiej użyj https://.
 # Time off (templates/time_off.html, src/web/time_off.rs, troubleshoot view)
 
 nav-time-off = Nieobecności
@@ -2075,6 +2148,29 @@ pager-previous = Poprzednia
 pager-next = Następna
 admin-users-search = Szukaj
 admin-figures-cached = Dane o rezerwacjach obliczone { $seconds } s temu.
+
+# OAuth connection consent (templates/auth/consent.html)
+oauth-title = Połącz aplikację
+oauth-intro = Zezwolić tej aplikacji na dostęp do calrs jako { $email }? Nazwę podaje jej twórca. Sprawdź adres powrotu przed zatwierdzeniem.
+oauth-events = Odczytywanie dostępnych dla ciebie typów wydarzeń
+oauth-blocks = Odczytywanie zajętych terminów w twoim kalendarzu
+oauth-invites = Tworzenie linków zaproszeń z twoimi uprawnieniami
+oauth-allow = Zezwól na dostęp
+oauth-deny = Odmów
+
+# Connected apps (templates/dashboard_apps.html, admin user menu)
+
+apps-page-title = Połączone aplikacje
+apps-heading = Połączone aplikacje
+apps-subtitle = Aplikacje, którym pozwolono działać w Twoim imieniu, np. asystenci AI połączeni przez MCP. Cofnięcie dostępu działa natychmiast.
+apps-approved = Zatwierdzono { $date }
+apps-last-used = Ostatnio użyto { $date }
+apps-never-used = Jeszcze nieużywana
+apps-revoke = Cofnij dostęp
+apps-revoke-confirm = Cofnąć dostęp dla { $name }? Aby połączyć się ponownie, aplikacja będzie wymagała nowego zatwierdzenia.
+apps-revoked = Dostęp cofnięty.
+apps-empty = Brak połączonych aplikacji. Klient MCP prosi o Twoje zatwierdzenie przy pierwszym połączeniu.
+admin-revoke-apps = Cofnij dostęp połączonych aplikacji ({ $count })
 
 # Write destination per event type (#47)
 etf-write-destination = Zapisuj potwierdzone rezerwacje w

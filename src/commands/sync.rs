@@ -48,9 +48,22 @@ const NOT_SUSPENDED_MICROSOFT: &str = "NOT (cs.provider_type = 'microsoft' AND E
          WHERE sa.id = cs.account_id AND su.enabled = 0))";
 
 pub async fn run(pool: &SqlitePool, key: &[u8; 32], full: bool) -> Result<()> {
-    let sources: Vec<(String, String, String, String, Option<String>, String, Option<String>, Option<String>, String)> = sqlx::query_as(
-        &format!("SELECT id, name, url, username, password_enc, auth_type, access_token_enc, token_expires_at, provider_type FROM caldav_sources cs WHERE enabled = 1 AND {NOT_SUSPENDED_MICROSOFT}"),
-    )
+    let sources: Vec<(
+        String,
+        String,
+        String,
+        String,
+        Option<String>,
+        String,
+        Option<String>,
+        Option<String>,
+        String,
+    )> = sqlx::query_as(&format!(
+        "SELECT cs.id, cs.name, cs.url, cs.username, cs.password_enc, cs.auth_type, \
+                    cs.access_token_enc, cs.token_expires_at, cs.provider_type \
+             FROM caldav_sources cs WHERE cs.enabled = 1 AND {} AND {NOT_SUSPENDED_MICROSOFT}",
+        crate::ews::global::ACTIVE_SOURCE_SQL
+    ))
     .fetch_all(pool)
     .await?;
 
@@ -163,19 +176,30 @@ pub(crate) async fn sync_one_source(
         return sync_provider_source(pool, key, provider.as_ref(), source_id).await;
     }
     if provider_type == kinds::EWS {
-        let provider = crate::crypto::decrypt_password(key, password_enc.unwrap_or(""))
-            .map_err(|e| anyhow::anyhow!("could not decrypt credentials: {e}"))
-            .and_then(|password| {
-                crate::providers::build_provider(provider_type, url, username, &password)
-            });
+        let provider = crate::ews::global::provider_for_source(
+            pool,
+            key,
+            source_id,
+            url,
+            username,
+            password_enc,
+        )
+        .await;
         let provider = match provider {
-            Ok(p) => p,
+            Ok(Some(p)) => p,
+            Ok(None) => {
+                // A managed source with nothing to do (global Exchange off
+                // or incomplete, its user suspended or not trusted): nothing
+                // to sync, and nothing to record or alert about.
+                tracing::info!(source_id = %source_id, "managed Exchange source skipped");
+                return Ok(());
+            }
             Err(e) => {
                 crate::commands::sync_health::record_sync_failure(pool, key, source_id, &e).await;
                 return Err(e);
             }
         };
-        return sync_provider_source(pool, key, provider.as_ref(), source_id).await;
+        return sync_ews_source(pool, key, provider.as_ref(), source_id).await;
     }
 
     let client = match crate::oauth2_caldav::build_client_for_source(
@@ -462,15 +486,16 @@ pub async fn sync_if_stale(pool: &SqlitePool, key: &[u8; 32], user_id: &str) {
     // Must match SQLite datetime('now') format: "YYYY-MM-DD HH:MM:SS" (space, not T)
     let cutoff_str = cutoff.format("%Y-%m-%d %H:%M:%S").to_string();
 
-    let stale_sources: Vec<(String, String, String, Option<String>, String, Option<String>, Option<String>, String)> = sqlx::query_as(
-        &format!("SELECT cs.id, cs.url, cs.username, cs.password_enc, cs.auth_type, cs.access_token_enc, cs.token_expires_at, cs.provider_type
+    let stale_sources: Vec<(String, String, String, Option<String>, String, Option<String>, Option<String>, String)> = sqlx::query_as(&format!(
+        "SELECT cs.id, cs.url, cs.username, cs.password_enc, cs.auth_type, cs.access_token_enc, cs.token_expires_at, cs.provider_type
          FROM caldav_sources cs
          JOIN accounts a ON a.id = cs.account_id
-         WHERE a.user_id = ? AND cs.enabled = 1
+         WHERE a.user_id = ?1 AND cs.enabled = 1 AND {}
            AND (cs.last_synced IS NULL OR cs.last_synced < ?2)
            AND (cs.last_sync_error_at IS NULL OR cs.last_sync_error_at < ?2)
-           AND {NOT_SUSPENDED_MICROSOFT}"),
-    )
+           AND {NOT_SUSPENDED_MICROSOFT}",
+        crate::ews::global::ACTIVE_SOURCE_SQL
+    ))
     .bind(user_id)
     .bind(&cutoff_str)
     .fetch_all(pool)
@@ -549,6 +574,12 @@ pub async fn sync_if_stale(pool: &SqlitePool, key: &[u8; 32], user_id: &str) {
 /// keep `last_synced` fresh but only fetch the delta, and this loop is the
 /// only place the full resync runs, so a busy host's source would otherwise
 /// never get one. A failing source still waits the minimum age.
+///
+/// A managed Exchange source is left out while it has nothing to do (global
+/// Exchange off or incomplete, its user suspended or not trusted, see
+/// [`crate::ews::global::ACTIVE_SOURCE_SQL`]): its sync is skipped without
+/// recording an attempt, so it would stay the stalest candidate and be picked
+/// on every tick, starving the other sources.
 pub async fn next_background_source(pool: &SqlitePool, min_age_secs: u64) -> Option<String> {
     sqlx::query_scalar(&format!(
         "SELECT id FROM (
@@ -556,14 +587,15 @@ pub async fn next_background_source(pool: &SqlitePool, min_age_secs: u64) -> Opt
                     MAX(COALESCE(cs.last_synced, '2000-01-01'),
                         COALESCE(cs.last_sync_error_at, '2000-01-01')) AS last_attempt
              FROM caldav_sources cs
-             WHERE cs.enabled = 1 AND {NOT_SUSPENDED_MICROSOFT}
+             WHERE cs.enabled = 1 AND {} AND {NOT_SUSPENDED_MICROSOFT}
          )
          WHERE ?1 = 0
             OR last_attempt <= datetime('now', ?2)
             OR ((last_full_sync IS NULL OR last_full_sync < datetime('now', '-24 hours'))
                 AND (last_sync_error_at IS NULL OR last_sync_error_at <= datetime('now', ?2)))
          ORDER BY last_attempt ASC
-         LIMIT 1"
+         LIMIT 1",
+        crate::ews::global::ACTIVE_SOURCE_SQL
     ))
     .bind(min_age_secs as i64)
     .bind(format!("-{min_age_secs} seconds"))
@@ -630,7 +662,392 @@ pub async fn sync_source_by_id(pool: &SqlitePool, key: &[u8; 32], source_id: &st
     .await;
 }
 
-/// Full-snapshot sync for EWS and Microsoft Graph through [`crate::providers::CalendarProvider`].
+/// EWS-specific sync path using the [`crate::providers::CalendarProvider`]
+/// trait. CalDAV sources keep going through [`sync_source`], which retains
+/// CalDAV-only optimisations (ctag, RFC 6578 sync-token, time-range queries,
+/// hardened orphan reconciliation). The EWS path is intentionally simpler:
+/// list folders, fetch each one in full, and reconcile by UID. Delta sync is a
+/// known follow-up — see `EwsProvider::sync_delta`.
+///
+/// The outcome is recorded on the source, as for [`sync_source`].
+pub async fn sync_ews_source(
+    pool: &SqlitePool,
+    key: &[u8; 32],
+    provider: &dyn crate::providers::CalendarProvider,
+    source_id: &str,
+) -> Result<()> {
+    let result = sync_ews_calendars(pool, key, provider, source_id).await;
+    crate::commands::sync_health::record_sync_outcome(pool, key, source_id, &result).await;
+    result
+}
+
+async fn sync_ews_calendars(
+    pool: &SqlitePool,
+    key: &[u8; 32],
+    provider: &dyn crate::providers::CalendarProvider,
+    source_id: &str,
+) -> Result<()> {
+    let mut calendar_failures: Vec<String> = Vec::new();
+    // A managed source reads someone's mailbox through the service account:
+    // it keeps busy times only, never what the meetings are about, nor the
+    // names of their calendar folders.
+    let busy_only = crate::ews::global::is_managed(pool, source_id).await;
+
+    // Phase 1, network only: what the mailbox holds. Nothing is written yet,
+    // since the source may be pointed at another mailbox while this runs.
+    let mut calendars = provider.list_calendars().await?;
+    if busy_only {
+        for (n, cal) in calendars.iter_mut().enumerate() {
+            cal.display_name = Some(crate::ews::global::neutral_calendar_name(n));
+        }
+    }
+    let not_synced: Vec<String> =
+        sqlx::query_scalar("SELECT href FROM calendars WHERE source_id = ? AND sync_enabled = 0")
+            .bind(source_id)
+            .fetch_all(pool)
+            .await
+            .unwrap_or_default();
+    // A source that has no calendar yet is meeting its mailbox for the first
+    // time (or again, after `forget_mailbox`): the moment to pick where
+    // bookings go.
+    let first_discovery: bool =
+        sqlx::query_scalar("SELECT COUNT(*) = 0 FROM calendars WHERE source_id = ?")
+            .bind(source_id)
+            .fetch_one(pool)
+            .await
+            .unwrap_or(false);
+
+    // Bounded fetch window. Matches the CalDAV path's FULL_FETCH_LOOKBACK_DAYS:
+    // 90 days back is plenty for orphan reconciliation and keeps EWS response
+    // sizes predictable. The provider's fetch_events_since uses CalendarView,
+    // which expands recurrences server-side within the window.
+    let since_dt = Utc::now() - chrono::Duration::days(FULL_FETCH_LOOKBACK_DAYS);
+    let since_iso = since_dt.to_rfc3339();
+    let since_prefix = since_dt.format("%Y%m%d").to_string();
+
+    let mut fetched = Vec::with_capacity(calendars.len());
+    for cal_info in &calendars {
+        if not_synced.contains(&cal_info.id) {
+            fetched.push(None);
+            continue;
+        }
+        fetched.push(Some(
+            provider.fetch_events_since(&cal_info.id, &since_iso).await,
+        ));
+    }
+    let default_href = if first_discovery {
+        default_write_calendar(pool, provider, source_id, &calendars).await
+    } else {
+        None
+    };
+
+    // Phase 2: keep it, under the source's mailbox lock, and only if the
+    // source still reads the mailbox this client impersonated. Otherwise the
+    // old mailbox's calendars would come back after `forget_mailbox`.
+    let lock = crate::ews::global::mailbox_lock(source_id);
+    let _guard = lock.lock().await;
+    let row: Option<Option<String>> =
+        sqlx::query_scalar("SELECT impersonate_email FROM caldav_sources WHERE id = ?")
+            .bind(source_id)
+            .fetch_optional(pool)
+            .await?;
+    let Some(target) = row else {
+        tracing::info!(source_id = %source_id, "EWS sync discarded: the source was removed meanwhile");
+        return Ok(());
+    };
+    if target.as_deref() != provider.impersonated_mailbox() {
+        tracing::warn!(source_id = %source_id, "EWS sync discarded: the source now reads another mailbox");
+        return Ok(());
+    }
+
+    let listed: Vec<&str> = calendars.iter().map(|c| c.id.as_str()).collect();
+    for (cal_info, result) in calendars.iter().zip(fetched) {
+        let (cal_id, _stored_change_marker, _stored_sync_state, sync_enabled) =
+            upsert_calendar_provider(pool, source_id, cal_info).await?;
+        let cal_label = cal_info.display_name.as_deref().unwrap_or(&cal_info.id);
+        let result = match result {
+            Some(r) if sync_enabled => r,
+            _ => {
+                tracing::debug!(calendar = %cal_label, "calendar not synced, skipping");
+                println!("  {} {}: not synced", "…".dimmed(), cal_label);
+                forget_calendar_events(pool, &cal_id).await;
+                continue;
+            }
+        };
+
+        match result {
+            Ok(raw_events) => {
+                let count =
+                    upsert_provider_events(pool, &cal_id, &raw_events, busy_only, None).await;
+                let deleted = remove_orphaned_ews_events(
+                    pool,
+                    key,
+                    provider,
+                    source_id,
+                    &cal_id,
+                    &raw_events,
+                    &since_prefix,
+                )
+                .await;
+                if deleted > 0 {
+                    tracing::info!(
+                        calendar_name = cal_label,
+                        stale_events_removed = deleted,
+                        "removed stale EWS events from local cache"
+                    );
+                }
+                println!(
+                    "  {} {}: {} event(s) synced{}",
+                    "✓".green(),
+                    cal_label,
+                    count,
+                    if deleted > 0 {
+                        format!(", {} removed", deleted)
+                    } else {
+                        String::new()
+                    }
+                );
+            }
+            Err(e) => {
+                println!("  {} {}: failed: {}", "✗".red(), cal_label, e);
+                calendar_failures.push(format!("{cal_label}: {e:#}"));
+            }
+        }
+    }
+
+    // A folder the mailbox stops listing is dropped, with its cached events
+    // and the event types' selections of it (they cascade), only once it has
+    // been missing from two successful listings in a row; a write calendar
+    // pointing at it is then cleared. An empty listing proves nothing (a
+    // mailbox always has its calendar folder), so it never drops anything.
+    if !listed.is_empty() {
+        let stored: Vec<(String, String, i64)> =
+            sqlx::query_as("SELECT id, href, ews_missing_count FROM calendars WHERE source_id = ?")
+                .bind(source_id)
+                .fetch_all(pool)
+                .await?;
+        for (id, href, misses) in stored {
+            if listed.contains(&href.as_str()) {
+                if misses > 0 {
+                    sqlx::query("UPDATE calendars SET ews_missing_count = 0 WHERE id = ?")
+                        .bind(&id)
+                        .execute(pool)
+                        .await?;
+                }
+            } else if misses >= 1 {
+                sqlx::query("DELETE FROM calendars WHERE id = ?")
+                    .bind(&id)
+                    .execute(pool)
+                    .await?;
+                tracing::info!(source_id = %source_id, calendar_id = %id, "EWS calendar missing from two listings in a row: removed");
+            } else {
+                sqlx::query("UPDATE calendars SET ews_missing_count = 1 WHERE id = ?")
+                    .bind(&id)
+                    .execute(pool)
+                    .await?;
+                tracing::info!(source_id = %source_id, calendar_id = %id, "EWS calendar not listed by the server: kept until the next listing");
+            }
+        }
+    }
+    sqlx::query(
+        "UPDATE caldav_sources SET write_calendar_href = NULL WHERE id = ? \
+         AND write_calendar_href IS NOT NULL \
+         AND NOT EXISTS (SELECT 1 FROM calendars c WHERE c.source_id = caldav_sources.id \
+                         AND c.href = caldav_sources.write_calendar_href)",
+    )
+    .bind(source_id)
+    .execute(pool)
+    .await?;
+
+    if let Some(href) = default_href {
+        let _ = sqlx::query(
+            "UPDATE caldav_sources SET write_calendar_href = ? \
+             WHERE id = ? AND write_calendar_href IS NULL",
+        )
+        .bind(&href)
+        .bind(source_id)
+        .execute(pool)
+        .await;
+        tracing::info!(source_id = %source_id, "managed source writes bookings to the mailbox's default calendar");
+    }
+
+    let _ = sqlx::query("UPDATE caldav_sources SET last_full_sync = datetime('now') WHERE id = ?")
+        .bind(source_id)
+        .execute(pool)
+        .await;
+    sqlx::query("UPDATE caldav_sources SET last_synced = datetime('now') WHERE id = ?")
+        .bind(source_id)
+        .execute(pool)
+        .await?;
+    tracing::info!(source_id = %source_id, "EWS sync completed");
+    calendar_failures_result(&calendar_failures)
+}
+
+/// The calendar a managed source's bookings should go to: the mailbox's
+/// default calendar, so a user who never opens the sources page still gets
+/// their bookings written to their agenda. Only for a managed source that has
+/// no write calendar yet, and only when its calendars were just discovered:
+/// after that, "do not write" is a choice the user may have made and a later
+/// sync must not undo. The caller applies it.
+///
+/// The default calendar is recognised by id, never by name (it is "Calendrier"
+/// on a French mailbox). When the server cannot name it, a mailbox with a
+/// single calendar is unambiguous; with several, nothing is guessed.
+async fn default_write_calendar(
+    pool: &SqlitePool,
+    provider: &dyn crate::providers::CalendarProvider,
+    source_id: &str,
+    calendars: &[crate::providers::RemoteCalendar],
+) -> Option<String> {
+    let eligible: bool = sqlx::query_scalar(
+        "SELECT managed = 1 AND write_calendar_href IS NULL FROM caldav_sources WHERE id = ?",
+    )
+    .bind(source_id)
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten()
+    .unwrap_or(false);
+    if !eligible {
+        return None;
+    }
+    let default = match provider.default_calendar().await {
+        Ok(id) => id,
+        Err(e) => {
+            tracing::warn!(source_id = %source_id, error = %e, "could not ask the server for the default calendar");
+            None
+        }
+    };
+    let chosen = default
+        .filter(|id| calendars.iter().any(|c| &c.id == id))
+        .or_else(|| match calendars {
+            [only] => Some(only.id.clone()),
+            _ => None,
+        });
+    if chosen.is_none() {
+        tracing::info!(source_id = %source_id, calendars = calendars.len(), "no default calendar to write bookings to; the user picks one");
+    }
+    chosen
+}
+
+/// What a busy-only event keeps of the iCal text of its resource: nothing,
+/// unless it recurs. Then one bare VEVENT per VEVENT of the resource, in
+/// order, carrying only what [`crate::rrule::extract_exdates`] reads: the
+/// first one's start and `EXDATE` lines (the series' cancelled occurrences),
+/// and each other one's `RECURRENCE-ID` (its moved occurrences, which the
+/// series must not block twice). No title, description, location, attendees
+/// or notes.
+fn busy_only_ical(resource: &str, rrule: Option<&str>) -> Option<String> {
+    rrule.filter(|r| !r.trim().is_empty())?;
+    let unfolded = crate::utils::unfold_ical(resource);
+    let mut out = String::new();
+    let mut index = 0usize;
+    let mut inside = false;
+    for line in unfolded.lines() {
+        let line = line.trim_end_matches('\r');
+        let name = line
+            .split([':', ';'])
+            .next()
+            .unwrap_or("")
+            .to_ascii_uppercase();
+        if line.eq_ignore_ascii_case("BEGIN:VEVENT") {
+            inside = true;
+            out.push_str("BEGIN:VEVENT\r\n");
+            continue;
+        }
+        if line.eq_ignore_ascii_case("END:VEVENT") {
+            inside = false;
+            index += 1;
+            out.push_str("END:VEVENT\r\n");
+            continue;
+        }
+        let keep = inside
+            && match index {
+                0 => name == "DTSTART" || name == "EXDATE",
+                _ => name == "RECURRENCE-ID",
+            };
+        if keep {
+            out.push_str(line);
+            out.push_str("\r\n");
+        }
+    }
+    Some(out)
+}
+
+/// EWS variant of orphan reconciliation, scoped to the fetched window.
+/// `since_prefix` is a `YYYYMMDD` lower bound matching the
+/// `fetch_events_since` call: events with `start_at` before it weren't in
+/// the response and must not be flagged as orphans. Pass an empty string to
+/// reconcile against every local event.
+///
+/// A vanished event's booking goes through [`cancel_orphaned_booking`] like
+/// on CalDAV: scoped to this source and host, confirmed gone with `provider`
+/// first, and both sides emailed.
+#[allow(clippy::too_many_arguments)]
+async fn remove_orphaned_ews_events(
+    pool: &SqlitePool,
+    key: &[u8; 32],
+    provider: &dyn crate::providers::CalendarProvider,
+    source_id: &str,
+    cal_id: &str,
+    raw_events: &[ProviderRawEvent],
+    since_prefix: &str,
+) -> u32 {
+    let mut seen_uids: Vec<(String, String)> = Vec::new();
+    for raw in raw_events {
+        for vevent in split_vevents(&raw.ical) {
+            let uid =
+                extract_vevent_field(&vevent, "UID").unwrap_or_else(|| Uuid::new_v4().to_string());
+            let recurrence_id = extract_vevent_field(&vevent, "RECURRENCE-ID");
+            seen_uids.push((uid, recurrence_id.unwrap_or_default()));
+        }
+    }
+
+    if seen_uids.is_empty() {
+        return 0;
+    }
+
+    // Same window-scoping trick as the CalDAV path: compact ("YYYYMMDDTHHMMSS")
+    // and all-day ("YYYYMMDD") start_at values both sort against a YYYYMMDD
+    // lower bound.
+    let local_events: Vec<(String, String, Option<String>)> = sqlx::query_as(
+        "SELECT id, uid, recurrence_id FROM events
+         WHERE calendar_id = ?
+           AND (? = '' OR start_at >= ?)",
+    )
+    .bind(cal_id)
+    .bind(since_prefix)
+    .bind(since_prefix)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
+
+    let mut deleted = 0u32;
+    for (event_id, uid, recurrence_id) in &local_events {
+        let rec_id = recurrence_id.clone().unwrap_or_default();
+        if !seen_uids.iter().any(|(u, r)| u == uid && r == &rec_id) {
+            // Decide before dropping the cached event: EWS has no
+            // booking-level sweep, so when Exchange could not say whether the
+            // booking's event is gone, the cached row is what brings it back
+            // for another check on the next sync.
+            let outcome =
+                cancel_orphaned_booking(pool, key, OrphanCheck::Provider(provider), source_id, uid)
+                    .await;
+            if outcome == OrphanOutcome::Inconclusive {
+                continue;
+            }
+            let _ = sqlx::query("DELETE FROM events WHERE id = ?")
+                .bind(event_id)
+                .execute(pool)
+                .await;
+            deleted += 1;
+        }
+    }
+    deleted
+}
+
+/// Full-snapshot sync for Microsoft Graph through [`crate::providers::CalendarProvider`].
+/// EWS has its own, [`sync_ews_source`].
 /// CalDAV retains its protocol-specific ctag and RFC 6578 sync-token path.
 /// These providers expand recurrences server-side, then reconcile the cache by UID.
 ///
@@ -742,7 +1159,7 @@ async fn sync_provider_calendars(
             } else {
                 (raw_events, 0)
             };
-            let count = upsert_provider_events(pool, &cal_id, generation, &raw_events).await;
+            let count = upsert_provider_events(pool, &cal_id, &raw_events, false, Some(generation)).await;
             // Written only while the generation held (see
             // upsert_provider_events); a change since then means this
             // snapshot proves nothing gone either.
@@ -1077,143 +1494,6 @@ async fn remove_unlisted_provider_calendars(
     Ok(())
 }
 
-/// Provider-trait equivalent of [`upsert_calendar`]. EWS uses opaque folder
-/// IDs in the `href` column; the `id` field on `RemoteCalendar` is reused.
-async fn upsert_calendar_provider(
-    pool: &SqlitePool,
-    source_id: &str,
-    cal_info: &crate::providers::RemoteCalendar,
-) -> Result<(String, Option<String>, Option<String>, bool)> {
-    let existing: Option<(String, Option<String>, Option<String>, bool)> = sqlx::query_as(
-        "SELECT id, ctag, sync_token, sync_enabled FROM calendars WHERE source_id = ? AND href = ?",
-    )
-    .bind(source_id)
-    .bind(&cal_info.id)
-    .fetch_optional(pool)
-    .await?;
-
-    match existing {
-        Some((id, ctag, sync_token, sync_enabled)) => {
-            sqlx::query(
-                "UPDATE calendars SET display_name = ?, color = ?, read_only = ? WHERE id = ?",
-            )
-            .bind(&cal_info.display_name)
-            .bind(&cal_info.color)
-            .bind(cal_info.read_only)
-            .bind(&id)
-            .execute(pool)
-            .await?;
-            Ok((id, ctag, sync_token, sync_enabled))
-        }
-        None => {
-            let id = Uuid::new_v4().to_string();
-            // Someone else's calendar does not make the user busy until they
-            // say so: a colleague's meetings are not the host's. Only the
-            // first discovery decides; the user's later choice stands.
-            sqlx::query(
-                "INSERT INTO calendars (id, source_id, href, display_name, color, ctag, is_busy, read_only) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            )
-            .bind(&id)
-            .bind(source_id)
-            .bind(&cal_info.id)
-            .bind(&cal_info.display_name)
-            .bind(&cal_info.color)
-            .bind(&cal_info.change_marker)
-            .bind(!cal_info.shared)
-            .bind(cal_info.read_only)
-            .execute(pool)
-            .await?;
-            Ok((id, None, None, true))
-        }
-    }
-}
-
-/// Provider-trait equivalent of [`upsert_raw_events`]. Splits the iCal blob
-/// into VEVENTs and upserts into the `events` table (same composite key:
-/// calendar_id + uid + recurrence_id).
-///
-/// Each row is written only while the calendar's sync generation is still
-/// `generation`, in the same statement: a calendar turned off (or off and on)
-/// mid-way gets no part of a snapshot fetched before the change (#324).
-async fn upsert_provider_events(
-    pool: &SqlitePool,
-    cal_id: &str,
-    generation: i64,
-    raw_events: &[ProviderRawEvent],
-) -> u32 {
-    let mut count = 0u32;
-    for raw in raw_events {
-        let vevent_blocks = split_vevents(&raw.ical);
-        let mut zones = crate::tzid::ResourceZones::new(&raw.ical);
-        for vevent in &vevent_blocks {
-            // Unfolded once for the field reads below (#267).
-            let fields = crate::utils::unfold_ical(vevent);
-            let uid =
-                extract_vevent_field(&fields, "UID").unwrap_or_else(|| Uuid::new_v4().to_string());
-            let summary = extract_vevent_field(&fields, "SUMMARY");
-            let start_at = extract_vevent_field(&fields, "DTSTART").unwrap_or_default();
-            let location = extract_vevent_field(&fields, "LOCATION");
-            let description = extract_vevent_field(&fields, "DESCRIPTION");
-            let status = extract_vevent_field(&fields, "STATUS");
-            let rrule = extract_vevent_field(&fields, "RRULE");
-            let recurrence_id = extract_vevent_field(&fields, "RECURRENCE-ID");
-            let transp = extract_vevent_field(&fields, "TRANSP");
-            let timezone = zones.event_timezone(&fields);
-            let end_at = crate::utils::extract_vevent_end(
-                &fields,
-                timezone.as_deref().and_then(crate::tzid::resolve_or_offset),
-            )
-            .unwrap_or_default();
-
-            let event_id = Uuid::new_v4().to_string();
-            let written = sqlx::query(
-                "INSERT INTO events (id, calendar_id, uid, summary, start_at, end_at, location, description, status, rrule, raw_ical, recurrence_id, timezone, transp)
-                 SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
-                 WHERE (SELECT sync_generation FROM calendars WHERE id = ?) = ?
-                 ON CONFLICT(calendar_id, uid, COALESCE(recurrence_id, '')) DO UPDATE SET
-                   summary = excluded.summary,
-                   start_at = excluded.start_at,
-                   end_at = excluded.end_at,
-                   location = excluded.location,
-                   description = excluded.description,
-                   status = excluded.status,
-                   rrule = excluded.rrule,
-                   raw_ical = excluded.raw_ical,
-                   recurrence_id = excluded.recurrence_id,
-                   timezone = excluded.timezone,
-                   transp = excluded.transp,
-                   synced_at = datetime('now')",
-            )
-            .bind(&event_id)
-            .bind(cal_id)
-            .bind(&uid)
-            .bind(&summary)
-            .bind(&start_at)
-            .bind(&end_at)
-            .bind(&location)
-            .bind(&description)
-            .bind(&status)
-            .bind(&rrule)
-            .bind(&raw.ical)
-            .bind(&recurrence_id)
-            .bind(&timezone)
-            .bind(&transp)
-            .bind(cal_id)
-            .bind(generation)
-            .execute(pool)
-            .await;
-
-            if let Err(error) = &written {
-                tracing::warn!(%error, "could not cache a provider event");
-            }
-            if matches!(written, Ok(ref r) if r.rows_affected() > 0) {
-                count += 1;
-            }
-        }
-    }
-    count
-}
-
 /// Split a snapshot into the items calrs can cache and the number it cannot:
 /// an incomplete VEVENT, no UID, a start or end that does not parse, or an
 /// item the provider listed but could not convert (an empty `ical`).
@@ -1408,6 +1688,162 @@ pub(crate) async fn cancel_orphan_unverified(
 ) -> bool {
     cancel_orphaned_booking(pool, key, OrphanCheck::Caldav(None), source_id, uid).await
         == OrphanOutcome::Cancelled
+}
+
+/// Provider-trait equivalent of [`upsert_calendar`]. EWS uses opaque folder
+/// IDs in the `href` column; the `id` field on `RemoteCalendar` is reused.
+async fn upsert_calendar_provider(
+    pool: &SqlitePool,
+    source_id: &str,
+    cal_info: &crate::providers::RemoteCalendar,
+) -> Result<(String, Option<String>, Option<String>, bool)> {
+    let existing: Option<(String, Option<String>, Option<String>, bool)> = sqlx::query_as(
+        "SELECT id, ctag, sync_token, sync_enabled FROM calendars WHERE source_id = ? AND href = ?",
+    )
+    .bind(source_id)
+    .bind(&cal_info.id)
+    .fetch_optional(pool)
+    .await?;
+
+    match existing {
+        Some((id, ctag, sync_token, sync_enabled)) => {
+            sqlx::query(
+                "UPDATE calendars SET display_name = ?, color = ?, read_only = ? WHERE id = ?",
+            )
+            .bind(&cal_info.display_name)
+            .bind(&cal_info.color)
+            .bind(cal_info.read_only)
+            .bind(&id)
+            .execute(pool)
+            .await?;
+            Ok((id, ctag, sync_token, sync_enabled))
+        }
+        None => {
+            let id = Uuid::new_v4().to_string();
+            // Someone else's calendar does not make the user busy until they
+            // say so: a colleague's meetings are not the host's. Only the
+            // first discovery decides; the user's later choice stands.
+            sqlx::query(
+                "INSERT INTO calendars (id, source_id, href, display_name, color, ctag, is_busy, read_only) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            )
+            .bind(&id)
+            .bind(source_id)
+            .bind(&cal_info.id)
+            .bind(&cal_info.display_name)
+            .bind(&cal_info.color)
+            .bind(&cal_info.change_marker)
+            .bind(!cal_info.shared)
+            .bind(cal_info.read_only)
+            .execute(pool)
+            .await?;
+            Ok((id, None, None, true))
+        }
+    }
+}
+
+/// Provider-trait equivalent of [`upsert_raw_events`]. Splits the iCal blob
+/// into VEVENTs and upserts into the `events` table (same composite key:
+/// calendar_id + uid + recurrence_id).
+/// With `busy_only` (a managed Exchange source), the title, description,
+/// location and iCal text are not stored: only what availability needs (UID,
+/// times, timezone, recurrence, status, transparency), plus, for a recurring
+/// event, its exception dates in [`busy_only_ical`].
+///
+/// With a `generation` (Graph), each row is written only while the
+/// calendar's sync generation is still that, in the same statement: a
+/// calendar turned off (or off and on) mid-way gets no part of a snapshot
+/// fetched before the change (#324). EWS passes `None`: its sync keeps the
+/// rules it was field-tested with.
+async fn upsert_provider_events(
+    pool: &SqlitePool,
+    cal_id: &str,
+    raw_events: &[ProviderRawEvent],
+    busy_only: bool,
+    generation: Option<i64>,
+) -> u32 {
+    let mut count = 0u32;
+    for raw in raw_events {
+        let vevent_blocks = split_vevents(&raw.ical);
+        let mut zones = crate::tzid::ResourceZones::new(&raw.ical);
+        for vevent in &vevent_blocks {
+            // Unfolded once for the field reads below (#267).
+            let fields = crate::utils::unfold_ical(vevent);
+            let uid =
+                extract_vevent_field(&fields, "UID").unwrap_or_else(|| Uuid::new_v4().to_string());
+            let summary = extract_vevent_field(&fields, "SUMMARY");
+            let start_at = extract_vevent_field(&fields, "DTSTART").unwrap_or_default();
+            let location = extract_vevent_field(&fields, "LOCATION");
+            let description = extract_vevent_field(&fields, "DESCRIPTION");
+            let status = extract_vevent_field(&fields, "STATUS");
+            let rrule = extract_vevent_field(&fields, "RRULE");
+            let recurrence_id = extract_vevent_field(&fields, "RECURRENCE-ID");
+            let transp = extract_vevent_field(&fields, "TRANSP");
+            let timezone = zones.event_timezone(&fields);
+            let end_at = crate::utils::extract_vevent_end(
+                &fields,
+                timezone.as_deref().and_then(crate::tzid::resolve_or_offset),
+            )
+            .unwrap_or_default();
+
+            let (summary, location, description, raw_ical) = if busy_only {
+                (
+                    None,
+                    None,
+                    None,
+                    busy_only_ical(&raw.ical, rrule.as_deref()),
+                )
+            } else {
+                (summary, location, description, Some(raw.ical.clone()))
+            };
+
+            let event_id = Uuid::new_v4().to_string();
+            let written = sqlx::query(
+                "INSERT INTO events (id, calendar_id, uid, summary, start_at, end_at, location, description, status, rrule, raw_ical, recurrence_id, timezone, transp)
+                 SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                 WHERE ? IS NULL OR (SELECT sync_generation FROM calendars WHERE id = ?) = ?
+                 ON CONFLICT(calendar_id, uid, COALESCE(recurrence_id, '')) DO UPDATE SET
+                   summary = excluded.summary,
+                   start_at = excluded.start_at,
+                   end_at = excluded.end_at,
+                   location = excluded.location,
+                   description = excluded.description,
+                   status = excluded.status,
+                   rrule = excluded.rrule,
+                   raw_ical = excluded.raw_ical,
+                   recurrence_id = excluded.recurrence_id,
+                   timezone = excluded.timezone,
+                   transp = excluded.transp,
+                   synced_at = datetime('now')",
+            )
+            .bind(&event_id)
+            .bind(cal_id)
+            .bind(&uid)
+            .bind(&summary)
+            .bind(&start_at)
+            .bind(&end_at)
+            .bind(&location)
+            .bind(&description)
+            .bind(&status)
+            .bind(&rrule)
+            .bind(&raw_ical)
+            .bind(&recurrence_id)
+            .bind(&timezone)
+            .bind(&transp)
+            .bind(generation)
+            .bind(cal_id)
+            .bind(generation)
+            .execute(pool)
+            .await;
+
+            if let Err(error) = &written {
+                tracing::warn!(%error, "could not cache a provider event");
+            }
+            if matches!(written, Ok(ref r) if r.rows_affected() > 0) {
+                count += 1;
+            }
+        }
+    }
+    count
 }
 
 // --- Helper functions ---
@@ -2165,6 +2601,209 @@ mod tests {
         (source_id, et_id)
     }
 
+    /// A managed Exchange source is a candidate only while it has something to
+    /// do: global Exchange on and complete, its user enabled and trusted.
+    /// Otherwise its skipped sync would keep it first in line for ever.
+    #[tokio::test]
+    async fn next_background_source_skips_idle_managed_sources() {
+        let pool = setup_test_db().await;
+        let (source, _) = seed_fixtures(&pool).await;
+        sqlx::query("UPDATE caldav_sources SET managed = 1 WHERE id = ?")
+            .bind(&source)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let step = |sql: &'static str| {
+            let pool = pool.clone();
+            async move { sqlx::raw_sql(sql).execute(&pool).await.unwrap() }
+        };
+        assert_eq!(next_background_source(&pool, 0).await, None, "feature off");
+        step("UPDATE auth_config SET ews_global_enabled = 1 WHERE id = 'singleton'").await;
+        assert_eq!(next_background_source(&pool, 0).await, None, "incomplete");
+        step(
+            "UPDATE auth_config SET ews_global_url = 'https://mail.example.com/EWS/Exchange.asmx', \
+             ews_service_username = 'svc', ews_service_password_enc = 'x' WHERE id = 'singleton'",
+        )
+        .await;
+        assert_eq!(next_background_source(&pool, 0).await, None, "untrusted");
+        step("UPDATE users SET email_trusted = 1, enabled = 0").await;
+        assert_eq!(next_background_source(&pool, 0).await, None, "suspended");
+        step("UPDATE users SET enabled = 1").await;
+        assert_eq!(
+            next_background_source(&pool, 0).await.as_deref(),
+            Some(source.as_str())
+        );
+    }
+
+    /// A managed source keeps busy times only: of a recurring event, the
+    /// series' start and exception dates and its moved occurrences'
+    /// RECURRENCE-IDs, which availability reads, nothing else.
+    #[test]
+    fn busy_only_ical_keeps_timing_and_drops_content() {
+        let resource = "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:u1\r\nSUMMARY:Salary review\r\n\
+                        DESCRIPTION:Private\r\nLOCATION:Room 1\r\n\
+                        DTSTART;TZID=Europe/Paris:20300107T100000\r\n\
+                        RRULE:FREQ=WEEKLY\r\nEXDATE;TZID=Europe/Paris:20300114T100000\r\n\
+                        ATTENDEE:mailto:boss@example.com\r\nEND:VEVENT\r\n\
+                        BEGIN:VEVENT\r\nUID:u1\r\nSUMMARY:Salary review (moved)\r\n\
+                        RECURRENCE-ID;TZID=Europe/Paris:20300121T100000\r\n\
+                        DTSTART;TZID=Europe/Paris:20300121T150000\r\nEND:VEVENT\r\n\
+                        END:VCALENDAR\r\n";
+        assert_eq!(
+            busy_only_ical(resource, None),
+            None,
+            "no rrule: nothing kept"
+        );
+        let kept = busy_only_ical(resource, Some("FREQ=WEEKLY")).unwrap();
+        assert_eq!(
+            kept,
+            "BEGIN:VEVENT\r\nDTSTART;TZID=Europe/Paris:20300107T100000\r\n\
+             EXDATE;TZID=Europe/Paris:20300114T100000\r\nEND:VEVENT\r\n\
+             BEGIN:VEVENT\r\nRECURRENCE-ID;TZID=Europe/Paris:20300121T100000\r\n\
+             END:VEVENT\r\n"
+        );
+        let exdates = crate::rrule::extract_exdates(&kept, Some("Europe/Paris"));
+        assert_eq!(
+            exdates,
+            crate::rrule::extract_exdates(resource, Some("Europe/Paris")),
+            "availability reads the same exceptions as from the full text"
+        );
+        assert_eq!(exdates.len(), 2);
+    }
+
+    /// An EWS client listing whatever calendars a test sets, with no events.
+    struct ListingProvider(std::sync::Mutex<Vec<&'static str>>);
+
+    #[async_trait::async_trait]
+    impl crate::providers::CalendarProvider for ListingProvider {
+        async fn check_connection(&self) -> Result<bool> {
+            Ok(true)
+        }
+        async fn list_calendars(&self) -> Result<Vec<crate::providers::RemoteCalendar>> {
+            Ok(self
+                .0
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|id| crate::providers::RemoteCalendar {
+                    id: id.to_string(),
+                    display_name: Some(id.to_string()),
+                    color: None,
+                    change_marker: None,
+                    sync_state: None,
+                    read_only: false,
+                    shared: false,
+                })
+                .collect())
+        }
+        async fn fetch_events(&self, _: &str) -> Result<Vec<crate::providers::RawEvent>> {
+            Ok(vec![])
+        }
+        async fn fetch_events_since(
+            &self,
+            _: &str,
+            _: &str,
+        ) -> Result<Vec<crate::providers::RawEvent>> {
+            Ok(vec![])
+        }
+        async fn sync_delta(
+            &self,
+            _: &str,
+            _: Option<&str>,
+        ) -> Result<crate::providers::DeltaResult> {
+            Ok(Default::default())
+        }
+        async fn put_event(&self, _: &str, _: &str, _: &str) -> Result<()> {
+            Ok(())
+        }
+        async fn delete_event(&self, _: &str, _: &str) -> Result<()> {
+            Ok(())
+        }
+        async fn event_exists(&self, _: &str, _: &str) -> Result<bool> {
+            Ok(false)
+        }
+    }
+
+    /// A calendar an EWS server stops listing is kept through one listing and
+    /// dropped at the second in a row, with its event-type selection; one
+    /// listed again in between starts over; an empty listing drops nothing.
+    /// The source here is the user's own EWS source, not a managed one.
+    #[tokio::test]
+    async fn an_unlisted_ews_calendar_goes_only_after_two_listings() {
+        let pool = setup_test_db().await;
+        let (source, et_id) = seed_fixtures(&pool).await;
+        sqlx::query("UPDATE caldav_sources SET provider_type = 'ews', write_calendar_href = 'B' WHERE id = ?")
+            .bind(&source)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let provider = ListingProvider(std::sync::Mutex::new(vec!["A", "B"]));
+        let key = [0u8; 32];
+        sync_ews_source(&pool, &key, &provider, &source)
+            .await
+            .unwrap();
+        let b: String =
+            sqlx::query_scalar("SELECT id FROM calendars WHERE source_id = ? AND href = 'B'")
+                .bind(&source)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        sqlx::query("INSERT INTO event_type_calendars (event_type_id, calendar_id) VALUES (?, ?)")
+            .bind(&et_id)
+            .bind(&b)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let hrefs = || async {
+            sqlx::query_scalar::<_, String>(
+                "SELECT href FROM calendars WHERE source_id = ? ORDER BY href",
+            )
+            .bind(&source)
+            .fetch_all(&pool)
+            .await
+            .unwrap()
+        };
+
+        // An empty answer proves nothing.
+        *provider.0.lock().unwrap() = vec![];
+        sync_ews_source(&pool, &key, &provider, &source)
+            .await
+            .unwrap();
+        assert_eq!(hrefs().await, ["A", "B"]);
+
+        // Missing once: kept. Listed again: the count starts over.
+        *provider.0.lock().unwrap() = vec!["A"];
+        sync_ews_source(&pool, &key, &provider, &source)
+            .await
+            .unwrap();
+        assert_eq!(hrefs().await, ["A", "B"]);
+        *provider.0.lock().unwrap() = vec!["A", "B"];
+        sync_ews_source(&pool, &key, &provider, &source)
+            .await
+            .unwrap();
+        *provider.0.lock().unwrap() = vec!["A"];
+        sync_ews_source(&pool, &key, &provider, &source)
+            .await
+            .unwrap();
+        assert_eq!(hrefs().await, ["A", "B"], "one miss after a listing");
+
+        // Missing twice in a row: gone, with its selection and the write
+        // calendar that pointed at it.
+        sync_ews_source(&pool, &key, &provider, &source)
+            .await
+            .unwrap();
+        assert_eq!(hrefs().await, ["A"]);
+        let (links, write): (i64, Option<String>) = sqlx::query_as(
+            "SELECT (SELECT COUNT(*) FROM event_type_calendars), \
+                    (SELECT write_calendar_href FROM caldav_sources WHERE id = ?)",
+        )
+        .bind(&source)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!((links, write), (0, None));
+    }
+
     /// #310: the background loop only picks a source whose last attempt,
     /// success or failure, is at least the minimum age; the stalest first.
     #[tokio::test]
@@ -2675,8 +3314,8 @@ mod tests {
     #[tokio::test]
     async fn provider_orphan_does_not_cross_owner_boundary_even_with_matching_calendar_ids() {
         let pool = setup_test_db().await;
-        let (_source_a, et_a, _, _) = provider_fixture(&pool, kinds::EWS).await;
-        let (source_b, _, _, cal_b) = provider_fixture(&pool, kinds::EWS).await;
+        let (_source_a, et_a, _, _) = provider_fixture(&pool, kinds::MICROSOFT).await;
+        let (source_b, _, _, cal_b) = provider_fixture(&pool, kinds::MICROSOFT).await;
         let booking = provider_booking(&pool, &et_a, "colliding-uid").await;
         cached_provider_event(
             &pool,
@@ -2746,8 +3385,8 @@ mod tests {
     #[tokio::test]
     async fn provider_orphan_uses_assigned_host_not_event_type_owner() {
         let pool = setup_test_db().await;
-        let (source_a, et_a, _, cal_a) = provider_fixture(&pool, kinds::EWS).await;
-        let (source_b, _, user_b, cal_b) = provider_fixture(&pool, kinds::EWS).await;
+        let (source_a, et_a, _, cal_a) = provider_fixture(&pool, kinds::MICROSOFT).await;
+        let (source_b, _, user_b, cal_b) = provider_fixture(&pool, kinds::MICROSOFT).await;
         let booking = provider_booking(&pool, &et_a, "assigned-uid").await;
         sqlx::query("UPDATE bookings SET assigned_user_id = ? WHERE id = ?")
             .bind(user_b)
@@ -3287,12 +3926,25 @@ mod tests {
         set_calendar_sync_enabled(&pool, &source, &calendar, true)
             .await
             .unwrap();
-        let written =
-            upsert_provider_events(&pool, &calendar, generation, &other_event_snapshot()).await;
+        let written = upsert_provider_events(
+            &pool,
+            &calendar,
+            &other_event_snapshot(),
+            false,
+            Some(generation),
+        )
+        .await;
         assert_eq!(written, 0);
         assert!(cached_uids(&pool, &calendar).await.is_empty());
         let current = calendar_generation(&pool, &calendar).await;
-        upsert_provider_events(&pool, &calendar, current, &other_event_snapshot()).await;
+        upsert_provider_events(
+            &pool,
+            &calendar,
+            &other_event_snapshot(),
+            false,
+            Some(current),
+        )
+        .await;
         assert_eq!(cached_uids(&pool, &calendar).await, ["still-there"]);
     }
 
@@ -3334,16 +3986,6 @@ mod tests {
             .unwrap();
         assert!(source_stamps(&pool, &source).await.1.is_some());
         assert_eq!(microsoft_coverage_gap(&pool, &user, Utc::now()).await, None);
-
-        let (ews, _, ews_user, _) = provider_fixture(&pool, kinds::EWS).await;
-        assert!(sync_provider_calendars(&pool, &[0; 32], &failing, &ews)
-            .await
-            .is_err());
-        assert!(source_stamps(&pool, &ews).await.1.is_some());
-        assert_eq!(
-            microsoft_coverage_gap(&pool, &ews_user, Utc::now()).await,
-            None
-        );
     }
 
     /// A booking whose Graph event the host deleted before any snapshot
@@ -3439,40 +4081,6 @@ mod tests {
     /// listing that misses a folder must not cascade away its events and
     /// event-type selections, nor bring it back synced when the owner had
     /// turned it off.
-    #[tokio::test]
-    async fn ews_never_deletes_a_calendar_missing_from_a_listing() {
-        let pool = setup_test_db().await;
-        let (source, event_type, _, _) = provider_fixture(&pool, kinds::EWS).await;
-        let (folder, _, _, _) =
-            upsert_calendar_provider(&pool, &source, &remote_calendar("folder"))
-                .await
-                .unwrap();
-        sqlx::query("INSERT INTO event_type_calendars (event_type_id, calendar_id) VALUES (?, ?)")
-            .bind(&event_type)
-            .bind(&folder)
-            .execute(&pool)
-            .await
-            .unwrap();
-        set_calendar_sync_enabled(&pool, &source, &folder, false)
-            .await
-            .unwrap();
-
-        sync_provider_calendars(&pool, &[0; 32], &snapshot_provider("write"), &source)
-            .await
-            .unwrap();
-        discover_provider_calendars(&pool, &snapshot_provider("write"), &source)
-            .await
-            .unwrap();
-        assert_eq!(sync_enabled_of(&pool, &source, "folder").await, Some(false));
-        let selected: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM event_type_calendars WHERE calendar_id = ?")
-                .bind(&folder)
-                .fetch_one(&pool)
-                .await
-                .unwrap();
-        assert_eq!(selected, 1);
-    }
-
     /// On Graph a calendar no longer listed goes, except the write calendar:
     /// the bookings written there are tracked by it.
     #[tokio::test]
@@ -3501,45 +4109,6 @@ mod tests {
     /// EWS keeps the snapshot rules it was field-tested with: an empty
     /// snapshot removes nothing, and an item calrs reads badly neither fails
     /// the sync nor stops the orphan sweep. The stricter rules are Graph's.
-    #[tokio::test]
-    async fn ews_keeps_its_field_tested_snapshot_rules() {
-        let pool = setup_test_db().await;
-        let (source, et, _, calendar) = provider_fixture(&pool, kinds::EWS).await;
-        let booking = provider_booking(&pool, &et, "cached").await;
-        let start = Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
-        cached_provider_event(&pool, &calendar, "cached", &start).await;
-
-        sync_provider_source(&pool, &[0; 32], &snapshot_provider("write"), &source)
-            .await
-            .unwrap();
-        assert_eq!(cached_uids(&pool, &calendar).await, ["cached"]);
-        assert_eq!(
-            booking_status_seq(&pool, &booking).await,
-            ("confirmed".into(), 0)
-        );
-
-        let mut provider = snapshot_provider("write");
-        provider.events.push(ProviderRawEvent {
-            remote_id: "odd".into(),
-            ical: "BEGIN:VEVENT\r\nUID:odd\r\nDTSTART:not-a-date\r\nEND:VEVENT\r\n".into(),
-        });
-        sync_provider_source(&pool, &[0; 32], &provider, &source)
-            .await
-            .unwrap();
-        let error: Option<String> =
-            sqlx::query_scalar("SELECT last_sync_error FROM caldav_sources WHERE id = ?")
-                .bind(&source)
-                .fetch_one(&pool)
-                .await
-                .unwrap();
-        assert_eq!(error, None);
-        assert_eq!(cached_uids(&pool, &calendar).await, ["odd"]);
-        assert_eq!(
-            booking_status_seq(&pool, &booking).await,
-            ("cancelled".into(), 1)
-        );
-    }
-
     /// A suspended user's Microsoft source is not synced, in the background
     /// or on demand, so their refresh token goes unused. Their other sources,
     /// and other users' Microsoft sources, sync as before.
@@ -3591,47 +4160,32 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn provider_sync_respects_each_providers_forward_window() {
+    async fn graph_sync_respects_its_forward_window() {
         let pool = setup_test_db().await;
         let (graph_source, _, _, graph_calendar) = provider_fixture(&pool, kinds::MICROSOFT).await;
-        let (ews_source, _, _, ews_calendar) = provider_fixture(&pool, kinds::EWS).await;
         let now = Utc::now();
-        for calendar in [&graph_calendar, &ews_calendar] {
-            for (uid, days) in [
-                ("past", -91),
-                ("in-window", 1),
-                ("ews-unfetched", 700),
-                ("future", 731),
-            ] {
-                cached_provider_event(
-                    &pool,
-                    calendar,
-                    uid,
-                    &(now + chrono::Duration::days(days))
-                        .format("%Y%m%dT%H%M%SZ")
-                        .to_string(),
-                )
-                .await;
-            }
+        for (uid, days) in [
+            ("past", -91),
+            ("in-window", 1),
+            ("in-window-late", 700),
+            ("future", 731),
+        ] {
+            cached_provider_event(
+                &pool,
+                &graph_calendar,
+                uid,
+                &(now + chrono::Duration::days(days))
+                    .format("%Y%m%dT%H%M%SZ")
+                    .to_string(),
+            )
+            .await;
         }
         sync_provider_calendars(&pool, &[0; 32], &snapshot_provider("write"), &graph_source)
             .await
             .unwrap();
-        sync_provider_calendars(
-            &pool,
-            &[0; 32],
-            &snapshot_with_other_event("write"),
-            &ews_source,
-        )
-        .await
-        .unwrap();
         assert_eq!(
             cached_uids(&pool, &graph_calendar).await,
             ["future", "past"]
-        );
-        assert_eq!(
-            cached_uids(&pool, &ews_calendar).await,
-            ["ews-unfetched", "future", "past", "still-there"]
         );
     }
 

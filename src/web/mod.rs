@@ -7,13 +7,16 @@ mod booking_notes;
 mod branding;
 mod calendar_push;
 pub mod captcha;
+mod connected_apps;
 mod dashboard;
 mod directory;
 mod event_types;
+mod ews_admin;
 mod format;
 mod hosts;
 mod invites;
 mod listing;
+mod mcp;
 pub mod meeting;
 mod microsoft;
 mod notify;
@@ -153,11 +156,24 @@ pub struct AppState {
     pub templates: Environment<'static>,
     pub login_limiter: RateLimiter,
     pub booking_limiter: RateLimiter,
+    /// OAuth authorizations, token exchanges and revocations, per client
+    /// address (`oauth::rate_limit`).
+    pub oauth_limiter: RateLimiter,
+    /// OAuth client registrations, per client address.
+    pub oauth_register_limiter: RateLimiter,
+    /// MCP tool calls, per user (`mcp::handle`).
+    pub mcp_limiter: RateLimiter,
+    /// Other MCP requests (initialize, ping, tools/list), per user.
+    pub mcp_request_limiter: RateLimiter,
     pub data_dir: PathBuf,
     pub secret_key: [u8; 32],
     pub theme_css: tokio::sync::RwLock<String>,
     pub company_link: tokio::sync::RwLock<Option<String>>,
     pub captcha_config: tokio::sync::RwLock<Option<captcha::CaptchaConfig>>,
+    /// Global EWS impersonation: when `Some`, every user has a managed source
+    /// row that the sync loop drives with the SOAP `ExchangeImpersonation`
+    /// header. Reloaded when the admin saves changes.
+    pub ews_global: tokio::sync::RwLock<Option<crate::ews::global::EwsGlobalConfig>>,
     /// Org-wide meeting provider config (Jitsi + webhook). Cached so guest
     /// slot/booking pages don't hit `auth_config` on every render. Rebuilt
     /// when the admin saves changes.
@@ -667,6 +683,7 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
     let initial_theme_css = build_theme_css(&pool).await;
     let initial_company_link = get_company_link(&pool).await;
     let initial_captcha = captcha::load_captcha_config(&pool, &secret_key).await;
+    let initial_ews_global = crate::ews::global::load_ews_global_config(&pool, &secret_key).await;
     let initial_meeting = meeting::load_config(&pool, &secret_key).await;
     let initial_csp = build_csp(&initial_captcha);
     let initial_german_formal = load_german_formal(&pool).await;
@@ -677,11 +694,16 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
         // 10 login attempts per IP per 15 minutes
         login_limiter: RateLimiter::new(10, 900),
         booking_limiter: RateLimiter::new(10, 300),
+        oauth_limiter: RateLimiter::new(60, 300),
+        oauth_register_limiter: RateLimiter::new(30, 900),
+        mcp_limiter: RateLimiter::new(120, 60),
+        mcp_request_limiter: RateLimiter::new(600, 60),
         secret_key,
         data_dir,
         theme_css: tokio::sync::RwLock::new(initial_theme_css),
         company_link: tokio::sync::RwLock::new(initial_company_link),
         captcha_config: tokio::sync::RwLock::new(initial_captcha),
+        ews_global: tokio::sync::RwLock::new(initial_ews_global),
         meeting_config: tokio::sync::RwLock::new(initial_meeting),
         csp: tokio::sync::RwLock::new(initial_csp),
         csp_baseline: build_csp(&None),
@@ -692,6 +714,9 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
     Router::new()
         .merge(crate::auth::auth_router())
         .merge(crate::mfa::router())
+        .merge(crate::oauth::router())
+        .merge(mcp::router())
+        .merge(connected_apps::router())
         .route("/", get(root_redirect))
         .route("/dashboard", get(dashboard))
         .route("/dashboard/event-types", get(dashboard_event_types))
@@ -886,6 +911,22 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
         .route("/dashboard/admin/smtp", post(admin_update_smtp))
         .route("/dashboard/admin/smtp/test", post(admin_update_smtp_test))
         .route("/dashboard/admin/smtp/clear", post(admin_update_smtp_clear))
+        .route(
+            "/dashboard/admin/ews",
+            post(ews_admin::admin_update_ews_global),
+        )
+        .route(
+            "/dashboard/admin/ews/trust",
+            post(ews_admin::admin_trust_email),
+        )
+        .route(
+            "/dashboard/admin/ews/remove",
+            post(ews_admin::admin_remove_managed_sources),
+        )
+        .route(
+            "/dashboard/admin/ews/remove-user",
+            post(ews_admin::admin_remove_user_source),
+        )
         .route("/dashboard/admin/sms", post(admin_update_sms))
         .route("/dashboard/admin/sms/test", post(admin_update_sms_test))
         .route("/dashboard/admin/sms/clear", post(admin_update_sms_clear))
