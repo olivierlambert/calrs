@@ -231,12 +231,20 @@ pub(super) fn parse_event_responses(body: &str) -> Result<Vec<RawEvent>> {
 }
 
 /// A sync-collection REPORT (RFC 6578): the new sync token, the changed
-/// events, and the hrefs whose resource-level status is 404 or 410.
+/// events, the hrefs whose resource-level status is 404 or 410, and whether
+/// the server truncated the answer.
 pub(super) fn parse_sync_response(body: &str) -> Result<SyncResult> {
     let ms = Multistatus::parse(body)?;
     let mut changed = Vec::new();
     let mut deleted_hrefs = Vec::new();
+    let mut truncated = false;
     for response in ms.responses() {
+        // A 507 is the server saying it stopped early (RFC 6578 section
+        // 3.6), on the collection itself rather than on a member.
+        if response.status_code() == Some(Some(507)) {
+            truncated = true;
+            continue;
+        }
         let href = response.href();
         if href.is_empty() {
             continue;
@@ -257,6 +265,7 @@ pub(super) fn parse_sync_response(body: &str) -> Result<SyncResult> {
         new_sync_token: ms.child(DAV, "sync-token").and_then(Element::trimmed_text),
         changed,
         deleted_hrefs,
+        truncated,
     })
 }
 

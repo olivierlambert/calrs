@@ -677,6 +677,10 @@ pub struct SyncResult {
     pub new_sync_token: Option<String>,
     pub changed: Vec<RawEvent>,
     pub deleted_hrefs: Vec<String>,
+    /// The server stopped before reporting every change (RFC 6578 section
+    /// 3.6, a 507 on the collection itself): `new_sync_token` is where it
+    /// stopped, and more changes follow from there.
+    pub truncated: bool,
 }
 
 #[derive(Debug, Clone)]

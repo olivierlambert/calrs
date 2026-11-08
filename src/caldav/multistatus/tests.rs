@@ -716,6 +716,19 @@ END:VCALENDAR</cal:calendar-data>
 }
 
 #[test]
+fn sync_truncated_by_the_server_is_flagged() {
+    // RFC 6578 section 3.6: a 507 on the collection means more changes
+    // follow from the returned token.
+    let xml = r#"<d:multistatus xmlns:d="DAV:" xmlns:cal="urn:ietf:params:xml:ns:caldav"><d:response><d:href>/cal/a.ics</d:href><d:propstat><d:prop><cal:calendar-data>BEGIN:VCALENDAR</cal:calendar-data></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response><d:response><d:href>/cal/</d:href><d:status>HTTP/1.1 507 Insufficient Storage</d:status></d:response><d:sync-token>partial</d:sync-token></d:multistatus>"#;
+    let result = sync(xml);
+    assert!(result.truncated);
+    assert_eq!(result.changed.len(), 1);
+    assert!(result.deleted_hrefs.is_empty());
+    assert_eq!(result.new_sync_token.as_deref(), Some("partial"));
+    assert!(!sync(&xml.replace("507 Insufficient Storage", "404 Not Found")).truncated);
+}
+
+#[test]
 fn sync_token_is_the_multistatus_one() {
     // A sync-token property inside a response is not the new collection
     // token, wherever it appears.
