@@ -851,9 +851,11 @@ pub async fn create_meet_for_booking_with_config(
     // Attendees and organizer go to Google through the Calendar API, with
     // `sendUpdates=none` (see `google_calendar::put_event_without_invitations`).
     // Google shares the event with its attendees, description included:
-    // no guest phone on it (#261).
+    // no guest phone on it (#261), and no answers to the booking questions,
+    // which attendees never see (#210).
     let ics = crate::email::generate_ics_caldav(&crate::email::BookingDetails {
         guest_phone: None,
+        answers: Vec::new(),
         ..details.clone()
     });
 
@@ -1273,7 +1275,11 @@ async fn booking_details_for_meet(
 
     // What the guest typed, read the way every other push reads it, so the
     // Meet copy cannot drift from the CalDAV one (#266).
-    let (notes, guest_phone) = crate::web::booking_guest_input(pool, &uid).await;
+    let crate::web::GuestInput {
+        notes,
+        phone: guest_phone,
+        answers,
+    } = crate::web::booking_guest_input(pool, &uid).await;
     let additional_attendees = crate::web::booking_additional_attendees(pool, &uid).await;
     let sequence = crate::web::booking_ics_sequence(pool, &uid).await;
 
@@ -1299,6 +1305,7 @@ async fn booking_details_for_meet(
         host_language: crate::email::user_language(pool, owner_id).await,
         host_timezone: host_tz.to_string(),
         sequence,
+        answers,
         ..Default::default()
     })
 }
@@ -2314,6 +2321,16 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
+        // Nor an answer to the booking questions, even one meant for the
+        // host's calendar (#210).
+        sqlx::query(
+            "INSERT INTO booking_answers (id, booking_id, position, key, kind, label, value, in_calendar, answered_at)
+             VALUES ('a1', ?, 0, 'area', 'short_text', 'Area of concern', 'Eviction', 1, '2026-11-08T10:00:00Z')",
+        )
+        .bind(&bid)
+        .execute(&pool)
+        .await
+        .unwrap();
         let api = FakeApi::new("https://meet.google.com/created-room");
         let key = [0u8; 32];
         // access_token_enc is plaintext "tok"; get_valid_access_token will try
@@ -2350,6 +2367,7 @@ mod tests {
         assert!(ics.contains("\r\nATTENDEE"), "{ics}");
         let unfolded = crate::utils::unfold_ical(ics);
         assert!(!unfolded.contains("612345678"), "{ics}");
+        assert!(!unfolded.contains("Eviction"), "{ics}");
     }
 
     /// Seed a decryptable access token so the retry tests reach the fake API

@@ -231,6 +231,11 @@ pub(super) struct EventTypeForm {
     avail_end: Option<String>,   // legacy: "17:00"
     pub(super) avail_windows: Option<String>, // "09:00-12:00,13:00-17:00"
     pub(super) avail_schedule: Option<String>, // "1:09:00-17:00;2:09:00-12:00,13:00-17:00"
+    /// The booking questions (#210) as the editor's script serialises them
+    /// (JSON, see `questions::EditorQuestion`). Absent: left as stored.
+    pub(super) questions: Option<String>,
+    /// The notes field: off, optional or required. Absent: left as stored.
+    pub(super) notes_mode: Option<String>,
     // Scheduling mode (round_robin / collective)
     pub(super) scheduling_mode: Option<String>,
     // Team (optional)
@@ -579,6 +584,7 @@ pub(super) async fn new_event_type_form(
     ensure_user_avail_seeded(&state.pool, &user.id).await;
     let user_avail = load_user_avail_schedule(&state.pool, &user.id).await;
 
+    let booking_form_ctx = questions::editor_context(&state.pool, None).await;
     let tmpl = match state.templates.get_template("event_type_form.html") {
         Ok(t) => t,
         Err(e) => return internal_error_html("template render", &e),
@@ -625,6 +631,9 @@ pub(super) async fn new_event_type_form(
             form_location_value => "",
             form_meeting_pattern_override => "",
             form_avail_schedule => user_avail,
+            form_questions => booking_form_ctx.questions_json,
+            form_notes_mode => booking_form_ctx.notes_mode,
+            questions_preview_url => booking_form_ctx.preview_url,
             form_reminder_minutes => 1440,
             form_max_additional_guests => 0,
             form_default_calendar_view => "month",
@@ -689,6 +698,22 @@ pub(super) async fn create_event_type(
             .into_response()
         }
     };
+    // The booking questions (#210), validated before anything is written.
+    let booking_questions =
+        match questions::editor_questions(&state.pool, None, form.questions.as_deref()).await {
+            Ok(questions) => questions,
+            Err(e) => {
+                return render_event_type_form_error(
+                    &state,
+                    &auth_user,
+                    &e.message(auth_user.lang),
+                    &form,
+                    FormTarget::NewPersonal,
+                )
+                .await
+                .into_response()
+            }
+        };
 
     // Check if a team_id was provided and it's non-empty
     let team_id = form.team_id.as_deref().filter(|s| !s.trim().is_empty());
@@ -834,41 +859,55 @@ pub(super) async fn create_event_type(
         .filter(|s| !s.is_empty())
         .map(str::to_string);
 
-    let written = sqlx::query(
-        "INSERT INTO event_types (id, account_id, slug, title, description, duration_min, slot_interval_min, buffer_before, buffer_after, min_notice_min, requires_confirmation, location_type, location_value, team_id, created_by_user_id, reminder_minutes, visibility, max_additional_guests, default_calendar_view, first_slot_only, timezone, cancel_notice_min, reschedule_notice_min, meeting_pattern_override, sms_phone_mode, guest_email_footer, booking_horizon_days, bookable_from, bookable_until, week_start)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-    )
-    .bind(&et_id)
-    .bind(&account_id)
-    .bind(&slug)
-    .bind(form.title.trim())
-    .bind(form.description.as_deref().filter(|s| !s.trim().is_empty()))
-    .bind(parse_int_field(&form.duration_min, 30))
-    .bind(parse_optional_positive_int(&form.slot_interval_min))
-    .bind(parse_int_field(&form.buffer_before, 0))
-    .bind(parse_int_field(&form.buffer_after, 0))
-    .bind(parse_int_field(&form.min_notice_min, 60))
-    .bind(requires_confirmation as i32)
-    .bind(location_type)
-    .bind(location_value)
-    .bind(team_id)
-    .bind(if team_id.is_some() { Some(&user.id) } else { None })
-    .bind(reminder_minutes)
-    .bind(&visibility)
-    .bind(parse_int_field(&form.max_additional_guests, 0))
-    .bind(&default_calendar_view)
-    .bind(first_slot_only as i32)
-    .bind(&timezone)
-    .bind(cancel_notice_min)
-    .bind(reschedule_notice_min)
-    .bind(&meeting_pattern_override)
-    .bind(&sms_phone_mode)
-    .bind(&guest_email_footer)
-    .bind(booking_horizon_days)
-    .bind(bookable_from)
-    .bind(bookable_until)
-    .bind(form.week_start.flatten().map(WeekStart::key))
-    .execute(&state.pool)
+    // The event type and its booking questions (#210) are written in one
+    // transaction: a refused question list never leaves a half-saved type.
+    let written = async {
+        let mut tx = state.pool.begin().await?;
+        sqlx::query(
+            "INSERT INTO event_types (id, account_id, slug, title, description, duration_min, slot_interval_min, buffer_before, buffer_after, min_notice_min, requires_confirmation, location_type, location_value, team_id, created_by_user_id, reminder_minutes, visibility, max_additional_guests, default_calendar_view, first_slot_only, timezone, cancel_notice_min, reschedule_notice_min, meeting_pattern_override, sms_phone_mode, guest_email_footer, booking_horizon_days, bookable_from, bookable_until, week_start)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&et_id)
+        .bind(&account_id)
+        .bind(&slug)
+        .bind(form.title.trim())
+        .bind(form.description.as_deref().filter(|s| !s.trim().is_empty()))
+        .bind(parse_int_field(&form.duration_min, 30))
+        .bind(parse_optional_positive_int(&form.slot_interval_min))
+        .bind(parse_int_field(&form.buffer_before, 0))
+        .bind(parse_int_field(&form.buffer_after, 0))
+        .bind(parse_int_field(&form.min_notice_min, 60))
+        .bind(requires_confirmation as i32)
+        .bind(location_type)
+        .bind(location_value)
+        .bind(team_id)
+        .bind(if team_id.is_some() { Some(&user.id) } else { None })
+        .bind(reminder_minutes)
+        .bind(&visibility)
+        .bind(parse_int_field(&form.max_additional_guests, 0))
+        .bind(&default_calendar_view)
+        .bind(first_slot_only as i32)
+        .bind(&timezone)
+        .bind(cancel_notice_min)
+        .bind(reschedule_notice_min)
+        .bind(&meeting_pattern_override)
+        .bind(&sms_phone_mode)
+        .bind(&guest_email_footer)
+        .bind(booking_horizon_days)
+        .bind(bookable_from)
+        .bind(bookable_until)
+        .bind(form.week_start.flatten().map(WeekStart::key))
+        .execute(&mut *tx)
+        .await?;
+        questions::save_in(
+            &mut tx,
+            &et_id,
+            booking_questions.as_deref(),
+            form.notes_mode.as_deref(),
+        )
+        .await?;
+        tx.commit().await
+    }
     .await;
     if let Err(e) = written {
         return event_type_write_failed(&state, &auth_user, &form, FormTarget::NewPersonal, &e)
@@ -1195,6 +1234,7 @@ pub(super) async fn edit_event_type_form(
 
     let form_sms_phone_mode = stored_sms_phone_mode(&state.pool, &et_id).await;
 
+    let booking_form_ctx = questions::editor_context(&state.pool, Some(&et_id)).await;
     let tmpl = match state.templates.get_template("event_type_form.html") {
         Ok(t) => t,
         Err(e) => return internal_error_html("template render", &e),
@@ -1262,6 +1302,9 @@ pub(super) async fn edit_event_type_form(
             form_avail_end => avail_end,
             form_avail_windows => avail_windows,
             form_avail_schedule => avail_schedule,
+            form_questions => booking_form_ctx.questions_json,
+            form_notes_mode => booking_form_ctx.notes_mode,
+            questions_preview_url => booking_form_ctx.preview_url,
             form_reminder_minutes => reminder_min.unwrap_or(0),
             form_max_additional_guests => max_additional_guests,
             form_scheduling_mode => scheduling_mode,
@@ -1349,6 +1392,27 @@ pub(super) async fn update_event_type(
             .into_response()
         }
     };
+    // The booking questions (#210), validated before anything is written.
+    let booking_questions =
+        match questions::editor_questions(&state.pool, Some(&et_id), form.questions.as_deref())
+            .await
+        {
+            Ok(questions) => questions,
+            Err(e) => {
+                return render_event_type_form_error(
+                    &state,
+                    &auth_user,
+                    &e.message(auth_user.lang),
+                    &form,
+                    FormTarget::EditPersonal {
+                        et_id: &et_id,
+                        slug: &slug,
+                    },
+                )
+                .await
+                .into_response()
+            }
+        };
     let requires_confirmation = form.requires_confirmation.as_deref() == Some("on");
     let sms_phone_mode = resolve_phone_mode(
         &state.pool,
@@ -1508,40 +1572,54 @@ pub(super) async fn update_event_type(
         .filter(|s| !s.is_empty())
         .map(str::to_string);
 
-    let written = sqlx::query(
-        "UPDATE event_types SET slug = ?, title = ?, description = ?, duration_min = ?, slot_interval_min = ?, buffer_before = ?, buffer_after = ?, min_notice_min = ?, requires_confirmation = ?, location_type = ?, location_value = ?, reminder_minutes = ?, visibility = ?, max_additional_guests = ?, scheduling_mode = ?, default_calendar_view = ?, first_slot_only = ?, timezone = ?, cancel_notice_min = ?, reschedule_notice_min = ?, meeting_pattern_override = ?, sms_phone_mode = ?, guest_email_footer = CASE WHEN ? THEN ? ELSE guest_email_footer END, booking_horizon_days = ?, bookable_from = ?, bookable_until = ?, week_start = CASE WHEN ? THEN ? ELSE week_start END WHERE id = ?",
-    )
-    .bind(&new_slug)
-    .bind(form.title.trim())
-    .bind(form.description.as_deref().filter(|s| !s.trim().is_empty()))
-    .bind(parse_int_field(&form.duration_min, 30))
-    .bind(parse_optional_positive_int(&form.slot_interval_min))
-    .bind(parse_int_field(&form.buffer_before, 0))
-    .bind(parse_int_field(&form.buffer_after, 0))
-    .bind(parse_int_field(&form.min_notice_min, 60))
-    .bind(requires_confirmation as i32)
-    .bind(location_type)
-    .bind(location_value)
-    .bind(reminder_minutes)
-    .bind(&visibility)
-    .bind(parse_int_field(&form.max_additional_guests, 0))
-    .bind(form.scheduling_mode.as_deref().unwrap_or("round_robin"))
-    .bind(&default_calendar_view)
-    .bind(if form.first_slot_only.as_deref() == Some("on") { 1 } else { 0 })
-    .bind(&timezone)
-    .bind(cancel_notice_min)
-    .bind(reschedule_notice_min)
-    .bind(&meeting_pattern_override)
-    .bind(&sms_phone_mode)
-    .bind(guest_email_footer.is_some())
-    .bind(guest_email_footer.flatten())
-    .bind(booking_horizon_days)
-    .bind(bookable_from)
-    .bind(bookable_until)
-    .bind(form.week_start.is_some())
-    .bind(form.week_start.flatten().map(WeekStart::key))
-    .bind(&et_id)
-    .execute(&state.pool)
+    // The event type and its booking questions (#210) are written in one
+    // transaction: a refused question list never leaves a half-saved type.
+    let written = async {
+        let mut tx = state.pool.begin().await?;
+        sqlx::query(
+            "UPDATE event_types SET slug = ?, title = ?, description = ?, duration_min = ?, slot_interval_min = ?, buffer_before = ?, buffer_after = ?, min_notice_min = ?, requires_confirmation = ?, location_type = ?, location_value = ?, reminder_minutes = ?, visibility = ?, max_additional_guests = ?, scheduling_mode = ?, default_calendar_view = ?, first_slot_only = ?, timezone = ?, cancel_notice_min = ?, reschedule_notice_min = ?, meeting_pattern_override = ?, sms_phone_mode = ?, guest_email_footer = CASE WHEN ? THEN ? ELSE guest_email_footer END, booking_horizon_days = ?, bookable_from = ?, bookable_until = ?, week_start = CASE WHEN ? THEN ? ELSE week_start END WHERE id = ?",
+        )
+        .bind(&new_slug)
+        .bind(form.title.trim())
+        .bind(form.description.as_deref().filter(|s| !s.trim().is_empty()))
+        .bind(parse_int_field(&form.duration_min, 30))
+        .bind(parse_optional_positive_int(&form.slot_interval_min))
+        .bind(parse_int_field(&form.buffer_before, 0))
+        .bind(parse_int_field(&form.buffer_after, 0))
+        .bind(parse_int_field(&form.min_notice_min, 60))
+        .bind(requires_confirmation as i32)
+        .bind(location_type)
+        .bind(location_value)
+        .bind(reminder_minutes)
+        .bind(&visibility)
+        .bind(parse_int_field(&form.max_additional_guests, 0))
+        .bind(form.scheduling_mode.as_deref().unwrap_or("round_robin"))
+        .bind(&default_calendar_view)
+        .bind(if form.first_slot_only.as_deref() == Some("on") { 1 } else { 0 })
+        .bind(&timezone)
+        .bind(cancel_notice_min)
+        .bind(reschedule_notice_min)
+        .bind(&meeting_pattern_override)
+        .bind(&sms_phone_mode)
+        .bind(guest_email_footer.is_some())
+        .bind(guest_email_footer.flatten())
+        .bind(booking_horizon_days)
+        .bind(bookable_from)
+        .bind(bookable_until)
+        .bind(form.week_start.is_some())
+        .bind(form.week_start.flatten().map(WeekStart::key))
+        .bind(&et_id)
+        .execute(&mut *tx)
+        .await?;
+        questions::save_in(
+            &mut tx,
+            &et_id,
+            booking_questions.as_deref(),
+            form.notes_mode.as_deref(),
+        )
+        .await?;
+        tx.commit().await
+    }
     .await;
     if let Err(e) = written {
         return event_type_write_failed(
@@ -2185,6 +2263,17 @@ async fn render_event_type_form_error(
     form: &EventTypeForm,
     target: FormTarget<'_>,
 ) -> Html<String> {
+    // The questions as posted, so a refused save keeps the edits (#210).
+    let booking_form_ctx = questions::editor_context(
+        &state.pool,
+        match target {
+            FormTarget::EditPersonal { et_id, .. } | FormTarget::EditTeam { et_id, .. } => {
+                Some(et_id)
+            }
+            _ => None,
+        },
+    )
+    .await;
     let tmpl = match state.templates.get_template("event_type_form.html") {
         Ok(t) => t,
         Err(e) => return internal_error_html("template render", &e),
@@ -2335,6 +2424,9 @@ async fn render_event_type_form_error(
             form_avail_end => form.avail_end.as_deref().unwrap_or("17:00"),
             form_avail_windows => form.avail_windows.as_deref().unwrap_or(""),
             form_avail_schedule => form.avail_schedule.as_deref().unwrap_or(""),
+            form_questions => form.questions.as_deref().unwrap_or(&booking_form_ctx.questions_json),
+            form_notes_mode => form.notes_mode.as_deref().map(questions::notes_mode).unwrap_or(booking_form_ctx.notes_mode),
+            questions_preview_url => booking_form_ctx.preview_url,
             form_default_calendar_view => form.default_calendar_view.as_deref().unwrap_or("month"),
             week_start_setting => week_start_setting,
             form_first_slot_only => form.first_slot_only.as_deref() == Some("on"),
@@ -2620,6 +2712,7 @@ pub(super) async fn new_group_event_type_form(
         .map(|(id, name)| context! { id => id, name => name })
         .collect();
 
+    let booking_form_ctx = questions::editor_context(&state.pool, None).await;
     let tmpl = match state.templates.get_template("event_type_form.html") {
         Ok(t) => t,
         Err(e) => return internal_error_html("template render", &e),
@@ -2659,6 +2752,9 @@ pub(super) async fn new_group_event_type_form(
             form_location_value => "",
             form_meeting_pattern_override => "",
             form_avail_schedule => user_avail,
+            form_questions => booking_form_ctx.questions_json,
+            form_notes_mode => booking_form_ctx.notes_mode,
+            questions_preview_url => booking_form_ctx.preview_url,
             form_default_calendar_view => "month",
             week_start_setting => week_start::new_event(&state.pool, &user.id).await,
             form_first_slot_only => false,
@@ -2740,6 +2836,22 @@ pub(super) async fn create_group_event_type(
             .into_response()
         }
     };
+    // The booking questions (#210), validated before anything is written.
+    let booking_questions =
+        match questions::editor_questions(&state.pool, None, form.questions.as_deref()).await {
+            Ok(questions) => questions,
+            Err(e) => {
+                return render_event_type_form_error(
+                    &state,
+                    &auth_user,
+                    &e.message(auth_user.lang),
+                    &form,
+                    FormTarget::NewTeam { team_id: &team_id },
+                )
+                .await
+                .into_response()
+            }
+        };
 
     if let Some(key) = slug_conflict(&state.pool, &slug, &account_id, Some(&team_id), None).await {
         return render_event_type_form_error(
@@ -2832,38 +2944,52 @@ pub(super) async fn create_group_event_type(
         .filter(|s| !s.is_empty())
         .map(str::to_string);
 
-    let written = sqlx::query(
-        "INSERT INTO event_types (id, account_id, slug, title, description, duration_min, slot_interval_min, buffer_before, buffer_after, min_notice_min, requires_confirmation, location_type, location_value, team_id, created_by_user_id, default_calendar_view, first_slot_only, timezone, cancel_notice_min, reschedule_notice_min, meeting_pattern_override, sms_phone_mode, guest_email_footer, booking_horizon_days, bookable_from, bookable_until, week_start)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-    )
-    .bind(&et_id)
-    .bind(&account_id)
-    .bind(&slug)
-    .bind(form.title.trim())
-    .bind(form.description.as_deref().filter(|s| !s.trim().is_empty()))
-    .bind(parse_int_field(&form.duration_min, 30))
-    .bind(parse_optional_positive_int(&form.slot_interval_min))
-    .bind(parse_int_field(&form.buffer_before, 0))
-    .bind(parse_int_field(&form.buffer_after, 0))
-    .bind(parse_int_field(&form.min_notice_min, 60))
-    .bind(requires_confirmation as i32)
-    .bind(location_type)
-    .bind(location_value)
-    .bind(&team_id)
-    .bind(&user.id)
-    .bind(&default_calendar_view)
-    .bind(first_slot_only as i32)
-    .bind(&timezone)
-    .bind(cancel_notice_min)
-    .bind(reschedule_notice_min)
-    .bind(&meeting_pattern_override)
-    .bind(&sms_phone_mode)
-    .bind(&guest_email_footer)
-    .bind(booking_horizon_days)
-    .bind(bookable_from)
-    .bind(bookable_until)
-    .bind(form.week_start.flatten().map(WeekStart::key))
-    .execute(&state.pool)
+    // The event type and its booking questions (#210) are written in one
+    // transaction: a refused question list never leaves a half-saved type.
+    let written = async {
+        let mut tx = state.pool.begin().await?;
+        sqlx::query(
+            "INSERT INTO event_types (id, account_id, slug, title, description, duration_min, slot_interval_min, buffer_before, buffer_after, min_notice_min, requires_confirmation, location_type, location_value, team_id, created_by_user_id, default_calendar_view, first_slot_only, timezone, cancel_notice_min, reschedule_notice_min, meeting_pattern_override, sms_phone_mode, guest_email_footer, booking_horizon_days, bookable_from, bookable_until, week_start)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&et_id)
+        .bind(&account_id)
+        .bind(&slug)
+        .bind(form.title.trim())
+        .bind(form.description.as_deref().filter(|s| !s.trim().is_empty()))
+        .bind(parse_int_field(&form.duration_min, 30))
+        .bind(parse_optional_positive_int(&form.slot_interval_min))
+        .bind(parse_int_field(&form.buffer_before, 0))
+        .bind(parse_int_field(&form.buffer_after, 0))
+        .bind(parse_int_field(&form.min_notice_min, 60))
+        .bind(requires_confirmation as i32)
+        .bind(location_type)
+        .bind(location_value)
+        .bind(&team_id)
+        .bind(&user.id)
+        .bind(&default_calendar_view)
+        .bind(first_slot_only as i32)
+        .bind(&timezone)
+        .bind(cancel_notice_min)
+        .bind(reschedule_notice_min)
+        .bind(&meeting_pattern_override)
+        .bind(&sms_phone_mode)
+        .bind(&guest_email_footer)
+        .bind(booking_horizon_days)
+        .bind(bookable_from)
+        .bind(bookable_until)
+        .bind(form.week_start.flatten().map(WeekStart::key))
+        .execute(&mut *tx)
+        .await?;
+        questions::save_in(
+            &mut tx,
+            &et_id,
+            booking_questions.as_deref(),
+            form.notes_mode.as_deref(),
+        )
+        .await?;
+        tx.commit().await
+    }
     .await;
     if let Err(e) = written {
         return event_type_write_failed(
@@ -3182,6 +3308,7 @@ pub(super) async fn edit_group_event_type_form(
 
     let form_sms_phone_mode = stored_sms_phone_mode(&state.pool, &et_id).await;
 
+    let booking_form_ctx = questions::editor_context(&state.pool, Some(&et_id)).await;
     let tmpl = match state.templates.get_template("event_type_form.html") {
         Ok(t) => t,
         Err(e) => return internal_error_html("template render", &e),
@@ -3236,6 +3363,9 @@ pub(super) async fn edit_group_event_type_form(
             form_avail_end => avail_end,
             form_avail_windows => avail_windows,
             form_avail_schedule => avail_schedule,
+            form_questions => booking_form_ctx.questions_json,
+            form_notes_mode => booking_form_ctx.notes_mode,
+            questions_preview_url => booking_form_ctx.preview_url,
             form_reminder_minutes => reminder_min.unwrap_or(0),
             form_max_additional_guests => max_additional_guests,
             form_scheduling_mode => scheduling_mode,
@@ -3339,6 +3469,28 @@ pub(super) async fn update_group_event_type(
             .into_response()
         }
     };
+    // The booking questions (#210), validated before anything is written.
+    let booking_questions =
+        match questions::editor_questions(&state.pool, Some(&et_id), form.questions.as_deref())
+            .await
+        {
+            Ok(questions) => questions,
+            Err(e) => {
+                return render_event_type_form_error(
+                    &state,
+                    &auth_user,
+                    &e.message(auth_user.lang),
+                    &form,
+                    FormTarget::EditTeam {
+                        team_id: &team_id,
+                        et_id: &et_id,
+                        slug: &slug,
+                    },
+                )
+                .await
+                .into_response()
+            }
+        };
     let requires_confirmation = form.requires_confirmation.as_deref() == Some("on");
     let sms_phone_mode = resolve_phone_mode(
         &state.pool,
@@ -3484,40 +3636,54 @@ pub(super) async fn update_group_event_type(
         .filter(|s| !s.is_empty())
         .map(str::to_string);
 
-    let written = sqlx::query(
-        "UPDATE event_types SET slug = ?, title = ?, description = ?, duration_min = ?, slot_interval_min = ?, buffer_before = ?, buffer_after = ?, min_notice_min = ?, requires_confirmation = ?, location_type = ?, location_value = ?, reminder_minutes = ?, visibility = ?, max_additional_guests = ?, scheduling_mode = ?, default_calendar_view = ?, first_slot_only = ?, timezone = ?, cancel_notice_min = ?, reschedule_notice_min = ?, meeting_pattern_override = ?, sms_phone_mode = ?, guest_email_footer = CASE WHEN ? THEN ? ELSE guest_email_footer END, booking_horizon_days = ?, bookable_from = ?, bookable_until = ?, week_start = CASE WHEN ? THEN ? ELSE week_start END WHERE id = ?",
-    )
-    .bind(&new_slug)
-    .bind(form.title.trim())
-    .bind(form.description.as_deref().filter(|s| !s.trim().is_empty()))
-    .bind(parse_int_field(&form.duration_min, 30))
-    .bind(parse_optional_positive_int(&form.slot_interval_min))
-    .bind(parse_int_field(&form.buffer_before, 0))
-    .bind(parse_int_field(&form.buffer_after, 0))
-    .bind(parse_int_field(&form.min_notice_min, 60))
-    .bind(requires_confirmation as i32)
-    .bind(location_type)
-    .bind(location_value)
-    .bind(reminder_minutes)
-    .bind(&visibility)
-    .bind(parse_int_field(&form.max_additional_guests, 0))
-    .bind(form.scheduling_mode.as_deref().unwrap_or("round_robin"))
-    .bind(&default_calendar_view)
-    .bind(if form.first_slot_only.as_deref() == Some("on") { 1 } else { 0 })
-    .bind(&timezone)
-    .bind(cancel_notice_min)
-    .bind(reschedule_notice_min)
-    .bind(&meeting_pattern_override)
-    .bind(&sms_phone_mode)
-    .bind(guest_email_footer.is_some())
-    .bind(guest_email_footer.flatten())
-    .bind(booking_horizon_days)
-    .bind(bookable_from)
-    .bind(bookable_until)
-    .bind(form.week_start.is_some())
-    .bind(form.week_start.flatten().map(WeekStart::key))
-    .bind(&et_id)
-    .execute(&state.pool)
+    // The event type and its booking questions (#210) are written in one
+    // transaction: a refused question list never leaves a half-saved type.
+    let written = async {
+        let mut tx = state.pool.begin().await?;
+        sqlx::query(
+            "UPDATE event_types SET slug = ?, title = ?, description = ?, duration_min = ?, slot_interval_min = ?, buffer_before = ?, buffer_after = ?, min_notice_min = ?, requires_confirmation = ?, location_type = ?, location_value = ?, reminder_minutes = ?, visibility = ?, max_additional_guests = ?, scheduling_mode = ?, default_calendar_view = ?, first_slot_only = ?, timezone = ?, cancel_notice_min = ?, reschedule_notice_min = ?, meeting_pattern_override = ?, sms_phone_mode = ?, guest_email_footer = CASE WHEN ? THEN ? ELSE guest_email_footer END, booking_horizon_days = ?, bookable_from = ?, bookable_until = ?, week_start = CASE WHEN ? THEN ? ELSE week_start END WHERE id = ?",
+        )
+        .bind(&new_slug)
+        .bind(form.title.trim())
+        .bind(form.description.as_deref().filter(|s| !s.trim().is_empty()))
+        .bind(parse_int_field(&form.duration_min, 30))
+        .bind(parse_optional_positive_int(&form.slot_interval_min))
+        .bind(parse_int_field(&form.buffer_before, 0))
+        .bind(parse_int_field(&form.buffer_after, 0))
+        .bind(parse_int_field(&form.min_notice_min, 60))
+        .bind(requires_confirmation as i32)
+        .bind(location_type)
+        .bind(location_value)
+        .bind(reminder_minutes)
+        .bind(&visibility)
+        .bind(parse_int_field(&form.max_additional_guests, 0))
+        .bind(form.scheduling_mode.as_deref().unwrap_or("round_robin"))
+        .bind(&default_calendar_view)
+        .bind(if form.first_slot_only.as_deref() == Some("on") { 1 } else { 0 })
+        .bind(&timezone)
+        .bind(cancel_notice_min)
+        .bind(reschedule_notice_min)
+        .bind(&meeting_pattern_override)
+        .bind(&sms_phone_mode)
+        .bind(guest_email_footer.is_some())
+        .bind(guest_email_footer.flatten())
+        .bind(booking_horizon_days)
+        .bind(bookable_from)
+        .bind(bookable_until)
+        .bind(form.week_start.is_some())
+        .bind(form.week_start.flatten().map(WeekStart::key))
+        .bind(&et_id)
+        .execute(&mut *tx)
+        .await?;
+        questions::save_in(
+            &mut tx,
+            &et_id,
+            booking_questions.as_deref(),
+            form.notes_mode.as_deref(),
+        )
+        .await?;
+        tx.commit().await
+    }
     .await;
     if let Err(e) = written {
         return event_type_write_failed(
@@ -3889,7 +4055,7 @@ const SQL_UUID_V4: &str = "lower(hex(randomblob(4))) || '-' || lower(hex(randomb
 
 /// Child tables copied along with an event type: table, the columns after
 /// `event_type_id`, and whether rows carry their own `id` (minted fresh).
-const COPIED_CHILD_TABLES: [(&str, &str, bool); 8] = [
+const COPIED_CHILD_TABLES: [(&str, &str, bool); 9] = [
     (
         "availability_rules",
         "day_of_week, start_time, end_time",
@@ -3910,6 +4076,13 @@ const COPIED_CHILD_TABLES: [(&str, &str, bool); 8] = [
     ("event_type_watchers", "team_id", false),
     ("event_type_resources", "resource_id", false),
     ("event_type_write_targets", "user_id, calendar_id", false),
+    // The booking questions (#210), with fresh ids; past answers stay with
+    // the original's bookings.
+    (
+        "event_type_questions",
+        "position, key, kind, label, help_text, required, options, consent, link_url, in_calendar",
+        true,
+    ),
 ];
 
 type Tx<'a> = sqlx::Transaction<'a, sqlx::Sqlite>;

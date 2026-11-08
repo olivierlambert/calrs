@@ -782,6 +782,42 @@ fn every_guest_email_details_literal_sets_the_guest_footer() {
     );
 }
 
+/// Every `BookingDetails` and `RescheduleDetails` literal outside the email
+/// module decides what to do with the guest's answers to the booking
+/// questions (#210): it sets `answers` (read with `booking_guest_input`, or
+/// left empty on a surface that must not carry them) or copies them from
+/// another value. A literal that leaves them to `..Default::default()`
+/// would drop the answers from a host email or calendar copy without
+/// anyone noticing, as notes and the phone once were (#261, #266).
+#[test]
+fn every_booking_details_literal_decides_on_the_answers() {
+    let mut files = web_source_files();
+    for dir in ["src/commands"] {
+        for entry in std::fs::read_dir(dir).expect("read dir") {
+            let path = entry.expect("dir entry").path();
+            if path.extension().is_some_and(|e| e == "rs") {
+                files.push(path);
+            }
+        }
+    }
+    files.push(std::path::PathBuf::from("src/google_meet.rs"));
+
+    let mut offenders = Vec::new();
+    for path in files {
+        let src = std::fs::read_to_string(&path).expect("read source");
+        for (line, ty) in details_literals_without(&src, "answers", &ANSWER_DETAILS) {
+            offenders.push(format!("{}:{line} ({ty})", path.display()));
+        }
+    }
+    assert!(
+        offenders.is_empty(),
+        "these literals neither set `answers` nor copy them from another value: {offenders:#?}"
+    );
+}
+
+/// The structs that carry the guest's answers.
+const ANSWER_DETAILS: [&str; 2] = ["BookingDetails", "RescheduleDetails"];
+
 /// The structs that carry a guest email's content.
 const GUEST_EMAIL_DETAILS: [&str; 3] =
     ["BookingDetails", "CancellationDetails", "RescheduleDetails"];
@@ -799,16 +835,31 @@ const GUEST_EMAIL_DETAILS: [&str; 3] =
 /// macro call whose body reads as expressions or statements (`vec![...]`).
 /// Test code (`#[cfg(test)]`, `#[test]`) is skipped.
 fn details_literals_without_footer(src: &str) -> Vec<(usize, &'static str)> {
+    details_literals_without(src, "guest_footer", &GUEST_EMAIL_DETAILS)
+}
+
+/// The same scan for any field of any of `types`: the literals that neither
+/// set `field` nor copy another value.
+fn details_literals_without(
+    src: &str,
+    field: &'static str,
+    types: &'static [&'static str],
+) -> Vec<(usize, &'static str)> {
     let file = syn::parse_file(src).expect("parse Rust source");
-    let mut finder = FooterLiterals::default();
+    let mut finder = FooterLiterals {
+        found: Vec::new(),
+        field,
+        types,
+    };
     syn::visit::Visit::visit_file(&mut finder, &file);
     finder.found.sort();
     finder.found
 }
 
-#[derive(Default)]
 struct FooterLiterals {
     found: Vec<(usize, &'static str)>,
+    field: &'static str,
+    types: &'static [&'static str],
 }
 
 /// Test code: a test function (`#[test]`, `#[tokio::test]`, any attribute
@@ -952,10 +1003,10 @@ impl<'ast> syn::visit::Visit<'ast> for FooterLiterals {
             .path
             .segments
             .last()
-            .and_then(|segment| GUEST_EMAIL_DETAILS.iter().find(|ty| segment.ident == **ty));
+            .and_then(|segment| self.types.iter().find(|ty| segment.ident == **ty));
         if let Some(ty) = ty {
             let sets_footer = literal.fields.iter().any(
-                |field| matches!(&field.member, syn::Member::Named(name) if name == "guest_footer"),
+                |field| matches!(&field.member, syn::Member::Named(name) if name == self.field),
             );
             let copies_another = literal
                 .rest

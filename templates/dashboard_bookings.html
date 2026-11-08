@@ -10,6 +10,7 @@
   {% elif not b.when and b.start_at_guest %}<div class="ui-row-sub">{{ t("bookings-guest-booked") }} {{ b.start_at_guest }}</div>{% endif %}
   {% if b.resource_name %}<div class="ui-row-sub">{{ t("bookings-resource") }} {{ b.resource_name }}</div>{% endif %}
   {% if b.notes %}<div class="booking-notes" tabindex="0"><strong>{{ t("confirmed-detail-notes") }}</strong> {{ b.notes }}</div>{% endif %}
+  {% if b.answers %}<details class="booking-answers"><summary>{{ t("bookings-answers") }}<span class="num">{{ b.answers | length }}</span></summary><dl>{% for a in b.answers %}<dt>{{ a.label }}</dt><dd>{{ a.value }}</dd>{% endfor %}</dl></details>{% endif %}
   {% if b.host_notes %}<div class="booking-notes host-notes" tabindex="0"><strong>{{ t("bookings-host-notes") }}</strong> {{ b.host_notes }}</div>{% endif %}
 {%- endmacro %}
 {#- The title opens the booking's host notes page (#173); the button only
@@ -48,7 +49,7 @@
     <h1 class="page-title">{{ t("bookings-page-title") }}</h1>
     <p class="page-subtitle">{{ t("bookings-summary", upcoming=bookings | length, pending=pending_bookings | length, tz=sidebar.user_timezone) }}</p>
   </div>
-  {% if bookings or pending_bookings or claimable_bookings or recent_bookings %}
+  {% if bookings or pending_bookings or claimable_bookings or recent_bookings or cancelled_bookings %}
   <div class="page-actions ui-search">
     {{ ic.icon("search", 15) }}
     <input type="search" data-search data-filter placeholder="{{ t('bookings-search-placeholder') }}" aria-label="{{ t('bookings-search-placeholder') }}">
@@ -158,11 +159,12 @@
   <p class="empty-line">{{ t("bookings-empty", link='<a href="/dashboard/event-types">' ~ (t("bookings-empty-link-label") | escape) ~ '</a>') | safe }}</p>
   {% endif %}
 </section>
-{% if recent_bookings %}
-<section class="sec" aria-labelledby="bk-recent">
-  <div class="sec-h"><h2 id="bk-recent">{{ t("bookings-recent") }}<span class="num">{{ recent_bookings | length }}</span></h2></div>
+{#- Recent and Cancelled: rows that only lead to the booking's host notes. #}
+{% macro hosted_section(sec_id, heading, rows) -%}
+<section class="sec" aria-labelledby="{{ sec_id }}">
+  <div class="sec-h"><h2 id="{{ sec_id }}">{{ heading }}<span class="num">{{ rows | length }}</span></h2></div>
   <ol class="ledger" data-filter-list>
-  {% for b in recent_bookings %}
+  {% for b in rows %}
   <li class="tt-row" data-filter-text="{{ b.event_title }} {{ b.guest_name }} {{ b.guest_email }}">
     {{ dated_time(b) }}
     <i class="g {{ b.status_mark }}" role="img" aria-label="{% if b.status_label %}{{ b.status_label }}{% else %}{{ t('overview-ruler-booked') }}{% endif %}"></i>
@@ -180,5 +182,7 @@
   <li class="ui-filter-empty" data-filter-empty hidden>{{ t("dash-no-matches") }}</li>
   </ol>
 </section>
-{% endif %}
+{%- endmacro %}
+{% if recent_bookings %}{{ hosted_section("bk-recent", t("bookings-recent"), recent_bookings) }}{% endif %}
+{% if cancelled_bookings %}{{ hosted_section("bk-cancelled", t("bookings-cancelled"), cancelled_bookings) }}{% endif %}
 {% endblock %}

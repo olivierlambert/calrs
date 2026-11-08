@@ -506,7 +506,11 @@ async fn send_pending_nudge(
         booking_strings_in_guest_tz(&start_at, &end_at, stored_tz, guest_tz);
     let base_url = crate::settings::base_url();
     // Read like the approval request it repeats, so the two cannot differ.
-    let (notes, guest_phone) = booking_guest_input(pool, &uid).await;
+    let GuestInput {
+        notes,
+        phone: guest_phone,
+        answers,
+    } = booking_guest_input(pool, &uid).await;
     let details = crate::email::BookingDetails {
         utc_times: crate::booking_time::ics_times(&start_at, &end_at),
         event_title,
@@ -519,6 +523,7 @@ async fn send_pending_nudge(
         uid: uid.clone(),
         notes,
         guest_phone,
+        answers,
         guest_language,
         host_timezone: stored_tz.name().to_string(),
         resource_name: booking_resource_label(pool, &uid).await,

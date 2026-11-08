@@ -12,7 +12,8 @@ Webhooks are configured at **Event types → Webhooks**
 ## Who can add one
 
 By default only administrators can. A webhook sends guest names, email
-addresses, phone numbers and notes to an address of the user's choosing, so
+addresses, phone numbers, notes and answers to the booking questions to an
+address of the user's choosing, so
 letting every user do that is a decision for the operator: **Admin panel →
 Email and SMS → Booking webhooks → Let any user add webhooks**. Turning the
 switch back off stops the webhooks other users added at once and drops the
@@ -101,6 +102,18 @@ X-Calrs-Signature: sha256=4f0c...e9
       "notes": "About the renewal",
       "timezone": "Europe/Paris"
     },
+    "answers": [
+      {
+        "key": "company",
+        "label": "Company",
+        "kind": "short_text",
+        "value": "Martin SARL",
+        "option_ids": [],
+        "consent": false,
+        "link_url": null,
+        "answered_at": "2026-11-07T09:12:44Z"
+      }
+    ],
     "attendees": ["paul@example.com"],
     "hosts": [{ "name": "Alice", "email": "alice@example.com" }],
     "claimed_by": null,
@@ -142,6 +155,16 @@ X-Calrs-Signature: sha256=4f0c...e9
 - **`guest.phone`** is set only when the event type asks for a phone number,
   in E.164 form. **`notes`**, **`phone`**, **`language`**, **`location`** and
   **`team`** can be `null`.
+- **`answers`** are the guest's answers to the event type's
+  [booking questions](booking-questions.md), in form order, empty when it asks
+  none. `key` is the question's stable identifier (it survives a rename),
+  `label` the question as the guest read it. `value` is the text typed, the
+  chosen labels joined by ", " for a choice, or `yes` / `no` for a checkbox;
+  `option_ids` are the chosen options' stable ids: match on them rather than
+  on `value`, which is for display (a choice whose label contains a comma
+  reads the same as two choices). `consent` marks a consent checkbox and
+  `link_url` the policy it linked to. An optional question left empty is not
+  listed; a checkbox always is.
 - **`reason`** is the cancellation or decline reason, the same text the guest
   is shown.
 - **`team`** is `{ "id", "slug", "name" }` for a team event type.

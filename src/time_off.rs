@@ -306,6 +306,38 @@ pub async fn upcoming(
     Ok(rows.into_iter().filter_map(from_row).collect())
 }
 
+/// Most periods [`upcoming_for_team`] returns.
+pub const TEAM_LIST_MAX: i64 = 200;
+
+/// The periods of `team_id`'s enabled members that have not ended yet,
+/// soonest first, each with the member's name, at most [`TEAM_LIST_MAX`].
+/// For the team settings page. The label is never read: it is its owner's
+/// alone, and a team admin only learns that the member is away.
+pub async fn upcoming_for_team(
+    pool: &SqlitePool,
+    team_id: &str,
+    now: DateTime<Utc>,
+) -> Result<Vec<(String, Period)>, sqlx::Error> {
+    let rows: Vec<(String, String, String, String, String)> = sqlx::query_as(
+        "SELECT u.name, t.id, t.start_at, t.end_at, t.timezone FROM user_time_off t \
+         JOIN team_members tm ON tm.user_id = t.user_id AND tm.team_id = ? \
+         JOIN users u ON u.id = t.user_id \
+         WHERE u.enabled = 1 AND t.end_at > ? \
+         ORDER BY t.start_at, t.end_at, u.name LIMIT ?",
+    )
+    .bind(team_id)
+    .bind(now.format(STORED).to_string())
+    .bind(TEAM_LIST_MAX)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .filter_map(|(name, id, start, end, timezone)| {
+            from_row((id, start, end, timezone, None)).map(|p| (name, p))
+        })
+        .collect())
+}
+
 /// `user_id`'s periods overlapping `[from, to)`.
 pub async fn overlapping(
     pool: &SqlitePool,

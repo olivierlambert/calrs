@@ -93,6 +93,7 @@ Every user-facing string goes through Fluent (`i18n/`).
 | `writeback.rs` | Write-back failure recording and retry (#162) |
 | `write_targets.rs` | Write destination per event type (#47): which of a host's calendars a booking is written to, moving and deleting the copies written there, the choices offered in the event type form and on the sources page |
 | `pending.rs` | Pending requests: expiry deadline, sweep (expire and nudge), pending settings on event types |
+| `questions.rs` | Booking questions (#210): an event type's questions and notes mode, the booking form's fields (`form_context`), reading a booking POST (`read_submission`, called once by every booking handler), storing answers in the booking's transaction, reading them back (`booking_answers`, `answers_by_booking`), the event type editor's validation and save (tests in `tests/questions.rs`) |
 | `notify.rs` | `spawn_emails` / `drain_emails`, new-booking notifications, reminders, watchers, SMS on new booking, the background loop |
 | `meeting.rs` | Auto-generated meeting links (Jitsi, webhook, Google Meet) |
 | `webhooks.rs` | Outgoing booking webhooks (#168): `enqueue` (called by every path that changes a booking, after it commits), payload, URL checks (SSRF), signed delivery with retries (`run_webhook_loop`, spawned by `src/main.rs`) |
@@ -108,6 +109,7 @@ Every user-facing string goes through Fluent (`i18n/`).
 | `connected_apps.rs` | Connected apps page (`/dashboard/settings/apps`): the user's OAuth grants with revoke, and the admin's revoke-all for a user |
 | `mcp.rs` | Stateless Streamable HTTP `/mcp`, JSON-RPC lifecycle, three scoped tools; reuses invites and availability services |
 | `api.rs` | REST API v1 under `/api/v1` (#169): Bearer authentication (OAuth tokens for `<base>/api/v1`, personal access tokens), scopes, JSON errors, rate limits, idempotency keys; event types, slots (`compute_slots`), bookings; writes call `book_personal`/`book_team` (`booking.rs`), `host_cancel_booking` (`dashboard.rs`) and `host_request_reschedule` (`booking_actions.rs`) |
+| `api_doc.rs` | OpenAPI 3.1 document of the REST API, generated with `utoipa` from the `#[utoipa::path]` and `ToSchema` in `api.rs` plus the shared answers (`CommonAnswers`) and the instance's server and OAuth URLs; served at `/api/v1/openapi.json` (public); `/api/docs`, the interactive reference (Swagger UI vendored in `assets/swagger-ui/`, served from `/static/swagger-ui/`) for signed-in users. Tests in `tests/api_doc.rs` keep router, scopes and schemas in step |
 | `api_tokens.rs` | API tokens page (`/dashboard/settings/api-tokens`): create (shown once), list, revoke personal access tokens; the admin switch letting every user create them |
 | `teams.rs` | Teams listing, creation, settings, avatars |
 | `sources.rs` | Calendar sources: add, edit, test, sync, remove, write-back setup, calendars to sync, Google connect |
@@ -127,7 +129,7 @@ with `use super::*` and sees those fixtures and every item of `web`:
 `security`, `auth_pages`, `branding`, `format`, `availability`, `resources`,
 `hosts`, `event_types`, `invites`, `booking`, `public_pages`,
 `booking_actions`, `booking_notes`, `dashboard`, `sources`, `admin`, `emails`,
-`ews_global`, `page_language`, `guards`, `api`, `oauth`, `mcp`, plus `booking_time`, `pending_hold`,
+`ews_global`, `page_language`, `guards`, `api`, `api_doc`, `oauth`, `mcp`, `questions`, plus `booking_time`, `pending_hold`,
 `writeback_failures`, `write_destinations`, `organizer`, `duplicate_event_type`, `time_off` and `webhooks`.
 
 ### `src/email/`
@@ -237,7 +239,9 @@ Call sites use `crate::email::name` whatever file `name` lives in.
   that rebuild `BookingDetails` from the row read what the guest typed
   through `booking_guest_input`, `booking_additional_attendees` and
   `booking_ics_sequence` (`src/web/calendar_push.rs`), not their own
-  queries. A trigger stamps `bookings.first_confirmed_at` (migration 071),
+  queries; `booking_guest_input` also returns the answers to the booking
+  questions (`src/web/questions.rs`), and `tests/guards.rs` fails on a
+  `BookingDetails` literal that neither sets `answers` nor copies them. A trigger stamps `bookings.first_confirmed_at` (migration 071),
   so an approval can tell a rescheduled booking from a new request: it texts
   and emails the guest "moved" and sends the attendees the moved invite
   instead of "added". Every path that ends a booking reads who holds its
@@ -302,6 +306,11 @@ Call sites use `crate::email::name` whatever file `name` lives in.
   as in `src/microsoft_oauth.rs`.
 - **An SMS gateway.** One adapter file in `src/sms/` implementing
   `SmsProvider`, and one `ProviderSpec` entry in `src/sms/factory.rs`.
+- **A booking question kind.** `Kind` in `src/web/questions.rs` (parse,
+  editor validation, `parse_submission`), its markup in `templates/book.html`
+  and the editor's `kinds` in `templates/event_type_form.html`, and how it
+  reads in `answer_display` (`src/email/render.rs`). `kind` is a text
+  column: no migration.
 - **A CLI subcommand.** `src/commands/<name>.rs`, `pub mod` in
   `src/commands/mod.rs`, a variant in the `Commands` enum and a match arm in
   `src/main.rs`.

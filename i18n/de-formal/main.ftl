@@ -226,6 +226,7 @@ team-form-you = (Sie)
 team-settings-invite-link-help = Teilen Sie diesen Link, um Zugang zur Buchungsseite dieses privaten Teams zu geben.
 team-settings-description-placeholder = Beschreiben Sie dieses Team...
 team-settings-members-help = Verwalten Sie die Mitglieder dieses Teams. Fügen Sie einzelne Benutzer hinzu oder verknüpfen Sie OIDC-Gruppen für die automatische Synchronisierung.
+team-settings-time-off-help = Geplante Abwesenheiten der Mitglieder, in Ihrer Zeitzone, { $timezone }. Die Notizen bleiben privat.
 
 # Event type form (templates/event_type_form.html)
 
@@ -456,6 +457,7 @@ time-off-subtitle = Zeiträume, in denen Sie keine Buchungen annehmen. Alle Term
 time-off-kept-notice = Termine, die in einem Zeitraum bereits gebucht sind, bleiben bestehen: Eine Abwesenheit sagt nichts ab. Sagen Sie sie bei Bedarf unter Buchungen ab oder verschieben Sie sie.
 time-off-times-help = Lassen Sie die Uhrzeiten leer, um ganze Tage zu sperren, beide Daten eingeschlossen. Die Uhrzeiten gelten in Ihrer Zeitzone, { $timezone }.
 time-off-label-help = Nur Sie sehen sie, hier und unter Diagnose. Gäste und Teammitglieder sehen sie nie.
+time-off-team-admins-notice = Die Administratoren Ihrer Teams und die der Instanz sehen Datum und Uhrzeit Ihrer Abwesenheiten, nie die Notiz.
 time-off-error-date = Geben Sie die Daten als JJJJ-MM-TT und die Uhrzeiten als HH:MM ein.
 time-off-error-too-many = Sie haben bereits 100 Zeiträume geplant. Löschen Sie einige, bevor Sie weitere hinzufügen.
 time-off-hint = Um Daten für alle Terminarten auf einmal zu sperren, nutzen Sie { $link }.
@@ -484,6 +486,7 @@ api-tokens-created = Kopieren Sie dieses Token jetzt: Es wird nur einmal angezei
 api-tokens-error-name = Geben Sie dem Token einen Namen mit höchstens 100 Zeichen.
 api-tokens-error-scope = Wählen Sie mindestens eine Berechtigung.
 api-tokens-error-limit = Sie haben bereits 20 Tokens. Widerrufen Sie zuerst eines.
+api-docs-try = Um eine Anfrage auszuprobieren, wählen Sie Authorize und fügen Sie ein persönliches Zugriffstoken ein. Diese Seite sendet Ihre Sitzung nie an die API.
 bookings-error-reschedule-resend-too-soon = Die Anfrage wurde dem Gast vor weniger als einer Stunde gesendet. Versuchen Sie es später erneut.
 
 # Write destination per event type (#47)
@@ -504,3 +507,15 @@ webhooks-state-suspended = Ausgesetzt: Die Person, die ihn hinzugefügt hat, kan
 webhooks-adopt-help = Wenn Sie ihn übernehmen, gehört er Ihnen und läuft wieder. Bestätigen Sie die Adresse, an die er sendet, und legen Sie ein neues Signaturgeheimnis fest: Die Person, die ihn hinzugefügt hat, kennt das alte womöglich. Noch wartende Zustellungen werden verworfen.
 webhooks-error-new-secret = Die URL zeigt jetzt auf einen anderen Host: Geben Sie auch ein neues Signaturgeheimnis ein.
 webhooks-url-masked-hint = (nur die Person, die ihn hinzugefügt hat, sieht die vollständige URL: geben Sie sie zum Speichern erneut ein)
+
+# Booking questions (#210): booking form, answers, event type editor
+
+book-question-pick-one = Kreuzen Sie mindestens ein Kästchen an.
+answer-you-agreed = Sie haben zugestimmt
+answer-you-did-not-agree = Sie haben nicht zugestimmt
+validate-notes-required = Bitte schreiben Sie eine Notiz für die Gastgeber.
+validate-question-required = Bitte beantworten Sie „{ $question }“.
+validate-questions-invalid = Die Buchungsfragen konnten nicht gelesen werden. Laden Sie die Seite neu und versuchen Sie es noch einmal.
+validate-question-kind-change = Bei Frage { $position }: Eine gespeicherte Frage behält ihre Art. Entfernen Sie sie und fügen Sie eine neue hinzu.
+etf-booking-form-help = Gäste geben immer ihren Namen und ihre E-Mail-Adresse an. Fügen Sie die Fragen hinzu, die dieser Termintyp braucht: Gäste beantworten sie beim Buchen, und die Antworten kommen mit der Buchung bei Ihnen an.
+etf-q-in-calendar-help = Bei sensiblen Antworten ausschalten: Wer Ihren Kalender lesen kann, würde sie sehen.

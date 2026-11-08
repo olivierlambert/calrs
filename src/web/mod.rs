@@ -1,6 +1,7 @@
 mod admin;
 mod admin_stats;
 mod api;
+mod api_doc;
 mod api_tokens;
 mod availability;
 mod booking;
@@ -25,6 +26,7 @@ mod notify;
 mod overview_stats;
 mod pending;
 mod public_pages;
+pub(crate) mod questions;
 mod sources;
 mod teams;
 mod time_off;
@@ -73,7 +75,7 @@ pub(crate) use calendar_push::resource_delete_booking;
 use calendar_push::*;
 pub(crate) use calendar_push::{
     booking_additional_attendees, booking_attendee_languages, booking_guest_input,
-    booking_ics_sequence, with_invite_holders,
+    booking_ics_sequence, with_invite_holders, GuestInput,
 };
 pub(crate) use calendar_push::{caldav_delete_booking, claimant_delete_booking};
 use dashboard::*;
@@ -1063,6 +1065,12 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
         .route(
             "/static/intl-tel-input/{file}",
             get(serve_intl_tel_input_asset),
+        )
+        // Interactive reference of the REST API, and its vendored viewer.
+        .route("/api/docs", get(api_doc::api_docs_page))
+        .route(
+            "/static/swagger-ui/{file}",
+            get(api_doc::serve_swagger_ui_asset),
         )
         // Group public routes
         .route("/team/{team_slug}", get(team_profile_page))

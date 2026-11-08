@@ -10,6 +10,27 @@ booking page already does, through the same code: a booking made through the
 API is checked, stored, emailed, written to calendars and texted exactly like
 one made on the booking page.
 
+## OpenAPI document and interactive reference
+
+- **`/api/v1/openapi.json`**: the OpenAPI 3.1 description of the API, generated
+  by calrs from its own handlers, so it always matches the version you run.
+  Every operation, its parameters and request body, the answer of each status
+  with the error codes it can carry, the headers, and the two security schemes
+  with the scope each operation needs. Its `servers` entry and OAuth URLs are
+  your base URL (`CALRS_BASE_URL`). It is public (it describes the API and
+  holds no data): point a client generator or an API tool at it.
+- **`/api/docs`**: an interactive reference built from that document, for
+  signed-in users (also linked from **Profile & Settings → API tokens**). It
+  is Swagger UI, shipped inside the calrs binary: the page loads nothing from
+  another site. To try a request, choose **Authorize**, paste a personal access
+  token into `personalAccessToken`, then **Try it out** on an operation. The
+  page never sends your session cookie (the API would ignore it anyway), and
+  the token stays in the page's memory until you leave it. The requests are
+  real: `POST /bookings` books, and emails the guest. **Authorize** offers the
+  personal token only: the page cannot complete the OAuth flow, so it hides
+  the `oauth2` scheme, which the JSON document still describes for
+  applications.
+
 ## Authentication
 
 Every request carries a Bearer token:
@@ -140,7 +161,7 @@ slot computation makes of it (no event titles, no calendar names).
 | 403 | `insufficient_scope`, `forbidden`, `origin_not_allowed` |
 | 404 | `not_found` |
 | 405 | `method_not_allowed` |
-| 409 | `slot_unavailable`, `limit_reached`, `booking_not_active`, `no_bookable_dates`, `reschedule_already_requested`, `idempotency_in_progress` |
+| 409 | `slot_unavailable`, `limit_reached`, `booking_not_active`, `no_bookable_dates`, `reschedule_already_requested`, `resend_too_soon`, `no_reschedule_pending`, `idempotency_in_progress` |
 | 413 | `payload_too_large` |
 | 415 | `unsupported_media_type` |
 | 422 | `too_soon`, `outside_booking_window`, `booking_refused`, `too_many_attendees`, `idempotency_key_reused` |
@@ -256,6 +277,9 @@ them the order near those rows can be off by the timezone's offset.
       "guest": {"name": "Jeanne Martin", "email": "jeanne@example.com",
                 "phone": null, "timezone": "Europe/Paris", "language": "fr",
                 "notes": "About the renewal"},
+      "answers": [{"key": "company", "label": "Company", "kind": "short_text",
+                   "value": "Martin SARL", "option_ids": [], "consent": false,
+                   "link_url": null, "answered_at": "2026-11-07T09:12:44Z"}],
       "attendees": ["paul@example.com"],
       "location": {"type": "link", "value": "https://meet.example.com/abc"},
       "host_notes": "Prefers mornings."
@@ -266,7 +290,10 @@ them the order near those rows can be off by the timezone's offset.
 ```
 
 `uid` is the iCalendar UID of the invitation (the one webhooks carry).
-`host_notes` are the hosts' own notes on the booking.
+`host_notes` are the hosts' own notes on the booking. `answers` are the
+guest's answers to the event type's [booking questions](booking-questions.md),
+in the shape webhooks use; match choices on `option_ids`, `value` is for
+display.
 
 ### `GET /api/v1/bookings/{id}`
 
@@ -302,6 +329,11 @@ Books an event type you manage for a guest.
   `de` becomes `de-formal`, as on the booking page.
 - No invite is needed for internal or private event types: you manage them.
   None is used up either.
+- The event type's [booking questions](booking-questions.md) are not asked:
+  you are booking for the guest, as with `calrs booking create`. `notes` is
+  stored as given whatever the notes field setting, and the booking has no
+  answers. Known limit of this version: the API cannot send answers, even for
+  required questions.
 
 The booking goes through the booking page's own code: the same validation, a
 re-check of the time against the slot engine and of the shared resources
@@ -398,4 +430,5 @@ would break a client gets `/api/v2`.
 
 ```bash
 cargo test web::tests::api
+cargo test web::tests::api_doc
 ```
