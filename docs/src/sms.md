@@ -40,7 +40,7 @@ Go to **Dashboard > Admin > SMS settings**. Pick a gateway and the form relabels
 Two settings apply whichever gateway you pick:
 
 - **Default country code** normalises phone numbers guests type in local form. A French guest typing `06 12 34 56 78` on an instance set to `+33` is stored as `+33612345678`. Numbers starting with `+` or `00` are taken as written, whatever this is set to.
-- **Daily limit** caps billed segments per day across the whole instance, test messages included. `0` means no limit. See [Keeping the bill bounded](#keeping-the-bill-bounded) and [Message content and cost](#message-content-and-cost).
+- **Daily limit** caps billed segments per day (the UTC day) across the whole instance, test messages included. `0` means no limit. See [Keeping the bill bounded](#keeping-the-bill-bounded) and [Message content and cost](#message-content-and-cost).
 
 The secret is encrypted at rest (AES-256-GCM), like every other stored credential. It is never displayed again: leaving the field empty when saving keeps the current value. Switching to a different gateway does require entering that gateway's own credential, since the stored one belongs to the previous vendor.
 
@@ -143,16 +143,16 @@ Four controls, and you want all of them:
 
 1. **Restrict destination countries at your gateway.** Twilio calls this Messaging Geo Permissions; disable every country you do not serve. GatewayAPI and seven.io have equivalent destination controls. This is free, it happens before calrs is involved, and it removes the expensive-route incentive entirely.
 2. **Keep the gateway account prepaid, without auto-recharge.** Whatever goes wrong then costs at most the float on the account.
-3. **Set a daily limit** in the admin SMS card, in billed segments. Past it, calrs stops texting and keeps sending email, so bookings keep working while the spend stops. Each message reserves its estimated segments before it is sent, so a burst of bookings cannot overshoot the limit, and the reservation is corrected to what the gateway reports, or given back if the gateway refuses the message. When the request fails on the way (a timeout, a dropped connection, a server error at the gateway), the message may have been sent and billed anyway, so calrs keeps counting it and shows it in the card as having no answer from the gateway. Today's messages, segments and cost are shown in the same card, test messages included.
+3. **Set a daily limit** in the admin SMS card, in billed segments. Past it, calrs stops texting and keeps sending email, so bookings keep working while the spend stops. Each message reserves its estimated segments before it is sent, so a burst of bookings cannot overshoot the limit, and the reservation is corrected to what the gateway reports, or given back if the gateway refuses the message. When the request may have reached the gateway without a usable answer (a timeout once it was sent, a dropped connection, a server error at the gateway, an answer that cannot be read), the message may have been sent and billed anyway, so calrs keeps counting it and shows it in the card as having no answer from the gateway. A request that never left (connection refused, a DNS or TLS failure) is not counted. "Today" is the UTC day. Today's messages, segments and cost are shown in the same card, test messages included.
 4. **Leave the captcha on.** An SMS-enabled booking form without a captcha is an open relay someone else pays for. The admin panel warns you when SMS is configured and the captcha is not.
 
 Booking endpoints are also rate limited per IP (10 requests per 5 minutes), which bounds the rate but not a distributed attempt, so it is not a substitute for the four above.
 
 ## Message content and cost
 
-Messages are billed per segment: 160 characters for the GSM-7 alphabet, but only 70 if the text contains a single character outside it, which includes most accented letters. calrs keeps its messages inside two segments in every shipped language, and shortens long event titles so the date and time always survive.
+Messages are billed per segment: a message of up to 160 characters in the GSM-7 alphabet is one segment, but only up to 70 if the text contains a single character outside it, which includes most accented letters. A longer message is split into parts of 153 characters (67 outside GSM-7), each billed as a segment. Outside GSM-7 the count is in UTF-16 code units, so an emoji counts as two characters. calrs keeps its messages inside two segments in every shipped language, and shortens long event titles so the date and time always survive.
 
-The daily limit counts segments, not messages, because segments are what you pay for: a limit of 100 allows 100 short messages but only 50 that run to two segments. The gateway reports segments and cost where it can, and calrs records them so the admin panel can show today's spend; when the gateway reports no segment count (the webhook), calrs records its own estimate. That usage ledger stores no phone numbers.
+The daily limit counts segments, not messages, because segments are what you pay for: a limit of 100 allows 100 short messages but only 50 that run to two segments. The gateway reports segments and cost where it can, and calrs records them so the admin panel can show today's spend; when the gateway reports no segment count (GatewayAPI and the webhook; Twilio and seven.io do report it), calrs records its own estimate. That usage ledger stores no phone numbers.
 
 ## Using the generic webhook
 

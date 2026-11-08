@@ -150,8 +150,13 @@ pub enum SmsError {
     InsufficientCredit(String),
     /// Throttled; retrying later may work.
     RateLimited(String),
-    /// Network-level failure (DNS, TLS, timeout).
+    /// The request may have reached the gateway, but no usable answer came
+    /// back: a timeout once it was sent, a dropped connection, a 5xx, an
+    /// unreadable response. The message may have been sent and billed.
     Transport(String),
+    /// Nothing left calrs: connection refused, a DNS or TLS failure, or a
+    /// request that could not be built. The message was not sent.
+    Unreachable(String),
     /// Anything else, carrying the gateway's own message.
     Other(String),
 }
@@ -164,7 +169,12 @@ impl std::fmt::Display for SmsError {
             SmsError::InvalidSender(m) => write!(f, "sender refused: {}", m),
             SmsError::InsufficientCredit(m) => write!(f, "insufficient credit: {}", m),
             SmsError::RateLimited(m) => write!(f, "rate limited by the SMS gateway: {}", m),
-            SmsError::Transport(m) => write!(f, "could not reach the SMS gateway: {}", m),
+            SmsError::Transport(m) => write!(
+                f,
+                "no usable answer from the SMS gateway (the message may have been sent): {}",
+                m
+            ),
+            SmsError::Unreachable(m) => write!(f, "could not reach the SMS gateway: {}", m),
             SmsError::Other(m) => write!(f, "SMS gateway error: {}", m),
         }
     }
@@ -182,6 +192,7 @@ impl SmsError {
             SmsError::InsufficientCredit(_) => "insufficient_credit",
             SmsError::RateLimited(_) => "rate_limited",
             SmsError::Transport(_) => "transport",
+            SmsError::Unreachable(_) => "unreachable",
             SmsError::Other(_) => "other",
         }
     }
@@ -227,6 +238,24 @@ pub(crate) fn http_client() -> &'static reqwest::Client {
             .build()
             .unwrap_or_default()
     })
+}
+
+/// Classify a failed HTTP request by whether the message can have left.
+///
+/// A connect failure (refused, DNS, TLS handshake, a connect timeout) or a
+/// request that could not be built sent nothing: [`SmsError::Unreachable`],
+/// and the cap's reservation is given back. Anything later (a timeout once
+/// the request was written, a connection dropped while waiting for the
+/// answer, a body that cannot be read) may have reached the gateway:
+/// [`SmsError::Transport`], and the reservation is kept. `is_request()` alone
+/// is not proof that nothing left, since reqwest reports a connection closed
+/// after the request was written that way too.
+pub(crate) fn request_error(e: reqwest::Error) -> SmsError {
+    if e.is_connect() || e.is_builder() {
+        SmsError::Unreachable(e.to_string())
+    } else {
+        SmsError::Transport(e.to_string())
+    }
 }
 
 const SMS_ENV_VARS: &[&str] = &[
@@ -611,11 +640,13 @@ pub async fn send_metered(
 }
 
 /// Whether a failed send may still have gone out (and been billed). A
-/// transport failure (timeout, reset connection, a 5xx) can come after the
-/// gateway accepted the message, so its reservation is kept: a spend cap errs
-/// toward over-counting. Every other error is a definite refusal (bad
-/// credentials, recipient or sender, no credit, throttled, a parsed 4xx, or a
-/// check calrs made before sending), and gives its reservation back.
+/// transport failure (a timeout once the request was sent, a dropped
+/// connection, a 5xx, an unreadable answer) can come after the gateway
+/// accepted the message, so its reservation is kept: a spend cap errs toward
+/// over-counting. Every other error is a definite refusal or a request that
+/// never left (bad credentials, recipient or sender, no credit, throttled, a
+/// parsed 4xx, a connect or DNS failure, a check calrs made before sending),
+/// and gives its reservation back.
 fn outcome_unknown(error: &SmsError) -> bool {
     matches!(error, SmsError::Transport(_))
 }

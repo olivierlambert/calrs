@@ -6,7 +6,8 @@ use super::*;
 
 /// A webhook SMS gateway on a local port, one task per connection so
 /// concurrent sends really overlap. Answers every request with `status`
-/// after `delay`, and counts the requests it received.
+/// after `delay`, and counts the requests it received. A `status` of 0
+/// reads the request and hangs up without answering.
 async fn spawn_gateway(
     status: u16,
     delay: std::time::Duration,
@@ -45,6 +46,9 @@ async fn spawn_gateway(
                 }
                 count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 tokio::time::sleep(delay).await;
+                if status == 0 {
+                    return;
+                }
                 let response = format!(
                     "HTTP/1.1 {status} X\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{{}}"
                 );
@@ -205,22 +209,89 @@ async fn a_send_lost_in_transit_stays_counted() {
     assert!(matches!(result, Err(crate::sms::MeteredSendError::OverCap)));
     assert_eq!(received.load(std::sync::atomic::Ordering::SeqCst), 1);
 
-    // No answer at all (nothing listening) is kept the same way.
+    // A gateway that read the request and hung up without answering may
+    // have sent it: kept the same way.
+    let (url, received) = spawn_gateway(0, std::time::Duration::ZERO).await;
+    let config = webhook_config(&url, 0);
+    let result =
+        crate::sms::send_metered(&pool, &config, "reminder", "+33612345678", &body_of(10)).await;
+    assert!(
+        matches!(
+            result,
+            Err(crate::sms::MeteredSendError::Gateway(
+                crate::sms::SmsError::Transport(_)
+            ))
+        ),
+        "{:?}",
+        result
+    );
+    assert_eq!(received.load(std::sync::atomic::Ordering::SeqCst), 1);
+    assert_eq!(crate::sms::unknown_today(&pool).await, 2);
+    assert_eq!(crate::sms::segments_today(&pool).await, 3);
+}
+
+/// A request that never left calrs (nothing listening: connection refused)
+/// sent nothing, so its reservation is given back.
+#[tokio::test]
+async fn a_send_that_never_left_is_released() {
+    let pool = setup_test_db().await;
     let dead = {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         listener.local_addr().unwrap().port()
     };
-    let config = webhook_config(&format!("http://127.0.0.1:{dead}/sms"), 0);
-    let result =
-        crate::sms::send_metered(&pool, &config, "reminder", "+33612345678", &body_of(10)).await;
-    assert!(matches!(
-        result,
-        Err(crate::sms::MeteredSendError::Gateway(
-            crate::sms::SmsError::Transport(_)
-        ))
-    ));
-    assert_eq!(crate::sms::unknown_today(&pool).await, 2);
-    assert_eq!(crate::sms::segments_today(&pool).await, 3);
+    let config = webhook_config(&format!("http://127.0.0.1:{dead}/sms"), 1);
+    for _ in 0..2 {
+        let result =
+            crate::sms::send_metered(&pool, &config, "reminder", "+33612345678", &body_of(10))
+                .await;
+        assert!(
+            matches!(
+                result,
+                Err(crate::sms::MeteredSendError::Gateway(
+                    crate::sms::SmsError::Unreachable(_)
+                ))
+            ),
+            "{:?}",
+            result
+        );
+    }
+    // Both were tried (the first did not use up the cap of one), and
+    // nothing is left in the ledger.
+    assert_eq!(crate::sms::sent_today(&pool).await, 0);
+    assert_eq!(crate::sms::unknown_today(&pool).await, 0);
+}
+
+/// An emoji in a host's title costs two UTF-16 code units, so a body the
+/// character count would bill as one segment reserves two.
+#[tokio::test]
+async fn the_reservation_counts_utf16_code_units() {
+    let pool = setup_test_db().await;
+    let (url, received) = spawn_gateway(200, std::time::Duration::ZERO).await;
+    let body = format!("{}🎉", "ł".repeat(69));
+    assert_eq!(body.chars().count(), 70);
+
+    let result = crate::sms::send_metered(
+        &pool,
+        &webhook_config(&url, 1),
+        "confirmed",
+        "+33612345678",
+        &body,
+    )
+    .await;
+    assert!(matches!(result, Err(crate::sms::MeteredSendError::OverCap)));
+    assert_eq!(received.load(std::sync::atomic::Ordering::SeqCst), 0);
+
+    crate::sms::send_metered(
+        &pool,
+        &webhook_config(&url, 2),
+        "confirmed",
+        "+33612345678",
+        &body,
+    )
+    .await
+    .expect("fits two segments");
+    // The webhook reports no count, so the estimate is what is kept.
+    assert_eq!(crate::sms::segments_today(&pool).await, 2);
 }
 
 #[tokio::test]
