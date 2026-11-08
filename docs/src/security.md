@@ -93,7 +93,9 @@ ON bookings(event_type_id, start_at)
 WHERE status IN ('confirmed', 'pending');
 ```
 
-Additionally, all booking handlers wrap the availability check and INSERT in a database transaction (`BEGIN IMMEDIATE`), preventing race conditions between concurrent requests.
+Every new booking, guest reschedule and approval also runs its availability checks and the write that claims the time under one process-wide lock (`resources::booking_lock()`), so concurrent requests are checked one after the other and each sees the bookings committed before it, including bookings of the host's other event types, which the index does not cover. The database transaction only wraps the writes and is opened after the checks, so no request waits for a pool connection while holding one.
+
+At booking time an availability read that fails (calendar events, bookings, time off, working hours, shared resources) refuses the request with an internal error instead of treating the host as free. Slot pages degrade softly: they log the error and show what they could read.
 
 ## Error handling
 

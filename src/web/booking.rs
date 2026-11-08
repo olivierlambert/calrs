@@ -289,6 +289,13 @@ impl BookingRefusal {
     }
 }
 
+/// A submit-time availability read that failed: the booking is refused
+/// with the internal error page (a 500 through the API), never made as if
+/// the host or resource were free. Logged by `internal_error_response`.
+pub(super) fn busy_check_failed(error: sqlx::Error) -> BookingRefusal {
+    BookingRefusal::Internal("availability check", error.to_string())
+}
+
 pub(super) async fn handle_group_booking(
     State(state): State<Arc<AppState>>,
     optional_auth: crate::auth::OptionalAuthUser,
@@ -588,13 +595,21 @@ pub(super) async fn book_team(
         None
     };
 
-    // Start a transaction to ensure atomicity of availability check + insert.
-    let mut tx = match state.pool.begin().await {
-        Ok(tx) => tx,
-        Err(e) => {
-            return Err(BookingRefusal::Internal("database query", e.to_string()));
-        }
-    };
+    // Required shared resources' feeds are refreshed first, outside the
+    // lock (network; failed fetches back off via last_synced_at).
+    let resource_ids: Vec<String> = crate::resources::resources_for_event_type(&state.pool, &et_id)
+        .await
+        .into_iter()
+        .map(|r| r.id)
+        .collect();
+    if !resource_ids.is_empty() {
+        crate::resources::sync_if_stale(&state.pool, &resource_ids).await;
+    }
+    // Every check below, through the commit of the booking row, runs under
+    // the process-wide booking lock, so concurrent submissions are checked
+    // one after the other and each sees the bookings committed before it.
+    // No pool connection is held while waiting for it (see `booking_lock`).
+    let booking_guard = crate::resources::booking_lock().await;
 
     // Resolve the host side. Round-robin: pick one available member and
     // assign the booking to them. Collective (#147): the booking belongs to
@@ -616,15 +631,14 @@ pub(super) async fn book_team(
         .bind(&team_id)
         .fetch_all(&state.pool)
         .await
-        .unwrap_or_default();
+        .map_err(|e| BookingRefusal::Internal("team members", e.to_string()))?;
         if members.is_empty() {
-            let _ = tx.rollback().await;
             return Err(BookingRefusal::Plain("error-no-members-available"));
         }
         // Submit-time re-check, mirroring pick_group_member: the slot grid
         // may be stale by the time the form is submitted.
         for (member_id, _, _, _) in &members {
-            let mut busy = fetch_busy_times_for_user(
+            let mut busy = try_fetch_busy_times_for_user(
                 &state.pool,
                 member_id,
                 buf_start,
@@ -632,12 +646,14 @@ pub(super) async fn book_team(
                 host_tz,
                 Some(&et_id),
             )
-            .await;
+            .await
+            .map_err(busy_check_failed)?;
             busy.extend(
-                user_avail_as_busy(&state.pool, member_id, buf_start, buf_end, host_tz).await,
+                try_user_avail_as_busy(&state.pool, member_id, buf_start, buf_end, host_tz)
+                    .await
+                    .map_err(busy_check_failed)?,
             );
             if has_conflict(&busy, buf_start, buf_end) {
-                let _ = tx.rollback().await;
                 return Err(BookingRefusal::Plain("error-no-members-available"));
             }
         }
@@ -660,11 +676,11 @@ pub(super) async fn book_team(
             buffer_after,
             host_tz,
         )
-        .await;
+        .await
+        .map_err(busy_check_failed)?;
         match assigned {
             Some((member_id, name, email)) => (Some(member_id), name, email, Vec::new()),
             None => {
-                let _ = tx.rollback().await;
                 return Err(BookingRefusal::Plain("error-no-members-available"));
             }
         }
@@ -674,7 +690,6 @@ pub(super) async fn book_team(
     if would_exceed_frequency_limit(&state.pool, &et_id, slot_start, assigned_user_id.as_deref())
         .await
     {
-        let _ = tx.rollback().await;
         return Err(BookingRefusal::Keys(
             "bae-title-unavailable",
             "bae-body-unavailable",
@@ -686,7 +701,7 @@ pub(super) async fn book_team(
     // by recomputing the page's own slots; the checks above just give the
     // common refusals their own message.
     let window = offered_slot_window(host_tz, slot_start);
-    let offered_busy = team_busy_source(
+    let offered_busy = try_team_busy_source(
         &state.pool,
         &et_id,
         &team_id,
@@ -695,7 +710,8 @@ pub(super) async fn book_team(
         window.busy_end,
         host_tz,
     )
-    .await;
+    .await
+    .map_err(busy_check_failed)?;
     if !is_offered_slot(
         &state.pool,
         &et_id,
@@ -712,27 +728,11 @@ pub(super) async fn book_team(
     )
     .await
     {
-        let _ = tx.rollback().await;
         return Err(BookingRefusal::Plain("error-slot-unavailable"));
     }
 
     // Required shared resources: verify availability and pick one in
-    // round-robin mode. The busy reads run on separate pool connections and
-    // cannot see uncommitted inserts, so a process-wide lock, held from the
-    // check until the booking row is committed, is what serializes
-    // concurrent bookings over shared resources. Feeds are refreshed
-    // before taking the lock (failed fetches back off via last_synced_at).
-    let resource_ids: Vec<String> = crate::resources::resources_for_event_type(&state.pool, &et_id)
-        .await
-        .into_iter()
-        .map(|r| r.id)
-        .collect();
-    let resource_guard = if resource_ids.is_empty() {
-        None
-    } else {
-        crate::resources::sync_if_stale(&state.pool, &resource_ids).await;
-        Some(crate::resources::booking_lock().await)
-    };
+    // round-robin mode, under the booking lock taken above.
     let assigned_resource_id = match crate::resources::check_and_pick(
         &state.pool,
         &et_id,
@@ -742,9 +742,9 @@ pub(super) async fn book_team(
         None,
     )
     .await
+    .map_err(busy_check_failed)?
     {
         crate::resources::ResourceCheck::Busy => {
-            let _ = tx.rollback().await;
             return Err(BookingRefusal::Plain("error-slot-unavailable"));
         }
         crate::resources::ResourceCheck::Free { assigned } => assigned,
@@ -789,6 +789,17 @@ pub(super) async fn book_team(
         ),
         None => (None, None, None),
     };
+    // The transaction only wraps the writes. It is opened after every check
+    // above, so this request never waits for a pool connection while it
+    // holds one: those checks read through the pool, and with every
+    // connection held by a transaction waiting on a read, all of them would
+    // stall until the acquire timeout. sqlx opens a deferred transaction, so
+    // it took no lock and no snapshot before its first statement anyway.
+    let mut tx = state
+        .pool
+        .begin()
+        .await
+        .map_err(|e| BookingRefusal::Internal("database query", e.to_string()))?;
     let insert_result = sqlx::query(
         "INSERT INTO bookings (time_version, id, event_type_id, uid, guest_name, guest_email, guest_timezone, notes, start_at, end_at, status, cancel_token, reschedule_token, assigned_user_id, confirm_token, language, assigned_resource_id, guest_phone, organizer_user_id, organizer_name, organizer_email)
          VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -860,7 +871,7 @@ pub(super) async fn book_team(
         webhooks::Event::new_booking(needs_approval),
     )
     .await;
-    drop(resource_guard);
+    drop(booking_guard);
 
     tracing::info!(booking_id = %id, event_type = %slug, guest = %guest.email, "booking created");
 
@@ -1224,15 +1235,42 @@ async fn handle_dynamic_group_booking(
     let buf_start = check_start - Duration::minutes(buffer_before as i64);
     let buf_end = check_end + Duration::minutes(buffer_after as i64);
 
+    // Required shared resources' feeds are refreshed first, outside the
+    // lock (network; failed fetches back off via last_synced_at).
+    let resource_ids: Vec<String> = crate::resources::resources_for_event_type(&state.pool, &et_id)
+        .await
+        .into_iter()
+        .map(|r| r.id)
+        .collect();
+    if !resource_ids.is_empty() {
+        crate::resources::sync_if_stale(&state.pool, &resource_ids).await;
+    }
+    // Every check below, through the commit of the booking row, runs under
+    // the process-wide booking lock (see `book_team`).
+    let booking_guard = crate::resources::booking_lock().await;
+
     // Check availability for ALL participants
     for (i, (uid, uname, _, _, _)) in dg_users.iter().enumerate() {
         let et_filter = if i == 0 { Some(et_id.as_str()) } else { None };
-        let mut busy =
-            fetch_busy_times_for_user(&state.pool, uid, buf_start, buf_end, host_tz, et_filter)
-                .await;
+        let mut busy = match try_fetch_busy_times_for_user(
+            &state.pool,
+            uid,
+            buf_start,
+            buf_end,
+            host_tz,
+            et_filter,
+        )
+        .await
+        {
+            Ok(busy) => busy,
+            Err(e) => return internal_error_response("availability check", &e),
+        };
         if i > 0 {
             ensure_user_avail_seeded(&state.pool, uid).await;
-            busy.extend(user_avail_as_busy(&state.pool, uid, buf_start, buf_end, host_tz).await);
+            match try_user_avail_as_busy(&state.pool, uid, buf_start, buf_end, host_tz).await {
+                Ok(hours) => busy.extend(hours),
+                Err(e) => return internal_error_response("availability check", &e),
+            }
         }
         if has_conflict(&busy, buf_start, buf_end) {
             return Html(tr1(
@@ -1263,7 +1301,7 @@ async fn handle_dynamic_group_booking(
     // common refusals their own message.
     let window = offered_slot_window(host_tz, slot_start);
     let user_ids: Vec<String> = dg_users.iter().map(|(uid, ..)| uid.clone()).collect();
-    let offered_busy = dynamic_group_busy_source(
+    let offered_busy = match try_dynamic_group_busy_source(
         &state.pool,
         &et_id,
         &user_ids,
@@ -1271,7 +1309,11 @@ async fn handle_dynamic_group_booking(
         window.busy_end,
         host_tz,
     )
-    .await;
+    .await
+    {
+        Ok(busy) => busy,
+        Err(e) => return internal_error_response("availability check", &e),
+    };
     if !is_offered_slot(
         &state.pool,
         &et_id,
@@ -1308,28 +1350,8 @@ async fn handle_dynamic_group_booking(
         None
     };
 
-    let mut tx = match state.pool.begin().await {
-        Ok(tx) => tx,
-        Err(e) => return internal_error_response("database query", &e),
-    };
-
     // Required shared resources: verify availability and pick one in
-    // round-robin mode. The busy reads run on separate pool connections and
-    // cannot see uncommitted inserts, so a process-wide lock, held from the
-    // check until the booking row is committed, is what serializes
-    // concurrent bookings over shared resources. Feeds are refreshed
-    // before taking the lock (failed fetches back off via last_synced_at).
-    let resource_ids: Vec<String> = crate::resources::resources_for_event_type(&state.pool, &et_id)
-        .await
-        .into_iter()
-        .map(|r| r.id)
-        .collect();
-    let resource_guard = if resource_ids.is_empty() {
-        None
-    } else {
-        crate::resources::sync_if_stale(&state.pool, &resource_ids).await;
-        Some(crate::resources::booking_lock().await)
-    };
+    // round-robin mode, under the booking lock taken above.
     let assigned_resource_id = match crate::resources::check_and_pick(
         &state.pool,
         &et_id,
@@ -1340,13 +1362,13 @@ async fn handle_dynamic_group_booking(
     )
     .await
     {
-        crate::resources::ResourceCheck::Busy => {
-            let _ = tx.rollback().await;
+        Ok(crate::resources::ResourceCheck::Busy) => {
             return Html(crate::i18n::translate(lang, "error-slot-unavailable", None))
                 .into_response();
         }
-        crate::resources::ResourceCheck::Free { assigned } => assigned,
-        crate::resources::ResourceCheck::NoResources => None,
+        Ok(crate::resources::ResourceCheck::Free { assigned }) => assigned,
+        Ok(crate::resources::ResourceCheck::NoResources) => None,
+        Err(e) => return internal_error_response("availability check", &e),
     };
 
     let sms_default_country_dg: String = crate::sms::default_country_code(&state.pool).await;
@@ -1380,6 +1402,12 @@ async fn handle_dynamic_group_booking(
         .map(|(_, _, name, _, _)| name.as_str())
         .collect::<Vec<_>>()
         .join(" & ");
+    // The transaction only wraps the writes, opened after every check (see
+    // `book_team`): no pool connection is held while the checks read.
+    let mut tx = match state.pool.begin().await {
+        Ok(tx) => tx,
+        Err(e) => return internal_error_response("database query", &e),
+    };
     let insert_result = sqlx::query(
         "INSERT INTO bookings (time_version, id, event_type_id, uid, guest_name, guest_email, guest_timezone, notes, start_at, end_at, status, cancel_token, reschedule_token, confirm_token, language, assigned_resource_id, guest_phone, organizer_user_id, organizer_name, organizer_email)
          VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -1480,7 +1508,7 @@ async fn handle_dynamic_group_booking(
         webhooks::Event::new_booking(needs_approval),
     )
     .await;
-    drop(resource_guard);
+    drop(booking_guard);
 
     tracing::info!(booking_id = %id, event_type = %slug, guest = %form.email, dynamic_group = %combined_username, "dynamic group booking created");
 
@@ -1909,15 +1937,21 @@ pub(super) async fn book_personal(
         None
     };
 
-    // Start a transaction to ensure atomicity of availability check + insert.
-    let mut tx = match state.pool.begin().await {
-        Ok(tx) => tx,
-        Err(e) => {
-            return Err(BookingRefusal::Internal("database query", e.to_string()));
-        }
-    };
+    // Required shared resources' feeds are refreshed first, outside the
+    // lock (network; failed fetches back off via last_synced_at).
+    let resource_ids: Vec<String> = crate::resources::resources_for_event_type(&state.pool, &et_id)
+        .await
+        .into_iter()
+        .map(|r| r.id)
+        .collect();
+    if !resource_ids.is_empty() {
+        crate::resources::sync_if_stale(&state.pool, &resource_ids).await;
+    }
+    // Every check below, through the commit of the booking row, runs under
+    // the process-wide booking lock (see `book_team`).
+    let booking_guard = crate::resources::booking_lock().await;
 
-    let busy = fetch_busy_times_for_user(
+    let busy = try_fetch_busy_times_for_user(
         &state.pool,
         &host_user_id,
         buf_start,
@@ -1925,16 +1959,15 @@ pub(super) async fn book_personal(
         host_tz,
         Some(&et_id),
     )
-    .await;
+    .await
+    .map_err(busy_check_failed)?;
     if has_conflict(&busy, buf_start, buf_end) {
-        let _ = tx.rollback().await;
         return Err(BookingRefusal::Plain("error-slot-unavailable"));
     }
 
     // Check booking frequency limits. Personal event-type flows don't have a
     // team assignee, so per-member caps degrade to event-type-wide here.
     if would_exceed_frequency_limit(&state.pool, &et_id, slot_start, None).await {
-        let _ = tx.rollback().await;
         return Err(BookingRefusal::Keys(
             "bae-title-unavailable",
             "bae-body-unavailable",
@@ -1947,7 +1980,7 @@ pub(super) async fn book_personal(
     // common refusals their own message.
     let window = offered_slot_window(host_tz, slot_start);
     let offered_busy = BusySource::Individual(
-        fetch_busy_times_for_user(
+        try_fetch_busy_times_for_user(
             &state.pool,
             &host_user_id,
             window.busy_start,
@@ -1955,7 +1988,8 @@ pub(super) async fn book_personal(
             host_tz,
             Some(&et_id),
         )
-        .await,
+        .await
+        .map_err(busy_check_failed)?,
     );
     if !is_offered_slot(
         &state.pool,
@@ -1973,27 +2007,11 @@ pub(super) async fn book_personal(
     )
     .await
     {
-        let _ = tx.rollback().await;
         return Err(BookingRefusal::Plain("error-slot-unavailable"));
     }
 
     // Required shared resources: verify availability and pick one in
-    // round-robin mode. The busy reads run on separate pool connections and
-    // cannot see uncommitted inserts, so a process-wide lock, held from the
-    // check until the booking row is committed, is what serializes
-    // concurrent bookings over shared resources. Feeds are refreshed
-    // before taking the lock (failed fetches back off via last_synced_at).
-    let resource_ids: Vec<String> = crate::resources::resources_for_event_type(&state.pool, &et_id)
-        .await
-        .into_iter()
-        .map(|r| r.id)
-        .collect();
-    let resource_guard = if resource_ids.is_empty() {
-        None
-    } else {
-        crate::resources::sync_if_stale(&state.pool, &resource_ids).await;
-        Some(crate::resources::booking_lock().await)
-    };
+    // round-robin mode, under the booking lock taken above.
     let assigned_resource_id = match crate::resources::check_and_pick(
         &state.pool,
         &et_id,
@@ -2003,9 +2021,9 @@ pub(super) async fn book_personal(
         None,
     )
     .await
+    .map_err(busy_check_failed)?
     {
         crate::resources::ResourceCheck::Busy => {
-            let _ = tx.rollback().await;
             return Err(BookingRefusal::Plain("error-slot-unavailable"));
         }
         crate::resources::ResourceCheck::Free { assigned } => assigned,
@@ -2022,6 +2040,13 @@ pub(super) async fn book_personal(
             ))
         }
     }
+    // The transaction only wraps the writes, opened after every check (see
+    // `book_team`): no pool connection is held while the checks read.
+    let mut tx = state
+        .pool
+        .begin()
+        .await
+        .map_err(|e| BookingRefusal::Internal("database query", e.to_string()))?;
     let insert_result = sqlx::query(
         "INSERT INTO bookings (time_version, id, event_type_id, uid, guest_name, guest_email, guest_timezone, notes, start_at, end_at, status, cancel_token, reschedule_token, confirm_token, language, assigned_resource_id, guest_phone)
          VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -2089,7 +2114,7 @@ pub(super) async fn book_personal(
         webhooks::Event::new_booking(needs_approval),
     )
     .await;
-    drop(resource_guard);
+    drop(booking_guard);
 
     tracing::info!(booking_id = %id, event_type = %slug, guest = %guest.email, "booking created");
 
@@ -2735,16 +2760,21 @@ pub(super) async fn handle_booking(
         None
     };
 
-    // Start a transaction to ensure atomicity of availability check + insert.
-    // The unique index idx_bookings_no_overlap is the ultimate guard against double-booking.
-    let mut tx = match state.pool.begin().await {
-        Ok(tx) => tx,
-        Err(e) => {
-            return internal_error_response("database query", &e);
-        }
-    };
+    // Required shared resources' feeds are refreshed first, outside the
+    // lock (network; failed fetches back off via last_synced_at).
+    let resource_ids: Vec<String> = crate::resources::resources_for_event_type(&state.pool, &et_id)
+        .await
+        .into_iter()
+        .map(|r| r.id)
+        .collect();
+    if !resource_ids.is_empty() {
+        crate::resources::sync_if_stale(&state.pool, &resource_ids).await;
+    }
+    // Every check below, through the commit of the booking row, runs under
+    // the process-wide booking lock (see `book_team`).
+    let booking_guard = crate::resources::booking_lock().await;
 
-    let busy = fetch_busy_times_for_user(
+    let busy = match try_fetch_busy_times_for_user(
         &state.pool,
         &host_user_id,
         buf_start,
@@ -2752,16 +2782,18 @@ pub(super) async fn handle_booking(
         host_tz,
         Some(&et_id),
     )
-    .await;
+    .await
+    {
+        Ok(busy) => busy,
+        Err(e) => return internal_error_response("availability check", &e),
+    };
     if has_conflict(&busy, buf_start, buf_end) {
-        let _ = tx.rollback().await;
         return Html(crate::i18n::translate(lang, "error-slot-unavailable", None)).into_response();
     }
 
     // Check booking frequency limits. Personal event-type flows don't have a
     // team assignee, so per-member caps degrade to event-type-wide here.
     if would_exceed_frequency_limit(&state.pool, &et_id, slot_start, None).await {
-        let _ = tx.rollback().await;
         return render_booking_action_error_keys_in(
             &state,
             lang,
@@ -2775,17 +2807,19 @@ pub(super) async fn handle_booking(
     // by recomputing the page's own slots; the checks above just give the
     // common refusals their own message.
     let window = offered_slot_window(host_tz, slot_start);
-    let offered_busy = BusySource::Individual(
-        fetch_busy_times_for_user(
-            &state.pool,
-            &host_user_id,
-            window.busy_start,
-            window.busy_end,
-            host_tz,
-            Some(&et_id),
-        )
-        .await,
-    );
+    let offered_busy = match try_fetch_busy_times_for_user(
+        &state.pool,
+        &host_user_id,
+        window.busy_start,
+        window.busy_end,
+        host_tz,
+        Some(&et_id),
+    )
+    .await
+    {
+        Ok(busy) => BusySource::Individual(busy),
+        Err(e) => return internal_error_response("availability check", &e),
+    };
     if !is_offered_slot(
         &state.pool,
         &et_id,
@@ -2802,27 +2836,11 @@ pub(super) async fn handle_booking(
     )
     .await
     {
-        let _ = tx.rollback().await;
         return Html(crate::i18n::translate(lang, "error-slot-unavailable", None)).into_response();
     }
 
     // Required shared resources: verify availability and pick one in
-    // round-robin mode. The busy reads run on separate pool connections and
-    // cannot see uncommitted inserts, so a process-wide lock, held from the
-    // check until the booking row is committed, is what serializes
-    // concurrent bookings over shared resources. Feeds are refreshed
-    // before taking the lock (failed fetches back off via last_synced_at).
-    let resource_ids: Vec<String> = crate::resources::resources_for_event_type(&state.pool, &et_id)
-        .await
-        .into_iter()
-        .map(|r| r.id)
-        .collect();
-    let resource_guard = if resource_ids.is_empty() {
-        None
-    } else {
-        crate::resources::sync_if_stale(&state.pool, &resource_ids).await;
-        Some(crate::resources::booking_lock().await)
-    };
+    // round-robin mode, under the booking lock taken above.
     let assigned_resource_id = match crate::resources::check_and_pick(
         &state.pool,
         &et_id,
@@ -2833,13 +2851,13 @@ pub(super) async fn handle_booking(
     )
     .await
     {
-        crate::resources::ResourceCheck::Busy => {
-            let _ = tx.rollback().await;
+        Ok(crate::resources::ResourceCheck::Busy) => {
             return Html(crate::i18n::translate(lang, "error-slot-unavailable", None))
                 .into_response();
         }
-        crate::resources::ResourceCheck::Free { assigned } => assigned,
-        crate::resources::ResourceCheck::NoResources => None,
+        Ok(crate::resources::ResourceCheck::Free { assigned }) => assigned,
+        Ok(crate::resources::ResourceCheck::NoResources) => None,
+        Err(e) => return internal_error_response("availability check", &e),
     };
 
     match crate::booking_time::legacy_slot_taken(&state.pool, &et_id, None, &start_at, "").await {
@@ -2850,6 +2868,14 @@ pub(super) async fn handle_booking(
         }
         Err(e) => return internal_error_response("booking conflict check", &e),
     }
+    // The transaction only wraps the writes, opened after every check (see
+    // `book_team`): no pool connection is held while the checks read. The
+    // unique index idx_bookings_no_overlap is the ultimate guard against
+    // double-booking.
+    let mut tx = match state.pool.begin().await {
+        Ok(tx) => tx,
+        Err(e) => return internal_error_response("database query", &e),
+    };
     let insert_result = sqlx::query(
         "INSERT INTO bookings (time_version, id, event_type_id, uid, guest_name, guest_email, guest_timezone, notes, start_at, end_at, status, cancel_token, reschedule_token, confirm_token, language, assigned_resource_id, guest_phone)
          VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -2919,7 +2945,7 @@ pub(super) async fn handle_booking(
         webhooks::Event::new_booking(needs_approval),
     )
     .await;
-    drop(resource_guard);
+    drop(booking_guard);
 
     tracing::info!(booking_id = %id, event_type = %slug, guest = %form.email, "booking created");
 

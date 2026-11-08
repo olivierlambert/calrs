@@ -2164,3 +2164,26 @@ async fn a_pending_reschedule_request_can_be_resent_once_an_hour() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(settled_mails_to(&mails, "api@rs.test").await.len(), 2);
 }
+
+/// A submit-time busy read that fails refuses an API booking with a 500,
+/// never books over a calendar that could not be read.
+#[tokio::test]
+async fn an_unreadable_calendar_refuses_an_api_booking() {
+    let _lock = crate::test_support::ENV_LOCK.lock().await;
+    let _env = super::oauth::environment();
+    let (app, pool, _, et_id) = setup_test_app().await;
+    let owner = user_id(&pool, "testuser").await;
+    let token = pat(&pool, &owner, ALL).await;
+    sqlx::query("ALTER TABLE events RENAME TO events_gone")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let body = create_body(&et_id, &monday_at("10:00"), "api@example.com");
+    let (status, _) = send(&app, api_post("/api/v1/bookings", &token, &body)).await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM bookings")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 0);
+}

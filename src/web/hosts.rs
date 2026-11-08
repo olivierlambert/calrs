@@ -325,6 +325,11 @@ pub(super) async fn sync_reschedule_hosts(state: &Arc<AppState>, hosts: &Resched
 /// collective booking needs the whole roster free and a round-robin booking —
 /// which resolves to exactly one member — needs that member free. Personal
 /// event types keep the plain single-user path.
+///
+/// `strict` is for the submit-time check: a read that fails is then an
+/// error rather than skipped rows, so it can never make a host look free.
+/// The reschedule slot page passes `false` and never gets an error.
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn reschedule_busy_source(
     pool: &SqlitePool,
     hosts: &RescheduleHosts,
@@ -334,66 +339,101 @@ pub(super) async fn reschedule_busy_source(
     host_tz: Tz,
     exclude_booking_id: &str,
     exclude_booking_uid: &str,
-) -> BusySource {
-    if hosts.team_id.is_none() {
-        let owner = hosts.user_ids.first().map(String::as_str).unwrap_or("");
-        let owner_busy = fetch_busy_times_for_user_ex(
+    strict: bool,
+) -> Result<BusySource, sqlx::Error> {
+    let calendars = |user_id: String, et_filter: Option<String>| async move {
+        reschedule_user_busy(
             pool,
-            owner,
+            &user_id,
             window_start,
             window_end,
             host_tz,
-            Some(et_id),
-            Some(exclude_booking_id),
-            Some(exclude_booking_uid),
+            et_filter.as_deref(),
+            exclude_booking_id,
+            exclude_booking_uid,
+            strict,
         )
-        .await;
+        .await
+    };
+    let hours = |user_id: String| async move {
+        if strict {
+            try_user_avail_as_busy(pool, &user_id, window_start, window_end, host_tz).await
+        } else {
+            Ok(user_avail_as_busy(pool, &user_id, window_start, window_end, host_tz).await)
+        }
+    };
+    let et = Some(et_id.to_string());
+    if hosts.team_id.is_none() {
+        let owner = hosts.user_ids.first().cloned().unwrap_or_default();
+        let owner_busy = calendars(owner.clone(), et.clone()).await?;
         if hosts.participants.is_empty() {
-            return BusySource::Individual(owner_busy);
+            return Ok(BusySource::Individual(owner_busy));
         }
         // A dynamic group booking: everyone must be free, each co-host
         // within their own working hours and with all of their calendars,
         // as on the dynamic group slot page.
         let mut member_busy = HashMap::new();
-        member_busy.insert(owner.to_string(), owner_busy);
+        member_busy.insert(owner, owner_busy);
         for user_id in &hosts.participants {
-            let mut busy = fetch_busy_times_for_user_ex(
-                pool,
-                user_id,
-                window_start,
-                window_end,
-                host_tz,
-                None,
-                Some(exclude_booking_id),
-                Some(exclude_booking_uid),
-            )
-            .await;
+            let mut busy = calendars(user_id.clone(), None).await?;
             ensure_user_avail_seeded(pool, user_id).await;
-            busy.extend(user_avail_as_busy(pool, user_id, window_start, window_end, host_tz).await);
+            busy.extend(hours(user_id.clone()).await?);
             member_busy.insert(user_id.clone(), busy);
         }
-        return BusySource::Team(member_busy);
+        return Ok(BusySource::Team(member_busy));
     }
     let mut member_busy = HashMap::new();
     for user_id in &hosts.user_ids {
-        let mut busy = fetch_busy_times_for_user_ex(
+        let mut busy = calendars(user_id.clone(), et.clone()).await?;
+        // Same personal-working-hours constraint the team slot grid applies.
+        // Members without explicit hours come back unconstrained, so this never
+        // plants a surprise 9-17 default.
+        busy.extend(hours(user_id.clone()).await?);
+        member_busy.insert(user_id.clone(), busy);
+    }
+    Ok(BusySource::Team(member_busy))
+}
+
+/// One user's busy times for [`reschedule_busy_source`], excluding the
+/// booking being moved and its own calendar copy.
+#[allow(clippy::too_many_arguments)]
+async fn reschedule_user_busy(
+    pool: &SqlitePool,
+    user_id: &str,
+    window_start: NaiveDateTime,
+    window_end: NaiveDateTime,
+    host_tz: Tz,
+    et_filter: Option<&str>,
+    exclude_booking_id: &str,
+    exclude_booking_uid: &str,
+    strict: bool,
+) -> Result<Vec<(NaiveDateTime, NaiveDateTime)>, sqlx::Error> {
+    if strict {
+        try_fetch_busy_times_for_user_opts(
             pool,
             user_id,
             window_start,
             window_end,
             host_tz,
-            Some(et_id),
+            et_filter,
+            Some(exclude_booking_id),
+            Some(exclude_booking_uid),
+            true,
+        )
+        .await
+    } else {
+        Ok(fetch_busy_times_for_user_ex(
+            pool,
+            user_id,
+            window_start,
+            window_end,
+            host_tz,
+            et_filter,
             Some(exclude_booking_id),
             Some(exclude_booking_uid),
         )
-        .await;
-        // Same personal-working-hours constraint the team slot grid applies.
-        // Members without explicit hours come back unconstrained, so this never
-        // plants a surprise 9-17 default.
-        busy.extend(user_avail_as_busy(pool, user_id, window_start, window_end, host_tz).await);
-        member_busy.insert(user_id.clone(), busy);
+        .await)
     }
-    BusySource::Team(member_busy)
 }
 
 /// Upper bound on the calendar refresh an approval does before re-checking
@@ -451,7 +491,8 @@ pub(super) async fn approval_hosts_awaiting_first_sync(
 /// each other's approval forever. Once one is approved it is confirmed, and
 /// the other is then refused. Working hours are not re-applied: the host is
 /// explicitly accepting this time. An empty collective roster is never free,
-/// as in [`reschedule_hosts`].
+/// as in [`reschedule_hosts`]. A busy time that cannot be read is an error,
+/// which the callers turn into an internal error page: never an approval.
 pub(super) async fn approval_hosts_free(
     pool: &SqlitePool,
     hosts: &RescheduleHosts,
@@ -460,13 +501,13 @@ pub(super) async fn approval_hosts_free(
     et_id: &str,
     start_at: &str,
     end_at: &str,
-) -> bool {
+) -> Result<bool, sqlx::Error> {
     if hosts.user_ids.is_empty() {
-        return false;
+        return Ok(false);
     }
     let host_tz = get_host_tz(pool, et_id).await;
     let Some((start, end)) = crate::booking_time::busy_range(start_at, end_at, host_tz) else {
-        return true;
+        return Ok(true);
     };
     // The co-hosts of a dynamic group booking read all their calendars, as
     // on the dynamic group slot page (the calendar selection is the owner's).
@@ -476,7 +517,7 @@ pub(super) async fn approval_hosts_free(
         .map(|u| (u, Some(et_id)))
         .chain(hosts.participants.iter().map(|u| (u, None)));
     for (user_id, et_filter) in everyone {
-        let busy = fetch_busy_times_for_user_opts(
+        let busy = try_fetch_busy_times_for_user_opts(
             pool,
             user_id,
             start,
@@ -487,7 +528,7 @@ pub(super) async fn approval_hosts_free(
             Some(booking_uid),
             false,
         )
-        .await;
+        .await?;
         if has_conflict(&busy, start, end) {
             tracing::info!(
                 uid = %booking_uid,
@@ -495,10 +536,10 @@ pub(super) async fn approval_hosts_free(
                 co_host = et_filter.is_none(),
                 "approval refused: a host is busy at the requested time"
             );
-            return false;
+            return Ok(false);
         }
     }
-    true
+    Ok(true)
 }
 
 /// The host profile the reschedule page shows: the person the booking is with

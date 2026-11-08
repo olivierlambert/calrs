@@ -269,7 +269,8 @@ async fn check_and_pick_all_mode_busy_resource_returns_busy() {
         Tz::UTC,
         None,
     )
-    .await;
+    .await
+    .unwrap();
     assert_eq!(
         check,
         crate::resources::ResourceCheck::Busy,
@@ -317,7 +318,8 @@ async fn check_and_pick_round_robin_returns_the_free_resource() {
         Tz::UTC,
         None,
     )
-    .await;
+    .await
+    .unwrap();
     assert_eq!(
         check,
         crate::resources::ResourceCheck::Free {
@@ -610,7 +612,8 @@ async fn check_and_pick_without_resources_returns_no_resources() {
         Tz::UTC,
         None,
     )
-    .await;
+    .await
+    .unwrap();
     assert_eq!(check, crate::resources::ResourceCheck::NoResources);
 }
 
@@ -659,7 +662,8 @@ async fn check_and_pick_round_robin_picks_least_loaded_resource() {
         Tz::UTC,
         None,
     )
-    .await;
+    .await
+    .unwrap();
     assert_eq!(
         check,
         crate::resources::ResourceCheck::Free {
@@ -708,7 +712,8 @@ async fn check_and_pick_cross_event_type_booking_blocks_shared_resource() {
         Tz::UTC,
         None,
     )
-    .await;
+    .await
+    .unwrap();
     assert_eq!(
         overlapping,
         crate::resources::ResourceCheck::Busy,
@@ -723,7 +728,8 @@ async fn check_and_pick_cross_event_type_booking_blocks_shared_resource() {
         Tz::UTC,
         None,
     )
-    .await;
+    .await
+    .unwrap();
     assert_eq!(
         disjoint,
         crate::resources::ResourceCheck::Free { assigned: None },
@@ -775,7 +781,8 @@ async fn transparent_and_cancelled_resource_events_do_not_block() {
         Tz::UTC,
         None,
     )
-    .await;
+    .await
+    .unwrap();
     assert_eq!(
         check,
         crate::resources::ResourceCheck::Free { assigned: None },

@@ -1844,8 +1844,8 @@ pub(super) async fn confirm_booking(
 
     // The host may have filled the time since the request came in (another
     // meeting in their calendar, or another booking): approving would then
-    // double-book them (#234).
-    if !approval_hosts_free(
+    // double-book them (#234). A busy time that cannot be read refuses.
+    let hosts_free = match approval_hosts_free(
         &state.pool,
         &approval_hosts,
         &bid,
@@ -1856,6 +1856,10 @@ pub(super) async fn confirm_booking(
     )
     .await
     {
+        Ok(free) => free,
+        Err(e) => return internal_error_response("availability check", &e),
+    };
+    if !hosts_free {
         tracing::warn!(booking_id = %bid, "approval refused: host no longer free");
         if approval_hosts_awaiting_first_sync(&state.pool, &approval_hosts).await {
             return Redirect::to("/dashboard/bookings?error=host-not-synced").into_response();
@@ -1871,11 +1875,12 @@ pub(super) async fn confirm_booking(
             match crate::resources::check_and_pick(&state.pool, &et_id, s, e, tz_check, Some(&bid))
                 .await
             {
-                crate::resources::ResourceCheck::Busy => {
+                Err(e) => return internal_error_response("availability check", &e),
+                Ok(crate::resources::ResourceCheck::Busy) => {
                     tracing::warn!(booking_id = %bid, "approval refused: required resource no longer available");
                     return Redirect::to("/dashboard/bookings?error=resource-busy").into_response();
                 }
-                crate::resources::ResourceCheck::Free { assigned } => {
+                Ok(crate::resources::ResourceCheck::Free { assigned }) => {
                     let _ =
                         sqlx::query("UPDATE bookings SET assigned_resource_id = ? WHERE id = ?")
                             .bind(&assigned)
@@ -1883,7 +1888,7 @@ pub(super) async fn confirm_booking(
                             .execute(&state.pool)
                             .await;
                 }
-                crate::resources::ResourceCheck::NoResources => {}
+                Ok(crate::resources::ResourceCheck::NoResources) => {}
             }
         }
     }

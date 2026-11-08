@@ -1435,26 +1435,41 @@ pub(crate) async fn microsoft_coverage_gap(
     user_id: &str,
     end: chrono::DateTime<Utc>,
 ) -> Option<CoverageGap> {
+    try_microsoft_coverage_gap(pool, user_id, end)
+        .await
+        .unwrap_or_else(|error| {
+            tracing::error!(%error, %user_id, "cannot read Microsoft sources; assuming no gap");
+            None
+        })
+}
+
+/// [`microsoft_coverage_gap`], with an unreadable source list as an error.
+pub(crate) async fn try_microsoft_coverage_gap(
+    pool: &SqlitePool,
+    user_id: &str,
+    end: chrono::DateTime<Utc>,
+) -> Result<Option<CoverageGap>, sqlx::Error> {
     let sources: Vec<Option<String>> = sqlx::query_scalar(
         "SELECT cs.last_full_sync FROM caldav_sources cs JOIN accounts a ON a.id = cs.account_id
          WHERE a.user_id = ? AND cs.enabled = 1 AND cs.provider_type = 'microsoft'",
     )
     .bind(user_id)
     .fetch_all(pool)
-    .await
-    .unwrap_or_default();
+    .await?;
     if sources.is_empty() {
-        return None;
+        return Ok(None);
     }
     let mut horizon: Option<chrono::DateTime<Utc>> = None;
     for stamp in &sources {
         let Some(end_of_source) = stamp.as_deref().and_then(microsoft_horizon) else {
-            return Some(CoverageGap::NotYetSynced);
+            return Ok(Some(CoverageGap::NotYetSynced));
         };
         horizon = Some(horizon.map_or(end_of_source, |h| h.min(end_of_source)));
     }
-    let horizon = horizon?;
-    (end > horizon).then_some(CoverageGap::BeyondWindow(horizon))
+    let Some(horizon) = horizon else {
+        return Ok(None);
+    };
+    Ok((end > horizon).then_some(CoverageGap::BeyondWindow(horizon)))
 }
 
 /// The parts of `[window_start, window_end)` (local times in `host_tz`) the
@@ -1469,20 +1484,39 @@ pub(crate) async fn microsoft_gap_intervals(
     window_end: chrono::NaiveDateTime,
     host_tz: chrono_tz::Tz,
 ) -> Vec<(chrono::NaiveDateTime, chrono::NaiveDateTime, CoverageGap)> {
+    try_microsoft_gap_intervals(pool, user_id, window_start, window_end, host_tz)
+        .await
+        .unwrap_or_else(|error| {
+            tracing::error!(%error, %user_id, "cannot read Microsoft sources; assuming no gap");
+            Vec::new()
+        })
+}
+
+/// [`microsoft_gap_intervals`], with an unreadable source list as an error:
+/// the submit-time booking checks refuse rather than assume no gap.
+pub(crate) async fn try_microsoft_gap_intervals(
+    pool: &SqlitePool,
+    user_id: &str,
+    window_start: chrono::NaiveDateTime,
+    window_end: chrono::NaiveDateTime,
+    host_tz: chrono_tz::Tz,
+) -> Result<Vec<(chrono::NaiveDateTime, chrono::NaiveDateTime, CoverageGap)>, sqlx::Error> {
     use chrono::TimeZone;
     let window_end_utc = host_tz
         .from_local_datetime(&window_end)
         .latest()
         .map(|end| end.with_timezone(&Utc))
         .unwrap_or_else(|| window_end.and_utc());
-    match microsoft_coverage_gap(pool, user_id, window_end_utc).await {
-        Some(gap @ CoverageGap::NotYetSynced) => vec![(window_start, window_end, gap)],
-        Some(gap @ CoverageGap::BeyondWindow(horizon)) => {
-            let horizon = horizon.with_timezone(&host_tz).naive_local();
-            vec![(horizon.max(window_start), window_end, gap)]
-        }
-        None => Vec::new(),
-    }
+    Ok(
+        match try_microsoft_coverage_gap(pool, user_id, window_end_utc).await? {
+            Some(gap @ CoverageGap::NotYetSynced) => vec![(window_start, window_end, gap)],
+            Some(gap @ CoverageGap::BeyondWindow(horizon)) => {
+                let horizon = horizon.with_timezone(&host_tz).naive_local();
+                vec![(horizon.max(window_start), window_end, gap)]
+            }
+            None => Vec::new(),
+        },
+    )
 }
 
 /// Lists a provider source's calendars into the cache without fetching any

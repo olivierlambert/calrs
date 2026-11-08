@@ -982,6 +982,7 @@ async fn pick_group_member_skips_member_with_pending_same_slot() {
         chrono_tz::Tz::UTC,
     )
     .await
+    .unwrap()
     .expect("bob is free, a member must be picked");
     assert_eq!(picked.0, bob, "picker must skip alice's pending slot");
 }

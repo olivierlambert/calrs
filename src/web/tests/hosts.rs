@@ -497,8 +497,10 @@ async fn reschedule_collective_without_eligible_members_has_no_available_slot() 
         chrono_tz::Tz::UTC,
         "",
         "",
+        true,
     )
-    .await;
+    .await
+    .unwrap();
     assert!(
         !busy_source_is_free(&busy, start, end),
         "an empty collective roster must make every slot unavailable"
@@ -561,8 +563,10 @@ async fn reschedule_hosts_unassigned_round_robin_falls_back_to_the_owner() {
         chrono_tz::Tz::UTC,
         "",
         "",
+        true,
     )
-    .await;
+    .await
+    .unwrap();
     match &busy {
         BusySource::Team(member_busy) => {
             assert_eq!(member_busy.len(), 1);
@@ -643,8 +647,10 @@ async fn reschedule_busy_source_uses_the_assigned_member_calendar() {
         chrono_tz::Tz::UTC,
         "",
         "",
+        true,
     )
-    .await;
+    .await
+    .unwrap();
     assert!(
         !busy_source_is_free(&busy, taken, taken_end),
         "the slot must be busy: it is taken on the assigned member's calendar"

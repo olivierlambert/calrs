@@ -15,6 +15,7 @@ mod booking_notes;
 mod booking_time;
 mod branding;
 mod calendar_week_start;
+mod concurrency;
 mod dashboard;
 mod directory;
 mod duplicate_event_type;
