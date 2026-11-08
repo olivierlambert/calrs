@@ -838,3 +838,27 @@ async fn mcp_blocks_include_time_off_without_its_label() {
     );
     assert!(!result.to_string().contains("Secret trip"));
 }
+
+#[tokio::test]
+async fn mcp_blocks_fail_closed_when_any_busy_query_fails() {
+    let _lock = crate::test_support::ENV_LOCK.lock().await;
+    let _env = oauth::environment();
+    for table in ["bookings", "user_time_off", "events"] {
+        let (app, pool, session, _) = setup_test_app().await;
+        let (_, tokens) = oauth::issue_tokens(&app, &session).await;
+        let token = tokens["access_token"].as_str().unwrap();
+        sqlx::query(&format!("ALTER TABLE {table} RENAME TO {table}_gone"))
+            .execute(&pool)
+            .await
+            .unwrap();
+        let result = call(
+            &app,
+            token,
+            "get_calendar_blocks",
+            json!({"start":"2030-03-04T00:00:00Z","end":"2030-03-05T00:00:00Z"}),
+        )
+        .await;
+        assert_eq!(result["isError"], true, "{table}: {result}");
+        assert!(result.get("structuredContent").is_none(), "{table}");
+    }
+}

@@ -610,7 +610,9 @@ pub(super) async fn fetch_busy_times_for_user_opts(
     exclude_booking_uid: Option<&str>,
     include_pending_holds: bool,
 ) -> Vec<(NaiveDateTime, NaiveDateTime)> {
-    try_fetch_busy_times_for_user_opts(
+    // Lenient: a failing query is logged and its rows skipped, the others
+    // kept, as the web paths always did. Never an error in this mode.
+    busy_times(
         pool,
         user_id,
         window_start,
@@ -620,13 +622,15 @@ pub(super) async fn fetch_busy_times_for_user_opts(
         exclude_booking_id,
         exclude_booking_uid,
         include_pending_holds,
+        false,
     )
     .await
     .unwrap_or_default()
 }
 
-/// Fallible entry point for integrations, which must not report an empty
-/// calendar when a database query fails.
+/// Strict entry point for integrations (MCP `get_calendar_blocks`): any
+/// failing query, time off included, is an error, never a partial or empty
+/// calendar an assistant would schedule over.
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn try_fetch_busy_times_for_user_opts(
     pool: &SqlitePool,
@@ -638,6 +642,52 @@ pub(super) async fn try_fetch_busy_times_for_user_opts(
     exclude_booking_id: Option<&str>,
     exclude_booking_uid: Option<&str>,
     include_pending_holds: bool,
+) -> Result<Vec<(NaiveDateTime, NaiveDateTime)>, sqlx::Error> {
+    busy_times(
+        pool,
+        user_id,
+        window_start,
+        window_end,
+        host_tz,
+        event_type_id,
+        exclude_booking_id,
+        exclude_booking_uid,
+        include_pending_holds,
+        true,
+    )
+    .await
+}
+
+/// One busy-time query's rows: in strict mode its error, else (lenient) an
+/// empty set and a log line, so the other queries' rows still count.
+fn busy_rows<T: Default>(
+    result: Result<T, sqlx::Error>,
+    strict: bool,
+    what: &str,
+    user_id: &str,
+) -> Result<T, sqlx::Error> {
+    match result {
+        Ok(rows) => Ok(rows),
+        Err(error) if strict => Err(error),
+        Err(error) => {
+            tracing::error!(%error, %user_id, query = what, "busy-time query failed; its rows are skipped");
+            Ok(T::default())
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn busy_times(
+    pool: &SqlitePool,
+    user_id: &str,
+    window_start: NaiveDateTime,
+    window_end: NaiveDateTime,
+    host_tz: Tz,
+    event_type_id: Option<&str>,
+    exclude_booking_id: Option<&str>,
+    exclude_booking_uid: Option<&str>,
+    include_pending_holds: bool,
+    strict: bool,
 ) -> Result<Vec<(NaiveDateTime, NaiveDateTime)>, sqlx::Error> {
     // Events are stored in compact iCal form ("YYYYMMDDTHHMMSS" for timed,
     // "YYYYMMDD" for all-day), so both overlap bounds must also be compact
@@ -659,7 +709,7 @@ pub(super) async fn try_fetch_busy_times_for_user_opts(
     // still make the booking conflict with its own calendar copy.
     let exclude_uid = exclude_booking_uid.unwrap_or("");
 
-    let events: Vec<(String, String, Option<String>)> = sqlx::query_as(
+    let events: Result<Vec<(String, String, Option<String>)>, _> = sqlx::query_as(
         "SELECT e.start_at, e.end_at, e.timezone FROM events e
          JOIN calendars c ON c.id = e.calendar_id
          JOIN caldav_sources cs ON cs.id = c.source_id
@@ -681,7 +731,8 @@ pub(super) async fn try_fetch_busy_times_for_user_opts(
     .bind(&end_compact)
     .bind(&start_compact)
     .fetch_all(pool)
-    .await?;
+    .await;
+    let events = busy_rows(events, strict, "calendar events", user_id)?;
 
     let mut busy: Vec<(NaiveDateTime, NaiveDateTime)> = events
         .iter()
@@ -693,7 +744,7 @@ pub(super) async fn try_fetch_busy_times_for_user_opts(
         .collect();
 
     let end_compact_rrule = window_end.format("%Y%m%dT235959").to_string();
-    let recurring: Vec<(String, String, String, Option<String>, Option<String>)> = sqlx::query_as(
+    let recurring: Result<Vec<(String, String, String, Option<String>, Option<String>)>, _> = sqlx::query_as(
         "SELECT e.start_at, e.end_at, e.rrule, e.raw_ical, e.timezone FROM events e
          JOIN calendars c ON c.id = e.calendar_id
          JOIN caldav_sources cs ON cs.id = c.source_id
@@ -714,7 +765,8 @@ pub(super) async fn try_fetch_busy_times_for_user_opts(
     .bind(&end_iso)
     .bind(&end_compact_rrule)
     .fetch_all(pool)
-    .await?;
+    .await;
+    let recurring = busy_rows(recurring, strict, "recurring events", user_id)?;
 
     busy.extend(expand_recurring_into_busy(
         &recurring,
@@ -735,7 +787,7 @@ pub(super) async fn try_fetch_busy_times_for_user_opts(
     // (`pending_blocks_slot`, on by default): otherwise a second guest is
     // offered the slot, fills the form, and is bounced at submit, and an
     // overlapping slot on another event type could be requested as well (#234).
-    let bookings: Vec<(String, String, i64, Option<String>)> = sqlx::query_as(&format!(
+    let bookings: Result<Vec<(String, String, i64, Option<String>)>, _> = sqlx::query_as(&format!(
         "SELECT b.start_at, b.end_at, b.time_version,
                 COALESCE(NULLIF(et.timezone, ''), u.timezone) FROM bookings b
          JOIN event_types et ON et.id = b.event_type_id
@@ -755,7 +807,8 @@ pub(super) async fn try_fetch_busy_times_for_user_opts(
     .bind(exclude_id)
     .bind(exclude_id)
     .fetch_all(pool)
-    .await?;
+    .await;
+    let bookings = busy_rows(bookings, strict, "bookings", user_id)?;
 
     for (s, e, version, zone) in &bookings {
         let legacy_tz = zone
@@ -772,12 +825,15 @@ pub(super) async fn try_fetch_busy_times_for_user_opts(
     // Time off (#46): the user takes no bookings then, whatever the event
     // type, so every caller of this function (slot pages, submit-time
     // re-checks, round robin, collective, reschedule, approval, MCP's
-    // get_calendar_blocks) sees it, as an anonymous interval. An unreadable
-    // time-off table counts the whole window as busy (fails closed), here
-    // too: MCP then reports busy rather than free.
-    busy.extend(
-        crate::time_off::busy_intervals(pool, user_id, window_start, window_end, host_tz).await,
-    );
+    // get_calendar_blocks) sees it, as an anonymous interval. Unreadable, it
+    // counts the whole window as busy on the web (fails closed) and is an
+    // error for MCP (strict).
+    busy.extend(if strict {
+        crate::time_off::try_busy_intervals(pool, user_id, window_start, window_end, host_tz)
+            .await?
+    } else {
+        crate::time_off::busy_intervals(pool, user_id, window_start, window_end, host_tz).await
+    });
 
     Ok(busy)
 }
