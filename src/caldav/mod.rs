@@ -835,7 +835,7 @@ async fn multistatus_body(resp: reqwest::Response, what: &str, url: &str) -> Res
 /// arrives rather than after holding all of it: a declared length over the
 /// cap fails before anything is read. Decoded with the charset of the
 /// `Content-Type` (UTF-8 by default), as reqwest's `text()` does.
-async fn read_body(mut resp: reqwest::Response, cap: usize) -> Result<String> {
+pub(crate) async fn read_body(mut resp: reqwest::Response, cap: usize) -> Result<String> {
     let url = resp.url().to_string();
     if let Some(len) = resp.content_length() {
         if len > cap as u64 {
@@ -864,7 +864,7 @@ async fn read_body(mut resp: reqwest::Response, cap: usize) -> Result<String> {
 /// Run a parse on the blocking pool: a large document takes real CPU, and
 /// the same runtime serves the booking pages. The text comes back with the
 /// result, for the callers that log it.
-async fn parse_blocking<T, F>(text: String, parse: F) -> (Result<T>, String)
+pub(crate) async fn parse_blocking<T, F>(text: String, parse: F) -> (Result<T>, String)
 where
     T: Send + 'static,
     F: FnOnce(&str) -> Result<T> + Send + 'static,
@@ -876,7 +876,7 @@ where
     match task.await {
         Ok(done) => done,
         Err(e) => (
-            Err(anyhow::anyhow!("CalDAV response parser failed: {e}")),
+            Err(anyhow::anyhow!("response parser failed: {e}")),
             String::new(),
         ),
     }
