@@ -499,7 +499,8 @@ const SWEEP_BATCH: i64 = 20;
 /// dropped: nothing will delete those copies any more, and they are in the
 /// past. For bookings still ahead that ended (cancelled, declined), a copy
 /// whose delete failed is tried again on the write-back retry schedule
-/// (`RETRY_DELAYS_MIN`), soonest first, and given up after the last attempt.
+/// (`RETRY_DELAYS_MIN`), soonest first, then every eight hours until the
+/// booking is over. Copies on a disabled source wait for it.
 /// Returns how many deletes were tried.
 pub(crate) async fn sweep_leftover_copies(
     pool: &SqlitePool,
@@ -519,6 +520,8 @@ pub(crate) async fn sweep_leftover_copies(
         "SELECT bc.booking_uid, bc.user_id, bc.source_id, bc.calendar_href, bc.delete_attempts
          FROM booking_write_copies bc
          JOIN bookings b ON b.uid = bc.booking_uid
+         JOIN caldav_sources cs ON cs.id = bc.source_id AND cs.enabled = 1
+         JOIN accounts a ON a.id = cs.account_id AND a.user_id = bc.user_id
          WHERE b.status IN ('cancelled', 'declined')
            AND (bc.next_delete_at IS NULL OR bc.next_delete_at <= ?)
          ORDER BY bc.next_delete_at IS NOT NULL, bc.next_delete_at
@@ -540,26 +543,29 @@ pub(crate) async fn sweep_leftover_copies(
             continue;
         }
         let attempts = attempts + 1;
-        match super::writeback::next_attempt_at(attempts, now) {
-            Some(next) => {
-                let _ = sqlx::query(
-                    "UPDATE booking_write_copies SET delete_attempts = ?, next_delete_at = ?
-                     WHERE booking_uid = ? AND user_id = ? AND source_id = ? AND calendar_href = ?",
-                )
-                .bind(attempts)
-                .bind(next.format("%Y-%m-%d %H:%M:%S").to_string())
-                .bind(uid)
-                .bind(user)
-                .bind(source_id)
-                .bind(href)
-                .execute(pool)
-                .await;
-            }
-            None => {
-                tracing::warn!(uid = %uid, user_id = %user, calendar = %href, attempts, "giving up deleting a booking copy from its calendar; remove it by hand");
-                forget_copy(pool, uid, user, &row).await;
-            }
+        // Past the retry schedule, keep trying every eight hours until the
+        // booking is over (its rows are dropped then): a copy left there is
+        // a meeting that no longer happens, blocking the host's calendar.
+        let next = super::writeback::next_attempt_at(attempts, now).unwrap_or_else(|| {
+            now + chrono::Duration::minutes(
+                super::writeback::RETRY_DELAYS_MIN[super::writeback::RETRY_DELAYS_MIN.len() - 1],
+            )
+        });
+        if attempts == super::writeback::MAX_ATTEMPTS {
+            tracing::warn!(uid = %uid, user_id = %user, calendar = %href, attempts, "a cancelled booking's copy still cannot be deleted from its calendar; retrying every 8 hours until the booking is over");
         }
+        let _ = sqlx::query(
+            "UPDATE booking_write_copies SET delete_attempts = ?, next_delete_at = ?
+             WHERE booking_uid = ? AND user_id = ? AND source_id = ? AND calendar_href = ?",
+        )
+        .bind(attempts)
+        .bind(next.format("%Y-%m-%d %H:%M:%S").to_string())
+        .bind(uid)
+        .bind(user)
+        .bind(source_id)
+        .bind(href)
+        .execute(pool)
+        .await;
     }
     tried
 }

@@ -353,7 +353,10 @@ impl CaldavClient {
             if refused_for_good(status.as_u16(), &body) {
                 return Err(anyhow::Error::new(crate::providers::PermanentRefusal {
                     summary: status.to_string(),
-                    message: format!("PUT {url} returned {status}"),
+                    message: match short_reason(&body) {
+                        reason if reason.is_empty() => format!("PUT {url} returned {status}"),
+                        reason => format!("PUT {url} returned {status}: {reason}"),
+                    },
                 }));
             }
             bail!("PUT {} returned {} — {}", url, status, body);
@@ -1198,13 +1201,45 @@ const REPORT_CALENDAR_DATA: &str = r#"<?xml version="1.0" encoding="utf-8"?>
   </c:filter>
 </c:calendar-query>"#;
 
+/// The reasons Google gives with a 403 that pass with time: rate limits and
+/// quotas.
+const GOOGLE_TRANSIENT_403: [&str; 4] = [
+    "rateLimitExceeded",
+    "userRateLimitExceeded",
+    "quotaExceeded",
+    "dailyLimitExceeded",
+];
+
+/// A short plain-text reason from a server's error body for the stored
+/// write-back error: tags stripped, whitespace collapsed, 120 characters.
+pub(crate) fn short_reason(body: &str) -> String {
+    let mut text = String::with_capacity(body.len().min(512));
+    let mut in_tag = false;
+    for c in body.chars() {
+        match c {
+            '<' => in_tag = true,
+            '>' => {
+                in_tag = false;
+                text.push(' ');
+            }
+            _ if !in_tag => text.push(c),
+            _ => {}
+        }
+    }
+    let collapsed = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    collapsed.chars().take(120).collect()
+}
+
 /// Whether a refused PUT will be refused again on a retry (#47): the
 /// calendar is gone (404), does not take writes (405), or forbids them
-/// (403). Google answers its rate limits with a 403 too, which passes.
+/// (403). Google answers its rate limits and quotas with a 403 too, which
+/// pass.
 pub(crate) fn refused_for_good(status: u16, body: &str) -> bool {
     match status {
         404 | 405 => true,
-        403 => !(body.contains("rateLimitExceeded") || body.contains("userRateLimitExceeded")),
+        403 => !GOOGLE_TRANSIENT_403
+            .iter()
+            .any(|reason| body.contains(reason)),
         _ => false,
     }
 }

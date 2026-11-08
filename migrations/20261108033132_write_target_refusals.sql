@@ -18,3 +18,14 @@ ALTER TABLE bookings ADD COLUMN caldav_source_id TEXT REFERENCES caldav_sources(
 -- that ended: how many were tried, and when the next one is due.
 ALTER TABLE booking_write_copies ADD COLUMN delete_attempts INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE booking_write_copies ADD COLUMN next_delete_at TEXT;
+
+-- Removing a source forgets where its bookings were written: their href no
+-- longer names a calendar calrs can reach. Clearing it keeps the orphan
+-- sweep from reading it as the same path on another server and cancelling
+-- a live booking (the foreign key alone would only clear the source id).
+CREATE TRIGGER bookings_forget_removed_source
+BEFORE DELETE ON caldav_sources
+BEGIN
+    UPDATE bookings SET caldav_calendar_href = NULL, caldav_source_id = NULL
+    WHERE caldav_source_id = OLD.id;
+END;

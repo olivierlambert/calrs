@@ -270,8 +270,8 @@ pub(super) async fn push_to_sources(
                 .bind(calendar_href)
                 .bind(source_id)
                 .bind(booking_uid)
-                    .execute(pool)
-                    .await;
+                .execute(pool)
+                .await;
             }
             if track {
                 record_copy(pool, booking_uid, user_id, source_id, calendar_href).await;
@@ -330,7 +330,21 @@ pub(super) async fn push_to_sources(
         // back: the event may still be there, and cancellation keys its
         // delete off this href. A claimant's copy must not take the host's
         // place here, or the host's delete would look in the wrong calendar.
-        if event_may_exist && !preserved_meet_href && owner == CopyOwner::Host {
+        // A write to a chosen destination that could not be verified does
+        // not take the href from a copy known to exist (#47): the copy is
+        // recorded below, so a cancellation still finds it either way.
+        let keeps_known_copy = track
+            && written.is_err()
+            && sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM bookings WHERE uid = ? AND caldav_calendar_href IS NOT NULL",
+            )
+            .bind(booking_uid)
+            .fetch_one(pool)
+            .await
+            .unwrap_or(0)
+                > 0;
+        if event_may_exist && !preserved_meet_href && owner == CopyOwner::Host && !keeps_known_copy
+        {
             let _ = sqlx::query(
                 "UPDATE bookings SET caldav_calendar_href = ?, caldav_source_id = ? WHERE uid = ?",
             )

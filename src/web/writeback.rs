@@ -216,9 +216,13 @@ pub(super) async fn push_and_record(
                 );
             }
         }
-        released.extend(
-            super::release_former_hosts(pool, key, booking_uid, &targets, &host_collections).await,
-        );
+        // Former hosts' copies go only once every current host's copy landed.
+        if pushed_ok.iter().all(|ok| *ok) {
+            released.extend(
+                super::release_former_hosts(pool, key, booking_uid, &targets, &host_collections)
+                    .await,
+            );
+        }
     }
     if !released.is_empty() {
         let written: Vec<super::CopyPlace> = plans

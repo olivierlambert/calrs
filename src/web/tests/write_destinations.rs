@@ -1165,6 +1165,12 @@ fn only_a_definitive_refusal_counts() {
         r#"{"error":{"errors":[{"reason":"rateLimitExceeded"}]}}"#
     ));
     assert!(!refused_for_good(403, "userRateLimitExceeded"));
+    assert!(!refused_for_good(403, r#"{"reason":"quotaExceeded"}"#));
+    assert!(!refused_for_good(403, r#"{"reason":"dailyLimitExceeded"}"#));
+    assert_eq!(
+        crate::caldav::short_reason("<html><body>\n<h1>Not  here</h1></body></html>"),
+        "Not here"
+    );
     assert!(!refused_for_good(503, ""));
     assert!(!refused_for_good(400, ""));
     let verify = crate::providers::WriteBackError::Verify(anyhow::anyhow!("returned 404"));
@@ -1257,16 +1263,18 @@ async fn an_unverified_first_move_still_lets_the_cancellation_delete_the_old_cop
     assert_eq!(p.dav.stored(), 1);
     let (error, _, _, href, _) = writeback_state(&p.pool, &p.id).await;
     assert!(error.is_some());
-    assert_eq!(href.as_deref(), Some("/dav/chosen/"));
+    // The href stays on the copy known to exist until the new one verifies.
+    assert_eq!(href.as_deref(), Some("/dav/cal/"));
     caldav_delete_booking(&p.pool, &[0u8; 32], &p.host, &p.uid).await;
     assert_eq!(p.dav.stored(), 0);
     assert!(copies(&p.pool, &p.uid).await.is_empty());
 }
 
-/// The background sweep backs off between attempts, gives up after the
-/// last, and drops the rows of bookings that are over.
+/// The background sweep backs off between attempts, keeps trying every
+/// eight hours past the schedule, and drops the rows of bookings that are
+/// over.
 #[tokio::test]
-async fn the_leftover_sweep_backs_off_gives_up_and_prunes_past_bookings() {
+async fn the_leftover_sweep_backs_off_and_prunes_past_bookings() {
     let p = personal_fixture().await;
     choose(&p.pool, &p.et_id, &p.host, &p.coaching_cal).await;
     push_fresh(&p.pool, &p.host, &p.uid).await;
@@ -1288,11 +1296,27 @@ async fn the_leftover_sweep_backs_off_gives_up_and_prunes_past_bookings() {
     assert!(next.is_some());
     // Not due yet.
     assert_eq!(sweep_leftover_copies(&p.pool, &key, now).await, 0);
-    for _ in 0..writeback::RETRY_DELAYS_MIN.len() {
+    for _ in 0..writeback::RETRY_DELAYS_MIN.len() + 2 {
         now += Duration::hours(9);
         assert_eq!(sweep_leftover_copies(&p.pool, &key, now).await, 1);
     }
-    // Given up after the last attempt.
+    // Past the schedule it keeps trying while the booking is ahead.
+    let (attempts, next): (i64, Option<String>) =
+        sqlx::query_as("SELECT delete_attempts, next_delete_at FROM booking_write_copies")
+            .fetch_one(&p.pool)
+            .await
+            .unwrap();
+    assert_eq!(attempts, writeback::MAX_ATTEMPTS + 2);
+    assert_eq!(
+        next,
+        Some(
+            (now + Duration::minutes(480))
+                .format("%Y-%m-%d %H:%M:%S")
+                .to_string()
+        )
+    );
+    // Once the booking is over, the row goes.
+    sweep_leftover_copies(&p.pool, &key, Utc::now() + Duration::days(11)).await;
     assert!(copies(&p.pool, &p.uid).await.is_empty());
     assert_eq!(p.dav.stored(), 1);
 
@@ -1334,7 +1358,11 @@ async fn a_refusal_with_no_source_write_calendar_is_a_failure() {
     .await;
     push_fresh(&pool, &host, &format!("uid-{id}")).await;
     let (error, attempts, next, _, _) = writeback_state(&pool, &id).await;
-    assert!(error.unwrap_or_default().contains("404"));
+    // A short plain reason from the body, never its markup.
+    let error = error.unwrap_or_default();
+    assert!(error.contains("404"), "{error}");
+    assert!(error.contains("Not here"), "{error}");
+    assert!(!error.contains('<'), "{error}");
     assert_eq!(attempts, 1);
     assert!(next.is_some());
     assert!(refusal(&pool, &et_id, &host).await.is_some());
@@ -1391,4 +1419,149 @@ async fn pushes_of_one_booking_are_serialised() {
     drop(guard);
     push.await.unwrap();
     assert_eq!(p.dav.puts(), 1);
+}
+
+// --- Third review ---
+
+/// Removing the source a booking's href is on clears the href: the same
+/// path on another server must not be read as the booking's calendar.
+#[tokio::test]
+async fn removing_the_hrefs_source_cannot_cancel_the_booking() {
+    let p = personal_fixture().await;
+    push_fresh(&p.pool, &p.host, &p.uid).await;
+    let (b_dav, b_source, b_cal) = second_source(&p.pool, &p.host, DavMode::Ok, "/dav/cal/").await;
+    choose(&p.pool, &p.et_id, &p.host, &b_cal).await;
+    push_fresh(&p.pool, &p.host, &p.uid).await;
+    assert_eq!(b_dav.stored(), 1);
+    // B (holding the booking) is removed; A keeps a write calendar with
+    // the same path.
+    sqlx::query("DELETE FROM caldav_sources WHERE id = ?")
+        .bind(&b_source)
+        .execute(&p.pool)
+        .await
+        .unwrap();
+    let stored: (Option<String>, Option<String>) =
+        sqlx::query_as("SELECT caldav_calendar_href, caldav_source_id FROM bookings WHERE id = ?")
+            .bind(&p.id)
+            .fetch_one(&p.pool)
+            .await
+            .unwrap();
+    assert_eq!(stored, (None, None));
+    let outcome = crate::commands::sync::cancel_orphaned_booking(
+        &p.pool,
+        &[0u8; 32],
+        crate::commands::sync::OrphanCheck::Caldav(None),
+        &p.source_id,
+        &p.uid,
+    )
+    .await;
+    assert_eq!(outcome, crate::commands::sync::OrphanOutcome::NoAction);
+    cancel_orphaned_bookings(&p.pool, &[0u8; 32], None, &p.source_id).await;
+    assert_eq!(booking_status(&p.pool, &p.id).await, "confirmed");
+}
+
+/// Rows on a disabled source never take a pass's places from due rows.
+#[tokio::test]
+async fn copies_on_a_disabled_source_do_not_stall_the_sweep() {
+    let p = personal_fixture().await;
+    let cancelled = |id: String| {
+        let pool = p.pool.clone();
+        async move {
+            sqlx::query("UPDATE bookings SET status = 'cancelled' WHERE id = ?")
+                .bind(id)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+    };
+    let (off_dav, off_source, _) = second_source(&p.pool, &p.host, DavMode::Ok, "/dav/off/").await;
+    sqlx::query("UPDATE caldav_sources SET enabled = 0 WHERE id = ?")
+        .bind(&off_source)
+        .execute(&p.pool)
+        .await
+        .unwrap();
+    for n in 0..25 {
+        record_copy(
+            &p.pool,
+            &p.uid,
+            &p.host,
+            &off_source,
+            &format!("/dav/off{n}/"),
+        )
+        .await;
+    }
+    cancelled(p.id.clone()).await;
+    choose(&p.pool, &p.et_id, &p.host, &p.coaching_cal).await;
+    let other = insert_v1_booking(
+        &p.pool,
+        &p.et_id,
+        "other@dest.test",
+        Utc::now() + Duration::days(12),
+        30,
+        "confirmed",
+        &[],
+    )
+    .await;
+    let other_uid = format!("uid-{other}");
+    push_fresh(&p.pool, &p.host, &other_uid).await;
+    cancelled(other.clone()).await;
+    assert_eq!(
+        sweep_leftover_copies(&p.pool, &[0u8; 32], Utc::now()).await,
+        1
+    );
+    assert_eq!(p.dav.stored(), 0);
+    assert_eq!(off_dav.puts(), 0);
+}
+
+/// A former host's copy stays while a current host's push failed: the
+/// booking keeps a copy somewhere until the new one landed.
+#[tokio::test]
+async fn a_former_hosts_copy_waits_for_the_new_hosts_write() {
+    let pool = setup_test_db().await;
+    let alice = insert_role_user(&pool, "alice@gate.test", "user").await;
+    let bob = insert_role_user(&pool, "bob@gate.test", "user").await;
+    for user in [&alice, &bob] {
+        insert_account(&pool, user).await;
+    }
+    let (team_id, et_id) = insert_team_with_et(
+        &pool,
+        "gate",
+        "sync",
+        &[(&alice, "admin"), (&bob, "member")],
+    )
+    .await;
+    sqlx::query("UPDATE event_types SET scheduling_mode = 'collective' WHERE id = ?")
+        .bind(&et_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (alice_base, alice_dav) = spawn_mock_dav(DavMode::Ok).await;
+    seed_write_source(&pool, &alice, &alice_base).await;
+    let (bob_dav, _, bob_cal) = second_source(&pool, &bob, DavMode::Ok, "/dav/bob/").await;
+    choose(&pool, &et_id, &bob, &bob_cal).await;
+    let id = insert_v1_booking(
+        &pool,
+        &et_id,
+        "guest@gate.test",
+        Utc::now() + Duration::days(10),
+        30,
+        "confirmed",
+        &[],
+    )
+    .await;
+    let uid = format!("uid-{id}");
+    push_fresh(&pool, &alice, &uid).await;
+    assert_eq!(bob_dav.stored(), 1);
+    sqlx::query("DELETE FROM team_members WHERE team_id = ? AND user_id = ?")
+        .bind(&team_id)
+        .bind(&bob)
+        .execute(&pool)
+        .await
+        .unwrap();
+    alice_dav.set_mode(DavMode::Reject);
+    push_fresh(&pool, &alice, &uid).await;
+    assert_eq!(bob_dav.stored(), 1);
+    alice_dav.set_mode(DavMode::Ok);
+    push_fresh(&pool, &alice, &uid).await;
+    assert_eq!(bob_dav.stored(), 0);
 }
