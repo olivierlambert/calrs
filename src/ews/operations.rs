@@ -14,10 +14,11 @@
 use anyhow::{bail, Context, Result};
 
 use super::parse::{
-    parse_calendar_items_response, parse_create_item_response, parse_get_item_response,
+    parse_calendar_items_response, parse_create_item_response, parse_delete_item_response,
+    parse_find_folder_page, parse_get_folder_response, parse_get_item_response,
     parse_sync_folder_items_response, EwsCalendarFolder, EwsCalendarItem, EwsSyncDelta,
 };
-use super::soap::{escape, post_soap};
+use super::soap::{escape, post_soap, post_soap_skipping};
 
 /// Issue a `GetFolder` against `inbox` to confirm that the credentials are
 /// valid and the endpoint speaks EWS. The folder is purely a convenience pick
@@ -38,13 +39,13 @@ pub async fn check_connection(
     </m:GetFolder>
 "#;
     let resp = post_soap(endpoint, username, password, body, false, impersonate_email).await?;
-    // post_soap already raises on SOAP faults; we only need to confirm the
-    // response carries a real folder reference (or, as a softer fallback, the
-    // standard Success class) before declaring the endpoint EWS-compatible.
-    if resp.contains("FolderId") || resp.contains("ResponseClass=\"Success\"") {
-        Ok(true)
-    } else {
-        bail!("EWS GetFolder returned no FolderId — server may not be EWS-compatible")
+    // post_soap already raises on SOAP faults; the reply must still be a
+    // successful GetFolder before the endpoint counts as EWS-compatible.
+    match parse_get_folder_response(&resp) {
+        Ok(_) => Ok(true),
+        Err(e) => {
+            bail!("EWS GetFolder answer unreadable, the server may not be EWS-compatible: {e}")
+        }
     }
 }
 
@@ -67,9 +68,7 @@ pub async fn default_calendar_folder_id(
     </m:GetFolder>
 "#;
     let resp = post_soap(endpoint, username, password, body, false, impersonate_email).await?;
-    Ok(super::parse::find_first_open_tag(&resp, "FolderId")
-        .and_then(|tag| super::soap::attr(&tag, "Id"))
-        .filter(|id| !id.is_empty()))
+    parse_get_folder_response(&resp)
 }
 
 /// Folders asked for per FindFolder page.
@@ -127,7 +126,7 @@ pub async fn list_calendar_folders(
             impersonate_email,
         )
         .await?;
-        let (mut batch, includes_last) = super::parse::parse_find_folder_page(&resp)?;
+        let (mut batch, includes_last) = parse_find_folder_page(&resp)?;
         let got = batch.len();
         folders.append(&mut batch);
         // A server that does not say (older Exchange, a test double) is
@@ -393,8 +392,9 @@ fn calendar_view_complete(
 }
 
 /// Fetch the MIME (RFC 5322 + iCalendar) representation of one or more items.
-/// Returns the items in the same order, dropping any that the server failed
-/// to retrieve.
+/// Returns the items in the same order, dropping any the server reports gone
+/// (`ErrorItemNotFound`: deleted since it was listed). Any other per-message
+/// error fails the call.
 pub async fn get_items_mime(
     endpoint: &str,
     username: &str,
@@ -427,7 +427,16 @@ pub async fn get_items_mime(
     </m:GetItem>
 "#,
     );
-    let resp = post_soap(endpoint, username, password, &body, true, impersonate_email).await?;
+    let resp = post_soap_skipping(
+        endpoint,
+        username,
+        password,
+        &body,
+        true,
+        impersonate_email,
+        &[super::parse::ITEM_GONE],
+    )
+    .await?;
     parse_get_item_response(&resp)
 }
 
@@ -666,15 +675,12 @@ where
 
 /// Item ids whose `calendar:UID` equals `uid`, deduplicated in order. A
 /// CalendarView lists each occurrence of a recurring series separately, and
-/// overlapping requests can return the same single item twice.
+/// overlapping requests can return the same single item twice. The parser
+/// decodes entities, so the UID compares as written.
 fn item_ids_with_uid(items: &[EwsCalendarItem], uid: &str) -> Vec<String> {
-    let escaped = escape(uid);
     let mut ids: Vec<String> = Vec::new();
     for item in items {
-        let matches = item
-            .uid
-            .as_deref()
-            .is_some_and(|u| u == uid || u == escaped);
+        let matches = item.uid.as_deref() == Some(uid);
         if matches && !ids.contains(&item.item_id) {
             ids.push(item.item_id.clone());
         }
@@ -701,7 +707,7 @@ pub async fn delete_item(
 "#,
         id = escape(item_id),
     );
-    let _ = post_soap(
+    let resp = post_soap(
         endpoint,
         username,
         password,
@@ -710,7 +716,7 @@ pub async fn delete_item(
         impersonate_email,
     )
     .await?;
-    Ok(())
+    parse_delete_item_response(&resp)
 }
 
 /// Run a delta sync (`SyncFolderItems`).
@@ -783,7 +789,7 @@ pub async fn sync_folder_items(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ews::soap::{extract_soap_fault, SOAP_FAULT_PREFIX};
+    use crate::ews::soap::{read_reply, SOAP_FAULT_PREFIX};
 
     /// The response from #179, trimmed to the parts `post_soap` reads.
     const UNSUPPORTED_PATH_RESPONSE: &str = r#"<?xml version="1.0" encoding="utf-8"?>
@@ -803,9 +809,33 @@ mod tests {
 
     #[test]
     fn unsupported_path_fault_triggers_the_fallback() {
-        let fault = extract_soap_fault(UNSUPPORTED_PATH_RESPONSE).expect("a fault");
-        let message = format!("{SOAP_FAULT_PREFIX}{fault}");
+        let err = read_reply(reqwest::StatusCode::OK, UNSUPPORTED_PATH_RESPONSE, "e")
+            .expect_err("a fault");
+        let message = err.to_string();
+        assert!(message.starts_with(SOAP_FAULT_PREFIX), "{message}");
         assert!(is_unsupported_restriction_fault(&message), "{message}");
+    }
+
+    /// The find limit refusal, as Exchange writes it, is recognised from the
+    /// error `post_soap` raises for it.
+    #[test]
+    fn find_count_limit_fault_is_recognised_from_the_reply() {
+        let xml = UNSUPPORTED_PATH_RESPONSE
+            .replace(
+                "ErrorUnsupportedPathForQuery",
+                "ErrorExceededFindCountLimit",
+            )
+            .replace(
+                "Die Eigenschaft darf nicht mit diesem Einschränkungstyp verwendet werden.",
+                "The number of items exceeded the limit &amp; was refused.",
+            );
+        let err = read_reply(reqwest::StatusCode::OK, &xml, "e").expect_err("a fault");
+        assert_eq!(
+            err.to_string(),
+            format!("{SOAP_FAULT_PREFIX}ErrorExceededFindCountLimit: The number of items exceeded the limit & was refused.")
+        );
+        assert!(is_find_limit_fault(&err.to_string()));
+        assert!(!is_unsupported_restriction_fault(&err.to_string()));
     }
 
     #[test]
@@ -980,8 +1010,14 @@ mod tests {
 <t:CalendarItem><t:ItemId Id="AAA" ChangeKey="x"/><t:UID>keep@calrs</t:UID></t:CalendarItem>
 <t:CalendarItem><t:ItemId Id="BBB" ChangeKey="y"/><t:UID>drop@calrs</t:UID></t:CalendarItem>
 </t:Items></m:RootFolder></m:FindItemResponseMessage></m:ResponseMessages></m:FindItemResponse>"#;
-        let page = parse_calendar_items_response(xml).unwrap();
+        let page =
+            parse_calendar_items_response(&crate::xml::parse(xml).unwrap().unwrap()).unwrap();
         assert_eq!(item_ids_with_uid(&page.items, "keep@calrs"), ["AAA"]);
+        // A UID with an entity in it is matched decoded.
+        let xml = xml.replace("keep@calrs", "a&amp;b@calrs");
+        let page =
+            parse_calendar_items_response(&crate::xml::parse(&xml).unwrap().unwrap()).unwrap();
+        assert_eq!(item_ids_with_uid(&page.items, "a&b@calrs"), ["AAA"]);
     }
 
     /// A fake CalendarView reporting whether it returned everything, like

@@ -111,7 +111,8 @@ X-Calrs-Signature: sha256=4f0c...e9
         "option_ids": [],
         "consent": false,
         "link_url": null,
-        "answered_at": "2026-11-07T09:12:44Z"
+        "answered_at": "2026-11-07T09:12:44Z",
+        "attested_by": null
       }
     ],
     "attendees": ["paul@example.com"],
@@ -164,7 +165,13 @@ X-Calrs-Signature: sha256=4f0c...e9
   on `value`, which is for display (a choice whose label contains a comma
   reads the same as two choices). `consent` marks a consent checkbox and
   `link_url` the policy it linked to. An optional question left empty is not
-  listed; a checkbox always is.
+  listed; a checkbox always is, except in a booking made through the REST
+  API, which lists only the questions it answered. `attested_by` is `null`
+  unless a host ticked a consent for the guest through the REST API: then it
+  is `{ "user_id", "name", "via", "credential_id" }`, who recorded it (their
+  name at the time) and with what, `via` being `api_token` (a personal
+  access token, `credential_id` its id) or `oauth` (an OAuth application,
+  `credential_id` its client id). The guest did not tick that box.
 - **`reason`** is the cancellation or decline reason, the same text the guest
   is shown.
 - **`team`** is `{ "id", "slug", "name" }` for a team event type.

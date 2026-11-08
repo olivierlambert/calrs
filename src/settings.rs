@@ -178,6 +178,31 @@ fn parse_sync_min_age(raw: &str) -> Result<u64, String> {
         .map_err(|_| format!("CALRS_SYNC_MIN_AGE={raw:?} is not a whole number of seconds"))
 }
 
+/// `CALRS_SYNC_CONCURRENCY` (#388): how many calendar sources the background
+/// sync may sync at once, never more than one per server. `Ok(None)` when
+/// unset or empty (the default applies); `Err` names an unusable value,
+/// including 0. Values above the cap are returned as given, for the caller to
+/// clamp and say so.
+pub fn sync_concurrency() -> Result<Option<usize>, String> {
+    match std::env::var("CALRS_SYNC_CONCURRENCY") {
+        Ok(raw) => parse_sync_concurrency(&raw),
+        Err(_) => Ok(None),
+    }
+}
+
+fn parse_sync_concurrency(raw: &str) -> Result<Option<usize>, String> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return Ok(None);
+    }
+    match raw.parse::<usize>() {
+        Ok(0) | Err(_) => Err(format!(
+            "CALRS_SYNC_CONCURRENCY={raw:?} is not a whole number of at least 1"
+        )),
+        Ok(n) => Ok(Some(n)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -202,5 +227,17 @@ mod tests {
         assert_eq!(parse_sync_min_age("100000"), Ok(100_000));
         assert!(parse_sync_min_age("15m").is_err());
         assert!(parse_sync_min_age("-60").is_err());
+    }
+
+    #[test]
+    fn sync_concurrency_parses_a_positive_count() {
+        assert_eq!(parse_sync_concurrency(""), Ok(None));
+        assert_eq!(parse_sync_concurrency(" "), Ok(None));
+        assert_eq!(parse_sync_concurrency("1"), Ok(Some(1)));
+        assert_eq!(parse_sync_concurrency(" 8 "), Ok(Some(8)));
+        assert_eq!(parse_sync_concurrency("500"), Ok(Some(500)));
+        assert!(parse_sync_concurrency("0").is_err());
+        assert!(parse_sync_concurrency("-2").is_err());
+        assert!(parse_sync_concurrency("four").is_err());
     }
 }

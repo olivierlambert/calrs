@@ -3717,3 +3717,191 @@ async fn the_owner_of_a_collective_event_type_is_busy_only_on_its_roster() {
     let busy = fetch_busy_times_for_user(&pool, &bob, start, end, chrono_tz::Tz::UTC, None).await;
     assert_eq!(busy, vec![(start, end)]);
 }
+
+// --- #376: recurring series started years before the window ---
+
+#[tokio::test]
+async fn long_running_series_block_the_window_on_both_readers() {
+    let pool = setup_test_db().await;
+    let (user_id, account_id, _) = seed_test_data(&pool).await;
+    let source_id = uuid::Uuid::new_v4().to_string();
+    let calendar_id = uuid::Uuid::new_v4().to_string();
+    sqlx::query(
+        "INSERT INTO caldav_sources (id, account_id, name, url, username) \
+             VALUES (?, ?, 'Work', 'https://calendar.test', 'host')",
+    )
+    .bind(&source_id)
+    .bind(&account_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO calendars (id, source_id, href, display_name, is_busy) \
+             VALUES (?, ?, '/work/', 'Work', 1)",
+    )
+    .bind(&calendar_id)
+    .bind(&source_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    // A daily stand-up since 2019: cancelled on the 10th, moved on the 12th
+    // (the moved occurrence is its own row, as sync stores it).
+    let standup = "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nDTSTART:20190107T091500\r\n\
+        EXDATE:20261110T091500\r\nEND:VEVENT\r\nBEGIN:VEVENT\r\n\
+        RECURRENCE-ID:20261112T091500\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+    // Every weekday since 2018 at 16:00, cancelled on Friday the 13th.
+    let review = "BEGIN:VEVENT\r\nDTSTART:20180101T160000\r\n\
+        EXDATE:20261113T160000\r\nEND:VEVENT\r\n";
+    for (uid, start, end, rrule, raw, recurrence_id) in [
+        (
+            "standup",
+            "20190107T091500",
+            "20190107T093000",
+            Some("FREQ=DAILY"),
+            Some(standup),
+            None,
+        ),
+        (
+            "standup",
+            "20261112T140000",
+            "20261112T141500",
+            None,
+            None,
+            Some("20261112T091500"),
+        ),
+        (
+            "review",
+            "20180101T160000",
+            "20180101T170000",
+            Some("FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR"),
+            Some(review),
+            None,
+        ),
+    ] {
+        sqlx::query(
+            "INSERT INTO events (id, calendar_id, uid, summary, start_at, end_at, rrule, raw_ical, recurrence_id) \
+                 VALUES (?, ?, ?, 'Busy', ?, ?, ?, ?, ?)",
+        )
+        .bind(uuid::Uuid::new_v4().to_string())
+        .bind(&calendar_id)
+        .bind(uid)
+        .bind(start)
+        .bind(end)
+        .bind(rrule)
+        .bind(raw)
+        .bind(recurrence_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+
+    let (from, to) = (dt(2026, 11, 9, 0, 0), dt(2026, 11, 15, 23, 59));
+    let lenient = fetch_busy_times_for_user(&pool, &user_id, from, to, Tz::UTC, None).await;
+    let strict = try_fetch_busy_times_for_user(&pool, &user_id, from, to, Tz::UTC, None)
+        .await
+        .unwrap();
+    for busy in [&lenient, &strict] {
+        let at = |d: u32, h: u32, m: u32| {
+            has_conflict(
+                busy,
+                dt(2026, 11, d, h, m),
+                dt(2026, 11, d, h, m) + Duration::minutes(5),
+            )
+        };
+        assert!(at(9, 9, 15), "the stand-up blocks Monday: {busy:?}");
+        assert!(!at(10, 9, 15), "the cancelled stand-up does not");
+        assert!(at(11, 9, 15));
+        assert!(!at(12, 9, 15), "the moved stand-up left its time");
+        assert!(at(12, 14, 0), "and blocks its new one");
+        assert!(at(14, 9, 15), "every day, weekends too");
+        assert!(at(9, 16, 30), "the weekday review blocks Monday");
+        assert!(at(12, 16, 30));
+        assert!(!at(13, 16, 30), "the cancelled review does not");
+        assert!(!at(14, 16, 30), "and it skips the weekend");
+    }
+    let mut lenient = lenient;
+    let mut strict = strict;
+    lenient.sort();
+    strict.sort();
+    assert_eq!(lenient, strict, "both readers expand the same way");
+}
+
+/// A recurring event whose rule calrs cannot expand blocks from its start,
+/// and the troubleshoot view says why rather than showing a closed day.
+#[tokio::test]
+async fn troubleshoot_names_an_unsupported_recurrence() {
+    let (app, pool, session, _et_id) = setup_test_app().await;
+    let account_id: String =
+        sqlx::query_scalar("SELECT id FROM accounts WHERE email = 'test@example.com'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let day = far_future_monday();
+    let date = NaiveDate::parse_from_str(&day, "%Y-%m-%d").unwrap();
+    let before = (date - Duration::days(3)).format("%Y%m%d").to_string();
+    seed_synced_event(
+        &pool,
+        &account_id,
+        &format!("{before}T090000"),
+        &format!("{before}T091500"),
+        "UTC",
+        "OPAQUE",
+    )
+    .await;
+    sqlx::query("UPDATE events SET summary = 'Odd-Rule', rrule = 'FREQ=HOURLY;INTERVAL=4'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let response = app
+        .oneshot(get_authed(
+            &format!("/dashboard/troubleshoot?date={day}&event_type=test-meeting"),
+            &session,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = body_string(response).await;
+    assert!(body.contains("Odd-Rule"), "{body}");
+    assert!(
+        body.contains("a repeat rule calrs cannot read, counted as busy from its start"),
+        "{body}"
+    );
+}
+
+/// A series of extra dates (RDATE) without an RRULE blocks its start and
+/// each of its dates, on both readers (#376).
+#[tokio::test]
+async fn a_series_of_extra_dates_blocks_each_of_them() {
+    let pool = setup_test_db().await;
+    let (user_id, account_id, _) = seed_test_data(&pool).await;
+    seed_synced_event(
+        &pool,
+        &account_id,
+        "20261109T140000",
+        "20261109T150000",
+        "UTC",
+        "OPAQUE",
+    )
+    .await;
+    sqlx::query("UPDATE events SET rdate = 1, raw_ical = ?")
+        .bind("BEGIN:VEVENT\r\nDTSTART:20261109T140000\r\nRDATE:20261112T090000\r\nEND:VEVENT\r\n")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (from, to) = (dt(2026, 11, 9, 0, 0), dt(2026, 11, 15, 23, 59));
+    let lenient = fetch_busy_times_for_user(&pool, &user_id, from, to, Tz::UTC, None).await;
+    let strict = try_fetch_busy_times_for_user(&pool, &user_id, from, to, Tz::UTC, None)
+        .await
+        .unwrap();
+    for busy in [&lenient, &strict] {
+        assert!(
+            has_conflict(busy, dt(2026, 11, 9, 14, 0), dt(2026, 11, 9, 14, 30)),
+            "{busy:?}"
+        );
+        assert!(
+            has_conflict(busy, dt(2026, 11, 12, 9, 0), dt(2026, 11, 12, 9, 30)),
+            "{busy:?}"
+        );
+        assert_eq!(busy.len(), 2, "the start is not counted twice: {busy:?}");
+    }
+}

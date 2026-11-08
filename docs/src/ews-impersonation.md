@@ -226,15 +226,30 @@ The status table lists 50 sources a page, failing ones first, and the
 addresses waiting for confirmation 20 a page. Once either list runs over one
 page, a search box finds a user or a mailbox.
 
-**Sync cadence on large organizations.** The background loop syncs one
-calendar source a minute, the stalest one, and every provisioned user has a
-source of their own. With N sources, each one is synced in the background
-about every N minutes, and its daily full resync only runs when its turn
-comes: past about 1,440 sources (one a minute for a day), full resyncs come
-less often than daily. Booking pages still refresh a host's calendars on
-demand once they are 5 minutes old, so hosts whose pages are visited stay
-current. This is tracked in
-[#388](https://github.com/olivierlambert/calrs/issues/388).
+## How often managed sources sync
+
+Booking pages refresh a host's sources on demand once they are 5 minutes old,
+so the hosts guests are booking stay current. Every other source is kept fresh
+by the background sync of `calrs serve`, which wakes once a minute and syncs
+enough sources for each to come round about once an hour (one per minute up to
+60 sources, 34 per minute for 2,000). Each source also gets a **full resync**
+once a day, which only the background sync runs: sources due one go first.
+
+All managed sources talk to the same Exchange endpoint with the same service
+account, and EWS throttling applies per service account, so the background
+sync never runs two syncs against one server at once: managed sources are
+synced one after the other (with any user's own source on that server), while
+sources on other servers run alongside them, up to `CALRS_SYNC_CONCURRENCY` at
+once (default 4). How many mailboxes one endpoint gets through depends on how long
+a sync takes (EWS sources fetch their calendars in full each time): at two
+seconds a mailbox, about 1,800 an hour. Past what fits, each source comes
+round less often than hourly, and the daily full resync still comes first, so
+it keeps running daily up to about 43,000 mailboxes at that pace. A sync still
+running after 10 minutes is stopped and counts as a failure of the source.
+`CALRS_SYNC_MIN_AGE` makes
+the background sync leave each source alone for longer, to lighten the load on
+the server. See
+[Deployment](./deployment.md#environment-variables).
 
 ## Switching it off
 
