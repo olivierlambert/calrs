@@ -49,6 +49,7 @@ Every user-facing string goes through Fluent (`i18n/`).
 | `src/models.rs` | Domain structs (mostly documentation; queries use tuples) |
 | `src/auth.rs` | Passwords, sessions, OIDC, extractors (`AuthUser`, `AdminUser`, `OptionalAuthUser`), login/register handlers |
 | `src/mfa.rs` | Local TOTP two-factor authentication: enrollment, login challenges, recovery codes, the admin policy, `/auth/mfa` and `/dashboard/settings/mfa` routes (tests in `src/mfa/tests.rs`) |
+| `src/oauth.rs` | First-party OAuth server: discovery, public client registration, PKCE/consent, token rotation/revocation, bearer validation and cleanup |
 | `src/crypto.rs` | AES-256-GCM for stored credentials, secret key management |
 | `src/settings.rs` | Runtime settings (base URL, private-host policy): env overrides DB |
 | `src/i18n.rs` | Fluent loader, language detection, the `t()` template global, i18n guard tests |
@@ -86,6 +87,7 @@ Every user-facing string goes through Fluent (`i18n/`).
 | `hosts.rs` | Who hosts a booking: host identity, collective members, write targets, reschedule and approval hosts |
 | `calendar_push.rs` | Pushing and deleting booking events on host calendars and resource collections |
 | `writeback.rs` | Write-back failure recording and retry (#162) |
+| `write_targets.rs` | Write destination per event type (#47): which of a host's calendars a booking is written to, moving and deleting the copies written there, the choices offered in the event type form and on the sources page |
 | `pending.rs` | Pending requests: expiry deadline, sweep (expire and nudge), pending settings on event types |
 | `notify.rs` | `spawn_emails` / `drain_emails`, new-booking notifications, reminders, watchers, SMS on new booking, the background loop |
 | `meeting.rs` | Auto-generated meeting links (Jitsi, webhook, Google Meet) |
@@ -96,6 +98,8 @@ Every user-facing string goes through Fluent (`i18n/`).
 | `directory.rs` | Searchable booking directory, visibility checks, personal meeting favorites and dashboard shortcuts |
 | `event_types.rs` | Event type forms (personal and team), availability overrides, form parsing helpers |
 | `invites.rs` | Invite Links page, invite management, bulk invites, quick links |
+| `connected_apps.rs` | Connected apps page (`/dashboard/settings/apps`): the user's OAuth grants with revoke, and the admin's revoke-all for a user |
+| `mcp.rs` | Stateless Streamable HTTP `/mcp`, JSON-RPC lifecycle, three scoped tools; reuses invites and availability services |
 | `teams.rs` | Teams listing, creation, settings, avatars |
 | `sources.rs` | Calendar sources: add, edit, test, sync, remove, write-back setup, calendars to sync, Google connect |
 | `admin.rs` | Admin panel: users, auth and OIDC, theme, captcha, SMTP, SMS, meeting links, resources, impersonation |
@@ -114,7 +118,7 @@ with `use super::*` and sees those fixtures and every item of `web`:
 `hosts`, `event_types`, `invites`, `booking`, `public_pages`,
 `booking_actions`, `booking_notes`, `dashboard`, `sources`, `admin`, `emails`,
 `page_language`, `guards`, plus `booking_time`, `pending_hold`,
-`writeback_failures`, `organizer`, `duplicate_event_type` and `time_off`.
+`writeback_failures`, `write_destinations`, `organizer`, `duplicate_event_type` and `time_off`.
 
 ### `src/email/`
 
@@ -149,6 +153,19 @@ Call sites use `crate::email::name` whatever file `name` lives in.
   `csp_middleware` (CSP rebuilt from captcha settings, relaxed for embeds and
   booking forms). Booking POSTs are rate limited per client IP
   (`client_ip_for_rate_limit`, rightmost `X-Forwarded-For`).
+- **OAuth integrations** (`src/oauth.rs`, migrations `20261108044050_oauth_server.sql` and `20261108044051_oauth_credential_scope.sql`).
+  Clients register automatically. Authorization uses the real browser session
+  (never admin impersonation), explicit translated consent and S256 PKCE. An
+  opaque, short-lived cookie resumes consent after local/SSO login. Credentials
+  are random, stored hashed, bound to a user/client/resource/scope grant. Access
+  tokens live one hour; rotating refresh tokens share a fixed 30-day deadline;
+  replay or revocation invalidates the grant. `bearer_user` validates the audience
+  and enabled user each request. Grants carry the consenting session's
+  `mfa_verified` and `GRANT_MFA_POLICY` applies `validate_session`'s MFA rule
+  to every token use; `mfa::revoke_access` deletes a user's grants with their
+  sessions. Cleanup joins the hourly session sweep.
+  MCP has no session state or SSE tasks and adds no dependencies. Tests:
+  `src/web/tests/oauth.rs` and `src/web/tests/mcp.rs`.
 - **Auth extractors** (`src/auth.rs`). `AuthUser` redirects to login,
   `AdminUser` returns 403, `OptionalAuthUser` for public pages. Each resolves
   the viewer's language once.
@@ -167,8 +184,10 @@ Call sites use `crate::email::name` whatever file `name` lives in.
 - **Calendar providers and write-back** (`src/providers/`, `src/caldav/`,
   `src/ews/`, `src/web/calendar_push.rs`, `src/web/writeback.rs`).
   `CalendarProvider` is the trait, `src/providers/factory.rs` builds one from a
-  `caldav_sources` row. Confirmed bookings are pushed to the host calendar,
-  verified, and failures are recorded and retried by the background loop.
+  `caldav_sources` row. Confirmed bookings are pushed to the host calendar
+  (the one chosen for the event type, `src/web/write_targets.rs`, else each
+  source's write calendar), verified, and failures are recorded and retried
+  by the background loop.
   Sync lives in `src/commands/sync.rs` (`sync_if_stale` on page loads) and
   `src/commands/sync_health.rs` (failure tracking).
 - **Availability** (`src/web/availability.rs`). `compute_slots` combines

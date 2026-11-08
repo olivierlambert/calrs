@@ -829,27 +829,28 @@ fn lists_guests(ics: &str, calendar_owner: &str) -> bool {
     })
 }
 
-/// The one Google copy of a booking that carries its guests as attendees,
-/// as the id of the source it is written through. Google puts an event on
-/// the Google calendar of each of its attendees by itself, so attendees on
-/// two copies (two collective members, a claimant's copy) would show a guest
-/// the meeting twice. Every other Google copy is written without attendees.
+/// Whose copy of a booking is the one Google copy that carries its guests
+/// as attendees. Google puts an event on the Google calendar of each of its
+/// attendees by itself, so attendees on two copies (two collective members,
+/// a claimant's copy) would show a guest the meeting twice. Every other
+/// Google copy is written without attendees.
 ///
 /// That copy is the Meet owner's when the booking has a Meet, otherwise the
 /// booking's primary host's: the stored organizer, else the assigned member,
 /// else the first collective member, else the event type owner. Both are the
-/// same person, `google_meet::elect_meet_owner`, on the same source, the one
-/// a Meet is minted on. `None` when that host writes to no Google calendar:
-/// then no Google copy carries attendees.
-pub(crate) async fn attendee_copy_source(pool: &SqlitePool, booking_uid: &str) -> Option<String> {
+/// same person, `google_meet::elect_meet_owner`. Of that user's Google
+/// copies of the booking (one on a chosen write destination, #47, or one per
+/// source otherwise), the writer picks the one on the lowest source id, the
+/// source a Meet is minted on. `None` when that host writes to no Google
+/// calendar: then no Google copy carries attendees.
+pub(crate) async fn attendee_copy_holder(pool: &SqlitePool, booking_uid: &str) -> Option<String> {
     let booking_id: String = sqlx::query_scalar("SELECT id FROM bookings WHERE uid = ?")
         .bind(booking_uid)
         .fetch_optional(pool)
         .await
         .ok()
         .flatten()?;
-    let holder = crate::google_meet::elect_meet_owner(pool, &booking_id).await?;
-    crate::google_meet::google_write_source_id(pool, &holder).await
+    crate::google_meet::elect_meet_owner(pool, &booking_id).await
 }
 
 /// Delete a booking from a Google calendar without a cancellation from
@@ -1535,6 +1536,27 @@ mod tests {
             assert_eq!(fake.attendees(CAL, "moved@calrs").unwrap().len(), 1);
             assert!(fake.attendees(CAL, "new@calrs").is_none());
         }
+    }
+
+    /// A Calendar API 403 that is no "API not usable" refusal (a rate
+    /// limit) is transient: the write fails for the retry, never as a
+    /// refusal for good that would send the booking to another calendar.
+    #[tokio::test]
+    async fn a_transient_api_403_is_no_permanent_refusal() {
+        let fake = std::sync::Arc::new(FakeGoogle::api_failing(403));
+        let (client, server) = serve_fake(fake.clone()).await;
+        let provider = crate::providers::caldav::CaldavProvider::from_client(client);
+        let error = crate::providers::put_and_verify(
+            &provider,
+            HREF,
+            "busy@calrs",
+            &booking_ics("busy@calrs"),
+        )
+        .await
+        .unwrap_err();
+        server.abort();
+        assert_eq!(error.permanent_refusal(), None, "{error}");
+        assert!(!error.event_may_exist());
     }
 
     /// Without the Calendar API, an event that already has attendees (the

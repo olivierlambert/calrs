@@ -1881,6 +1881,7 @@ mfa-restart = Retour à la connexion
 mfa-manage = Gérer l’authentification à deux facteurs
 mfa-recovery-help = Conservez ces codes de récupération en lieu sûr. Ils ne sont affichés qu’une fois. Chaque code remplace un code de votre application pour une seule utilisation. Les nouveaux codes remplacent tous les anciens.
 mfa-continue = Continuer vers le tableau de bord
+mfa-continue-consent = Continuer vers la page d'autorisation
 mfa-enabled = L’authentification à deux facteurs est activée.
 mfa-disabled = L’authentification à deux facteurs est désactivée.
 mfa-required-help = Votre administrateur impose l’authentification à deux facteurs aux comptes locaux. Vous ne pouvez pas la désactiver.
@@ -1974,3 +1975,38 @@ pager-previous = Précédent
 pager-next = Suivant
 admin-users-search = Rechercher
 admin-figures-cached = Chiffres des réservations calculés il y a { $seconds } s.
+
+# OAuth connection consent (templates/auth/consent.html)
+oauth-title = Connecter une application
+oauth-intro = Autoriser cette application à accéder à calrs en tant que { $email } ? Le nom de l'application est fourni par son développeur. Vérifiez l'adresse de retour avant d'autoriser l'accès.
+oauth-events = Consulter les types d'événements auxquels vous avez accès
+oauth-blocks = Consulter vos plages occupées
+oauth-invites = Créer des liens d'invitation avec vos autorisations
+oauth-allow = Autoriser l'accès
+oauth-deny = Refuser
+
+# Connected apps (templates/dashboard_apps.html, admin user menu)
+
+apps-page-title = Applications connectées
+apps-heading = Applications connectées
+apps-subtitle = Les applications que vous avez autorisées à agir en votre nom, comme les assistants IA connectés par MCP. En révoquer une coupe son accès immédiatement.
+apps-approved = Autorisée le { $date }
+apps-last-used = Dernière utilisation le { $date }
+apps-never-used = Pas encore utilisée
+apps-revoke = Révoquer
+apps-revoke-confirm = Révoquer l'accès de { $name } ? L'application devra être autorisée à nouveau pour se reconnecter.
+apps-revoked = Accès révoqué.
+apps-empty = Aucune application connectée. Un client MCP demande votre autorisation la première fois qu'il se connecte.
+admin-revoke-apps = Révoquer les applications connectées ({ $count })
+
+# Write destination per event type (#47)
+etf-write-destination = Écrire les réservations confirmées dans
+etf-write-destination-default = Par défaut (réglage de la source)
+etf-write-destination-help = Pour ce type d'événement uniquement. Par défaut, elles sont écrites dans l'agenda d'écriture de chacune de vos sources. Sur un type d'événement d'équipe, ce choix ne concerne que les réservations dont vous êtes l'hôte.
+etf-write-destination-team = Chaque membre choisit où sont écrites les réservations dont il est l'hôte, dans { $link }.
+sources-destinations-heading = Réservations par type d'événement
+sources-destinations-help = Choisissez l'agenda dans lequel sont écrites les réservations confirmées de chaque type d'événement. Sur un type d'événement d'équipe, ce choix concerne les réservations dont vous êtes l'hôte ; les autres membres choisissent le leur. Les réservations déjà écrites suivent à leur prochaine écriture : report, approbation, nouvelle tentative ou prise en charge.
+sources-destinations-saved = Enregistré. Les nouvelles réservations vont dans les agendas choisis ici.
+write-destination-not-yours = Rien n'a été enregistré : choisissez l'un de vos propres agendas, pour un type d'événement dont vous êtes l'hôte.
+write-destination-unavailable = { $name } (indisponible)
+write-destination-refused = Cet agenda a refusé la dernière réservation ({ $error }), qui a été écrite selon le réglage de la source. La prochaine réservation le réessaiera.

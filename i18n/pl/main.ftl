@@ -1952,6 +1952,7 @@ mfa-restart = Wróć do logowania
 mfa-manage = Zarządzaj uwierzytelnianiem dwuskładnikowym
 mfa-recovery-help = Zapisz te kody odzyskiwania w bezpiecznym miejscu. Są wyświetlane tylko raz. Każdy kod jednorazowo zastępuje kod z aplikacji. Nowe kody zastępują wszystkie poprzednie.
 mfa-continue = Przejdź do panelu
+mfa-continue-consent = Przejdź do strony zatwierdzenia
 mfa-enabled = Uwierzytelnianie dwuskładnikowe jest włączone.
 mfa-disabled = Uwierzytelnianie dwuskładnikowe jest wyłączone.
 mfa-required-help = Twój administrator wymaga uwierzytelniania dwuskładnikowego dla kont lokalnych. Nie możesz go wyłączyć.
@@ -2045,3 +2046,38 @@ pager-previous = Poprzednia
 pager-next = Następna
 admin-users-search = Szukaj
 admin-figures-cached = Dane o rezerwacjach obliczone { $seconds } s temu.
+
+# OAuth connection consent (templates/auth/consent.html)
+oauth-title = Połącz aplikację
+oauth-intro = Zezwolić tej aplikacji na dostęp do calrs jako { $email }? Nazwę podaje jej twórca. Sprawdź adres powrotu przed zatwierdzeniem.
+oauth-events = Odczytywanie dostępnych dla ciebie typów wydarzeń
+oauth-blocks = Odczytywanie zajętych terminów w twoim kalendarzu
+oauth-invites = Tworzenie linków zaproszeń z twoimi uprawnieniami
+oauth-allow = Zezwól na dostęp
+oauth-deny = Odmów
+
+# Connected apps (templates/dashboard_apps.html, admin user menu)
+
+apps-page-title = Połączone aplikacje
+apps-heading = Połączone aplikacje
+apps-subtitle = Aplikacje, którym pozwolono działać w Twoim imieniu, np. asystenci AI połączeni przez MCP. Cofnięcie dostępu działa natychmiast.
+apps-approved = Zatwierdzono { $date }
+apps-last-used = Ostatnio użyto { $date }
+apps-never-used = Jeszcze nieużywana
+apps-revoke = Cofnij dostęp
+apps-revoke-confirm = Cofnąć dostęp dla { $name }? Aby połączyć się ponownie, aplikacja będzie wymagała nowego zatwierdzenia.
+apps-revoked = Dostęp cofnięty.
+apps-empty = Brak połączonych aplikacji. Klient MCP prosi o Twoje zatwierdzenie przy pierwszym połączeniu.
+admin-revoke-apps = Cofnij dostęp połączonych aplikacji ({ $count })
+
+# Write destination per event type (#47)
+etf-write-destination = Zapisuj potwierdzone rezerwacje w
+etf-write-destination-default = Domyślnie (ustawienie źródła)
+etf-write-destination-help = Tylko dla tego typu wydarzenia. Domyślnie trafiają do kalendarza zapisu każdego z twoich źródeł. W typie wydarzenia zespołu dotyczy to tylko rezerwacji, które prowadzisz.
+etf-write-destination-team = Każdy członek sam wybiera, gdzie zapisywane są prowadzone przez niego rezerwacje (strona { $link }).
+sources-destinations-heading = Rezerwacje według typu wydarzenia
+sources-destinations-help = Wybierz kalendarz, w którym zapisywane są potwierdzone rezerwacje każdego typu wydarzenia. W typie wydarzenia zespołu dotyczy to rezerwacji, które prowadzisz; pozostali członkowie wybierają własny. Rezerwacje już zapisane przenoszą się przy następnym zapisie: przełożeniu, zatwierdzeniu, ponownej próbie lub przejęciu.
+sources-destinations-saved = Zapisano. Nowe rezerwacje trafiają do wybranych tutaj kalendarzy.
+write-destination-not-yours = Nic nie zapisano: wybierz jeden z własnych kalendarzy, dla typu wydarzenia, który prowadzisz.
+write-destination-unavailable = { $name } (niedostępny)
+write-destination-refused = Ten kalendarz odrzucił ostatnią rezerwację ({ $error }), więc zapisano ją według ustawienia źródła. Następna rezerwacja spróbuje ponownie.

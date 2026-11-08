@@ -7,6 +7,7 @@ mod booking_notes;
 mod branding;
 mod calendar_push;
 pub mod captcha;
+mod connected_apps;
 mod dashboard;
 mod directory;
 mod event_types;
@@ -14,6 +15,7 @@ mod format;
 mod hosts;
 mod invites;
 mod listing;
+mod mcp;
 pub mod meeting;
 mod notify;
 mod overview_stats;
@@ -23,6 +25,7 @@ mod sources;
 mod teams;
 mod time_off;
 mod week_start;
+mod write_targets;
 pub(crate) mod writeback;
 
 use crate::booking_window::{
@@ -83,6 +86,7 @@ use public_pages::*;
 use sources::*;
 use teams::*;
 use time_off::*;
+use write_targets::*;
 
 /// Simple per-IP rate limiter for login attempts.
 /// Tracks (attempt_count, window_start) per IP.
@@ -149,6 +153,15 @@ pub struct AppState {
     pub templates: Environment<'static>,
     pub login_limiter: RateLimiter,
     pub booking_limiter: RateLimiter,
+    /// OAuth authorizations, token exchanges and revocations, per client
+    /// address (`oauth::rate_limit`).
+    pub oauth_limiter: RateLimiter,
+    /// OAuth client registrations, per client address.
+    pub oauth_register_limiter: RateLimiter,
+    /// MCP tool calls, per user (`mcp::handle`).
+    pub mcp_limiter: RateLimiter,
+    /// Other MCP requests (initialize, ping, tools/list), per user.
+    pub mcp_request_limiter: RateLimiter,
     pub data_dir: PathBuf,
     pub secret_key: [u8; 32],
     pub theme_css: tokio::sync::RwLock<String>,
@@ -673,6 +686,10 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
         // 10 login attempts per IP per 15 minutes
         login_limiter: RateLimiter::new(10, 900),
         booking_limiter: RateLimiter::new(10, 300),
+        oauth_limiter: RateLimiter::new(60, 300),
+        oauth_register_limiter: RateLimiter::new(30, 900),
+        mcp_limiter: RateLimiter::new(120, 60),
+        mcp_request_limiter: RateLimiter::new(600, 60),
         secret_key,
         data_dir,
         theme_css: tokio::sync::RwLock::new(initial_theme_css),
@@ -688,6 +705,9 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
     Router::new()
         .merge(crate::auth::auth_router())
         .merge(crate::mfa::router())
+        .merge(crate::oauth::router())
+        .merge(mcp::router())
+        .merge(connected_apps::router())
         .route("/", get(root_redirect))
         .route("/dashboard", get(dashboard))
         .route("/dashboard/event-types", get(dashboard_event_types))
@@ -797,6 +817,10 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
         .route(
             "/dashboard/sources/{id}/calendars",
             get(source_calendars_form).post(update_source_calendars),
+        )
+        .route(
+            "/dashboard/sources/destinations",
+            post(save_write_destinations),
         )
         // Settings & avatar
         .route(

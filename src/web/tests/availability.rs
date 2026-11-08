@@ -3230,3 +3230,30 @@ fn resolve_event_type_tz_keeps_a_null_row_following_its_owner() {
         Some("Mars/Olympus_Mons")
     );
 }
+
+/// On the web paths a failing busy-time query costs only its own rows: the
+/// bookings that loaded still block their slot (as before MCP's strict mode).
+#[tokio::test]
+async fn a_failing_calendar_query_keeps_the_bookings_that_loaded() {
+    let pool = setup_test_db().await;
+    let (user, _, et_id) = seed_test_data(&pool).await;
+    insert_booking_at(&pool, &et_id, "c-keep", "r-keep", Duration::days(3)).await;
+    let start =
+        NaiveDateTime::parse_from_str(&booking_start_at(Duration::days(3)), "%Y-%m-%dT%H:%M:%S")
+            .unwrap();
+    sqlx::query("ALTER TABLE events RENAME TO events_gone")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let busy = fetch_busy_times_for_user(
+        &pool,
+        &user,
+        start - Duration::days(1),
+        start + Duration::days(1),
+        chrono_tz::Tz::UTC,
+        Some(&et_id),
+    )
+    .await;
+    // Only the booking can be busy here (no calendar rows, no time off).
+    assert_eq!(busy.len(), 1, "{busy:?}");
+}

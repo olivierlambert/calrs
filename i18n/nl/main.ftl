@@ -1883,6 +1883,7 @@ mfa-restart = Terug naar inloggen
 mfa-manage = Tweestapsverificatie beheren
 mfa-recovery-help = Bewaar deze herstelcodes op een veilige plek. Ze worden maar één keer getoond. Elke code vervangt één keer een code uit je authenticator-app. Nieuwe herstelcodes vervangen alle eerdere codes.
 mfa-continue = Verder naar het dashboard
+mfa-continue-consent = Doorgaan naar de goedkeuringspagina
 mfa-enabled = Tweestapsverificatie is ingeschakeld.
 mfa-disabled = Tweestapsverificatie is uitgeschakeld.
 mfa-required-help = Je beheerder vereist tweestapsverificatie voor lokale accounts. Je kunt het niet uitschakelen.
@@ -1976,3 +1977,38 @@ pager-previous = Vorige
 pager-next = Volgende
 admin-users-search = Zoeken
 admin-figures-cached = Boekingscijfers { $seconds } s geleden berekend.
+
+# OAuth connection consent (templates/auth/consent.html)
+oauth-title = Een toepassing verbinden
+oauth-intro = Deze toepassing toegang geven tot calrs als { $email }? De naam wordt opgegeven door de ontwikkelaar. Controleer het terugkeeradres voordat je toestemming geeft.
+oauth-events = Afspraaktypes lezen waartoe je toegang hebt
+oauth-blocks = Je bezette agendatijden lezen
+oauth-invites = Uitnodigingslinks maken met jouw rechten
+oauth-allow = Toegang toestaan
+oauth-deny = Weigeren
+
+# Connected apps (templates/dashboard_apps.html, admin user menu)
+
+apps-page-title = Gekoppelde apps
+apps-heading = Gekoppelde apps
+apps-subtitle = Apps die je toestemming hebt gegeven om namens jou te handelen, zoals AI-assistenten die via MCP zijn verbonden. Intrekken stopt hun toegang meteen.
+apps-approved = Goedgekeurd op { $date }
+apps-last-used = Laatst gebruikt op { $date }
+apps-never-used = Nog niet gebruikt
+apps-revoke = Intrekken
+apps-revoke-confirm = Toegang van { $name } intrekken? De app moet opnieuw worden goedgekeurd om weer verbinding te maken.
+apps-revoked = Toegang ingetrokken.
+apps-empty = Er is geen app gekoppeld. Een MCP-client vraagt je om toestemming wanneer hij voor het eerst verbinding maakt.
+admin-revoke-apps = Gekoppelde apps intrekken ({ $count })
+
+# Write destination per event type (#47)
+etf-write-destination = Bevestigde boekingen schrijven naar
+etf-write-destination-default = Standaard (instelling van de bron)
+etf-write-destination-help = Alleen voor dit afspraaktype. Standaard komen ze in de schrijfagenda van elk van je bronnen. Bij een teamafspraaktype geldt dit alleen voor de boekingen die je zelf begeleidt.
+etf-write-destination-team = Elk lid kiest zelf onder { $link } waar de boekingen die het begeleidt worden geschreven.
+sources-destinations-heading = Boekingen per afspraaktype
+sources-destinations-help = Kies per afspraaktype de agenda waarin de bevestigde boekingen worden geschreven. Bij een teamafspraaktype geldt dit voor de boekingen die je zelf begeleidt; de andere leden kiezen hun eigen agenda. Boekingen die al geschreven zijn, verhuizen bij de volgende schrijfactie: verzetten, goedkeuren, opnieuw proberen of claimen.
+sources-destinations-saved = Opgeslagen. Nieuwe boekingen gaan naar de hier gekozen agenda's.
+write-destination-not-yours = Er is niets opgeslagen: kies een van je eigen agenda's, voor een afspraaktype dat je begeleidt.
+write-destination-unavailable = { $name } (niet beschikbaar)
+write-destination-refused = Deze agenda weigerde de laatste boeking ({ $error }), die volgens de instelling van de bron is geschreven. De volgende boeking probeert het opnieuw.

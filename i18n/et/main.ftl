@@ -1881,6 +1881,7 @@ mfa-restart = Tagasi sisselogimise juurde
 mfa-manage = Halda kaheastmelist autentimist
 mfa-recovery-help = Hoia neid taastekoode turvalises kohas. Neid näidatakse ainult üks kord. Iga kood asendab autentimisrakenduse koodi üheks kasutuskorraks. Uued taastekoodid asendavad kõik varasemad koodid.
 mfa-continue = Jätka töölauale
+mfa-continue-consent = Jätka kinnituslehele
 mfa-enabled = Kaheastmeline autentimine on lubatud.
 mfa-disabled = Kaheastmeline autentimine on keelatud.
 mfa-required-help = Sinu administraator nõuab kohalikele kontodele kaheastmelist autentimist. Sa ei saa seda keelata.
@@ -1974,3 +1975,38 @@ pager-previous = Eelmine
 pager-next = Järgmine
 admin-users-search = Otsi
 admin-figures-cached = Broneeringute arvud arvutati { $seconds } s tagasi.
+
+# OAuth connection consent (templates/auth/consent.html)
+oauth-title = Ühenda rakendus
+oauth-intro = Kas lubad sellel rakendusel kasutada calrs-i kasutajana { $email }? Nime määrab rakenduse arendaja. Kontrolli enne lubamist tagasisuunamise aadressi.
+oauth-events = Loe sündmuste tüüpe, millele sul on juurdepääs
+oauth-blocks = Loe oma kalendri hõivatud aegu
+oauth-invites = Loo broneerimiskutse linke oma õigustega
+oauth-allow = Luba juurdepääs
+oauth-deny = Keeldu
+
+# Connected apps (templates/dashboard_apps.html, admin user menu)
+
+apps-page-title = Ühendatud rakendused
+apps-heading = Ühendatud rakendused
+apps-subtitle = Rakendused, millel lubasid sinu nimel tegutseda, näiteks MCP kaudu ühendatud tehisintellekti assistendid. Juurdepääsu tühistamine jõustub kohe.
+apps-approved = Kinnitatud { $date }
+apps-last-used = Viimati kasutatud { $date }
+apps-never-used = Pole veel kasutatud
+apps-revoke = Tühista
+apps-revoke-confirm = Kas tühistada rakenduse { $name } juurdepääs? Uuesti ühendamiseks tuleb rakendus uuesti kinnitada.
+apps-revoked = Juurdepääs tühistatud.
+apps-empty = Ühtegi rakendust pole ühendatud. MCP-klient küsib sinu kinnitust esimesel ühendamisel.
+admin-revoke-apps = Tühista ühendatud rakendused ({ $count })
+
+# Write destination per event type (#47)
+etf-write-destination = Kirjuta kinnitatud broneeringud kalendrisse
+etf-write-destination-default = Vaikimisi (allika seadistus)
+etf-write-destination-help = Ainult selle sündmuse tüübi jaoks. Vaikimisi kirjutatakse need iga sinu allika kirjutuskalendrisse. Meeskonna sündmuse tüübi puhul kehtib see ainult broneeringutele, mida sina juhid.
+etf-write-destination-team = Iga liige valib ise lehel { $link }, kuhu tema juhitavad broneeringud kirjutatakse.
+sources-destinations-heading = Broneeringud sündmuse tüübi kaupa
+sources-destinations-help = Vali iga sündmuse tüübi jaoks kalender, kuhu selle kinnitatud broneeringud kirjutatakse. Meeskonna sündmuse tüübi puhul kehtib see broneeringutele, mida sina juhid; teised liikmed valivad oma. Juba kirjutatud broneeringud liiguvad järgmisel kirjutamisel: ümberajastamisel, kinnitamisel, uuel katsel või ülevõtmisel.
+sources-destinations-saved = Salvestatud. Uued broneeringud lähevad siin valitud kalendritesse.
+write-destination-not-yours = Midagi ei salvestatud: vali üks oma kalendritest sündmuse tüübi jaoks, mida sa juhid.
+write-destination-unavailable = { $name } (pole saadaval)
+write-destination-refused = See kalender lükkas viimase broneeringu tagasi ({ $error }), mistõttu kirjutati see allika seadistuse järgi. Järgmine broneering proovib uuesti.

@@ -1881,6 +1881,7 @@ mfa-restart = Torna all’accesso
 mfa-manage = Gestisci l’autenticazione a due fattori
 mfa-recovery-help = Conserva questi codici di recupero in un luogo sicuro. Vengono mostrati una sola volta. Ogni codice sostituisce un codice dell’app per un solo utilizzo. I nuovi codici sostituiscono tutti quelli precedenti.
 mfa-continue = Continua alla dashboard
+mfa-continue-consent = Continua alla pagina di approvazione
 mfa-enabled = L’autenticazione a due fattori è attiva.
 mfa-disabled = L’autenticazione a due fattori è disattivata.
 mfa-required-help = Il tuo amministratore richiede l’autenticazione a due fattori per gli account locali. Non puoi disattivarla.
@@ -1974,3 +1975,38 @@ pager-previous = Precedente
 pager-next = Successiva
 admin-users-search = Cerca
 admin-figures-cached = Dati delle prenotazioni calcolati { $seconds } s fa.
+
+# OAuth connection consent (templates/auth/consent.html)
+oauth-title = Collega un’applicazione
+oauth-intro = Consentire a questa applicazione di accedere a calrs come { $email }? Il nome è fornito dallo sviluppatore. Controlla l’indirizzo di callback prima di approvare.
+oauth-events = Leggere i tipi di evento a cui hai accesso
+oauth-blocks = Leggere gli orari occupati del tuo calendario
+oauth-invites = Creare link di invito con i tuoi permessi
+oauth-allow = Consenti accesso
+oauth-deny = Rifiuta
+
+# Connected apps (templates/dashboard_apps.html, admin user menu)
+
+apps-page-title = App collegate
+apps-heading = App collegate
+apps-subtitle = Le applicazioni che hai autorizzato ad agire a tuo nome, come gli assistenti IA collegati tramite MCP. Revocarne una ne blocca subito l'accesso.
+apps-approved = Approvata il { $date }
+apps-last-used = Ultimo utilizzo il { $date }
+apps-never-used = Non ancora utilizzata
+apps-revoke = Revoca
+apps-revoke-confirm = Revocare l'accesso di { $name }? L'applicazione dovrà essere approvata di nuovo per ricollegarsi.
+apps-revoked = Accesso revocato.
+apps-empty = Nessuna applicazione collegata. Un client MCP chiede la tua approvazione la prima volta che si collega.
+admin-revoke-apps = Revoca app collegate ({ $count })
+
+# Write destination per event type (#47)
+etf-write-destination = Scrivi le prenotazioni confermate in
+etf-write-destination-default = Predefinito (impostazione dell'origine)
+etf-write-destination-help = Solo per questo tipo di evento. Per impostazione predefinita vengono scritte nel calendario di scrittura di ciascuna delle tue origini. Su un tipo di evento del team, vale solo per le prenotazioni che gestisci tu.
+etf-write-destination-team = Ogni membro sceglie dove vengono scritte le prenotazioni che gestisce, in { $link }.
+sources-destinations-heading = Prenotazioni per tipo di evento
+sources-destinations-help = Scegli il calendario in cui vengono scritte le prenotazioni confermate di ogni tipo di evento. Su un tipo di evento del team vale per le prenotazioni che gestisci tu; gli altri membri scelgono il proprio. Le prenotazioni già scritte si spostano alla scrittura successiva: una riprogrammazione, un'approvazione, un nuovo tentativo o una presa in carico.
+sources-destinations-saved = Salvato. Le nuove prenotazioni vanno nei calendari scelti qui.
+write-destination-not-yours = Non è stato salvato nulla: scegli uno dei tuoi calendari, per un tipo di evento che gestisci.
+write-destination-unavailable = { $name } (non disponibile)
+write-destination-refused = Questo calendario ha rifiutato l'ultima prenotazione ({ $error }), che è stata scritta secondo l'impostazione dell'origine. La prossima prenotazione riproverà.

@@ -333,10 +333,8 @@ async fn the_meet_owners_copy_is_the_one_with_attendees() {
     // What minting the Meet left on the owner's calendar.
     google.insert("bob@google.test", &uid, "ev-meet", guests());
     assert_eq!(
-        crate::google_calendar::attendee_copy_source(&pool, &uid)
-            .await
-            .as_deref(),
-        Some("src-b")
+        crate::google_calendar::attendee_copy_holder(&pool, &uid).await,
+        Some(bob.clone())
     );
 
     caldav_push_booking(&pool, &KEY, &alice, &uid, &details(&uid)).await;
@@ -578,4 +576,91 @@ async fn a_fresh_push_leaves_hosts_past_its_budget_to_the_retry() {
     assert!(failures.is_empty(), "{failures:?}");
     assert!(google.attendees("alice@google.test", &uid).is_some());
     assert!(google.attendees("bob@google.test", &uid).is_some());
+}
+
+/// A calendar `user_id` chose for event type `et_id` (#47), on source
+/// `source_id` of the fake.
+async fn choose_destination(
+    pool: &SqlitePool,
+    et_id: &str,
+    user_id: &str,
+    source_id: &str,
+    calendar: &str,
+) {
+    let cal_id = format!("cal-{calendar}");
+    sqlx::query("INSERT INTO calendars (id, source_id, href, display_name, is_busy) VALUES (?, ?, ?, 'Team', 0)")
+        .bind(&cal_id)
+        .bind(source_id)
+        .bind(format!("/caldav/v2/{}/events", urlencoding::encode(calendar)))
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO event_type_write_targets (event_type_id, user_id, calendar_id) VALUES (?, ?, ?)",
+    )
+    .bind(et_id)
+    .bind(user_id)
+    .bind(&cal_id)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+/// Write destinations per event type (#47) follow the rule: the holder's
+/// destination copy carries the guests, another member's none. When the
+/// holder's copy moves back to the source setting, the copy left on the
+/// old destination, which lists the guests, is deleted through the
+/// Calendar API, so Google mails no cancellation.
+#[tokio::test]
+async fn write_destinations_follow_the_one_attendee_copy_rule() {
+    let pool = setup_test_db().await;
+    let alice = insert_role_user(&pool, "alice@google.test", "user").await;
+    let bob = insert_role_user(&pool, "bob@google.test", "user").await;
+    let (_, et_id) = insert_team_with_et(
+        &pool,
+        "g237dest",
+        "g237dest-et",
+        &[(&alice, "member"), (&bob, "member")],
+    )
+    .await;
+    sqlx::query("UPDATE event_types SET scheduling_mode = 'collective' WHERE id = ?")
+        .bind(&et_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let google = Arc::new(FakeGoogle::default());
+    let (base, server) = fake::serve(google.clone()).await;
+    google_source(&pool, "src-a", &alice, &base, "alice@google.test").await;
+    google_source(&pool, "src-b", &bob, &base, "bob@google.test").await;
+    choose_destination(&pool, &et_id, &alice, "src-a", "alice-team@google.test").await;
+    choose_destination(&pool, &et_id, &bob, "src-b", "bob-team@google.test").await;
+    insert_booking(&pool, &et_id, None, start(), "confirmed").await;
+    let uid = only_booking_uid(&pool, &et_id).await;
+
+    caldav_push_booking(&pool, &KEY, &alice, &uid, &details(&uid)).await;
+    assert_eq!(
+        google.attendees("alice-team@google.test", &uid),
+        Some(guests())
+    );
+    assert_eq!(
+        google.attendees("bob-team@google.test", &uid),
+        Some(Vec::new())
+    );
+    assert_eq!(google.attendees("alice@google.test", &uid), None);
+    assert_eq!(google.attendees("bob@google.test", &uid), None);
+
+    sqlx::query("DELETE FROM event_type_write_targets WHERE user_id = ?")
+        .bind(&alice)
+        .execute(&pool)
+        .await
+        .unwrap();
+    caldav_push_booking(&pool, &KEY, &alice, &uid, &details(&uid)).await;
+    server.abort();
+    assert_eq!(google.attendees("alice@google.test", &uid), Some(guests()));
+    assert_eq!(google.attendees("alice-team@google.test", &uid), None);
+    let log = google.log();
+    assert_nothing_announced(&log);
+    assert!(log
+        .iter()
+        .any(|e| e.starts_with("DELETE /api/calendars/alice-team%40google.test/events/")));
 }
