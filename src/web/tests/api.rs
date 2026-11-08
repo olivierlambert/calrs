@@ -9,7 +9,7 @@ use serde_json::{json, Value};
 const API: &str = "https://cal.example/api/v1";
 const MCP: &str = "https://cal.example/mcp";
 
-fn api_get(uri: &str, token: &str) -> Request<Body> {
+pub(super) fn api_get(uri: &str, token: &str) -> Request<Body> {
     Request::builder()
         .uri(uri)
         .header("authorization", format!("Bearer {token}"))
@@ -17,7 +17,7 @@ fn api_get(uri: &str, token: &str) -> Request<Body> {
         .unwrap()
 }
 
-fn api_post(uri: &str, token: &str, body: &Value) -> Request<Body> {
+pub(super) fn api_post(uri: &str, token: &str, body: &Value) -> Request<Body> {
     Request::builder()
         .method("POST")
         .uri(uri)
@@ -45,7 +45,7 @@ async fn send(app: &Router, request: Request<Body>) -> (StatusCode, Value) {
     (status, serde_json::from_str(&body).unwrap_or(Value::Null))
 }
 
-async fn user_id(pool: &SqlitePool, username: &str) -> String {
+pub(super) async fn user_id(pool: &SqlitePool, username: &str) -> String {
     sqlx::query_scalar("SELECT id FROM users WHERE username = ?")
         .bind(username)
         .fetch_one(pool)
@@ -54,7 +54,7 @@ async fn user_id(pool: &SqlitePool, username: &str) -> String {
 }
 
 /// A personal access token of `user` with `scope`, inserted directly.
-async fn pat(pool: &SqlitePool, user: &str, scope: &str) -> String {
+pub(super) async fn pat(pool: &SqlitePool, user: &str, scope: &str) -> String {
     let secret = crate::oauth::random_token();
     let token = format!("calrs_pat_{secret}");
     sqlx::query(
@@ -72,18 +72,18 @@ async fn pat(pool: &SqlitePool, user: &str, scope: &str) -> String {
     token
 }
 
-const ALL: &str = "event-types:read slots:read bookings:read bookings:write";
+pub(super) const ALL: &str = "event-types:read slots:read bookings:read bookings:write";
 
 fn error_code(body: &Value) -> &str {
     body["error"]["code"].as_str().unwrap_or("")
 }
 
 /// `far_future_monday()` at `hh:mm` UTC, as RFC 3339.
-fn monday_at(hhmm: &str) -> String {
+pub(super) fn monday_at(hhmm: &str) -> String {
     format!("{}T{hhmm}:00Z", far_future_monday())
 }
 
-fn create_body(et_id: &str, start: &str, email: &str) -> Value {
+pub(super) fn create_body(et_id: &str, start: &str, email: &str) -> Value {
     json!({"event_type_id": et_id, "start": start, "timezone": "UTC", "name": "Api Guest", "email": email})
 }
 

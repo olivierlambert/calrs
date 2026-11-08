@@ -7,6 +7,7 @@ use super::*;
 mod admin;
 mod admin_stats;
 mod api;
+mod api_doc;
 mod auth_pages;
 mod availability;
 mod booking;
