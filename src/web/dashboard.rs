@@ -1485,8 +1485,31 @@ pub(super) async fn cancel_booking(
     if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
         return resp;
     }
-    let user = &auth_user.user;
+    host_cancel_booking(&state, &auth_user.user, &booking_id, form.reason).await;
+    Redirect::to("/dashboard/bookings").into_response()
+}
 
+/// What `host_cancel_booking` did.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum HostCancel {
+    /// No confirmed or pending booking of `user`'s event types has this id.
+    NotFound,
+    /// The booking changed state meanwhile (approved, cancelled, declined).
+    Unchanged,
+    /// Cancelled (it was confirmed) or declined (it was pending).
+    Done(&'static str),
+}
+
+/// The host ends a booking of one of their event types, as the dashboard's
+/// cancel button does: a pending request is declined, a confirmed booking
+/// cancelled, the calendar copies deleted, guest and host emailed and the
+/// guest texted. Shared with the REST API (#169).
+pub(super) async fn host_cancel_booking(
+    state: &AppState,
+    user: &crate::models::User,
+    booking_id: &str,
+    reason: Option<String>,
+) -> HostCancel {
     // Verify the booking belongs to this user and is confirmed or pending.
     // Pending bookings are "declined" (no CalDAV event was ever pushed); confirmed ones are "cancelled".
     #[allow(clippy::type_complexity)]
@@ -1511,7 +1534,7 @@ pub(super) async fn cancel_booking(
              JOIN accounts a ON a.id = et.account_id
              WHERE b.id = ? AND a.user_id = ? AND b.status IN ('confirmed', 'pending')",
     )
-    .bind(&booking_id)
+    .bind(booking_id)
     .bind(&user.id)
     .fetch_optional(&state.pool)
     .await
@@ -1533,7 +1556,7 @@ pub(super) async fn cancel_booking(
         guest_language,
     ) = match booking {
         Some(b) => b,
-        None => return Redirect::to("/dashboard/bookings").into_response(),
+        None => return HostCancel::NotFound,
     };
 
     let was_pending = prev_status == "pending";
@@ -1553,7 +1576,7 @@ pub(super) async fn cancel_booking(
         .map(|r| r.rows_affected())
         .unwrap_or(0);
     if changed == 0 {
-        return Redirect::to("/dashboard/bookings").into_response();
+        return HostCancel::Unchanged;
     }
 
     tracing::info!(booking_id = %bid, status = new_status, "booking {}", new_status);
@@ -1569,7 +1592,7 @@ pub(super) async fn cancel_booking(
     let guest_tz_parsed = guest_timezone.parse::<Tz>().unwrap_or(Tz::UTC);
     let (date, start_time, end_time) =
         booking_strings_in_guest_tz(&start_at, &end_at, stored_tz, guest_tz_parsed);
-    let reason = form.reason.filter(|r| !r.trim().is_empty());
+    let reason = reason.filter(|r| !r.trim().is_empty());
 
     let sequence = booking_ics_sequence(&state.pool, &uid).await;
     // Built before the SMTP block so the SMS path can borrow the same strings:
@@ -1674,7 +1697,7 @@ pub(super) async fn cancel_booking(
         .await;
     }
 
-    Redirect::to("/dashboard/bookings").into_response()
+    HostCancel::Done(new_status)
 }
 
 // --- Confirm pending booking ---

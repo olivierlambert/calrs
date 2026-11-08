@@ -2578,8 +2578,35 @@ pub(super) async fn host_reschedule_booking(
     if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
         return resp;
     }
-    let user = &auth_user.user;
+    match host_request_reschedule(&state, &auth_user.user, &booking_id).await {
+        HostReschedule::NoBookableDates => {
+            Redirect::to("/dashboard/bookings?error=no-bookable-dates").into_response()
+        }
+        HostReschedule::NotFound | HostReschedule::Requested => {
+            Redirect::to("/dashboard/bookings").into_response()
+        }
+    }
+}
 
+/// What `host_request_reschedule` did.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum HostReschedule {
+    /// No confirmed or pending booking of `user`'s event types has this id.
+    NotFound,
+    /// The event type has no bookable day left to offer the guest.
+    NoBookableDates,
+    /// The guest was given a new reschedule link (and emailed it).
+    Requested,
+}
+
+/// The host asks the guest to pick a new time, as the dashboard's reschedule
+/// button does: a fresh reschedule token, the host-initiated flag, and the
+/// "pick a new time" email. Shared with the REST API (#169).
+pub(super) async fn host_request_reschedule(
+    state: &AppState,
+    user: &crate::models::User,
+    booking_id: &str,
+) -> HostReschedule {
     let booking: Option<(
         String,
         String,
@@ -2598,7 +2625,7 @@ pub(super) async fn host_reschedule_booking(
              JOIN accounts a ON a.id = et.account_id
              WHERE b.id = ? AND a.user_id = ? AND b.status IN ('confirmed', 'pending')",
     )
-    .bind(&booking_id)
+    .bind(booking_id)
     .bind(&user.id)
     .fetch_optional(&state.pool)
     .await
@@ -2607,7 +2634,7 @@ pub(super) async fn host_reschedule_booking(
     let (bid, uid, guest_name, guest_email, start_at, end_at, event_title, guest_timezone, et_id) =
         match booking {
             Some(b) => b,
-            None => return Redirect::to("/dashboard/bookings").into_response(),
+            None => return HostReschedule::NotFound,
         };
 
     // The guest picks the new time on the event type's slot page. With no
@@ -2618,7 +2645,7 @@ pub(super) async fn host_reschedule_booking(
     let (first, last) =
         window.effective_date_bounds(today_in(get_host_tz(&state.pool, &et_id).await));
     if first > last {
-        return Redirect::to("/dashboard/bookings?error=no-bookable-dates").into_response();
+        return HostReschedule::NoBookableDates;
     }
 
     // Generate new reschedule token and set the host-initiated flag
@@ -2720,7 +2747,7 @@ pub(super) async fn host_reschedule_booking(
         }
     }
 
-    Redirect::to("/dashboard/bookings").into_response()
+    HostReschedule::Requested
 }
 
 // --- Claim endpoints ---
