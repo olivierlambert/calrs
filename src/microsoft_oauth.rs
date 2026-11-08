@@ -439,9 +439,11 @@ fn fresh_access(tokens: &StoredTokens, key: &[u8; 32]) -> Result<Option<String>>
         .access_token_enc
         .as_deref()
         .ok_or_else(|| anyhow!("Microsoft access token is missing; reconnect"))?;
-    Ok(Some(crate::crypto::decrypt_value(key, encrypted).map_err(
-        |_| anyhow!("Unable to decrypt Microsoft access token"),
-    )?))
+    Ok(Some(
+        crate::crypto::decrypt_value(key, encrypted)
+            .map_err(|_| anyhow!("Unable to decrypt Microsoft access token"))?
+            .to_string(),
+    ))
 }
 
 /// Stores refreshed tokens only while the row still carries
@@ -475,7 +477,7 @@ pub async fn build_provider_for_source(
     let access = access_token(pool, key, source_id, false).await?;
     Ok(Box::new(SourceGraph {
         pool: pool.clone(),
-        key: *key,
+        key: crate::crypto::SecretKey::new(*key),
         source_id: source_id.to_owned(),
         graph: tokio::sync::RwLock::new(Arc::new(GraphProvider::new(&access)?)),
     }))
@@ -580,7 +582,7 @@ async fn forget_refresh_token(pool: &SqlitePool, source_id: &str, refused: &str)
 /// or expired early: the tokens are refreshed once and the call retried.
 struct SourceGraph {
     pool: SqlitePool,
-    key: [u8; 32],
+    key: crate::crypto::SecretKey,
     source_id: String,
     graph: tokio::sync::RwLock<Arc<GraphProvider>>,
 }
@@ -766,7 +768,9 @@ mod tests {
                 .fetch_one(&pool)
                 .await
                 .unwrap();
-        let verifier = crate::crypto::decrypt_value(&[1; 32], &encrypted).unwrap();
+        let verifier = crate::crypto::decrypt_value(&[1; 32], &encrypted)
+            .unwrap()
+            .to_string();
         assert_ne!(encrypted, verifier);
         assert_eq!(challenge(&verifier), params["code_challenge"]);
         assert!(consume_state(&pool, "u2", state).await.is_err());
@@ -840,7 +844,9 @@ mod tests {
         let config = load_config(&pool).await.unwrap();
         assert_eq!(before, config.secret_enc);
         assert_eq!(
-            crate::crypto::decrypt_value(&[1; 32], &config.secret_enc).unwrap(),
+            crate::crypto::decrypt_value(&[1; 32], &config.secret_enc)
+                .unwrap()
+                .to_string(),
             "secret"
         );
         assert_eq!(config.tenant, "organizations");
@@ -966,7 +972,8 @@ mod tests {
             .unwrap();
         assert_eq!(
             crate::crypto::decrypt_value(&[1; 32], stored.refresh_token_enc.as_deref().unwrap())
-                .unwrap(),
+                .unwrap()
+                .to_string(),
             "original"
         );
         let previous = stored_expiry(&pool, &id).await;
@@ -1002,7 +1009,8 @@ mod tests {
             .unwrap();
         assert_eq!(
             crate::crypto::decrypt_value(&[1; 32], stored.refresh_token_enc.as_deref().unwrap())
-                .unwrap(),
+                .unwrap()
+                .to_string(),
             "rotated"
         );
         assert_eq!(
@@ -1030,7 +1038,8 @@ mod tests {
             .unwrap();
         assert_eq!(
             crate::crypto::decrypt_value(&[1; 32], stored.refresh_token_enc.as_deref().unwrap())
-                .unwrap(),
+                .unwrap()
+                .to_string(),
             "rotated"
         );
         let previous = stored_expiry(&pool, &id).await;
@@ -1055,7 +1064,8 @@ mod tests {
             .unwrap();
         assert_eq!(
             crate::crypto::decrypt_value(&[1; 32], stored.refresh_token_enc.as_deref().unwrap())
-                .unwrap(),
+                .unwrap()
+                .to_string(),
             "rotated"
         );
     }
@@ -1137,7 +1147,9 @@ mod tests {
             .unwrap();
         let current = stored.refresh_token_enc.unwrap();
         assert_eq!(
-            crate::crypto::decrypt_value(&[1; 32], &current).unwrap(),
+            crate::crypto::decrypt_value(&[1; 32], &current)
+                .unwrap()
+                .to_string(),
             "reconnected"
         );
         // Otherwise it goes, and the next sync stops at "reconnect" without

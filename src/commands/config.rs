@@ -1129,7 +1129,9 @@ mod tests {
         for encrypted in [google, microsoft] {
             assert_ne!(encrypted, "calendar-secret");
             assert_eq!(
-                crate::crypto::decrypt_value(&key, &encrypted).unwrap(),
+                crate::crypto::decrypt_value(&key, &encrypted)
+                    .unwrap()
+                    .to_string(),
                 "calendar-secret"
             );
         }

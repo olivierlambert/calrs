@@ -159,11 +159,94 @@ impl RateLimiter {
     }
 }
 
+/// Per-key rate limiter whose counters live in SQLite (`rate_limit_counters`),
+/// so a restart does not hand every address a fresh budget (#85,
+/// FINDING-10). Same rule as [`RateLimiter`]: a key's window opens at its
+/// first request and admits `max_attempts` requests until it closes.
+///
+/// A check is one upsert on the pool, with no connection held across any
+/// other await. Expired rows are reset in place by the upsert and deleted
+/// hourly by [`prune_rate_limit_counters`]. On a database error the request
+/// is let through and the error logged: refusing every booking because the
+/// counter could not be written would be worse than a missed count.
+pub struct PersistentRateLimiter {
+    pool: SqlitePool,
+    bucket: &'static str,
+    max_attempts: u32,
+    window_secs: i64,
+}
+
+impl PersistentRateLimiter {
+    pub fn new(
+        pool: SqlitePool,
+        bucket: &'static str,
+        max_attempts: u32,
+        window_secs: i64,
+    ) -> Self {
+        Self {
+            pool,
+            bucket,
+            max_attempts,
+            window_secs,
+        }
+    }
+
+    /// Returns true if the request should be rejected (rate limited).
+    pub async fn check_limited(&self, key: &str) -> bool {
+        self.check_limited_at(key, Utc::now().timestamp()).await
+    }
+
+    pub(crate) async fn check_limited_at(&self, key: &str, now: i64) -> bool {
+        // `fetch_all` rather than `fetch_one`: it steps the statement to
+        // completion, so the implicit write transaction of an upsert with
+        // RETURNING ends here instead of when the cached statement is reset.
+        let counted: Result<Vec<i64>, sqlx::Error> = sqlx::query_scalar(
+            "INSERT INTO rate_limit_counters (bucket, key, window_start, expires_at, count)
+             VALUES (?1, ?2, ?3, ?3 + ?4, 1)
+             ON CONFLICT(bucket, key) DO UPDATE SET
+                 count = CASE WHEN ?3 - window_start > ?4 THEN 1 ELSE count + 1 END,
+                 window_start = CASE WHEN ?3 - window_start > ?4 THEN ?3 ELSE window_start END,
+                 expires_at = CASE WHEN ?3 - window_start > ?4 THEN ?3 + ?4 ELSE expires_at END
+             RETURNING count",
+        )
+        .bind(self.bucket)
+        .bind(key)
+        .bind(now)
+        .bind(self.window_secs)
+        .fetch_all(&self.pool)
+        .await;
+        match counted {
+            Ok(rows) => rows
+                .first()
+                .is_some_and(|count| *count > i64::from(self.max_attempts)),
+            Err(e) => {
+                tracing::warn!(bucket = self.bucket, error = %e, "rate limit counter not updated, request let through");
+                false
+            }
+        }
+    }
+}
+
+/// Deletes the persistent rate limit counters whose window closed before
+/// `now` (unix seconds). Called hourly from the reminder loop.
+pub(crate) async fn prune_rate_limit_counters(
+    pool: &SqlitePool,
+    now: i64,
+) -> Result<u64, sqlx::Error> {
+    sqlx::query("DELETE FROM rate_limit_counters WHERE expires_at < ?")
+        .bind(now)
+        .execute(pool)
+        .await
+        .map(|r| r.rows_affected())
+}
+
 pub struct AppState {
     pub pool: SqlitePool,
     pub templates: Environment<'static>,
     pub login_limiter: RateLimiter,
-    pub booking_limiter: RateLimiter,
+    /// Booking POSTs, per client address (10 per 5 minutes). Persisted in
+    /// SQLite so a restart does not reset it.
+    pub booking_limiter: PersistentRateLimiter,
     /// "Send test" on the webhooks page, per user (#168).
     pub webhook_test_limiter: RateLimiter,
     /// OAuth authorizations, token exchanges and revocations, per client
@@ -185,7 +268,8 @@ pub struct AppState {
     pub(crate) api_token_flash:
         std::sync::Mutex<HashMap<String, (String, String, std::time::Instant)>>,
     pub data_dir: PathBuf,
-    pub secret_key: [u8; 32],
+    /// Wiped from memory when the state is dropped (#85, FINDING-14).
+    pub secret_key: crate::crypto::SecretKey,
     pub theme_css: tokio::sync::RwLock<String>,
     pub company_link: tokio::sync::RwLock<Option<String>>,
     pub captcha_config: tokio::sync::RwLock<Option<captcha::CaptchaConfig>>,
@@ -399,29 +483,74 @@ pub(crate) fn oidc_failure_response() -> Response {
 
 /// Extract the client IP for rate-limiting from request headers.
 ///
-/// Trust model: assumes calrs runs behind a single reverse proxy (the
-/// documented Caddy/Nginx setup) that appends the observed peer address
-/// to `X-Forwarded-For`. Each proxy in the chain appends, so the
-/// rightmost value is the most-recent trusted hop's view of its peer,
-/// and everything to its left is attacker-controlled. Taking the
-/// rightmost value defeats the "set X-Forwarded-For: random.ip on every
-/// request" rate-limit bypass.
+/// Trust model, in order:
 ///
-/// `X-Real-IP` is intentionally not honoured: neither documented proxy
-/// sets it by default, so a client-supplied `X-Real-IP` would pass
-/// straight through and be trusted (worse than the bug this fixes).
+/// 1. **Behind a reverse proxy** (the documented Caddy/Nginx setup), the
+///    proxy appends the peer it observed to `X-Forwarded-For`. Each proxy
+///    in the chain appends, so the rightmost value is the most recent
+///    trusted hop's view of its peer, and everything to its left is
+///    attacker-controlled. Taking the rightmost value defeats the "set
+///    X-Forwarded-For: random.ip on every request" rate-limit bypass.
+/// 2. **Directly exposed**, with no `X-Forwarded-For`, the TCP peer
+///    address is used, as recorded by [`peer_addr_middleware`] from
+///    axum's `ConnectInfo` (`calrs serve` serves with
+///    `into_make_service_with_connect_info`). Before this fallback every
+///    such client shared one "unknown" bucket, so one person mistyping a
+///    password locked everyone out of signing in.
+/// 3. `"unknown"` when neither is known (a router driven without a
+///    socket, as in tests): one shared bucket, which throttles rather
+///    than lets through.
 ///
-/// Falls back to `"unknown"` if `X-Forwarded-For` is missing, which
-/// collapses such requests into a single shared rate-limit bucket. That
-/// is intentional: it throttles abuse rather than letting it through.
+/// A directly exposed instance trusts a client-sent `X-Forwarded-For`, as
+/// it always has; put calrs behind a proxy that sets the header to rely
+/// on per-client limits. `X-Real-IP` is intentionally not honoured:
+/// neither documented proxy sets it by default, so a client-supplied
+/// `X-Real-IP` would pass straight through and be trusted.
 pub fn client_ip_for_rate_limit(headers: &HeaderMap) -> String {
+    forwarded_client_ip(headers)
+        .or_else(|| {
+            headers
+                .get(PEER_ADDR_HEADER)
+                .and_then(|v| v.to_str().ok())
+                .map(str::to_string)
+        })
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
+/// The rightmost `X-Forwarded-For` value, when the header is there and not
+/// empty: the client address as the reverse proxy saw it.
+pub fn forwarded_client_ip(headers: &HeaderMap) -> Option<String> {
     headers
         .get("x-forwarded-for")
         .and_then(|v| v.to_str().ok())
         .and_then(|s| s.rsplit(',').next())
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "unknown".to_string())
+}
+
+/// Internal request header carrying the TCP peer address to
+/// [`client_ip_for_rate_limit`]. Set only by [`peer_addr_middleware`],
+/// which first removes any copy the client sent.
+pub const PEER_ADDR_HEADER: &str = "x-calrs-peer-addr";
+
+/// Records the TCP peer address (axum `ConnectInfo`) as
+/// [`PEER_ADDR_HEADER`], so the limiters, which read only headers, can fall
+/// back to it when there is no `X-Forwarded-For`. A client-sent copy of the
+/// header is always dropped, so only the socket decides.
+async fn peer_addr_middleware(
+    mut request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let peer = request
+        .extensions()
+        .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
+        .map(|info| info.0.ip().to_string());
+    let headers = request.headers_mut();
+    headers.remove(PEER_ADDR_HEADER);
+    if let Some(value) = peer.and_then(|ip| axum::http::HeaderValue::from_str(&ip).ok()) {
+        headers.insert(PEER_ADDR_HEADER, value);
+    }
+    next.run(request).await
 }
 
 /// Form struct for POST endpoints that only need CSRF validation.
@@ -695,7 +824,12 @@ async fn csp_middleware(
     response
 }
 
-pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8; 32]) -> Router {
+pub async fn create_router(
+    pool: SqlitePool,
+    data_dir: PathBuf,
+    secret_key: impl Into<crate::crypto::SecretKey>,
+) -> Router {
+    let secret_key: crate::crypto::SecretKey = secret_key.into();
     let mut env = Environment::new();
     env.set_undefined_behavior(minijinja::UndefinedBehavior::Lenient);
     env.set_loader(minijinja::path_loader("templates"));
@@ -713,12 +847,15 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
     let initial_csp = build_csp(&initial_captcha);
     let initial_german_formal = load_german_formal(&pool).await;
 
+    // 10 booking POSTs per IP per 5 minutes, counted in SQLite.
+    let booking_limiter = PersistentRateLimiter::new(pool.clone(), "booking", 10, 300);
+
     let state = Arc::new(AppState {
         pool,
         templates: env,
         // 10 login attempts per IP per 15 minutes
         login_limiter: RateLimiter::new(10, 900),
-        booking_limiter: RateLimiter::new(10, 300),
+        booking_limiter,
         webhook_test_limiter: RateLimiter::new(10, 600),
         oauth_limiter: RateLimiter::new(60, 300),
         oauth_register_limiter: RateLimiter::new(30, 900),
@@ -1181,6 +1318,7 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
             state.clone(),
             german_formal_middleware,
         ))
+        .layer(axum::middleware::from_fn(peer_addr_middleware))
         .with_state(state)
 }
 

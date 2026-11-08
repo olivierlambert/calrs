@@ -22,9 +22,11 @@ Login attempts are rate-limited per IP address:
 
 - **10 attempts** per **15-minute window**
 - After the limit, further attempts return an error without checking credentials
-- The client IP is read from the `X-Forwarded-For` header (set by your reverse proxy)
+- The client IP is the rightmost `X-Forwarded-For` value when the header is present (set by your reverse proxy), otherwise the address of the TCP connection
 
-> **Important:** Make sure your reverse proxy sets `X-Forwarded-For` correctly. Without it, rate limiting falls back to a single "unknown" bucket and won't be effective.
+The same rule identifies the client for every per-address limit (sign-in, two-factor codes, bookings, OAuth).
+
+> **Trust model:** behind a reverse proxy, make sure it sets `X-Forwarded-For`. Without the header, calrs uses the connection's address, which behind a proxy is the proxy itself: every client then shares one bucket, and one person mistyping a password can lock everyone out for 15 minutes. Exposed directly with no proxy, calrs uses each client's own connection address. A directly exposed instance still believes an `X-Forwarded-For` header a client sends, so per-client limits are only as reliable as that header; for a public deployment, put calrs behind a proxy that sets it.
 
 ### Nginx
 
@@ -42,6 +44,10 @@ Booking submissions are rate-limited per IP address:
 
 - **10 attempts** per **5-minute window**
 - Applies to all booking handlers (user, team, and legacy)
+- The client IP is the rightmost `X-Forwarded-For` value, the address your reverse proxy saw
+- The counters are stored in the database (`rate_limit_counters`), so restarting calrs does not reset them; closed windows are pruned hourly
+
+Login and the other limits are kept in memory and start over when calrs restarts.
 
 ## CSRF protection
 
@@ -115,6 +121,8 @@ Tokens are UUID v4 (128-bit random), stored with unique indexes in the database.
 ### CalDAV credential storage
 
 CalDAV and SMTP passwords are encrypted at rest using **AES-256-GCM**. The encryption key is auto-generated at `$DATA_DIR/secret.key` on first run, or can be provided via the `CALRS_SECRET_KEY` environment variable. Legacy hex-encoded passwords (from pre-v0.10.0) are auto-migrated to encrypted format on startup. Protect your `secret.key` file with filesystem permissions.
+
+In memory, the key and its long-lived copies, the plaintext of every decrypted credential, and the secrets the server keeps for its whole life (captcha secret, meeting webhook secret, EWS service-account password) are held in buffers that are wiped when released (`zeroize`), as is the AES key schedule. This narrows what a core dump or a later memory disclosure could reveal. It cannot reach copies that libraries make while using a credential (the HTTP and SMTP clients), or the `CALRS_SECRET_KEY` value in the process environment, which the operating system keeps for the life of the process.
 
 ### No brute-force account lockout
 

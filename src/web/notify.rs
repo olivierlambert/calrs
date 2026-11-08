@@ -327,7 +327,7 @@ fn resolve_sync_min_age(parsed: Result<u64, String>) -> u64 {
 /// Background task that sends booking reminders on a 60-second tick. Also
 /// piggybacks an hourly sweep of expired sessions so the `sessions` table
 /// doesn't accumulate dead rows indefinitely.
-pub async fn run_reminder_loop(pool: SqlitePool, secret_key: [u8; 32]) {
+pub async fn run_reminder_loop(pool: SqlitePool, secret_key: crate::crypto::SecretKey) {
     let mut last_session_cleanup = std::time::Instant::now();
     let sync_min_age = background_sync_min_age();
     loop {
@@ -354,6 +354,9 @@ pub async fn run_reminder_loop(pool: SqlitePool, secret_key: [u8; 32]) {
             if let Err(e) = crate::oauth::cleanup(&pool).await {
                 tracing::warn!(error = %e, "OAuth cleanup failed");
             }
+            if let Err(e) = super::prune_rate_limit_counters(&pool, Utc::now().timestamp()).await {
+                tracing::warn!(error = %e, "rate limit counter cleanup failed");
+            }
         }
 
         // Pending requests: decline the ones past their deadline and nudge
@@ -363,7 +366,7 @@ pub async fn run_reminder_loop(pool: SqlitePool, secret_key: [u8; 32]) {
         // Reminders run in their own function: their early exits (nothing
         // due, no channel configured) used to `continue` this loop and skip
         // the background sync below on almost every tick.
-        send_due_reminders(pool.clone(), secret_key).await;
+        send_due_reminders(pool.clone(), &secret_key).await;
 
         // Calendar write-backs that failed earlier and are due another try
         // (#162).
@@ -385,7 +388,7 @@ pub async fn run_reminder_loop(pool: SqlitePool, secret_key: [u8; 32]) {
 
 /// One pass of the reminder batch: email and SMS reminders for confirmed
 /// bookings whose reminder time has come.
-pub(super) async fn send_due_reminders(pool: SqlitePool, secret_key: [u8; 32]) {
+pub(super) async fn send_due_reminders(pool: SqlitePool, secret_key: &[u8; 32]) {
     // Find bookings that need a reminder:
     // - status is confirmed
     // - reminder not yet sent
@@ -406,11 +409,11 @@ pub(super) async fn send_due_reminders(pool: SqlitePool, secret_key: [u8; 32]) {
     // SMS is delivered independently of email, so a deployment with SMS
     // but no SMTP still gets its reminders out. Skip the batch only when
     // neither channel can deliver anything.
-    let smtp_config = crate::email::load_smtp_config(&pool, &secret_key)
+    let smtp_config = crate::email::load_smtp_config(&pool, secret_key)
         .await
         .ok()
         .flatten();
-    let sms_configured = crate::sms::load_config(&pool, &secret_key)
+    let sms_configured = crate::sms::load_config(&pool, secret_key)
         .await
         .ok()
         .flatten()
@@ -538,7 +541,7 @@ pub(super) async fn send_due_reminders(pool: SqlitePool, secret_key: [u8; 32]) {
             if let Some(ctx) =
                 crate::sms::SmsContext::for_booking(&details, details.guest_phone.as_deref(), true)
             {
-                crate::sms::notify_guest(&pool, &secret_key, crate::sms::SmsEvent::Reminder, ctx)
+                crate::sms::notify_guest(&pool, secret_key, crate::sms::SmsEvent::Reminder, ctx)
                     .await;
                 notified = true;
             }

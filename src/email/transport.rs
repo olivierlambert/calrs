@@ -414,7 +414,7 @@ pub async fn load_smtp_config(pool: &SqlitePool, key: &[u8; 32]) -> Result<Optio
 
     match row {
         Some((host, port, username, password_enc, from_email, from_name, tls_mode)) => {
-            let password = crate::crypto::decrypt_password(key, &password_enc)?;
+            let password = crate::crypto::decrypt_password(key, &password_enc)?.to_string();
             let tls_mode = SmtpTlsMode::parse(&tls_mode).unwrap_or(SmtpTlsMode::StartTls);
             let config = SmtpConfig {
                 host,

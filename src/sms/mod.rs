@@ -324,7 +324,7 @@ pub async fn load_config(pool: &SqlitePool, key: &[u8; 32]) -> Result<Option<Sms
     };
 
     let api_secret = match api_secret_enc.as_deref().filter(|s| !s.is_empty()) {
-        Some(enc) => crate::crypto::decrypt_password(key, enc)?,
+        Some(enc) => crate::crypto::decrypt_password(key, enc)?.to_string(),
         None => String::new(),
     };
 

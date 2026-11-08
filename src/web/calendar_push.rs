@@ -953,7 +953,7 @@ pub(super) async fn resource_write_candidates(
     if let (Some(u), Some(enc)) = (service_username, service_password_enc) {
         if !u.is_empty() {
             if let Ok(p) = crate::crypto::decrypt_password(key, enc) {
-                out.push((u.to_string(), p));
+                out.push((u.to_string(), p.to_string()));
             }
         }
     }
@@ -982,7 +982,7 @@ pub(super) async fn resource_write_candidates(
         }
         if let Some(enc) = password_enc.as_deref() {
             if let Ok(p) = crate::crypto::decrypt_password(key, enc) {
-                out.push((username, p));
+                out.push((username, p.to_string()));
             }
         }
     }

@@ -67,6 +67,8 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # Encryption (credential storage)
 aes-gcm = "0.10"
+# Wipes the expanded AES key schedule when a cipher is dropped (#85).
+aes = { version = "0.8", features = ["zeroize"] }
 zeroize = "1"
 
 # HMAC-SHA256 for outbound webhook signatures

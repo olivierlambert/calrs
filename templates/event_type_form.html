@@ -445,7 +445,7 @@
                data-order-error="{{ t('form-error-bookable-range-order') }}"
                style="max-width: 170px;">
       </div>
-      <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">{{ t("event-type-form-bookable-range-help") }}{% if editing and form_slug %} <a href="/dashboard/event-types/{{ form_slug }}/overrides" style="color: var(--ink);">{{ t("event-types-overrides") }} &rarr;</a>{% endif %}</span>
+      <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">{{ t("event-type-form-bookable-range-help") }}{% if editing and overrides_url %} <a href="{{ overrides_url }}" style="color: var(--ink);">{{ t("event-types-overrides") }} &rarr;</a>{% endif %}</span>
     </div>
   </div>
 </details>

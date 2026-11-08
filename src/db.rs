@@ -1447,7 +1447,9 @@ mod tests {
             stored.0
         );
         assert_eq!(
-            crate::crypto::decrypt_value(&key, &stored.0).unwrap(),
+            crate::crypto::decrypt_value(&key, &stored.0)
+                .unwrap()
+                .to_string(),
             plaintext,
         );
     }
@@ -1480,7 +1482,9 @@ mod tests {
                 .unwrap();
         // The stored value roundtrips back to the original plaintext.
         assert_eq!(
-            crate::crypto::decrypt_value(&key, &stored.0).unwrap(),
+            crate::crypto::decrypt_value(&key, &stored.0)
+                .unwrap()
+                .to_string(),
             plaintext,
         );
     }
@@ -1518,7 +1522,9 @@ mod tests {
         // ciphertext from the random nonce).
         assert_eq!(after_first.0, after_second.0);
         assert_eq!(
-            crate::crypto::decrypt_value(&key, &after_second.0).unwrap(),
+            crate::crypto::decrypt_value(&key, &after_second.0)
+                .unwrap()
+                .to_string(),
             plaintext,
         );
     }
@@ -1555,7 +1561,9 @@ mod tests {
             stored.0
         );
         assert_eq!(
-            crate::crypto::decrypt_value(&key, &stored.0).unwrap(),
+            crate::crypto::decrypt_value(&key, &stored.0)
+                .unwrap()
+                .to_string(),
             plaintext,
         );
     }
@@ -1587,7 +1595,9 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(
-            crate::crypto::decrypt_value(&key, &stored.0).unwrap(),
+            crate::crypto::decrypt_value(&key, &stored.0)
+                .unwrap()
+                .to_string(),
             plaintext,
         );
     }
@@ -1625,7 +1635,9 @@ mod tests {
 
         assert_eq!(after_first.0, after_second.0);
         assert_eq!(
-            crate::crypto::decrypt_value(&key, &after_second.0).unwrap(),
+            crate::crypto::decrypt_value(&key, &after_second.0)
+                .unwrap()
+                .to_string(),
             plaintext,
         );
     }

@@ -2498,9 +2498,9 @@ pub(super) async fn admin_update_sms(
         String::new()
     } else {
         match existing.as_ref().and_then(|(_, enc)| enc.as_deref()) {
-            Some(enc) if !enc.is_empty() => {
-                crate::crypto::decrypt_password(&state.secret_key, enc).unwrap_or_default()
-            }
+            Some(enc) if !enc.is_empty() => crate::crypto::decrypt_password(&state.secret_key, enc)
+                .map(|s| s.to_string())
+                .unwrap_or_default(),
             _ => String::new(),
         }
     };

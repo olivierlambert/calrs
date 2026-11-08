@@ -45,8 +45,9 @@ const UNUSED_CLIENT_LIFETIME: i64 = 30 * 86400;
 const GRANTED_CLIENT_LIFETIME: i64 = 180 * 86400;
 /// Clients never granted, registered from one address (`rate_key`) within
 /// UNUSED_CLIENT_LIFETIME, beyond which that address cannot register more.
-/// Not applied to the "unknown" address (no X-Forwarded-For), which every
-/// registrant would share.
+/// Applied only to an address from X-Forwarded-For: without the header the
+/// address is the TCP peer, which behind a proxy that does not set it is the
+/// proxy itself, shared by every registrant (as "unknown" was before).
 const PENDING_CLIENTS_PER_ADDRESS: i64 = 50;
 /// The clients cleanup and the cap may remove, as a condition on `c`, binding
 /// now, now - UNUSED_CLIENT_LIFETIME and now - GRANTED_CLIENT_LIFETIME: no
@@ -503,7 +504,8 @@ async fn register(
         .bind(now - UNUSED_CLIENT_LIFETIME)
         .fetch_one(&mut *tx)
         .await?;
-    if pending >= PENDING_CLIENTS_PER_ADDRESS && rate_key(&headers) != "unknown" {
+    if pending >= PENDING_CLIENTS_PER_ADDRESS && crate::web::forwarded_client_ip(&headers).is_some()
+    {
         return Err(Error(
             StatusCode::TOO_MANY_REQUESTS,
             "temporarily_unavailable",

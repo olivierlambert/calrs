@@ -18,7 +18,7 @@
     <div class="error" style="margin-bottom: 1rem;">{{ error }}</div>
   {% endif %}
 
-  <form method="POST" action="/dashboard/event-types/{{ event_type_slug }}/overrides" style="border-bottom: 1px solid var(--border); padding-bottom: 1.25rem; margin-bottom: 1.25rem;">
+  <form method="POST" action="/dashboard/event-types/{{ event_type_id }}/overrides" style="border-bottom: 1px solid var(--border); padding-bottom: 1.25rem; margin-bottom: 1.25rem;">
     <h2 style="font-size: 1rem; margin-bottom: 0.75rem;">{{ t("overrides-add-heading") }}</h2>
 
     <div class="form-group">
@@ -70,7 +70,7 @@
           <span style="color: var(--text-muted); font-size: 0.85rem; margin-left: 0.25rem;">{{ o.start_time }} &ndash; {{ o.end_time }}</span>
         {% endif %}
       </div>
-      <form method="POST" action="/dashboard/event-types/{{ event_type_slug }}/overrides/{{ o.id }}/delete" style="margin: 0;">
+      <form method="POST" action="/dashboard/event-types/{{ event_type_id }}/overrides/{{ o.id }}/delete" style="margin: 0;">
         <button type="submit" class="slot-btn" style="font-size: 0.8rem; color: var(--error-text); cursor: pointer;" data-confirm="{{ t('overrides-delete-confirm') }}" onclick="return confirm(this.dataset.confirm);">{{ t("overrides-delete") }}</button>
       </form>
     </div>

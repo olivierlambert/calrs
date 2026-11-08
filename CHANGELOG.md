@@ -197,6 +197,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Fixed
+
+- **Rate limits no longer put every client in one bucket without a reverse proxy** (#85). With no `X-Forwarded-For` header, every client was counted as "unknown", so on an instance exposed directly one person mistyping a password ten times locked everyone out of signing in for 15 minutes, and the same went for two-factor codes, bookings and OAuth. calrs now uses the connection's address when the header is absent; with the header, the rightmost value still wins, as before. Behind a reverse proxy, make sure it sets `X-Forwarded-For` (see Security in the docs).
+
+### Security
+
+- **Availability overrides are addressed by event type id** (#85, FINDING-15). The overrides pages looked an event type up by its slug alone, so when two users both had an `intro` event type an administrator could view or add overrides on the wrong one, and a team admin could do the same with two teams sharing a slug. The pages now live at `/dashboard/event-types/{id}/overrides` and every link uses that. An old slug URL still works when the slug names exactly one event type you may manage; otherwise it answers "Not found" instead of guessing.
+- **The booking rate limit survives a restart** (#85, FINDING-10). The per-address limit on booking submissions (10 per 5 minutes, keyed on the rightmost `X-Forwarded-For` value) was kept in memory, so restarting calrs gave every address a fresh budget. Its counters now live in the database (one write per booking submission, pruned hourly). If the counter cannot be written, the submission is let through and the error logged.
+- **The secret key and decrypted credentials are wiped from memory** (#85, FINDING-14). The encryption key (from `CALRS_SECRET_KEY` or `secret.key`) and its long-lived copies, the plaintext of every decrypted credential, and the captcha, meeting webhook and EWS service-account secrets the server keeps in memory are now cleared when released (`zeroize`), as is the AES key schedule. Copies made inside libraries (HTTP and SMTP clients) and the process environment are outside its reach.
+
 ## [2.0.0-beta.3] - 2026-11-08
 
 The 2.0 features that waited in pull requests land: native Microsoft 365 and Outlook.com calendars through Microsoft Graph (#229, PR #290; thanks to @adeg, who wrote it and offered to maintain the provider), organization-wide Exchange calendars through impersonation (#138), Google out of office (#240), MCP over HTTP with OAuth (#273), a REST API with an OpenAPI reference (#169), booking webhooks (#168), booking questions (#210), host notes (#173), time off (#46), a write calendar per event type (#47) and a guest email footer (#223). Bookings are now checked one after the other under a lock, and an availability check that fails refuses the booking instead of treating the host as free. Twenty-three migrations, and a few changes of behaviour: read the upgrade notes below. **Back up your database before upgrading**, as for any pre-release.

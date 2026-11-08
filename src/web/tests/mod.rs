@@ -201,8 +201,11 @@ async fn insert_team_with_et(
     // Each team event gets its own placeholder account to avoid colliding
     // with personal events under the unique(account_id, slug) constraint.
     let account_id = uuid::Uuid::new_v4().to_string();
-    sqlx::query("INSERT INTO accounts (id, name, email, timezone) VALUES (?, 't', 't@x', 'UTC')")
+    // Its own address too: accounts.email is unique, and a test may need
+    // several teams.
+    sqlx::query("INSERT INTO accounts (id, name, email, timezone) VALUES (?, 't', ?, 'UTC')")
         .bind(&account_id)
+        .bind(format!("t-{account_id}@x"))
         .execute(pool)
         .await
         .unwrap();

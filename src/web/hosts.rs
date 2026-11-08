@@ -364,7 +364,7 @@ pub(super) async fn sync_reschedule_hosts(state: &Arc<AppState>, hosts: &Resched
         .chain(&hosts.claimant)
     {
         let pool = state.pool.clone();
-        let key = state.secret_key;
+        let key = state.secret_key.clone();
         let user_id = user_id.clone();
         sync_tasks.spawn(async move {
             crate::commands::sync::sync_if_stale(&pool, &key, &user_id).await;

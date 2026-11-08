@@ -693,7 +693,7 @@ pub(super) async fn update_source(
         form.password.clone()
     } else {
         match crate::crypto::decrypt_password(&state.secret_key, &existing_password_enc) {
-            Ok(p) => p,
+            Ok(p) => p.to_string(),
             Err(_) => {
                 return Html(crate::i18n::translate(
                     auth_user.lang,

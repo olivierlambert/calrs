@@ -634,7 +634,9 @@ async fn admin_adds_a_webhook_and_the_secret_is_encrypted() {
     assert_eq!(url, "https://93.184.215.14/hook");
     assert!(!enc.contains(SECRET));
     assert_eq!(
-        crate::crypto::decrypt_value(&[0u8; 32], &enc).unwrap(),
+        crate::crypto::decrypt_value(&[0u8; 32], &enc)
+            .unwrap()
+            .to_string(),
         SECRET
     );
 
@@ -1864,7 +1866,9 @@ async fn taking_over_needs_a_suspended_webhook_and_a_new_secret() {
     assert_eq!(url, "https://93.184.215.14/mine");
     assert_ne!(secret_enc, old_secret);
     assert_eq!(
-        crate::crypto::decrypt_value(&[0u8; 32], &secret_enc).unwrap(),
+        crate::crypto::decrypt_value(&[0u8; 32], &secret_enc)
+            .unwrap()
+            .to_string(),
         "fresh-secret-0123456789"
     );
     // What was queued for the old receiver is gone.

@@ -803,7 +803,7 @@ async fn reminders_show_host_notes_to_the_host_only() {
     .await;
     set_host_notes(&pool, &id, SECRET).await;
 
-    send_due_reminders(pool.clone(), [0u8; 32]).await;
+    send_due_reminders(pool.clone(), &[0u8; 32]).await;
 
     let host = mail_to(&mails, "test@example.com").await;
     assert!(host.contains(SECRET), "{host}");

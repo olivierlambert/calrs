@@ -145,40 +145,86 @@ pub(super) async fn owns_or_admins_team_of(
         > 0
 }
 
-/// Look up an event type by slug that the (non-admin) user is allowed to
-/// manage. Personal events resolve via the account owner; team events resolve
-/// via team admin role. Global admins should bypass this and look up by slug
-/// directly. Returns (id, title, team_id).
-///
-/// If the user has both a personal event and a team event with the same slug,
-/// the personal event wins. Branch order in `UNION ALL` is not guaranteed by
-/// SQL, so we wrap it in a subquery and order by `team_id IS NULL DESC`
-/// (i.e. NULLs first → personal first) to make the resolution deterministic.
-pub(super) async fn find_manageable_event_type_by_slug(
+/// The ids of the event types called `slug` that `user` may manage, at most
+/// two: enough to tell "exactly one" from "several". A global admin may
+/// manage every event type; anyone else their own personal ones and those
+/// of the teams they admin. Slugs are unique per account and per team, not
+/// across them, so a slug alone can name several event types (#85,
+/// FINDING-15): callers act only on exactly one.
+pub(super) async fn manageable_event_type_ids_by_slug(
     pool: &SqlitePool,
-    user_id: &str,
+    user: &crate::models::User,
     slug: &str,
-) -> Option<(String, String, Option<String>)> {
-    sqlx::query_as(
-        "SELECT id, title, team_id FROM (
-             SELECT et.id, et.title, et.team_id FROM event_types et
-             JOIN accounts a ON a.id = et.account_id
-             WHERE a.user_id = ? AND et.slug = ? AND et.team_id IS NULL
-             UNION ALL
-             SELECT et.id, et.title, et.team_id FROM event_types et
-             JOIN team_members tm ON tm.team_id = et.team_id
-             WHERE tm.user_id = ? AND tm.role = 'admin' AND et.slug = ? AND et.team_id IS NOT NULL
-         )
-         ORDER BY (team_id IS NULL) DESC
-         LIMIT 1",
-    )
-    .bind(user_id)
-    .bind(slug)
-    .bind(user_id)
-    .bind(slug)
-    .fetch_optional(pool)
-    .await
-    .unwrap_or(None)
+) -> Vec<String> {
+    let ids = if user.role == "admin" {
+        sqlx::query_scalar("SELECT id FROM event_types WHERE slug = ? ORDER BY id LIMIT 2")
+            .bind(slug)
+            .fetch_all(pool)
+            .await
+    } else {
+        sqlx::query_scalar(
+            "SELECT id FROM (
+                 SELECT et.id FROM event_types et
+                 JOIN accounts a ON a.id = et.account_id
+                 WHERE a.user_id = ? AND et.slug = ? AND et.team_id IS NULL
+                 UNION
+                 SELECT et.id FROM event_types et
+                 JOIN team_members tm ON tm.team_id = et.team_id
+                 WHERE tm.user_id = ? AND tm.role = 'admin' AND et.slug = ?
+             )
+             ORDER BY id
+             LIMIT 2",
+        )
+        .bind(&user.id)
+        .bind(slug)
+        .bind(&user.id)
+        .bind(slug)
+        .fetch_all(pool)
+        .await
+    };
+    ids.unwrap_or_default()
+}
+
+/// What the `{key}` of an overrides URL names. The pages are addressed by
+/// event type id; a slug is the URL they had before #85, kept working only
+/// when it names exactly one event type the user may manage.
+pub(super) enum OverridesTarget {
+    /// An event type the user may manage: (id, title, team_id).
+    EventType(String, String, Option<String>),
+    /// A slug naming exactly one event type the user may manage: its id.
+    LegacySlug(String),
+    /// Nothing the user may manage, or a slug several event types share.
+    NotFound,
+}
+
+pub(super) async fn resolve_overrides_target(
+    pool: &SqlitePool,
+    user: &crate::models::User,
+    key: &str,
+) -> OverridesTarget {
+    let by_id: Option<(String, String, Option<String>)> =
+        sqlx::query_as("SELECT id, title, team_id FROM event_types WHERE id = ?")
+            .bind(key)
+            .fetch_optional(pool)
+            .await
+            .unwrap_or(None);
+    if let Some((id, title, team_id)) = by_id {
+        if can_manage_event_type(pool, user, &id).await {
+            return OverridesTarget::EventType(id, title, team_id);
+        }
+    }
+    match manageable_event_type_ids_by_slug(pool, user, key)
+        .await
+        .as_slice()
+    {
+        [id] => OverridesTarget::LegacySlug(id.clone()),
+        _ => OverridesTarget::NotFound,
+    }
+}
+
+/// The overrides page of event type `et_id`.
+pub(super) fn overrides_url(et_id: &str) -> String {
+    format!("/dashboard/event-types/{et_id}/overrides")
 }
 
 /// The phone mode persisted on an event type. A vanished row or a failed
@@ -1263,6 +1309,7 @@ pub(super) async fn edit_event_type_form(
     Html(
         tmpl.render(context! {
             editing => true,
+            overrides_url => overrides_url(&et_id),
             form_enabled => event_type_enabled(&state.pool, &et_id).await,
             toggle_url => format!("/dashboard/event-types/{et_slug}/toggle"),
             original_slug => et_slug,
@@ -2405,6 +2452,12 @@ async fn render_event_type_form_error(
             selected_resource_ids => form.resource_ids.clone().unwrap_or_default(),
             resource_scheduling_mode => form.resource_scheduling_mode.as_deref().unwrap_or("all"),
             editing => editing,
+            overrides_url => match target {
+                FormTarget::EditPersonal { et_id, .. } | FormTarget::EditTeam { et_id, .. } => {
+                    overrides_url(et_id)
+                }
+                _ => String::new(),
+            },
             form_title => form.title.as_str(),
             form_slug => form.slug.as_str(),
             form_description => form.description.as_deref().unwrap_or(""),
@@ -2486,27 +2539,16 @@ async fn render_event_type_form_error(
 pub(super) async fn overrides_page(
     State(state): State<Arc<AppState>>,
     auth_user: crate::auth::AuthUser,
-    Path(slug): Path<String>,
+    Path(key): Path<String>,
 ) -> impl IntoResponse {
-    let user = &auth_user.user;
-    let is_global_admin = user.role == "admin";
-
-    let et: Option<(String, String, Option<String>)> = if is_global_admin {
-        sqlx::query_as(
-            "SELECT et.id, et.title, et.team_id FROM event_types et WHERE et.slug = ? LIMIT 1",
-        )
-        .bind(&slug)
-        .fetch_optional(&state.pool)
-        .await
-        .unwrap_or(None)
-    } else {
-        find_manageable_event_type_by_slug(&state.pool, &user.id, &slug).await
-    };
-
-    let (et_id, et_title, team_id) = match et {
-        Some(e) => e,
-        None => return Redirect::to("/dashboard/event-types").into_response(),
-    };
+    let (et_id, et_title, team_id) =
+        match resolve_overrides_target(&state.pool, &auth_user.user, &key).await {
+            OverridesTarget::EventType(id, title, team_id) => (id, title, team_id),
+            OverridesTarget::LegacySlug(id) => {
+                return Redirect::to(&overrides_url(&id)).into_response()
+            }
+            OverridesTarget::NotFound => return dashboard_not_found(&state, &auth_user),
+        };
     let is_team = team_id.is_some();
 
     let overrides: Vec<(String, String, Option<String>, Option<String>, i32)> = sqlx::query_as(
@@ -2547,7 +2589,7 @@ pub(super) async fn overrides_page(
             sidebar => sidebar_context(&auth_user, "event-types"),
             lang => auth_user.lang,
             event_type_title => et_title,
-            event_type_slug => slug,
+            event_type_id => et_id,
             overrides => overrides_ctx,
             is_team => is_team,
             impersonating => impersonating,
@@ -2571,35 +2613,25 @@ pub(super) async fn create_override(
     State(state): State<Arc<AppState>>,
     auth_user: crate::auth::AuthUser,
     headers: HeaderMap,
-    Path(slug): Path<String>,
+    Path(key): Path<String>,
     Form(form): Form<OverrideForm>,
 ) -> impl IntoResponse {
     if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
         return resp;
     }
     let user = &auth_user.user;
-    let is_global_admin = user.role == "admin";
 
-    let et_id: Option<String> = if is_global_admin {
-        sqlx::query_scalar("SELECT id FROM event_types WHERE slug = ? LIMIT 1")
-            .bind(&slug)
-            .fetch_optional(&state.pool)
-            .await
-            .unwrap_or(None)
-    } else {
-        find_manageable_event_type_by_slug(&state.pool, &user.id, &slug)
-            .await
-            .map(|(id, _, _)| id)
+    // A form from a page opened before the URLs moved to ids still posts to
+    // the slug: accepted when the slug names exactly one event type.
+    let et_id = match resolve_overrides_target(&state.pool, user, &key).await {
+        OverridesTarget::EventType(id, _, _) | OverridesTarget::LegacySlug(id) => id,
+        OverridesTarget::NotFound => return dashboard_not_found(&state, &auth_user),
     };
-
-    let et_id = match et_id {
-        Some(id) => id,
-        None => return Redirect::to("/dashboard/event-types").into_response(),
-    };
+    let back = overrides_url(&et_id);
 
     // Validate date
     if NaiveDate::parse_from_str(&form.date, "%Y-%m-%d").is_err() {
-        return Redirect::to(&format!("/dashboard/event-types/{}/overrides", slug)).into_response();
+        return Redirect::to(&back).into_response();
     }
 
     let is_blocked = form.override_type != "custom";
@@ -2607,8 +2639,7 @@ pub(super) async fn create_override(
         let s = form.start_time.as_deref().unwrap_or("");
         let e = form.end_time.as_deref().unwrap_or("");
         if s.is_empty() || e.is_empty() || s >= e {
-            return Redirect::to(&format!("/dashboard/event-types/{}/overrides", slug))
-                .into_response();
+            return Redirect::to(&back).into_response();
         }
         (Some(s.to_string()), Some(e.to_string()))
     } else {
@@ -2630,13 +2661,13 @@ pub(super) async fn create_override(
 
     tracing::info!(
         override_id = %id,
-        event_type = %slug,
+        event_type_id = %et_id,
         date = %form.date,
         is_blocked = is_blocked,
         "availability override created"
     );
 
-    Redirect::to(&format!("/dashboard/event-types/{}/overrides", slug)).into_response()
+    Redirect::to(&back).into_response()
 }
 
 #[derive(Deserialize)]
@@ -2648,7 +2679,7 @@ pub(super) async fn delete_override(
     State(state): State<Arc<AppState>>,
     auth_user: crate::auth::AuthUser,
     headers: HeaderMap,
-    Path((slug, override_id)): Path<(String, String)>,
+    Path((key, override_id)): Path<(String, String)>,
     Form(form): Form<DeleteOverrideForm>,
 ) -> impl IntoResponse {
     if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
@@ -2665,6 +2696,8 @@ pub(super) async fn delete_override(
             .await
             .unwrap_or(None);
 
+    // Back to the page of the override's own event type, whatever the URL
+    // said; the path key only matters when there is no such override.
     if let Some(et_id) = target_et_id {
         if can_manage_event_type(&state.pool, user, &et_id).await {
             let _ = sqlx::query("DELETE FROM availability_overrides WHERE id = ?")
@@ -2672,10 +2705,15 @@ pub(super) async fn delete_override(
                 .execute(&state.pool)
                 .await;
             tracing::info!(override_id = %override_id, deleted_by = %user.email, "availability override deleted");
+            return Redirect::to(&overrides_url(&et_id)).into_response();
         }
     }
 
-    Redirect::to(&format!("/dashboard/event-types/{}/overrides", slug)).into_response()
+    Redirect::to(&format!(
+        "/dashboard/event-types/{}/overrides",
+        urlencoding::encode(&key)
+    ))
+    .into_response()
 }
 
 // --- Group event type handlers ---
@@ -3333,6 +3371,7 @@ pub(super) async fn edit_group_event_type_form(
         tmpl.render(context! {
             editing => true,
             is_group => true,
+            overrides_url => overrides_url(&et_id),
             form_enabled => event_type_enabled(&state.pool, &et_id).await,
             toggle_url => format!("/dashboard/group-event-types/{team_id}/{et_slug}/toggle"),
             form_team_id => team_id,

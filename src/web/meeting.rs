@@ -96,8 +96,9 @@ pub struct JitsiConfig {
 pub struct WebhookConfig {
     pub url: String,
     pub auth_mode: WebhookAuthMode,
-    /// Shared secret for HMAC; empty when `auth_mode` is `None`.
-    pub secret: String,
+    /// Shared secret for HMAC; empty when `auth_mode` is `None`. Kept in
+    /// `AppState` for the life of the process, so wiped when dropped.
+    pub secret: zeroize::Zeroizing<String>,
     /// Human-readable label shown to guests; same semantics as
     /// [`JitsiConfig::display_name`].
     pub display_name: Option<String>,
@@ -194,7 +195,7 @@ pub async fn load_config(pool: &SqlitePool, key: &[u8; 32]) -> MeetingConfig {
                 (WebhookAuthMode::Hmac, Some(enc)) if !enc.is_empty() => {
                     crate::crypto::decrypt_value(key, enc).unwrap_or_default()
                 }
-                _ => String::new(),
+                _ => zeroize::Zeroizing::default(),
             };
             WebhookConfig {
                 url: url.to_string(),

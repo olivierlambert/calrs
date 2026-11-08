@@ -1294,7 +1294,7 @@ impl Drop for InFlight {
 /// still sends, to the same URL with the same secret.
 async fn serve_endpoint(
     pool: SqlitePool,
-    key: [u8; 32],
+    key: crate::crypto::SecretKey,
     webhook_id: String,
     now: DateTime<Utc>,
     allowlist: Vec<String>,
@@ -1351,7 +1351,11 @@ pub(crate) async fn start_pass(
         let Some(guard) = InFlight::claim(&webhook_id) else {
             continue;
         };
-        let (pool, key, allowlist) = (pool.clone(), *key, allowlist.to_vec());
+        let (pool, key, allowlist) = (
+            pool.clone(),
+            crate::crypto::SecretKey::new(*key),
+            allowlist.to_vec(),
+        );
         handles.push(tokio::spawn(async move {
             let _guard = guard;
             serve_endpoint(pool, key, webhook_id, now, allowlist).await
@@ -1421,7 +1425,7 @@ pub(crate) async fn prune(pool: &SqlitePool, now: DateTime<Utc>) {
 /// The delivery task spawned by `calrs serve`. Wakes when a delivery is
 /// queued, and every 30 seconds for the retries. Deliveries queued by the
 /// CLI are picked up by that tick.
-pub async fn run_webhook_loop(pool: SqlitePool, key: [u8; 32]) {
+pub async fn run_webhook_loop(pool: SqlitePool, key: crate::crypto::SecretKey) {
     // At startup too: a server that was down a while has stale rows.
     prune(&pool, Utc::now()).await;
     let mut last_prune = std::time::Instant::now();

@@ -176,10 +176,10 @@ async fn main() -> Result<()> {
             }
             // Spawn background reminder task
             let reminder_pool = pool.clone();
-            let reminder_key = secret_key;
+            let reminder_key = secret_key.clone();
             tokio::spawn(web::run_reminder_loop(reminder_pool, reminder_key));
             // Outgoing booking webhooks (#168): delivered off the request path.
-            tokio::spawn(web::run_webhook_loop(pool.clone(), secret_key));
+            tokio::spawn(web::run_webhook_loop(pool.clone(), secret_key.clone()));
 
             let router = web::create_router(pool, data_dir, secret_key).await;
             let addr = std::net::SocketAddr::from((host, port));
@@ -201,9 +201,14 @@ async fn main() -> Result<()> {
                 tracing::info!("Shutdown signal received, stopping gracefully...");
             };
 
-            axum::serve(listener, router)
-                .with_graceful_shutdown(shutdown)
-                .await?;
+            // The peer address is the rate limiters' fallback when no
+            // reverse proxy sets X-Forwarded-For (`client_ip_for_rate_limit`).
+            axum::serve(
+                listener,
+                router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+            )
+            .with_graceful_shutdown(shutdown)
+            .await?;
             // Booking emails are sent in the background after the response;
             // let the ones still in flight finish before the runtime stops.
             web::drain_emails(std::time::Duration::from_secs(30)).await;

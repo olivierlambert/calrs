@@ -198,7 +198,7 @@ pub async fn get_valid_access_token(
     if needs_refresh {
         refresh_access_token(pool, key, source_id).await
     } else {
-        crate::crypto::decrypt_password(key, access_token_enc)
+        crate::crypto::decrypt_password(key, access_token_enc).map(|t| t.to_string())
     }
 }
 
