@@ -168,7 +168,7 @@ impersonation**, this gives a zero-touch onboarding flow:
 2. calrs auto-registers them with the email from the (now verified) `email`
    claim.
 3. If global EWS impersonation has **auto-provision** enabled
-   (**Admin → EWS**), calrs immediately provisions a managed Exchange source
+   (**Admin → Sign-in and security → Exchange**), calrs immediately provisions a managed Exchange source
    for that user, impersonating their email — their calendar starts syncing with
    no manual source setup.
 
@@ -177,7 +177,7 @@ impersonation**, this gives a zero-touch onboarding flow:
 Impersonation targets the user's email as their Exchange SMTP address. If the
 address Authentik sends differs from the mailbox domain (e.g. Authentik issues
 `alice@example.com` but the mailbox is `alice@example.local`), set the
-**Impersonation domain** override in **Admin → EWS**. calrs keeps the local part
+**Impersonation domain** override in **Admin → Sign-in and security → Exchange**. calrs keeps the local part
 and swaps the domain, so impersonation resolves to the real mailbox. Validate
 this on one or two accounts before rolling out broadly.
 
@@ -190,7 +190,7 @@ this on one or two accounts before rolling out broadly.
 | Authentik shows **"Redirect URI Error"** | The redirect URI in the provider doesn't match `{CALRS_BASE_URL}/auth/oidc/callback` | Set the provider redirect URI to exactly `https://<host>/auth/oidc/callback` and make sure `CALRS_BASE_URL` matches (host, scheme, and the `/auth/` segment) |
 | **"Authentication failed"** after returning from Authentik; logs show `email_verified=true` not asserted | Authentik 2025.10+ returns `email_verified: false` by default | Apply [step 4](#4-fix-email_verified-authentik-202510) |
 | **"An account with this email already exists … not verified"** | A local account with that email exists, but `email_verified` is false so calrs won't auto-link it | Same as above — assert `email_verified: true` |
-| Login works but no calendar appears | Global EWS auto-provision is off, or the impersonation target domain is wrong | Enable auto-provision and/or set the impersonation domain override in **Admin → EWS** |
+| Login works but no calendar appears | Global EWS auto-provision is off, or the impersonation target domain is wrong | Enable auto-provision and/or set the impersonation domain override in **Admin → Sign-in and security → Exchange** |
 | ID token signature / discovery errors | No signing key on the provider | Assign a certificate as the provider's **Signing Key** |
 
 See also: [Authentication](./authentication.md) for the generic OIDC reference

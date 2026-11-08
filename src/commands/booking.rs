@@ -205,8 +205,8 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
                  JOIN accounts a ON a.id = cs.account_id
                  WHERE a.user_id = (SELECT ha.user_id FROM event_types het
                                     JOIN accounts ha ON ha.id = het.account_id WHERE het.id = ?)
-                   AND c.is_busy = 1 AND c.sync_enabled = 1
-                   AND (NOT EXISTS (SELECT 1 FROM event_type_calendars etc JOIN calendars sc ON sc.id = etc.calendar_id WHERE etc.event_type_id = ? AND sc.sync_enabled = 1)
+                   AND c.sync_enabled = 1
+                   AND ((c.is_busy = 1 AND NOT EXISTS (SELECT 1 FROM event_type_calendars etc JOIN calendars sc ON sc.id = etc.calendar_id WHERE etc.event_type_id = ? AND sc.sync_enabled = 1))
                         OR c.id IN (SELECT calendar_id FROM event_type_calendars WHERE event_type_id = ?))
                    AND (e.status IS NULL OR e.status != 'CANCELLED')
                    AND (e.transp IS NULL OR e.transp != 'TRANSPARENT')",
@@ -228,6 +228,30 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
                             s.format("%H:%M"),
                             e.format("%H:%M")
                         );
+                    }
+                }
+            }
+
+            // The hosts' Microsoft calendars must have been read for this
+            // time: not before their first snapshot, nor past what the last
+            // one covered (the web path and `event-type slots` treat both as
+            // busy). Every host the event type needs, as on the web.
+            let gaps = crate::commands::event_type::host_microsoft_gaps(
+                pool, &et_id, buf_start, buf_end, host_tz,
+            )
+            .await?;
+            for (s, e, gap) in gaps {
+                if s < buf_end && e > buf_start {
+                    match gap {
+                        crate::commands::sync::CoverageGap::NotYetSynced => bail!(
+                            "A host's Microsoft calendar has not finished its first sync; \
+                             its busy times are unknown. Run `calrs sync` and try again"
+                        ),
+                        crate::commands::sync::CoverageGap::BeyondWindow(horizon) => bail!(
+                            "This time is past {}, the end of what a host's Microsoft calendar \
+                             was last synced for, so its conflicts cannot be checked",
+                            horizon.format("%Y-%m-%d")
+                        ),
                     }
                 }
             }
@@ -1161,6 +1185,40 @@ mod tests {
             .await
             .expect_err("the host's own event still blocks");
         assert!(err.to_string().contains("Conflict"), "{err}");
+    }
+
+    /// A host's Microsoft calendar is only read up to the Graph sync window,
+    /// and not at all before its first snapshot: the CLI refuses such times
+    /// rather than book over an Outlook event it never saw.
+    #[tokio::test]
+    async fn create_refuses_times_a_microsoft_calendar_was_not_read_for() {
+        let pool = setup_db().await;
+        let (_user_id, host_account, _et_id) = seed_event_type(&pool).await;
+        sqlx::query("INSERT INTO caldav_sources (id, account_id, name, url, username, provider_type) VALUES ('ms', ?, 'M', 'https://graph.microsoft.com/v1.0', 'u', 'microsoft')")
+            .bind(&host_account)
+            .execute(&pool)
+            .await
+            .unwrap();
+        // 2030-03-18 is past the 730-day window from today.
+        let err = run(&pool, &[0u8; 32], create_at("10:00", "a@test.com"))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("first sync"), "{err}");
+        sqlx::query("UPDATE caldav_sources SET last_full_sync = datetime('now') WHERE id = 'ms'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let err = run(&pool, &[0u8; 32], create_at("10:00", "a@test.com"))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("past"), "{err}");
+        sqlx::query("UPDATE caldav_sources SET enabled = 0 WHERE id = 'ms'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        run(&pool, &[0u8; 32], create_at("10:00", "a@test.com"))
+            .await
+            .expect("a disabled Microsoft source vouches for nothing and blocks nothing");
     }
 
     /// The host's time off (#46) refuses a CLI booking, as on the web.

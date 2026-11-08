@@ -220,6 +220,7 @@
         {{ svc("ok" if mfa_required else "off", t("mfa-title"), (t("mfa-required") if mfa_required else t("mfa-optional")) | lower, "access") }}
         {{ svc("ok" if oidc_enabled else "off", t("admin-svc-oidc"), t("admin-status-enabled") if oidc_enabled else t("admin-status-disabled"), "access") }}
         {{ svc("ok" if google_oauth2_configured else "off", t("admin-svc-google"), t("admin-status-configured") if google_oauth2_configured else t("admin-status-not-configured"), "access") }}
+        {{ svc("ok" if microsoft_oauth2_configured else "off", t("admin-svc-microsoft"), t("admin-status-configured") if microsoft_oauth2_configured else t("admin-status-not-configured"), "access") }}
         {{ svc("ok" if registration_enabled else "off", t("admin-svc-registration"), t("admin-status-enabled") if registration_enabled else t("admin-status-disabled"), "access") }}
         {{ svc("ok" if jitsi_configured else "off", t("admin-svc-jitsi"), t("admin-status-enabled") if jitsi_configured else t("admin-status-disabled"), "meetings") }}
         {{ svc("ok" if meeting_webhook_configured else "off", t("admin-svc-webhook"), t("admin-status-enabled") if meeting_webhook_configured else t("admin-status-disabled"), "meetings") }}
@@ -594,6 +595,38 @@
       <input type="password" name="google_oauth2_client_secret" value="" placeholder="{{ t('admin-keep-unchanged') }}">
     </div>
     <button type="submit" class="adm-btn adm-btn-primary">{{ t("admin-save-google") }}</button>
+  </form>
+</div>
+
+<!-- Microsoft Graph delegated OAuth2 (separate from SSO) -->
+<div class="card">
+  <h2>{{ t("microsoft-calendar-title") }}</h2>
+  <div style="margin-bottom: 1rem; font-size: 0.875rem; color: var(--text-secondary);">
+    {{ t("admin-status") }} {% if microsoft_oauth2_configured %}<strong style="color: var(--success);">{{ t("admin-status-configured") }}</strong>{% else %}<span style="color: var(--text-muted);">{{ t("admin-status-not-configured") }}</span>{% endif %}
+    {% if microsoft_oauth2_client_id %}&middot; {{ t("admin-client-id") }} <span style="color: var(--text-muted);">{{ microsoft_oauth2_client_id }}</span>{% endif %}
+  </div>
+  <form method="post" action="/dashboard/admin/microsoft-oauth2">
+    <p style="font-size: 0.825rem; color: var(--text-muted); margin-bottom: 1rem;">
+      {{ t("microsoft-admin-help") }}
+      {% if microsoft_callback_uri %}<code>{{ microsoft_callback_uri }}</code>{% endif %}
+    </p>
+    {% if not microsoft_callback_uri %}
+    <div class="notice notice--warning" style="margin-bottom: 1rem;">{{ icon("alert") }}<span>{{ t("microsoft-callback-needs-https") }}</span></div>
+    {% endif %}
+    <div class="form-group">
+      <label for="microsoft_oauth2_client_id">{{ t("admin-client-id-label") }}</label>
+      <input type="text" id="microsoft_oauth2_client_id" name="microsoft_oauth2_client_id" value="{{ microsoft_oauth2_client_id }}" placeholder="00000000-0000-0000-0000-000000000000">
+    </div>
+    <div class="form-group">
+      <label for="microsoft_oauth2_client_secret">{{ t("admin-client-secret") }} <span class="hint">{{ t("admin-keep-current-hint") }}</span></label>
+      <input type="password" id="microsoft_oauth2_client_secret" name="microsoft_oauth2_client_secret" value="" autocomplete="new-password" placeholder="{{ t('admin-keep-unchanged') }}">
+    </div>
+    <div class="form-group">
+      <label for="microsoft_oauth2_tenant">{{ t("microsoft-tenant-label") }}</label>
+      <input type="text" id="microsoft_oauth2_tenant" name="microsoft_oauth2_tenant" value="{{ microsoft_oauth2_tenant }}" required>
+      <small style="display: block; margin-top: 0.25rem; color: var(--text-muted); font-size: 0.825rem;">{{ t("microsoft-tenant-help") }}</small>
+    </div>
+    <button type="submit" class="adm-btn adm-btn-primary">{{ t("microsoft-admin-save") }}</button>
   </form>
 </div>
 

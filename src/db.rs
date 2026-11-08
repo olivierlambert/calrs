@@ -1169,18 +1169,25 @@ mod tests {
     async fn migrate_is_idempotent() {
         let pool = memory_pool().await;
         migrate(&pool).await.unwrap();
+        let before: Vec<(String, String)> =
+            sqlx::query_as("SELECT name, applied_at FROM _migrations ORDER BY name")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
         // Running again should not fail or double-apply
         migrate(&pool).await.unwrap();
 
-        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM _migrations")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+        let after: Vec<(String, String)> =
+            sqlx::query_as("SELECT name, applied_at FROM _migrations ORDER BY name")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
         assert_eq!(
-            count.0 as usize,
+            after.len(),
             MIGRATIONS.len(),
             "still one row per migration after a second run"
         );
+        assert_eq!(after, before, "A second run must not reapply migrations");
     }
 
     #[tokio::test]

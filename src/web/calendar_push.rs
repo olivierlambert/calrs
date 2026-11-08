@@ -487,7 +487,8 @@ pub(super) async fn push_to_sources(
 }
 
 /// A calendar client for one of a user's sources, whatever its protocol:
-/// EWS through the provider factory, CalDAV (basic or OAuth2) through
+/// Microsoft Graph through `build_provider_for_source` (token refresh), EWS
+/// through the provider factory, CalDAV (basic or OAuth2) through
 /// `build_client_for_source`. `Ok(None)` for a managed Exchange source with
 /// nothing to do (see [`crate::ews::global::provider_for_source`]).
 #[allow(clippy::too_many_arguments)]
@@ -503,6 +504,11 @@ pub(super) async fn write_provider_for_source(
     token_expires_at: Option<&str>,
     provider_type: &str,
 ) -> anyhow::Result<Option<Box<dyn crate::providers::CalendarProvider>>> {
+    if provider_type == crate::providers::factory::kinds::MICROSOFT {
+        return crate::microsoft_oauth::build_provider_for_source(pool, key, source_id)
+            .await
+            .map(Some);
+    }
     if provider_type == crate::providers::factory::kinds::EWS {
         return crate::ews::global::provider_for_source(
             pool,
@@ -792,42 +798,42 @@ pub(crate) async fn caldav_delete_booking(
         }
     };
 
-    let delete_result = if provider_type == crate::providers::factory::kinds::EWS {
-        let client = match crate::ews::global::provider_for_source(
-            pool,
-            key,
-            &source_id,
-            &url,
-            &username,
-            password_enc.as_deref(),
-        )
-        .await
-        {
-            Ok(Some(c)) => c,
-            _ => return,
-        };
-        client.delete_event(&calendar_href, booking_uid).await
-    } else {
-        let client = match crate::oauth2_caldav::build_client_for_source(
-            pool,
-            key,
-            &source_id,
-            &url,
-            &auth_type,
-            &username,
-            password_enc.as_deref(),
-            access_token_enc.as_deref(),
-            token_expires_at.as_deref(),
-        )
-        .await
-        {
-            Ok(c) => c,
-            Err(_) => return,
-        };
-        client.delete_event(&calendar_href, booking_uid).await
+    let delete_result = match write_provider_for_source(
+        pool,
+        key,
+        &source_id,
+        &url,
+        &username,
+        password_enc.as_deref(),
+        &auth_type,
+        access_token_enc.as_deref(),
+        token_expires_at.as_deref(),
+        &provider_type,
+    )
+    .await
+    {
+        Ok(Some(client)) => client.delete_event(&calendar_href, booking_uid).await,
+        // A managed Exchange source with nothing to do.
+        Ok(None) => return,
+        Err(error) => Err(error),
     };
     if let Err(e) = delete_result {
         tracing::error!(uid = %booking_uid, error = %e, "calendar event delete failed");
+    }
+    // A push under the source setting writes the booking to the write
+    // calendar of every source of the host, not only the one stored (a
+    // CalDAV source and a Microsoft one, say), and those copies are not
+    // recorded: delete them by uid too, skipping each place already tried
+    // (the stored one, and the recorded copies deleted above), as
+    // `caldav_delete_for_user` does.
+    for row in default_write_sources(pool, cache_user).await {
+        let tried = (row.0 == source_id && row.4 == calendar_href)
+            || tracked
+                .iter()
+                .any(|(sid, href)| *sid == row.0 && *href == row.4);
+        if !tried {
+            delete_from(pool, key, &row, booking_uid, DeleteKind::Ended).await;
+        }
     }
 
     // Also remove the cached event from local DB so it doesn't block availability

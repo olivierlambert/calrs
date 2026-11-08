@@ -139,6 +139,56 @@ async fn confirm_pending_booking_via_dashboard() {
     );
 }
 
+/// An approval refused because a host's Microsoft calendar has not
+/// finished its first sync says so, rather than calling the host busy; the
+/// sources page and the troubleshoot view explain the state too.
+#[tokio::test]
+async fn an_unsynced_microsoft_calendar_is_named_as_the_reason() {
+    let (app, pool, session, et_id) = setup_test_app().await;
+    sqlx::query("INSERT INTO caldav_sources (id, account_id, name, url, username, provider_type) SELECT 'ms', a.id, 'Microsoft Calendar', 'https://graph.microsoft.com/v1.0', 'u', 'microsoft' FROM accounts a JOIN event_types et ON et.account_id = a.id WHERE et.id = ?")
+        .bind(&et_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let booking_id = uuid::Uuid::new_v4().to_string();
+    sqlx::query("INSERT INTO bookings (id, event_type_id, uid, guest_name, guest_email, guest_timezone, start_at, end_at, status, cancel_token, reschedule_token, confirm_token) VALUES (?, ?, 'uid-unsynced', 'Guest', 'guest@test.com', 'UTC', '2030-06-17T10:00:00Z', '2030-06-17T10:30:00Z', 'pending', 'ct-u', 'rt-u', 'cf-u')")
+        .bind(&booking_id)
+        .bind(&et_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let csrf = "test-csrf-unsynced";
+    let response = app
+        .clone()
+        .oneshot(post_form(
+            &format!("/dashboard/bookings/{booking_id}/confirm"),
+            &session,
+            csrf,
+            &format!("_csrf={csrf}"),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        response.headers().get("location").unwrap(),
+        "/dashboard/bookings?error=host-not-synced"
+    );
+    let page = |uri: &'static str| {
+        let app = app.clone();
+        let session = session.clone();
+        async move { body_string(app.oneshot(get_authed(uri, &session)).await.unwrap()).await }
+    };
+    let message = |key| crate::i18n::translate("en", key, None).replace('\'', "&#x27;");
+    assert!(page("/dashboard/bookings?error=host-not-synced")
+        .await
+        .contains(&message("bae-body-host-not-synced")));
+    assert!(page("/dashboard/sources")
+        .await
+        .contains(&message("sources-microsoft-not-ready")));
+    assert!(page("/dashboard/troubleshoot")
+        .await
+        .contains(&message("troubleshoot-microsoft-not-ready")));
+}
+
 #[tokio::test]
 async fn cancel_booking_via_dashboard() {
     let (app, pool, session, et_id) = setup_test_app().await;
@@ -609,7 +659,7 @@ fn compute_initials_empty() {
     assert_eq!(compute_initials(""), "?");
 }
 
-// --- Dashboard with cancelled bookings (shouldn't show) ---
+// --- Dashboard with cancelled bookings (not among the upcoming ones) ---
 
 #[tokio::test]
 async fn dashboard_bookings_hides_cancelled() {
@@ -632,10 +682,15 @@ async fn dashboard_bookings_hides_cancelled() {
         .await
         .unwrap();
     let body = body_string(response).await;
+    // Listed under "Cancelled and declined", never under the upcoming ones.
+    let upcoming = body.find("aria-labelledby=\"bk-upcoming\"").unwrap();
+    let cancelled = body.find("aria-labelledby=\"bk-cancelled\"").unwrap();
+    assert!(upcoming < cancelled);
     assert!(
-        !body.contains("Cancelled Guest"),
+        !body[upcoming..cancelled].contains("Cancelled Guest"),
         "Cancelled bookings should not appear in upcoming"
     );
+    assert!(body[cancelled..].contains("Cancelled Guest"));
 }
 
 // --- Pending bookings show on dashboard ---

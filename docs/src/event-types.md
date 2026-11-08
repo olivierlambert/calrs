@@ -58,9 +58,11 @@ calrs event-type create \
 
 When you have multiple CalDAV calendars, you can choose **which calendars block availability** for each event type. For example, a "Work meeting" event type can check only the work calendar, while a "Personal chat" checks only the personal calendar.
 
-From the dashboard form, select the calendars under the **Calendars** section. Only calendars marked as "busy" (`is_busy=1`) appear.
+From the dashboard form, select the calendars under the **Calendars** section. Every synced calendar of your sources appears there: a calendar turned off under **Calendars** on its source is never read, so it cannot block an event type. If none of the calendars an event type selected is synced any more, the event type checks every busy calendar again.
 
-**Default behavior:** If no calendars are selected, all busy calendars are checked — same as before. This is fully backward-compatible.
+**Default behavior:** If no calendars are selected, every busy calendar is checked, as before. That leaves out calendars colleagues shared with you, which start outside the busy calendars: to check one, select every calendar that should block, shared ones included.
+
+A Microsoft 365 calendar a colleague shared with you starts outside the busy calendars, and calrs has no setting that adds it: it counts only for the event types that select it (see [Microsoft Calendar](./microsoft-calendar.md#calendars-shared-by-colleagues)).
 
 The other direction, **which calendar receives the confirmed bookings**, can also be chosen per event type: **"Write confirmed bookings to"** in the same section. See [CalDAV write-back](./caldav.md#per-event-type-write-confirmed-bookings-to); for a team event type, each member chooses on the Calendar sources page.
 
@@ -377,7 +379,7 @@ To block the same dates on every event type at once, use time off instead.
 - on a **collective** team event type the slot is gone, since everyone has to be there;
 - a guest's reschedule onto the period and the approval of a request that falls in it are refused, as for a conflicting calendar event.
 
-A period is a start date and an end date, both included, with optional times to block part of a day (from 14:00, or until 12:00). Times are in your profile time zone; a period keeps the zone it was entered in, and the list says so if you change your profile zone later. An optional note is shown only to you, on the Time off page and in **Troubleshoot**, where the period appears as "Time off". Guests only ever see that the times are not available, and teammates see nothing. An admin viewing your dashboard as you sees your periods read-only, without the notes.
+A period is a start date and an end date, both included, with optional times to block part of a day (from 14:00, or until 12:00). Times are in your profile time zone; a period keeps the zone it was entered in, and the list says so if you change your profile zone later. An optional note is shown only to you, on the Time off page and in **Troubleshoot**, where the period appears as "Time off". Guests only ever see that the times are not available. The admins of your teams see that you are away, the dates and times without the note, in a read-only Time off section of the team settings page; other teammates see nothing. The Time off page says so under the note field. An admin viewing your dashboard as you sees your periods read-only, without the notes.
 
 Bookings already made inside a new period are **kept**: adding time off cancels nothing. Cancel or reschedule them from **Bookings** if you need to. A request still waiting for your approval inside a period can no longer be approved (the host is busy at that time): decline it, or delete the time off first. Ended periods drop off the list and are deleted 30 days after they end. On the overview, time off closes the hours it covers on the day ruler and the week.
 

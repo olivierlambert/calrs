@@ -45,6 +45,8 @@ impl CalendarProvider for CaldavProvider {
                 color: c.color,
                 change_marker: c.ctag,
                 sync_state: c.sync_token,
+                read_only: false,
+                shared: false,
             })
             .collect())
     }

@@ -1826,7 +1826,14 @@ async fn api_slots_skip_a_repeated_hour_as_the_booking_check_does() {
 async fn the_daily_cap_holds_under_concurrency_and_refusals_give_their_place_back() {
     let _lock = crate::test_support::ENV_LOCK.lock().await;
     let _env = super::oauth::environment();
-    let (app, pool, _, et_id) = setup_test_app().await;
+    // Each of the ten bookings below holds a connection for its transaction
+    // and reads on another. On the usual two-connection pool, two requests
+    // holding both connections in their transactions starved each other's
+    // reads until sqlx's 30 second acquire timeout, again and again: the
+    // test took minutes, which under tarpaulin, with every other test of
+    // the ENV_LOCK queued behind it, exceeded its 60 second silence limit.
+    // Eleven connections always leave one free for a read.
+    let (app, pool, _, et_id) = setup_test_app_with(11).await;
     let owner = user_id(&pool, "testuser").await;
     let token = pat(&pool, &owner, ALL).await;
     let log_count = || async {
@@ -1886,8 +1893,8 @@ async fn the_daily_cap_holds_under_concurrency_and_refusals_give_their_place_bac
             other => panic!("unexpected {other}"),
         }
     }
-    // The test pool has two connections, so some of the ten can also lose
-    // in the booking core (409); whatever happens, the cap holds.
+    // Some of the ten can also lose in the booking core (409), to SQLite's
+    // locking; whatever happens, the cap holds.
     assert!(created <= 2, "{created} created");
     assert!(capped + created <= 10);
     assert_eq!(log_count().await, 48 + created);

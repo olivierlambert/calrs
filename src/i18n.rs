@@ -904,6 +904,7 @@ mod tests {
         const KEY_TAKING_HELPERS: &[&str] = &[
             "render_booking_action_error_keys_in(",
             "status_subject(",
+            "microsoft_failure(",
             "BookingRefusal::Plain(",
             "BookingRefusal::Keys(",
         ];

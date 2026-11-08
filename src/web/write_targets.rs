@@ -719,9 +719,9 @@ pub(super) async fn hosts_event_type(
         > 0
 }
 
-/// The calendars `user_id` can choose from: every calendar of their own
-/// enabled sources, synced or not, as a source's write calendar can be
-/// (#324). Each as (calendar id, "calendar (source)").
+/// The calendars `user_id` can choose from: every writable calendar of
+/// their own enabled sources, synced or not, as a source's write calendar
+/// can be (#324). Each as (calendar id, "calendar (source)").
 pub(super) async fn destination_choices(pool: &SqlitePool, user_id: &str) -> Vec<(String, String)> {
     // A calendar of a managed Exchange source only while that source is
     // active: its owner enabled and trusted, global Exchange on.
@@ -729,7 +729,9 @@ pub(super) async fn destination_choices(pool: &SqlitePool, user_id: &str) -> Vec
         "SELECT c.id, c.display_name, c.href, cs.name FROM calendars c
          JOIN caldav_sources cs ON cs.id = c.source_id
          JOIN accounts a ON a.id = cs.account_id
-         WHERE a.user_id = ? AND cs.enabled = 1 AND {ACTIVE}
+         -- A calendar the account cannot write to (Graph canEdit false)
+         -- cannot receive bookings.
+         WHERE a.user_id = ? AND cs.enabled = 1 AND c.read_only = 0 AND {ACTIVE}
          ORDER BY cs.name, c.display_name, c.href",
         ACTIVE = crate::ews::global::ACTIVE_SOURCE_SQL
     ))
@@ -746,7 +748,8 @@ pub(super) async fn destination_choices(pool: &SqlitePool, user_id: &str) -> Vec
 }
 
 /// Whether `calendar_id` is a calendar `user_id` may choose (see
-/// [`destination_choices`]). An empty id, the source setting, always is.
+/// [`destination_choices`]): theirs, on an enabled source, and writable. An
+/// empty id, the source setting, always is.
 pub(super) async fn is_destination_choice(
     pool: &SqlitePool,
     user_id: &str,
@@ -759,7 +762,7 @@ pub(super) async fn is_destination_choice(
         "SELECT COUNT(*) FROM calendars c
          JOIN caldav_sources cs ON cs.id = c.source_id
          JOIN accounts a ON a.id = cs.account_id
-         WHERE c.id = ? AND a.user_id = ? AND cs.enabled = 1 AND {ACTIVE}",
+         WHERE c.id = ? AND a.user_id = ? AND cs.enabled = 1 AND c.read_only = 0 AND {ACTIVE}",
         ACTIVE = crate::ews::global::ACTIVE_SOURCE_SQL
     ))
     .bind(calendar_id)

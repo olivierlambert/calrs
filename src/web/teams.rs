@@ -537,6 +537,31 @@ pub(super) async fn team_settings_page(
         })
         .collect();
 
+    // Upcoming time off of the members (#46), in the viewer's zone, without
+    // the private labels. Read-only, so a failed read only hides it.
+    let viewer_tz: Tz = user.timezone.parse().unwrap_or(Tz::UTC);
+    let now = Utc::now();
+    let time_off = crate::time_off::upcoming_for_team(&state.pool, &tid, now)
+        .await
+        .unwrap_or_else(|e| {
+            tracing::warn!(team_id = %tid, error = %e, "cannot read the members' time off");
+            Vec::new()
+        });
+    let time_off_ctx: Vec<minijinja::Value> = time_off
+        .into_iter()
+        .map(|(name, period)| {
+            let shown = crate::time_off::Period {
+                tz: viewer_tz,
+                ..period
+            };
+            context! {
+                name => name,
+                range => super::time_off::period_range_label(&shown, auth_user.lang),
+                in_progress => shown.in_progress(now),
+            }
+        })
+        .collect();
+
     // All enabled users for the member picker
     let all_users: Vec<(String, String, String, Option<String>)> = sqlx::query_as(
         "SELECT id, name, email, avatar_path FROM users WHERE enabled = 1 ORDER BY name",
@@ -618,6 +643,8 @@ pub(super) async fn team_settings_page(
             all_users => all_users_ctx,
             oidc_groups => if groups_ctx.is_empty() { None } else { Some(groups_ctx) },
             linked_groups => linked_groups_ctx,
+            time_off => time_off_ctx,
+            viewer_timezone => viewer_tz.name(),
             success => query
                 .get("success")
                 .map(|_| crate::i18n::translate(auth_user.lang, "settings-saved", None)),

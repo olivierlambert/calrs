@@ -8,6 +8,8 @@ use super::*;
 pub(super) struct SourcesQuery {
     /// Outcome of the last "Bookings by meeting" save: `saved` or `refused`.
     destinations: Option<String>,
+    /// A refused write destination (`write-calendar`).
+    error: Option<String>,
 }
 
 pub(super) async fn dashboard_sources(
@@ -16,6 +18,12 @@ pub(super) async fn dashboard_sources(
     Query(query): Query<SourcesQuery>,
 ) -> impl IntoResponse {
     let user = &auth_user.user;
+    let error_message = match query.error.as_deref() {
+        Some("write-calendar") => {
+            crate::i18n::translate(auth_user.lang, "sources-write-calendar-refused", None)
+        }
+        _ => String::new(),
+    };
 
     #[allow(clippy::type_complexity)]
     let sources: Vec<(
@@ -30,9 +38,10 @@ pub(super) async fn dashboard_sources(
         String,
         Option<String>,
         Option<String>,
+        Option<String>,
         bool,
     )> = sqlx::query_as(
-        "SELECT cs.id, cs.name, cs.url, cs.username, cs.last_synced, cs.enabled, cs.write_calendar_href, cs.auth_type, cs.provider_type, cs.last_sync_error, cs.sync_failing_since, cs.managed
+        "SELECT cs.id, cs.name, cs.url, cs.username, cs.last_synced, cs.enabled, cs.write_calendar_href, cs.auth_type, cs.provider_type, cs.last_sync_error, cs.sync_failing_since, cs.last_full_sync, cs.managed
          FROM caldav_sources cs
          JOIN accounts a ON a.id = cs.account_id
          WHERE a.user_id = ?
@@ -43,8 +52,10 @@ pub(super) async fn dashboard_sources(
     .await
     .unwrap_or_default();
 
-    let all_calendars: Vec<(String, String, Option<String>, bool)> = sqlx::query_as(
-        "SELECT c.source_id, c.href, c.display_name, c.sync_enabled
+    // Every calendar of the user's sources, for the synced count (#324) and
+    // the write-back choices.
+    let all_calendars: Vec<(String, String, Option<String>, bool, bool)> = sqlx::query_as(
+        "SELECT c.source_id, c.href, c.display_name, c.sync_enabled, c.read_only
          FROM calendars c
          JOIN caldav_sources cs ON cs.id = c.source_id
          JOIN accounts a ON a.id = cs.account_id
@@ -71,26 +82,43 @@ pub(super) async fn dashboard_sources(
                 provider_type,
                 last_sync_error,
                 sync_failing_since,
+                last_full_sync,
                 managed,
             )| {
-                // Every calendar can receive bookings, synced or not (#324).
-                let cals: Vec<minijinja::Value> = all_calendars
-                    .iter()
-                    .filter(|(sid, _, _, _)| sid == id)
-                    .map(|(_, href, display, _)| {
+                let source_calendars = || all_calendars.iter().filter(|c| &c.0 == id);
+                // A Microsoft source with no complete snapshot yet makes its
+                // owner busy everywhere (`microsoft_coverage_gap`).
+                let not_ready = *enabled
+                    && provider_type == crate::providers::factory::kinds::MICROSOFT
+                    && last_full_sync.is_none();
+                // Write-back choices: every calendar can receive bookings,
+                // synced or not (#324), except one the account cannot write
+                // to, unless it is already the one configured.
+                let cals: Vec<minijinja::Value> = source_calendars()
+                    .filter(|(_, href, _, _, read_only)| {
+                        !*read_only || write_cal.as_deref() == Some(href.as_str())
+                    })
+                    .map(|(_, href, display, _, _)| {
                         context! {
                             href => href,
                             name => display.as_deref().unwrap_or(href),
                         }
                     })
                     .collect();
-                let synced_count = all_calendars
-                    .iter()
-                    .filter(|(sid, _, _, sync_enabled)| sid == id && *sync_enabled)
+                // Selected before the account lost write access: still
+                // shown, with a warning, since its writes now fail.
+                let write_calendar_read_only =
+                    source_calendars().any(|(_, href, _, _, read_only)| {
+                        *read_only && write_cal.as_deref() == Some(href.as_str())
+                    });
+                let calendar_count = source_calendars().count();
+                let synced_count = source_calendars()
+                    .filter(|(_, _, _, sync_enabled, _)| *sync_enabled)
                     .count();
                 context! {
                     id => id,
                     synced_count => synced_count,
+                    calendar_count => calendar_count,
                     id_short => &id[..8.min(id.len())],
                     name => name,
                     url => url,
@@ -105,6 +133,8 @@ pub(super) async fn dashboard_sources(
                     sync_failing_since => sync_failing_since.as_deref().unwrap_or(""),
                     enabled => enabled,
                     write_calendar_href => write_cal.as_deref().unwrap_or(""),
+                    write_calendar_read_only => write_calendar_read_only,
+                    not_ready => not_ready,
                     auth_type => auth_type,
                     provider_type => provider_type,
                     provider_label => crate::providers::factory::label(provider_type),
@@ -160,6 +190,7 @@ pub(super) async fn dashboard_sources(
             sidebar => sidebar_context(&auth_user, "sources"),
             lang => auth_user.lang,
             sources => sources_ctx,
+            error => error_message,
             destinations => destinations,
             destination_calendars => destination_calendars,
             destinations_status => destinations_status,
@@ -248,7 +279,7 @@ fn caldav_providers() -> Vec<(&'static str, &'static str, &'static str, &'static
         ("google", "Google Calendar", "", "caldav"),
         (
             "exchange",
-            "Microsoft Exchange (EWS)",
+            "Microsoft Exchange on-premises (EWS)",
             "https://mail.example.com/EWS/Exchange.asmx",
             "ews",
         ),
@@ -273,15 +304,7 @@ pub(super) async fn new_source_form(
         .map(|(id, name, url, backend)| context! { id => id, name => name, url => url, backend => backend })
         .collect();
 
-    let google_configured: bool = sqlx::query_scalar::<_, Option<String>>(
-        "SELECT google_oauth2_client_id FROM auth_config LIMIT 1",
-    )
-    .fetch_optional(&state.pool)
-    .await
-    .unwrap_or(None)
-    .flatten()
-    .map(|s| !s.is_empty())
-    .unwrap_or(false);
+    let (google_configured, microsoft_configured) = oauth_connect_configured(&state).await;
 
     let (impersonating, impersonating_name, _) = impersonation_ctx(&auth_user);
     Html(
@@ -294,6 +317,7 @@ pub(super) async fn new_source_form(
             form_username => "",
             error => "",
             google_oauth2_configured => google_configured,
+            microsoft_oauth2_configured => microsoft_configured,
             sidebar => sidebar_context(&auth_user, "sources"),
             lang => auth_user.lang,
             impersonating => impersonating,
@@ -334,6 +358,7 @@ pub(super) async fn create_source(
                 &crate::i18n::translate(auth_user.lang, "form-error-no-account", None),
                 &form,
             )
+            .await
             .into_response()
         }
     };
@@ -349,20 +374,25 @@ pub(super) async fn create_source(
             &crate::i18n::translate(auth_user.lang, "form-error-all-fields-required", None),
             &form,
         )
+        .await
         .into_response();
     }
 
     let provider_type = match parse_provider_type(form.provider_type.as_deref()) {
         Ok(p) => p,
         Err(msg) => {
-            return render_source_form_error(&state, &auth_user, &msg, &form).into_response();
+            return render_source_form_error(&state, &auth_user, &msg, &form)
+                .await
+                .into_response();
         }
     };
 
     // Validate URL against SSRF (HTTPS-only, no private targets) for both
     // CalDAV and EWS — the validator is shared.
     if let Err(e) = crate::providers::factory::validate_url(&provider_type, &url) {
-        return render_source_form_error(&state, &auth_user, &e.to_string(), &form).into_response();
+        return render_source_form_error(&state, &auth_user, &e.to_string(), &form)
+            .await
+            .into_response();
     }
 
     // Test connection unless skip requested
@@ -374,6 +404,7 @@ pub(super) async fn create_source(
                 Ok(c) => c,
                 Err(e) => {
                     return render_source_form_error(&state, &auth_user, &e.to_string(), &form)
+                        .await
                         .into_response();
                 }
             };
@@ -386,7 +417,9 @@ pub(super) async fn create_source(
                     "error",
                     &e.to_string(),
                 );
-                return render_source_form_error(&state, &auth_user, &msg, &form).into_response();
+                return render_source_form_error(&state, &auth_user, &msg, &form)
+                    .await
+                    .into_response();
             }
         }
     }
@@ -445,7 +478,24 @@ pub(super) async fn create_source(
     Redirect::to("/dashboard/sources").into_response()
 }
 
-fn render_source_form_error(
+/// Whether the Google and Microsoft connect cards can start a flow.
+async fn oauth_connect_configured(state: &AppState) -> (bool, bool) {
+    let google = sqlx::query_scalar::<_, Option<String>>(
+        "SELECT google_oauth2_client_id FROM auth_config LIMIT 1",
+    )
+    .fetch_optional(&state.pool)
+    .await
+    .unwrap_or(None)
+    .flatten()
+    .map(|s| !s.is_empty())
+    .unwrap_or(false);
+    let microsoft = crate::microsoft_oauth::load_config(&state.pool)
+        .await
+        .is_ok();
+    (google, microsoft)
+}
+
+async fn render_source_form_error(
     state: &AppState,
     auth_user: &crate::auth::AuthUser,
     error: &str,
@@ -461,6 +511,7 @@ fn render_source_form_error(
         .map(|(id, name, url, backend)| context! { id => id, name => name, url => url, backend => backend })
         .collect();
 
+    let (google_configured, microsoft_configured) = oauth_connect_configured(state).await;
     let (impersonating, impersonating_name, _) = impersonation_ctx(auth_user);
     Html(
         tmpl.render(context! {
@@ -471,6 +522,8 @@ fn render_source_form_error(
             form_url => form.url.as_str(),
             form_username => form.username.as_str(),
             error => error,
+            google_oauth2_configured => google_configured,
+            microsoft_oauth2_configured => microsoft_configured,
             sidebar => sidebar_context(auth_user, "sources"),
             lang => auth_user.lang,
             impersonating => impersonating,
@@ -813,7 +866,25 @@ pub(super) async fn test_source(
 
     // EWS sources go through the provider trait; CalDAV (basic or OAuth2) keeps
     // the existing CaldavClient path so OAuth2 refresh + ctag stay intact.
-    let result = if provider_type == crate::providers::factory::kinds::EWS {
+    let result = if provider_type == crate::providers::factory::kinds::MICROSOFT {
+        match crate::microsoft_oauth::build_provider_for_source(
+            &state.pool,
+            &state.secret_key,
+            &source_id,
+        )
+        .await
+        {
+            Ok(client) => match client.check_connection().await {
+                Ok(true) => {
+                    crate::i18n::translate(auth_user.lang, "source-test-microsoft-ok", None)
+                }
+                _ => crate::i18n::translate(auth_user.lang, "source-test-microsoft-failed", None),
+            },
+            Err(_) => {
+                crate::i18n::translate(auth_user.lang, "source-test-microsoft-credentials", None)
+            }
+        }
+    } else if provider_type == crate::providers::factory::kinds::EWS {
         let provider = crate::ews::global::provider_for_source(
             &state.pool,
             &state.secret_key,
@@ -1235,7 +1306,7 @@ pub(super) async fn setup_write_calendar(
     let calendars: Vec<(String, Option<String>, Option<String>, i64)> = sqlx::query_as(
         "SELECT c.href, c.display_name, c.color,
                 (SELECT COUNT(*) FROM events e WHERE e.calendar_id = c.id) as event_count
-         FROM calendars c WHERE c.source_id = ?
+         FROM calendars c WHERE c.source_id = ? AND c.read_only = 0
          ORDER BY event_count DESC, c.display_name",
     )
     .bind(&source_id)
@@ -1316,6 +1387,22 @@ pub(super) async fn set_write_calendar(
     } else {
         Some(form.calendar_href)
     };
+    // A destination must be one of this source's calendars that the account
+    // can write to; an empty one turns write-back off. A refusal says so.
+    if href.is_some() {
+        let writable: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM calendars WHERE source_id = ? AND href = ? AND read_only = 0)",
+        )
+        .bind(&source_id)
+        .bind(&href)
+        .fetch_one(&state.pool)
+        .await
+        .unwrap_or(false);
+        if !writable {
+            tracing::info!(source_id = %source_id, "write calendar refused: not a writable calendar of the source");
+            return Redirect::to("/dashboard/sources?error=write-calendar").into_response();
+        }
+    }
 
     // Only one of this source's own calendars, the ones the page offers. Any
     // other href would send bookings to a folder the source does not read:
