@@ -26,19 +26,22 @@ pub const SCOPES: [&str; 3] = ["event-types:read", "calendar:read", "invites:wri
 const CONTINUE_COOKIE: &str = "__Host-calrs_oauth";
 const ACCESS_LIFETIME: i64 = 3600;
 const GRANT_LIFETIME: i64 = 30 * 86400;
-/// A registered client that never obtained a grant is dropped after a day, so
-/// anonymous registrations cannot hold the client cap for long.
-const UNUSED_CLIENT_LIFETIME: i64 = 86400;
+/// A registered client that never obtained a grant is dropped after 30 days:
+/// long enough for a user who denied, or gave up during login or MFA setup,
+/// to retry with the same client; abuse is bounded by the per-address cap.
+const UNUSED_CLIENT_LIFETIME: i64 = 30 * 86400;
 /// A client once granted is kept this long after its last grant, so an MCP
 /// client whose grant was revoked or expired can simply authorize again.
 const GRANTED_CLIENT_LIFETIME: i64 = 180 * 86400;
 /// Clients never granted, registered from one address (`rate_key`) within
-/// a day, beyond which that address cannot register more.
+/// UNUSED_CLIENT_LIFETIME, beyond which that address cannot register more.
+/// Not applied to the "unknown" address (no X-Forwarded-For), which every
+/// registrant would share.
 const PENDING_CLIENTS_PER_ADDRESS: i64 = 50;
 /// The clients cleanup and the cap may remove, as a condition on `c`, binding
 /// now, now - UNUSED_CLIENT_LIFETIME and now - GRANTED_CLIENT_LIFETIME: no
 /// grant left, no authorization a signed-in user is looking at, and either
-/// never granted and over a day old, or last granted over 180 days ago.
+/// never granted and over 30 days old, or last granted over 180 days ago.
 const RECLAIMABLE_CLIENT: &str = "NOT EXISTS (SELECT 1 FROM oauth_grants g WHERE g.client_id = c.id)
     AND NOT EXISTS (SELECT 1 FROM oauth_requests r WHERE r.client_id = c.id AND r.user_id IS NOT NULL AND r.expires_at > ?)
     AND ((c.last_granted_at IS NULL AND c.created_at < ?) OR c.last_granted_at < ?)";
@@ -451,7 +454,7 @@ async fn register(
         .bind(now - UNUSED_CLIENT_LIFETIME)
         .fetch_one(&mut *tx)
         .await?;
-    if pending >= PENDING_CLIENTS_PER_ADDRESS {
+    if pending >= PENDING_CLIENTS_PER_ADDRESS && rate_key(&headers) != "unknown" {
         return Err(Error(
             StatusCode::TOO_MANY_REQUESTS,
             "temporarily_unavailable",
@@ -583,7 +586,10 @@ async fn consent_page(
     let lang = crate::i18n::resolve(user.language.as_deref(), &headers);
     let body = state.templates.get_template("auth/consent.html")
         .and_then(|t| t.render(minijinja::context! {
-            lang => lang, email => user.email, client_name => name, redirect_uri => params.redirect_uri,
+            // The parsed form, which `consent` redirects to: a backslash, a
+            // percent-encoded or numeric host would read differently raw.
+            lang => lang, email => user.email, client_name => name,
+            redirect_uri => Url::parse(&params.redirect_uri).map(|u| u.as_str().to_string()).unwrap_or_default(),
             redirect_host => Url::parse(&params.redirect_uri).ok().and_then(|u| u.host_str().map(str::to_string)),
             events => scopes.split_whitespace().any(|s| s == SCOPES[0]),
             blocks => scopes.split_whitespace().any(|s| s == SCOPES[1]),

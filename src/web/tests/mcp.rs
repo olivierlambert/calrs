@@ -750,14 +750,23 @@ async fn mcp_admin_tokens_get_no_reach_over_other_users_event_types() {
 }
 
 #[tokio::test]
-async fn mcp_requests_are_rate_limited_per_user() {
+async fn mcp_tool_calls_are_rate_limited_per_user() {
     let _lock = crate::test_support::ENV_LOCK.lock().await;
     let _env = oauth::environment();
     let (app, _, session, _) = setup_test_app().await;
     let (_, tokens) = oauth::issue_tokens(&app, &session).await;
     let token = tokens["access_token"].as_str().unwrap();
     let list = json!({"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"list_event_types","arguments":{}}});
+    let ping = json!({"jsonrpc":"2.0","id":8,"method":"ping"});
+    // A stateless client pings around each call: still 120 tool calls.
     for _ in 0..120 {
+        let status = app
+            .clone()
+            .oneshot(rpc(token, ping.clone()))
+            .await
+            .unwrap()
+            .status();
+        assert_eq!(status, StatusCode::OK);
         let status = app
             .clone()
             .oneshot(rpc(token, list.clone()))
@@ -773,8 +782,16 @@ async fn mcp_requests_are_rate_limited_per_user() {
         .unwrap()
         .status();
     assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
-    // Every request counts, not only tool calls.
-    let ping = json!({"jsonrpc":"2.0","id":8,"method":"ping"});
+    // Other requests have their own, looser budget: 600 per minute.
+    for _ in 0..480 {
+        let status = app
+            .clone()
+            .oneshot(rpc(token, ping.clone()))
+            .await
+            .unwrap()
+            .status();
+        assert_eq!(status, StatusCode::OK);
+    }
     let status = app
         .clone()
         .oneshot(rpc(token, ping))

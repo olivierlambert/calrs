@@ -803,7 +803,7 @@ async fn oauth_registration_refuses_spoofing_names_and_expires_unused_clients() 
     }
     let unused = register_client(&app).await;
     let (used, _) = issue_tokens(&app, &session).await;
-    sqlx::query("UPDATE oauth_clients SET created_at = created_at - 2 * 86400")
+    sqlx::query("UPDATE oauth_clients SET created_at = created_at - 31 * 86400")
         .execute(&pool)
         .await
         .unwrap();
@@ -1544,4 +1544,135 @@ async fn oauth_registration_accepts_common_client_shapes() {
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn oauth_consent_shows_the_callback_the_browser_will_follow() {
+    let _lock = crate::test_support::ENV_LOCK.lock().await;
+    let _env = environment();
+    let (app, _, session, _) = setup_test_app().await;
+    for (registered, host, raw) in [
+        (
+            "https://evil.example\\@trusted.example/cb",
+            "evil.example",
+            "\\@trusted",
+        ),
+        ("https://%65vil.example/cb", "evil.example", "%65vil"),
+        ("https://0x7f.0.0.1/cb", "127.0.0.1", "0x7f"),
+        ("https://127.1/cb", "127.0.0.1", "127.1/"),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/oauth/register")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        json!({"client_name": "Look", "redirect_uris": [registered]}).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CREATED, "{registered}");
+        let client = json_body(response).await["client_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let uri = format!("/oauth/authorize?client_id={client}&redirect_uri={}&response_type=code&code_challenge={}&code_challenge_method=S256&resource={}", urlencoding::encode(registered), crate::oauth::hash(VERIFIER), urlencoding::encode(RESOURCE));
+        let response = app.clone().oneshot(get(&uri)).await.unwrap();
+        assert_eq!(response.status(), StatusCode::SEE_OTHER, "{registered}");
+        let request = request_cookie(&response);
+        let html = body_string(
+            app.clone()
+                .oneshot(
+                    Request::builder()
+                        .uri("/oauth/consent")
+                        .header(
+                            "cookie",
+                            format!("__Host-calrs_session={session}; __Host-calrs_oauth={request}"),
+                        )
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert!(
+            html.contains(&format!(
+                "<p class=\"oauth-consent-host\"><strong>{host}</strong></p>"
+            )),
+            "{registered}: {html}"
+        );
+        let shown = html.replace("&#x2f;", "/");
+        let parsed = reqwest::Url::parse(registered).unwrap();
+        assert!(shown.contains(parsed.as_str()), "{registered}");
+        assert!(!shown.contains(raw), "{registered} shown raw");
+        // The consent redirect goes to that same parsed URL.
+        let response = app
+            .clone()
+            .oneshot(consent_request(&session, &request, "deny", "csrf"))
+            .await
+            .unwrap();
+        let location = response.headers()["location"].to_str().unwrap();
+        assert!(location.starts_with(parsed.as_str()), "{location}");
+    }
+}
+
+#[tokio::test]
+async fn oauth_per_address_client_cap_is_off_without_a_forwarded_address() {
+    let _lock = crate::test_support::ENV_LOCK.lock().await;
+    let _env = environment();
+    let (app, pool, _, _) = setup_test_app().await;
+    sqlx::query(
+        "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 60)
+         INSERT INTO oauth_clients (id, name, redirect_uris, created_at, registered_by)
+         SELECT 'pending-' || i, 'Pending', '[]', CAST(strftime('%s', 'now') AS INTEGER), ? FROM n",
+    )
+    .bind(crate::oauth::hash("unknown"))
+    .execute(&pool)
+    .await
+    .unwrap();
+    // No X-Forwarded-For: every registrant would share "unknown".
+    register_client(&app).await;
+}
+
+#[tokio::test]
+async fn oauth_a_client_nobody_approved_survives_a_month() {
+    let _lock = crate::test_support::ENV_LOCK.lock().await;
+    let _env = environment();
+    let (app, pool, _, _) = setup_test_app().await;
+    let client = register_client(&app).await;
+    sqlx::query("UPDATE oauth_clients SET created_at = created_at - 29 * 86400")
+        .execute(&pool)
+        .await
+        .unwrap();
+    crate::oauth::cleanup(&pool).await.unwrap();
+    let status = app
+        .clone()
+        .oneshot(get(&authorization_uri(&client)))
+        .await
+        .unwrap()
+        .status();
+    assert_eq!(
+        status,
+        StatusCode::SEE_OTHER,
+        "retry after a denial still works"
+    );
+    sqlx::query("DELETE FROM oauth_requests")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE oauth_clients SET created_at = created_at - 2 * 86400")
+        .execute(&pool)
+        .await
+        .unwrap();
+    crate::oauth::cleanup(&pool).await.unwrap();
+    let left: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM oauth_clients")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(left, 0);
 }

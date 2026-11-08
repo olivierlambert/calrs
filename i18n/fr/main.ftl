@@ -1977,11 +1977,11 @@ admin-figures-cached = Chiffres des réservations calculés il y a { $seconds } 
 
 # OAuth connection consent (templates/auth/consent.html)
 oauth-title = Connecter une application
-oauth-intro = Autoriser cette application à accéder à calrs en tant que { $email } ? Le nom de l’application est fourni par son développeur. Vérifiez l’adresse de retour avant d’autoriser l’accès.
-oauth-events = Consulter les types d’événements auxquels vous avez accès
+oauth-intro = Autoriser cette application à accéder à calrs en tant que { $email } ? Le nom de l'application est fourni par son développeur. Vérifiez l'adresse de retour avant d'autoriser l'accès.
+oauth-events = Consulter les types d'événements auxquels vous avez accès
 oauth-blocks = Consulter vos plages occupées
-oauth-invites = Créer des liens d’invitation avec vos autorisations
-oauth-allow = Autoriser l’accès
+oauth-invites = Créer des liens d'invitation avec vos autorisations
+oauth-allow = Autoriser l'accès
 oauth-deny = Refuser
 
 # Connected apps (templates/dashboard_apps.html, admin user menu)
@@ -1993,7 +1993,7 @@ apps-approved = Autorisée le { $date }
 apps-last-used = Dernière utilisation le { $date }
 apps-never-used = Pas encore utilisée
 apps-revoke = Révoquer
-apps-revoke-confirm = Révoquer l’accès de { $name } ? L’application devra être autorisée à nouveau pour se reconnecter.
+apps-revoke-confirm = Révoquer l'accès de { $name } ? L'application devra être autorisée à nouveau pour se reconnecter.
 apps-revoked = Accès révoqué.
-apps-empty = Aucune application connectée. Un client MCP demande votre autorisation la première fois qu’il se connecte.
+apps-empty = Aucune application connectée. Un client MCP demande votre autorisation la première fois qu'il se connecte.
 admin-revoke-apps = Révoquer les applications connectées ({ $count })

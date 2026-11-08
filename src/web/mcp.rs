@@ -136,13 +136,15 @@ async fn handle(State(state): State<Arc<AppState>>, headers: HeaderMap, body: By
             StatusCode::BAD_REQUEST.into_response()
         };
     };
-    // One token cannot load the database: 120 requests per minute per user,
-    // whatever the method (notifications above do no work).
-    if state
-        .mcp_limiter
-        .check_limited(&format!("mcp:{}", user.id))
-        .await
-    {
+    // One token cannot load the database: 120 tool calls per minute per user,
+    // and 600 other requests (initialize, ping, tools/list), which stateless
+    // clients send around their calls (notifications above do no work).
+    let (limiter, key) = if method == "tools/call" {
+        (&state.mcp_limiter, format!("mcp:{}", user.id))
+    } else {
+        (&state.mcp_request_limiter, format!("mcp-other:{}", user.id))
+    };
+    if limiter.check_limited(&key).await {
         return StatusCode::TOO_MANY_REQUESTS.into_response();
     }
     let result = match method {

@@ -87,8 +87,9 @@ existing reusable access token. Generating a link does not change visibility.
 
 Each call for an internal/private event creates a **new** link. Avoid automatically
 repeating a successful call. Link requests are limited to ten attempts per user
-per five minutes, and all MCP requests together (`initialize`, `ping`,
-`tools/list`, tool calls) to 120 per user per minute (HTTP 429 beyond).
+per five minutes, tool calls to 120 per user per minute, and other MCP requests
+(`initialize`, `ping`, `tools/list`) to 600 per user per minute (HTTP 429
+beyond).
 
 Example request after MCP initialization:
 
@@ -199,8 +200,9 @@ Grants follow the same rules as browser sessions:
 The approval page cannot be framed (`frame-ancestors 'none'`, `X-Frame-Options:
 DENY`), its form is CSRF protected, and it shows the callback address the code
 will be sent to. Client names with control, bidirectional or invisible characters
-are refused at registration. A registered client that never obtains a grant is
-deleted after a day.
+are refused at registration. The callback is shown as the browser will follow
+it (parsed: a backslash, a percent-encoded or a numeric host are written out),
+with its host on a line of its own.
 
 Clients can disconnect using `POST /oauth/revoke` with form fields `client_id`
 and `token` (access or refresh token). This revokes the whole grant. Logging out
@@ -217,16 +219,23 @@ The OAuth endpoints are rate limited per client address (the rightmost
 `X-Forwarded-For` value, as for bookings; an IPv6 address counts by its /64):
 client registration 30 requests per 15 minutes, authorization, token exchanges
 and revocations 60 requests per 5 minutes each. One address cannot hold more
-than 50 clients registered in the last day that nobody approved. At most 10,000
-clients are registered.
+than 50 clients registered in the last 30 days that nobody approved. Over a
+limit they answer HTTP 429 with `{"error":"temporarily_unavailable"}`.
 
-A client nobody approved is deleted after a day. A client once approved is kept
-for 180 days after its last approval, even when its grant was revoked or
-expired, so the MCP client can simply authorize again. At the 10,000 cap the
-oldest client in either of those deletable states makes room, and registration
-is refused only when no client can be removed. An authorization a signed-in
-user is looking at keeps its client. Over the limit they answer HTTP 429 with
-`{"error":"temporarily_unavailable"}`.
+These per-address protections need the reverse proxy calrs is deployed behind
+to set `X-Forwarded-For`. Without it every request has the same address
+("unknown"): the rate limits then apply to everyone together, and the
+per-address client cap is not applied at all (it would let one registrant lock
+everyone out).
+
+A client nobody approved is deleted after 30 days, so a user who denied, or gave
+up during login or two-factor setup, can retry with the same client. A client
+once approved is kept for 180 days after its last approval, even when its grant
+was revoked or expired, so the MCP client can simply authorize again. At most
+10,000 clients are registered: at that cap the oldest client in either of those
+deletable states makes room, and registration is refused only when no client
+can be removed. An authorization a signed-in user is looking at keeps its
+client.
 
 Discovery and endpoints:
 
