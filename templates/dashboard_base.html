@@ -788,8 +788,14 @@ function renderMdPreview(md, links) {
     .replace(/(!?)\[([^\]]+)\]\(([^)]+)\)/g, function(match, bang, text, href) {
       return bang + (mdSafeHref(href, links) ? '<a href="' + (email ? href.trim() : href) + '" style="color:var(--accent);text-decoration:underline;">' + text + '</a>' : text);
     })
-    .replace(/\u0000(\d+)\u0000/g, function(match, i) { return mdEscape(kept[+i]); })
     .replace(/\n/g, '<br>');
+  // Only the email footer set text aside; anywhere else a NUL-delimited
+  // number is the author's text and stays as is.
+  if (email) {
+    html = html.replace(/\u0000(\d+)\u0000/g, function(match, i) {
+      return kept[+i] === undefined ? match : mdEscape(kept[+i]).replace(/\n/g, '<br>');
+    });
+  }
   return html
   || '<span style="color:var(--text-muted);">' + {{ t('editor-nothing-to-preview') | tojson }} + '</span>';
 }

@@ -2947,6 +2947,32 @@ pub(super) async fn claim_booking(
         .into_response();
     }
 
+    // List the claimant as an attendee, marked as added by the claim and as
+    // theirs, in the claim's own transaction: a claim whose row is missing
+    // would let a later attendee email take the claimant for a guest (#223).
+    // The row keeps this address after they change their booking email, and
+    // stays staff after their account is deleted.
+    let listed = sqlx::query(
+        "INSERT INTO booking_attendees (id, booking_id, email, added_by_claim, claimant_user_id) \
+         SELECT ?, ?, COALESCE(booking_email, email), 1, id FROM users WHERE id = ?",
+    )
+    .bind(uuid::Uuid::new_v4().to_string())
+    .bind(&booking_id)
+    .bind(&claimant_user_id)
+    .execute(&mut *tx)
+    .await;
+    match listed {
+        Ok(r) if r.rows_affected() == 1 => {}
+        Ok(_) => {
+            let _ = tx.rollback().await;
+            return internal_error_response("list the claimant", "claimant not found");
+        }
+        Err(e) => {
+            let _ = tx.rollback().await;
+            return internal_error_response("list the claimant", &e);
+        }
+    }
+
     // Mark this token as used
     let _ =
         sqlx::query("UPDATE booking_claim_tokens SET used_at = datetime('now') WHERE token = ?")
@@ -3037,22 +3063,6 @@ pub(super) async fn claim_booking(
     let date = start_at.get(..10).unwrap_or(&start_at).to_string();
     let start_time = extract_time_24h(&start_at);
     let end_time = extract_time_24h(&end_at);
-
-    // Add claimant as a booking attendee, marked as added by the claim and as
-    // theirs: the row keeps this address after they change their booking
-    // email, and stays staff after their account is deleted, so the later
-    // attendee emails never treat it as a guest's (#223).
-    let attendee_id = uuid::Uuid::new_v4().to_string();
-    let _ = sqlx::query(
-        "INSERT INTO booking_attendees (id, booking_id, email, added_by_claim, claimant_user_id) \
-         VALUES (?, ?, ?, 1, ?)",
-    )
-    .bind(&attendee_id)
-    .bind(&booking_id)
-    .bind(&claimant_email)
-    .bind(&claimant_user_id)
-    .execute(&state.pool)
-    .await;
 
     let claim_host_tz = get_host_tz(&state.pool, &event_type_id).await;
 

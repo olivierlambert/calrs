@@ -798,27 +798,104 @@ struct FooterLiterals {
     found: Vec<(usize, &'static str)>,
 }
 
-/// `#[test]`, or `#[cfg(test)]`.
+/// Test code: a test function (`#[test]`, `#[tokio::test]`, any attribute
+/// whose path ends in `test`), or an item under a `cfg` that only holds in
+/// tests (`cfg(test)`, `cfg(all(test, ...))`, but not `cfg(not(test))`).
 fn is_test_code(attrs: &[syn::Attribute]) -> bool {
     attrs.iter().any(|attr| {
-        attr.path().is_ident("test")
-            || (attr.path().is_ident("cfg")
-                && attr
-                    .parse_args::<syn::Ident>()
-                    .is_ok_and(|ident| ident == "test"))
+        let path = attr.path();
+        if path.is_ident("cfg") {
+            return attr
+                .parse_args::<syn::Meta>()
+                .is_ok_and(|meta| cfg_implies_test(&meta));
+        }
+        path.segments
+            .last()
+            .is_some_and(|segment| segment.ident == "test")
     })
 }
 
-/// A call of some `default()` with no arguments: `Default::default()`,
-/// `BookingDetails::default()`. A struct update from it copies nothing.
-fn is_default_call(expr: &syn::Expr) -> bool {
+/// Whether a `cfg` predicate can only be true when compiling tests.
+fn cfg_implies_test(meta: &syn::Meta) -> bool {
+    use syn::parse::Parser;
+    match meta {
+        syn::Meta::Path(path) => path.is_ident("test"),
+        syn::Meta::List(list) => {
+            let parts = syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated
+                .parse2(list.tokens.clone());
+            let Ok(parts) = parts else {
+                return false;
+            };
+            if list.path.is_ident("all") {
+                parts.iter().any(cfg_implies_test)
+            } else if list.path.is_ident("any") {
+                !parts.is_empty() && parts.iter().all(cfg_implies_test)
+            } else {
+                false
+            }
+        }
+        syn::Meta::NameValue(_) => false,
+    }
+}
+
+/// `expr` without the parentheses, invisible groups and single-expression
+/// blocks around it: `(X::default())` and `{ X::default() }` are the call.
+fn unwrap_expr(expr: &syn::Expr) -> &syn::Expr {
     match expr {
+        syn::Expr::Paren(inner) => unwrap_expr(&inner.expr),
+        syn::Expr::Group(inner) => unwrap_expr(&inner.expr),
+        syn::Expr::Block(block) if block.attrs.is_empty() && block.label.is_none() => {
+            match block.block.stmts.as_slice() {
+                [syn::Stmt::Expr(inner, None)] => unwrap_expr(inner),
+                _ => expr,
+            }
+        }
+        _ => expr,
+    }
+}
+
+/// A call of some `default()` with no arguments: `Default::default()`,
+/// `BookingDetails::default()`, also wrapped in parentheses or a block. A
+/// struct update from it copies nothing.
+fn is_default_call(expr: &syn::Expr) -> bool {
+    match unwrap_expr(expr) {
         syn::Expr::Call(call) if call.args.is_empty() => matches!(
             &*call.func,
             syn::Expr::Path(path) if path.path.segments.last().is_some_and(|s| s.ident == "default")
         ),
         _ => false,
     }
+}
+
+/// The expressions of a `tokio::select!` body: each branch's future, its
+/// `if` precondition and its handler (`pattern = future, if cond => handler`,
+/// `else => handler`), after an optional `biased;`.
+fn select_branches(input: syn::parse::ParseStream) -> syn::Result<Vec<syn::Expr>> {
+    let mut exprs = Vec::new();
+    if input.peek(syn::Ident) && input.fork().parse::<syn::Ident>()? == "biased" {
+        input.parse::<syn::Ident>()?;
+        input.parse::<syn::Token![;]>()?;
+    }
+    while !input.is_empty() {
+        if input.peek(syn::Token![else]) {
+            input.parse::<syn::Token![else]>()?;
+        } else {
+            syn::Pat::parse_multi_with_leading_vert(input)?;
+            input.parse::<syn::Token![=]>()?;
+            exprs.push(input.parse()?);
+            if input.peek(syn::Token![,]) && input.peek2(syn::Token![if]) {
+                input.parse::<syn::Token![,]>()?;
+                input.parse::<syn::Token![if]>()?;
+                exprs.push(input.parse()?);
+            }
+        }
+        input.parse::<syn::Token![=>]>()?;
+        exprs.push(input.parse()?);
+        if input.peek(syn::Token![,]) {
+            input.parse::<syn::Token![,]>()?;
+        }
+    }
+    Ok(exprs)
 }
 
 impl<'ast> syn::visit::Visit<'ast> for FooterLiterals {
@@ -831,6 +908,29 @@ impl<'ast> syn::visit::Visit<'ast> for FooterLiterals {
     fn visit_item_fn(&mut self, item: &'ast syn::ItemFn) {
         if !is_test_code(&item.attrs) {
             syn::visit::visit_item_fn(self, item);
+        }
+    }
+
+    fn visit_item_impl(&mut self, item: &'ast syn::ItemImpl) {
+        if !is_test_code(&item.attrs) {
+            syn::visit::visit_item_impl(self, item);
+        }
+    }
+
+    fn visit_impl_item_fn(&mut self, item: &'ast syn::ImplItemFn) {
+        if !is_test_code(&item.attrs) {
+            syn::visit::visit_impl_item_fn(self, item);
+        }
+    }
+
+    fn visit_stmt(&mut self, stmt: &'ast syn::Stmt) {
+        let attrs = match stmt {
+            syn::Stmt::Local(local) => &local.attrs[..],
+            syn::Stmt::Expr(syn::Expr::Block(block), _) => &block.attrs[..],
+            _ => &[],
+        };
+        if !is_test_code(attrs) {
+            syn::visit::visit_stmt(self, stmt);
         }
     }
 
@@ -859,6 +959,19 @@ impl<'ast> syn::visit::Visit<'ast> for FooterLiterals {
 
     fn visit_macro(&mut self, mac: &'ast syn::Macro) {
         use syn::parse::Parser;
+        if mac
+            .path
+            .segments
+            .last()
+            .is_some_and(|s| s.ident == "select")
+        {
+            if let Ok(exprs) = select_branches.parse2(mac.tokens.clone()) {
+                for expr in &exprs {
+                    self.visit_expr(expr);
+                }
+                return;
+            }
+        }
         let exprs = syn::punctuated::Punctuated::<syn::Expr, syn::Token![,]>::parse_terminated
             .parse2(mac.tokens.clone());
         if let Ok(exprs) = exprs {
@@ -950,6 +1063,45 @@ mod tests {
             (15, "BookingDetails"),
             (23, "RescheduleDetails"),
             (24, "BookingDetails"),
+        ]
+    );
+}
+
+/// Round three of the review: async and composite-`cfg` test code is
+/// skipped (but not `cfg(not(test))`), a `default()` call wrapped in
+/// parentheses or a block copies nothing, and the branches of a
+/// `tokio::select!` are read.
+#[test]
+fn the_guest_footer_guard_skips_tests_and_reads_wrapped_defaults_and_select() {
+    let src = r#"
+#[tokio::test]
+async fn a() { let d = BookingDetails { uid: x, ..Default::default() }; }
+#[cfg(all(test, feature = "x"))]
+fn b() { let d = BookingDetails { uid: x, ..Default::default() }; }
+#[cfg(test)]
+impl Fixture { fn c() { let d = BookingDetails { uid: x, ..Default::default() }; } }
+#[cfg(not(test))]
+fn d() { let d = BookingDetails { uid: x, ..Default::default() }; }
+fn e() { let d = BookingDetails { uid: x, ..(BookingDetails::default()) }; }
+fn f() { let d = CancellationDetails { uid: x, ..{ CancellationDetails::default() } }; }
+fn g() { let d = BookingDetails { uid: x, ..{ let o = other(); o } }; }
+async fn h() {
+    tokio::select! {
+        biased;
+        _ = tick() => { send(RescheduleDetails { uid: x, ..Default::default() }) }
+        Some(v) = rx.recv(), if ready => send(BookingDetails { uid: v, guest_footer: None, ..Default::default() }),
+        else => send(CancellationDetails { uid: x, ..Default::default() }),
+    }
+}
+"#;
+    assert_eq!(
+        details_literals_without_footer(src),
+        vec![
+            (9, "BookingDetails"),
+            (10, "BookingDetails"),
+            (11, "CancellationDetails"),
+            (16, "RescheduleDetails"),
+            (18, "CancellationDetails"),
         ]
     );
 }

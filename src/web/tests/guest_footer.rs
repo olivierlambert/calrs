@@ -1046,10 +1046,12 @@ async fn a_failed_claimant_lookup_sends_no_attendee_the_footer() {
 }
 
 /// The migration's backfill of claims made before it, run again over rows
-/// reset to their legacy state. Attendees older than the claim are the
-/// guest's; the claim's row is found by its time, under the address the
-/// claimant had then, and so is a deleted claimant's; a row created within
-/// the claim's second is taken as possibly the claimant's.
+/// reset to their legacy state. A guest's invitees were inserted with the
+/// booking, so a row within seconds of the booking's creation is theirs,
+/// even in the claim's own second; every later row on a claimed booking came
+/// from a claim and is marked, under the address the claimant had then, a
+/// deleted claimant's and a reclaimed booking's first claimant's included.
+/// Timestamps that cannot be compared mark the row.
 #[tokio::test]
 async fn the_claimant_backfill_finds_legacy_claims_by_their_time() {
     let pool = setup_test_db().await;
@@ -1060,63 +1062,56 @@ async fn the_claimant_backfill_finds_legacy_claims_by_their_time() {
         .execute(&pool)
         .await
         .unwrap();
-    let claim = |claimant: Option<String>| {
+    let booking = |created: &str, claimant: Option<&String>, claimed: &str| {
         vec![
-            ("claimed_by_user_id", claimant),
-            ("claimed_at", Some("2026-03-01 10:00:00".to_string())),
+            ("created_at", Some(created.to_string())),
+            ("claimed_by_user_id", claimant.cloned()),
+            ("claimed_at", Some(claimed.to_string())),
         ]
     };
+    let created = "2026-02-01 09:00:00";
+    let claimed = "2026-03-01 10:00:00";
     let start = Utc::now() + Duration::days(10);
-    let changed = insert_v1_booking(
-        &pool,
-        &et_id,
-        "g1@test.com",
-        start,
-        30,
-        "confirmed",
-        &claim(Some(watcher.clone())),
-    )
-    .await;
-    let deleted = insert_v1_booking(
-        &pool,
-        &et_id,
-        "g2@test.com",
-        start + Duration::days(1),
-        30,
-        "confirmed",
-        &claim(None),
-    )
-    .await;
-    let same_second = insert_v1_booking(
-        &pool,
-        &et_id,
-        "g3@test.com",
-        start + Duration::days(2),
-        30,
-        "confirmed",
-        &claim(Some(watcher.clone())),
-    )
-    .await;
-    let unclaimed = insert_v1_booking(
-        &pool,
-        &et_id,
-        "g4@test.com",
-        start + Duration::days(3),
-        30,
-        "confirmed",
-        &[],
-    )
-    .await;
-    for (booking, email, at) in [
-        (&changed, "friend1@test.com", "2026-02-01 09:00:00"),
-        (&changed, "watcher@test.com", "2026-03-01 10:00:00"),
-        (&deleted, "friend2@test.com", "2026-02-01 09:00:00"),
-        (&deleted, "gone@test.com", "2026-03-01 10:00:01"),
-        (&same_second, "friend3@test.com", "2026-03-01 10:00:00"),
-        (&same_second, "watcher-new@test.com", "2026-03-01 10:00:00"),
-        (&unclaimed, "friend4@test.com", "2026-03-02 00:00:00"),
+    let mut ids = Vec::new();
+    for (day, extra) in [
+        // The claimant changed address since.
+        (0, booking(created, Some(&watcher), claimed)),
+        // The claimant was deleted.
+        (1, booking(created, None, claimed)),
+        // Reclaimed after the first claimant was deleted.
+        (2, booking(created, Some(&watcher), "2026-03-05 10:00:00")),
+        // Booked and claimed within one second.
+        (3, booking(claimed, Some(&watcher), claimed)),
+        // A creation time that cannot be read.
+        (4, booking("unknown", None, claimed)),
+        // Never claimed.
+        (5, vec![("created_at", Some(created.to_string()))]),
     ] {
-        insert_attendee_row(&pool, booking, email, at, None).await;
+        let id = insert_v1_booking(
+            &pool,
+            &et_id,
+            &format!("g{day}@test.com"),
+            start + Duration::days(day),
+            30,
+            "confirmed",
+            &extra,
+        )
+        .await;
+        ids.push(id);
+    }
+    for (booking, email, at) in [
+        (0, "friend0@test.com", "2026-02-01 09:00:00"),
+        (0, "watcher@test.com", "2026-03-01 10:00:00"),
+        (1, "friend1@test.com", "2026-02-01 09:00:03"),
+        (1, "gone@test.com", "2026-03-01 10:00:01"),
+        (2, "friend2@test.com", "2026-02-01 09:00:00"),
+        (2, "first@test.com", "2026-03-01 10:00:00"),
+        (2, "watcher-new@test.com", "2026-03-05 10:00:00"),
+        (3, "friend3@test.com", "2026-03-01 10:00:00"),
+        (4, "friend4@test.com", "2026-02-01 09:00:00"),
+        (5, "friend5@test.com", "2026-03-02 00:00:00"),
+    ] {
+        insert_attendee_row(&pool, &ids[booking], email, at, None).await;
     }
 
     let migration =
@@ -1146,10 +1141,13 @@ async fn the_claimant_backfill_finds_legacy_claims_by_their_time() {
     assert_eq!(
         rows,
         vec![
+            ("first@test.com".to_string(), true, None),
+            ("friend0@test.com".to_string(), false, None),
             ("friend1@test.com".to_string(), false, None),
             ("friend2@test.com".to_string(), false, None),
-            ("friend3@test.com".to_string(), true, None),
-            ("friend4@test.com".to_string(), false, None),
+            ("friend3@test.com".to_string(), false, None),
+            ("friend4@test.com".to_string(), true, None),
+            ("friend5@test.com".to_string(), false, None),
             ("gone@test.com".to_string(), true, None),
             ("watcher-new@test.com".to_string(), true, w.clone()),
             ("watcher@test.com".to_string(), true, w),
@@ -1184,9 +1182,23 @@ fn the_footer_preview_shows_code_and_images_as_typed() {
         ),
         ("``a ` b``\nnext", "``a ` b``<br>next"),
     ];
-    let inputs: Vec<&str> = cases.iter().map(|(input, _)| *input).collect();
+    // The default editor never set text aside, so a NUL-delimited number
+    // typed there is shown as is rather than throwing.
+    let cases: Vec<(&str, &str, &str)> = cases
+        .iter()
+        .map(|(input, expected)| (*input, "email", *expected))
+        .chain([
+            ("a \u{0}0\u{0} b", "", "a \u{0}0\u{0} b"),
+            ("\u{0}7\u{0} *x*", "", "\u{0}7\u{0} <em>x</em>"),
+            ("\u{0}7\u{0} *x*", "email", "7 <em>x</em>"),
+        ])
+        .collect();
+    let inputs: Vec<(&str, &str)> = cases
+        .iter()
+        .map(|(input, mode, _)| (*input, *mode))
+        .collect();
     let program = format!(
-        "{script}\nconsole.log(JSON.stringify({}.map(function(md) {{ return renderMdPreview(md, 'email'); }})));",
+        "{script}\nconsole.log(JSON.stringify({}.map(function(c) {{ return renderMdPreview(c[0], c[1]); }})));",
         serde_json::to_string(&inputs).unwrap()
     );
     let output = match std::process::Command::new("node")
@@ -1206,7 +1218,63 @@ fn the_footer_preview_shows_code_and_images_as_typed() {
         String::from_utf8_lossy(&output.stderr)
     );
     let rendered: Vec<String> = serde_json::from_slice(&output.stdout).unwrap();
-    for ((input, expected), got) in cases.iter().zip(&rendered) {
-        assert_eq!(got, expected, "{input:?}");
+    assert_eq!(rendered.len(), cases.len());
+    for ((input, mode, expected), got) in cases.iter().zip(&rendered) {
+        assert_eq!(got, expected, "{input:?} ({mode:?})");
     }
+}
+
+/// The claimant's attendee row is written in the claim's transaction: when
+/// it cannot be, the claim fails as a whole, so no claimed booking is left
+/// without the row that keeps its claimant from being taken for a guest.
+#[tokio::test]
+async fn a_claim_whose_attendee_row_cannot_be_written_is_rolled_back() {
+    let (app, pool, _, et_id) = setup_test_app().await;
+    let id = insert_v1_booking(
+        &pool,
+        &et_id,
+        "guest@test.com",
+        Utc::now() + Duration::days(10),
+        30,
+        "confirmed",
+        &[],
+    )
+    .await;
+    let watcher = insert_role_user(&pool, "watcher@test.com", "user").await;
+    sqlx::query(
+        "INSERT INTO booking_claim_tokens (id, booking_id, user_id, token, expires_at) \
+         VALUES ('bct-rollback', ?, ?, 'claim-tok-rollback', datetime('now', '+7 days'))",
+    )
+    .bind(&id)
+    .bind(&watcher)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "CREATE TRIGGER refuse_attendees BEFORE INSERT ON booking_attendees \
+         BEGIN SELECT RAISE(ABORT, 'refused'); END",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let csrf = "csrf-claim-rollback";
+    let response = app
+        .oneshot(post_form_unauthed(
+            &format!("/booking/claim/{id}"),
+            csrf,
+            &format!("_csrf={csrf}&token=claim-tok-rollback"),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 500);
+    let (claimed_by, used_at): (Option<String>, Option<String>) = sqlx::query_as(
+        "SELECT b.claimed_by_user_id, t.used_at FROM bookings b \
+         JOIN booking_claim_tokens t ON t.booking_id = b.id WHERE b.id = ?",
+    )
+    .bind(&id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!((claimed_by, used_at), (None, None));
 }

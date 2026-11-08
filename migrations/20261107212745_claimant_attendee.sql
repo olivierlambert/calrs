@@ -10,15 +10,17 @@
 ALTER TABLE booking_attendees ADD COLUMN added_by_claim INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE booking_attendees ADD COLUMN claimant_user_id TEXT REFERENCES users(id) ON DELETE SET NULL;
 
--- Claims made before this migration. A guest's attendees are inserted with
--- the booking, and only a confirmed booking can be claimed, so they predate
--- bookings.claimed_at; the claim's row was inserted right after the claim,
--- and both timestamps come from datetime('now'). A row not provably older
--- than the claim is marked: that is the claimant's, under whatever address
--- they had then, or, for a row created within the same second as the claim,
--- possibly the claimant's, which then goes without the footer rather than
--- risk sending it to staff. A booking whose claimant was deleted keeps
--- claimed_at, so its row is still found.
+-- Claims made before this migration. A guest's attendees are only ever
+-- inserted in the transaction that creates the booking, so their created_at
+-- is within seconds of bookings.created_at (both from datetime('now')). A
+-- claim needs a confirmed booking, a watcher email and a click, so its row
+-- comes later. On a claimed booking, every attendee row not provably a
+-- guest's invitee is marked: one created more than 10 seconds after the
+-- booking was, which covers every claim the booking had (a first claimant
+-- since deleted, then a second one), under whatever address each had then.
+-- A row whose timestamps cannot be compared is marked too: it goes without
+-- the footer rather than risk sending it to staff. A booking whose
+-- claimant was deleted keeps claimed_at, so its rows are still found.
 UPDATE booking_attendees
 SET added_by_claim = 1
 WHERE EXISTS (
@@ -26,7 +28,10 @@ WHERE EXISTS (
     FROM bookings b
     WHERE b.id = booking_attendees.booking_id
       AND (b.claimed_by_user_id IS NOT NULL OR b.claimed_at IS NOT NULL)
-      AND COALESCE(julianday(booking_attendees.created_at) < julianday(b.claimed_at), 0) = 0
+      AND COALESCE(
+            (julianday(booking_attendees.created_at) - julianday(b.created_at)) * 86400 <= 10,
+            0
+          ) = 0
 );
 
 -- The claimant's own row, while they exist: the marked row under their
