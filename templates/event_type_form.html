@@ -1055,8 +1055,8 @@
 </div>
 {% endif %}
 
-{% if is_group is defined and is_group and watcher_teams is defined and watcher_teams %}
-<details class="card collapsible-section" style="margin-top: 1rem;"{% if selected_watcher_team_ids is defined and selected_watcher_team_ids %} open{% endif %}>
+{% if watcher_teams is defined and watcher_teams and ((is_group is defined and is_group) or (not editing and teams is defined and teams)) %}
+<details class="card collapsible-section" id="watcher-section" style="margin-top: 1rem;"{% if selected_watcher_team_ids is defined and selected_watcher_team_ids %} open{% endif %}>
   <summary class="collapsible-header">
     <h2>{{ t("etf-watcher-teams") }}</h2>
     <span class="collapsible-hint" id="watcher-hint"></span>
@@ -1422,6 +1422,9 @@ function sub(tpl, a, b) {
     function toggleMode() {
       var isTeam = teamSel ? !!teamSel.value : {{ is_group is defined and is_group and "true" or "false" }};
       if (modeGroup) modeGroup.style.display = isTeam ? '' : 'none';
+      // Watchers belong to team event types only.
+      var watcherSection = document.getElementById('watcher-section');
+      if (watcherSection) watcherSection.style.display = isTeam ? '' : 'none';
       togglePriority();
     }
 
