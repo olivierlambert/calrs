@@ -424,11 +424,10 @@ pub async fn try_busy_intervals(
         .collect())
 }
 
-/// [`try_busy_intervals`] for the web slot engine, failing closed: if the
+/// [`try_busy_intervals`] for the web slot grids, failing closed: if the
 /// time off cannot be read, the whole window comes back busy, so slot grids
-/// show nothing and the booking, reschedule and approval checks refuse with
-/// their usual "no longer available" answer rather than book someone during
-/// time off we could not read.
+/// show nothing. The booking, reschedule and approval checks use the strict
+/// readers, which get the error and refuse with the internal error page.
 pub async fn busy_intervals(
     pool: &SqlitePool,
     user_id: &str,

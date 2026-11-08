@@ -489,6 +489,7 @@ async fn review_frequency_query_errors_block_slots_and_member_selection() {
         assert!(
             pick_group_member(&pool, "review-team", &et, start, end, start, 0, 0, Tz::UTC)
                 .await
+                .unwrap()
                 .is_some()
         );
         let mut days = vec![SlotDay {
@@ -520,7 +521,7 @@ async fn review_frequency_query_errors_block_slots_and_member_selection() {
         assert!(
             pick_group_member(&pool, "review-team", &et, start, end, start, 0, 0, Tz::UTC)
                 .await
-                .is_none(),
+                .is_err(),
             "{broken_column}"
         );
         if table == "bookings" {

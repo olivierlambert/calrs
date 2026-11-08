@@ -341,6 +341,7 @@ async fn round_robin_skips_the_member_off_and_collective_loses_the_slot() {
         &pool, &team_id, &et_id, slot_start, slot_end, slot_start, 0, 0, utc,
     )
     .await
+    .unwrap()
     .map(|(id, _, _)| id);
     assert_eq!(picked.as_deref(), Some(bob.as_str()), "Bob takes it");
 
@@ -358,6 +359,7 @@ async fn round_robin_skips_the_member_off_and_collective_loses_the_slot() {
         &pool, &team_id, &et_id, slot_start, slot_end, slot_start, 0, 0, utc
     )
     .await
+    .unwrap()
     .is_none());
 }
 
@@ -380,31 +382,29 @@ async fn approval_recheck_refuses_a_host_on_time_off() {
         collective: false,
         participants: Vec::new(),
     };
-    assert!(
-        approval_hosts_free(
-            &pool,
-            &hosts,
-            &booking_id,
-            "uid",
-            &et_id,
-            &start_at,
-            &end_at
-        )
-        .await
-    );
+    assert!(approval_hosts_free(
+        &pool,
+        &hosts,
+        &booking_id,
+        "uid",
+        &et_id,
+        &start_at,
+        &end_at
+    )
+    .await
+    .unwrap());
     add_off(&pool, &user, start, start + Duration::hours(1), None).await;
-    assert!(
-        !approval_hosts_free(
-            &pool,
-            &hosts,
-            &booking_id,
-            "uid",
-            &et_id,
-            &start_at,
-            &end_at
-        )
-        .await
-    );
+    assert!(!approval_hosts_free(
+        &pool,
+        &hosts,
+        &booking_id,
+        "uid",
+        &et_id,
+        &start_at,
+        &end_at
+    )
+    .await
+    .unwrap());
 }
 
 #[tokio::test]
@@ -747,7 +747,7 @@ async fn dynamic_group_reschedule_and_approval_check_every_participant() {
     .fetch_one(&pool)
     .await
     .unwrap();
-    let hosts = reschedule_hosts(&pool, &uid, &owner).await;
+    let hosts = reschedule_hosts(&pool, &uid, &owner).await.unwrap();
     assert_eq!(hosts.participants, vec![second.clone()]);
 
     // The co-host is busy during their own group booking (10:00 Monday).
@@ -786,8 +786,10 @@ async fn dynamic_group_reschedule_and_approval_check_every_participant() {
         utc,
         &booking_id,
         &uid,
+        true,
     )
-    .await;
+    .await
+    .unwrap();
     assert!(free(&busy), "both free before the time off");
     add_off(&pool, &second, new_start, new_end, None).await;
     let busy = reschedule_busy_source(
@@ -799,8 +801,10 @@ async fn dynamic_group_reschedule_and_approval_check_every_participant() {
         utc,
         &booking_id,
         &uid,
+        true,
     )
-    .await;
+    .await
+    .unwrap();
     assert!(!free(&busy), "the co-host is off at the new time");
 
     let (start_at, end_at) = (
@@ -808,7 +812,9 @@ async fn dynamic_group_reschedule_and_approval_check_every_participant() {
         format!("{}Z", new_end.format("%Y-%m-%dT%H:%M:%S")),
     );
     assert!(
-        !approval_hosts_free(&pool, &hosts, &booking_id, &uid, &et_id, &start_at, &end_at).await
+        !approval_hosts_free(&pool, &hosts, &booking_id, &uid, &et_id, &start_at, &end_at)
+            .await
+            .unwrap()
     );
 }
 

@@ -1826,14 +1826,10 @@ async fn api_slots_skip_a_repeated_hour_as_the_booking_check_does() {
 async fn the_daily_cap_holds_under_concurrency_and_refusals_give_their_place_back() {
     let _lock = crate::test_support::ENV_LOCK.lock().await;
     let _env = super::oauth::environment();
-    // Each of the ten bookings below holds a connection for its transaction
-    // and reads on another. On the usual two-connection pool, two requests
-    // holding both connections in their transactions starved each other's
-    // reads until sqlx's 30 second acquire timeout, again and again: the
-    // test took minutes, which under tarpaulin, with every other test of
-    // the ENV_LOCK queued behind it, exceeded its 60 second silence limit.
-    // Eleven connections always leave one free for a read.
-    let (app, pool, _, et_id) = setup_test_app_with(11).await;
+    // On the usual two-connection pool: a booking holds no connection while
+    // its checks read (the transaction opens after them), so ten concurrent
+    // bookings no longer starve each other until sqlx's acquire timeout.
+    let (app, pool, _, et_id) = setup_test_app().await;
     let owner = user_id(&pool, "testuser").await;
     let token = pat(&pool, &owner, ALL).await;
     let log_count = || async {
@@ -2163,4 +2159,27 @@ async fn a_pending_reschedule_request_can_be_resent_once_an_hour() {
     let (status, _) = send(&app, api_post(&uri, &token, &json!({"resend": true}))).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(settled_mails_to(&mails, "api@rs.test").await.len(), 2);
+}
+
+/// A submit-time busy read that fails refuses an API booking with a 500,
+/// never books over a calendar that could not be read.
+#[tokio::test]
+async fn an_unreadable_calendar_refuses_an_api_booking() {
+    let _lock = crate::test_support::ENV_LOCK.lock().await;
+    let _env = super::oauth::environment();
+    let (app, pool, _, et_id) = setup_test_app().await;
+    let owner = user_id(&pool, "testuser").await;
+    let token = pat(&pool, &owner, ALL).await;
+    sqlx::query("ALTER TABLE events RENAME TO events_gone")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let body = create_body(&et_id, &monday_at("10:00"), "api@example.com");
+    let (status, _) = send(&app, api_post("/api/v1/bookings", &token, &body)).await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM bookings")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 0);
 }

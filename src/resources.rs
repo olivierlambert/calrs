@@ -26,17 +26,28 @@ use crate::utils::{convert_event_to_tz, extract_vevent_field, parse_ical_datetim
 /// Re-sync a resource feed when older than this many minutes.
 pub const SYNC_STALE_MINUTES: i64 = 5;
 
-/// Serializes the resource availability check + booking insert
-/// process-wide. SQLite gives us no cross-connection serialization here:
-/// the busy reads run on other pool connections and cannot see an
-/// uncommitted insert, so without this lock two concurrent bookings (even
-/// on different event types sharing a resource) could both see the
-/// resource as free. Bookings without resources never take this lock.
+/// Serializes every booking's availability checks and the write that
+/// claims the time, process-wide: new bookings (every booking core),
+/// guest reschedules and approvals. SQLite gives us no cross-connection
+/// serialization here: the busy reads run on pool connections and cannot
+/// see another request's uncommitted insert, so without this lock two
+/// concurrent bookings could both see a host or a shared resource as free.
+///
+/// Deadlock rule: never wait for this lock while holding a pool connection
+/// (a transaction or an `acquire`d connection). Holders read through the
+/// pool, so a request parked on the lock with a connection in hand could
+/// starve the holder. The booking cores take it before their transaction.
+///
+/// No network under the lock: no feed fetch, CalDAV sync, SMTP, DNS or
+/// sleep while holding it, or one slow server holds up every booking on
+/// the instance. Feeds and calendars are refreshed before it is taken, and
+/// the checks under it read cached data only (`check_and_pick`,
+/// `try_cached_blocking_intervals_for_event_type`).
 static BOOKING_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
-/// Acquire the process-wide resource booking lock. Hold it from before
-/// [`check_and_pick`] until after the booking row is committed, then drop
-/// it before any network write-back.
+/// Acquire the process-wide booking lock. Hold it from before the first
+/// submit-time availability check until after the booking row is
+/// committed, then drop it before any network write-back.
 pub async fn booking_lock() -> tokio::sync::MutexGuard<'static, ()> {
     BOOKING_LOCK.lock().await
 }
@@ -306,6 +317,17 @@ pub async fn sync_if_stale(pool: &SqlitePool, resource_ids: &[String]) {
 
 /// Resources attached to an event type (empty = feature unused).
 pub async fn resources_for_event_type(pool: &SqlitePool, event_type_id: &str) -> Vec<ResourceRef> {
+    try_resources_for_event_type(pool, event_type_id)
+        .await
+        .unwrap_or_default()
+}
+
+/// [`resources_for_event_type`], with an unreadable attachment list as an
+/// error rather than "no resources".
+async fn try_resources_for_event_type(
+    pool: &SqlitePool,
+    event_type_id: &str,
+) -> Result<Vec<ResourceRef>, sqlx::Error> {
     let rows: Vec<(String, String)> = sqlx::query_as(
         "SELECT r.id, r.name FROM resources r
          JOIN event_type_resources etr ON etr.resource_id = r.id
@@ -313,11 +335,11 @@ pub async fn resources_for_event_type(pool: &SqlitePool, event_type_id: &str) ->
     )
     .bind(event_type_id)
     .fetch_all(pool)
-    .await
-    .unwrap_or_default();
-    rows.into_iter()
+    .await?;
+    Ok(rows
+        .into_iter()
         .map(|(id, name)| ResourceRef { id, name })
-        .collect()
+        .collect())
 }
 
 /// Busy intervals for one resource in `[window_start, window_end]`,
@@ -331,6 +353,31 @@ pub async fn busy_for_resource(
     host_tz: Tz,
     exclude_booking_id: Option<&str>,
 ) -> Vec<(NaiveDateTime, NaiveDateTime)> {
+    try_busy_for_resource(
+        pool,
+        resource_id,
+        window_start,
+        window_end,
+        host_tz,
+        exclude_booking_id,
+    )
+    .await
+    .unwrap_or_else(|error| {
+        tracing::error!(%error, %resource_id, "cannot read resource busy times; treating the window as busy");
+        vec![(window_start, window_end)]
+    })
+}
+
+/// [`busy_for_resource`], with any failing query as an error: what the
+/// booking-time [`check_and_pick`] uses.
+async fn try_busy_for_resource(
+    pool: &SqlitePool,
+    resource_id: &str,
+    window_start: NaiveDateTime,
+    window_end: NaiveDateTime,
+    host_tz: Tz,
+    exclude_booking_id: Option<&str>,
+) -> Result<Vec<(NaiveDateTime, NaiveDateTime)>, sqlx::Error> {
     let end_compact = window_end.format("%Y%m%dT%H%M%S").to_string();
     let start_compact = window_start.format("%Y%m%dT%H%M%S").to_string();
     let end_iso = window_end.format("%Y-%m-%dT%H:%M:%S").to_string();
@@ -358,8 +405,7 @@ pub async fn busy_for_resource(
     .bind(&end_compact)
     .bind(&start_compact)
     .fetch_all(pool)
-    .await
-    .unwrap_or_default();
+    .await?;
 
     let mut busy: Vec<(NaiveDateTime, NaiveDateTime)> = events
         .iter()
@@ -384,8 +430,7 @@ pub async fn busy_for_resource(
     .bind(exclude_id)
     .bind(&end_compact)
     .fetch_all(pool)
-    .await
-    .unwrap_or_default();
+    .await?;
 
     busy.extend(crate::web::expand_recurring_into_busy(
         &recurring,
@@ -415,15 +460,14 @@ pub async fn busy_for_resource(
     .bind(exclude_id)
     .bind(exclude_id)
     .fetch_all(pool)
-    .await
-    .unwrap_or_default();
+    .await?;
     for (s, e) in &bookings {
         if let Some((start, end)) = crate::booking_time::busy_range(s, e, host_tz) {
             busy.push((start, end));
         }
     }
 
-    busy
+    Ok(busy)
 }
 
 /// Sort intervals and merge overlapping/adjacent ones.
@@ -495,7 +539,10 @@ pub fn merge_mode_busy(
 }
 
 /// Busy intervals that block slots of this event type, given its attached
-/// resources and mode. Empty when no resources are attached.
+/// resources and mode. Empty when no resources are attached. For slot
+/// grids: stale feeds are refreshed first, and a read that fails blocks
+/// (an unreadable attachment list blocks the whole window, as an unreadable
+/// resource does), never reads as free.
 pub async fn blocking_intervals_for_event_type(
     pool: &SqlitePool,
     event_type_id: &str,
@@ -504,7 +551,13 @@ pub async fn blocking_intervals_for_event_type(
     host_tz: Tz,
     exclude_booking_id: Option<&str>,
 ) -> Vec<(NaiveDateTime, NaiveDateTime)> {
-    let refs = resources_for_event_type(pool, event_type_id).await;
+    let refs = match try_resources_for_event_type(pool, event_type_id).await {
+        Ok(refs) => refs,
+        Err(error) => {
+            tracing::error!(%error, %event_type_id, "cannot read the event type's resources; treating the window as busy");
+            return vec![(window_start, window_end)];
+        }
+    };
     if refs.is_empty() {
         return Vec::new();
     }
@@ -535,9 +588,51 @@ pub async fn blocking_intervals_for_event_type(
     merge_mode_busy(&per_resource, &mode)
 }
 
+/// [`blocking_intervals_for_event_type`] for the submit-time slot check,
+/// which runs under [`booking_lock`]: reads the cached feed events only and
+/// never fetches a feed (the booking paths refresh feeds before taking the
+/// lock), and any failing read is an error.
+pub async fn try_cached_blocking_intervals_for_event_type(
+    pool: &SqlitePool,
+    event_type_id: &str,
+    window_start: NaiveDateTime,
+    window_end: NaiveDateTime,
+    host_tz: Tz,
+    exclude_booking_id: Option<&str>,
+) -> Result<Vec<(NaiveDateTime, NaiveDateTime)>, sqlx::Error> {
+    let refs = try_resources_for_event_type(pool, event_type_id).await?;
+    if refs.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mode: String =
+        sqlx::query_scalar("SELECT resource_scheduling_mode FROM event_types WHERE id = ?")
+            .bind(event_type_id)
+            .fetch_optional(pool)
+            .await?
+            .unwrap_or_else(|| "all".to_string());
+    let mut per_resource = Vec::with_capacity(refs.len());
+    for r in &refs {
+        per_resource.push(
+            try_busy_for_resource(
+                pool,
+                &r.id,
+                window_start,
+                window_end,
+                host_tz,
+                exclude_booking_id,
+            )
+            .await?,
+        );
+    }
+    Ok(merge_mode_busy(&per_resource, &mode))
+}
+
 /// Booking-time check: verify resource availability for `[start, end)` and,
 /// in round-robin mode, pick the free resource with the fewest upcoming
 /// assignments (stable tie-break by name via the resource listing order).
+/// A read that decides availability failing is an error, which the callers
+/// turn into a refusal: never a resource that looks free. Reads the cached
+/// feed events only (it runs under [`booking_lock`]).
 pub async fn check_and_pick(
     pool: &SqlitePool,
     event_type_id: &str,
@@ -545,33 +640,33 @@ pub async fn check_and_pick(
     end: NaiveDateTime,
     host_tz: Tz,
     exclude_booking_id: Option<&str>,
-) -> ResourceCheck {
-    let refs = resources_for_event_type(pool, event_type_id).await;
+) -> Result<ResourceCheck, sqlx::Error> {
+    let refs = try_resources_for_event_type(pool, event_type_id).await?;
     if refs.is_empty() {
-        return ResourceCheck::NoResources;
+        return Ok(ResourceCheck::NoResources);
     }
     let mode: String =
         sqlx::query_scalar("SELECT resource_scheduling_mode FROM event_types WHERE id = ?")
             .bind(event_type_id)
             .fetch_optional(pool)
-            .await
-            .unwrap_or(None)
+            .await?
             .unwrap_or_else(|| "all".to_string());
 
     let mut free: Vec<&ResourceRef> = Vec::new();
     for r in &refs {
-        let busy = busy_for_resource(pool, &r.id, start, end, host_tz, exclude_booking_id).await;
+        let busy =
+            try_busy_for_resource(pool, &r.id, start, end, host_tz, exclude_booking_id).await?;
         let overlaps = busy.iter().any(|(bs, be)| *bs < end && *be > start);
         if !overlaps {
             free.push(r);
         } else if mode != "round_robin" {
-            return ResourceCheck::Busy;
+            return Ok(ResourceCheck::Busy);
         }
     }
 
     if mode == "round_robin" {
         if free.is_empty() {
-            return ResourceCheck::Busy;
+            return Ok(ResourceCheck::Busy);
         }
         // Least-loaded pick: fewest upcoming confirmed assignments.
         let mut best: Option<(i64, &ResourceRef)> = None;
@@ -593,11 +688,11 @@ pub async fn check_and_pick(
                 best = Some((load, r));
             }
         }
-        ResourceCheck::Free {
+        Ok(ResourceCheck::Free {
             assigned: best.map(|(_, r)| r.id.clone()),
-        }
+        })
     } else {
-        ResourceCheck::Free { assigned: None }
+        Ok(ResourceCheck::Free { assigned: None })
     }
 }
 

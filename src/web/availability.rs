@@ -142,10 +142,12 @@ pub(super) fn build_avail_schedule(all_rules: &[(i32, String, String)]) -> Strin
 
 /// Convert a user's default availability rules into "busy" times for hours OUTSIDE
 /// their available windows. This lets us constrain dynamic group link participants
-/// by their working hours without changing the slot computation engine.
-/// Convert a user's default availability rules into "busy" times for hours OUTSIDE
-/// their available windows. Times are converted from the participant's timezone to
+/// and team members by their working hours without changing the slot
+/// computation engine. Times are converted from the participant's timezone to
 /// the host's timezone so they integrate correctly with the slot computation.
+///
+/// Lenient, for slot grids: unreadable hours are logged and leave the user
+/// unconstrained. Booking checks use [`try_user_avail_as_busy`].
 pub(super) async fn user_avail_as_busy(
     pool: &SqlitePool,
     user_id: &str,
@@ -153,26 +155,45 @@ pub(super) async fn user_avail_as_busy(
     window_end: NaiveDateTime,
     host_tz: chrono_tz::Tz,
 ) -> Vec<(NaiveDateTime, NaiveDateTime)> {
+    try_user_avail_as_busy(pool, user_id, window_start, window_end, host_tz)
+        .await
+        .unwrap_or_else(|error| {
+            tracing::error!(%error, %user_id, "cannot read working hours; slots shown unconstrained");
+            Vec::new()
+        })
+}
+
+/// [`user_avail_as_busy`], with an unreadable query as an error rather than
+/// "no constraint": what the submit-time booking checks use.
+pub(super) async fn try_user_avail_as_busy(
+    pool: &SqlitePool,
+    user_id: &str,
+    window_start: NaiveDateTime,
+    window_end: NaiveDateTime,
+    host_tz: chrono_tz::Tz,
+) -> Result<Vec<(NaiveDateTime, NaiveDateTime)>, sqlx::Error> {
     let rules: Vec<(i32, String, String)> = sqlx::query_as(
         "SELECT day_of_week, start_time, end_time FROM user_availability_rules WHERE user_id = ? ORDER BY day_of_week, start_time",
     )
     .bind(user_id)
     .fetch_all(pool)
-    .await
-    .unwrap_or_default();
+    .await?;
 
     // No rules = no constraint (user hasn't set default availability)
     if rules.is_empty() {
-        return vec![];
+        return Ok(vec![]);
     }
 
     // Get the participant's timezone
-    let user_tz_str: String = sqlx::query_scalar("SELECT timezone FROM users WHERE id = ?")
-        .bind(user_id)
-        .fetch_one(pool)
-        .await
-        .unwrap_or_else(|_| "UTC".to_string());
-    let user_tz: chrono_tz::Tz = user_tz_str.parse().unwrap_or(chrono_tz::Tz::UTC);
+    let user_tz_str: Option<Option<String>> =
+        sqlx::query_scalar("SELECT timezone FROM users WHERE id = ?")
+            .bind(user_id)
+            .fetch_optional(pool)
+            .await?;
+    let user_tz: chrono_tz::Tz = user_tz_str
+        .flatten()
+        .and_then(|tz| tz.parse().ok())
+        .unwrap_or(chrono_tz::Tz::UTC);
 
     // Work in the participant's timezone: convert window bounds from host TZ to user TZ
     let window_start_user = host_tz
@@ -231,7 +252,8 @@ pub(super) async fn user_avail_as_busy(
     }
 
     // Convert busy times from participant's TZ back to host's TZ
-    busy.into_iter()
+    Ok(busy
+        .into_iter()
         .filter_map(|(start, end)| {
             let start_host = user_tz
                 .from_local_datetime(&start)
@@ -243,7 +265,7 @@ pub(super) async fn user_avail_as_busy(
                 .map(|dt| dt.with_timezone(&host_tz).naive_local())?;
             Some((start_host, end_host))
         })
-        .collect()
+        .collect())
 }
 
 /// Load a user's default availability rules as a serialized schedule string.
@@ -346,7 +368,9 @@ pub(super) async fn ensure_user_avail_seeded(pool: &SqlitePool, user_id: &str) {
 // --- Slot computation (shared with CLI) ---
 
 /// Pick an available team member for a booking slot.
-/// Returns (user_id, name, email) of the member with fewest recent bookings.
+/// Returns (user_id, name, email) of the member with fewest recent bookings,
+/// `None` when nobody is free. Any read that decides who is free failing is
+/// an error, never a member who looks free: this runs at booking time.
 pub(super) async fn pick_group_member(
     pool: &SqlitePool,
     team_id: &str,
@@ -357,7 +381,7 @@ pub(super) async fn pick_group_member(
     buffer_before: i32,
     buffer_after: i32,
     host_tz: Tz,
-) -> Option<(String, String, String)> {
+) -> Result<Option<(String, String, String)>, sqlx::Error> {
     let buf_start = slot_start - Duration::minutes(buffer_before as i64);
     let buf_end = slot_end + Duration::minutes(buffer_after as i64);
 
@@ -374,31 +398,23 @@ pub(super) async fn pick_group_member(
     .bind(event_type_id)
     .bind(team_id)
     .fetch_all(pool)
-    .await
-    .unwrap_or_default();
+    .await?;
 
     // Per-member booking-frequency caps. We exclude any member already at
     // (or over) their per-period cap so the picker doesn't pick them just to
     // have the submit-time check reject the booking.
-    let per_member_limits: Result<Vec<(i32, String)>, sqlx::Error> = sqlx::query_as(
+    let per_member_limits: Vec<(i32, String)> = sqlx::query_as(
         "SELECT max_bookings, period FROM booking_frequency_limits \
          WHERE event_type_id = ? AND per_member = 1",
     )
     .bind(event_type_id)
     .fetch_all(pool)
-    .await;
-    let per_member_limits = match per_member_limits {
-        Ok(limits) => limits,
-        Err(error) => {
-            tracing::error!(%error, %event_type_id, "cannot load member booking frequency limits");
-            return None;
-        }
-    };
+    .await?;
 
     let mut available_members = Vec::new();
 
     for (user_id, name, email, weight) in &members {
-        let mut busy = fetch_busy_times_for_user(
+        let mut busy = try_fetch_busy_times_for_user(
             pool,
             user_id,
             buf_start,
@@ -406,12 +422,12 @@ pub(super) async fn pick_group_member(
             host_tz,
             Some(event_type_id),
         )
-        .await;
+        .await?;
         // Also exclude members who are outside their own working hours for
         // this slot. Members without explicit user_availability_rules are
         // returned unconstrained by user_avail_as_busy, matching the slot
         // grid semantics in show_group_slots.
-        busy.extend(user_avail_as_busy(pool, user_id, buf_start, buf_end, host_tz).await);
+        busy.extend(try_user_avail_as_busy(pool, user_id, buf_start, buf_end, host_tz).await?);
         if has_conflict(&busy, buf_start, buf_end) {
             continue;
         }
@@ -426,7 +442,7 @@ pub(super) async fn pick_group_member(
         let assigned: Vec<(String, String)> = sqlx::query_as(
             "SELECT CASE time_version WHEN 1 THEN start_at ELSE rtrim(start_at, 'Z') END AS start_at, CASE time_version WHEN 1 THEN end_at ELSE rtrim(end_at, 'Z') END AS end_at FROM bookings WHERE assigned_user_id = ? AND status IN ('confirmed', 'pending') AND start_at < strftime('%Y-%m-%dT%H:%M:%S', ?, '+2 days') AND end_at > strftime('%Y-%m-%dT%H:%M:%S', ?, '-2 days')")
             .bind(user_id).bind(buf_end.to_string()).bind(buf_start.to_string())
-            .fetch_all(pool).await.unwrap_or_default();
+            .fetch_all(pool).await?;
         if assigned.iter().any(
             |(s, e)| match crate::booking_time::busy_range(s, e, host_tz) {
                 Some((s, e)) => s < buf_end && e > buf_start,
@@ -439,14 +455,7 @@ pub(super) async fn pick_group_member(
         let mut at_per_member_cap = false;
         for (max, period) in &per_member_limits {
             let (rs, re) = frequency_period_range(actual_start, period);
-            let counts = match crate::booking_time::period_counts(pool, event_type_id, rs, re).await
-            {
-                Ok(counts) => counts,
-                Err(error) => {
-                    tracing::error!(%error, %event_type_id, "cannot check member booking frequency");
-                    return None;
-                }
-            };
+            let counts = crate::booking_time::period_counts(pool, event_type_id, rs, re).await?;
             let count: i64 = counts
                 .into_iter()
                 .filter(|(uid, _)| uid.as_deref() == Some(user_id))
@@ -465,7 +474,7 @@ pub(super) async fn pick_group_member(
     }
 
     if available_members.is_empty() {
-        return None;
+        return Ok(None);
     }
 
     // Among available members, pick by highest weight first, then fewest bookings in last 30 days
@@ -493,7 +502,7 @@ pub(super) async fn pick_group_member(
         }
     }
 
-    best.map(|(uid, name, email, _, _)| (uid, name, email))
+    Ok(best.map(|(uid, name, email, _, _)| (uid, name, email)))
 }
 
 pub(super) struct SlotDay {
@@ -571,6 +580,32 @@ pub(super) async fn fetch_busy_times_for_user(
     .await
 }
 
+/// [`fetch_busy_times_for_user`] for the submit-time booking checks: any
+/// query that fails is an error, so a database that cannot be read (pool
+/// exhausted, table locked) refuses the booking instead of reading as a
+/// free host. Slot grids keep the lenient [`fetch_busy_times_for_user`].
+pub(super) async fn try_fetch_busy_times_for_user(
+    pool: &SqlitePool,
+    user_id: &str,
+    window_start: NaiveDateTime,
+    window_end: NaiveDateTime,
+    host_tz: Tz,
+    event_type_id: Option<&str>,
+) -> Result<Vec<(NaiveDateTime, NaiveDateTime)>, sqlx::Error> {
+    try_fetch_busy_times_for_user_opts(
+        pool,
+        user_id,
+        window_start,
+        window_end,
+        host_tz,
+        event_type_id,
+        None,
+        None,
+        true,
+    )
+    .await
+}
+
 pub(super) async fn fetch_busy_times_for_user_ex(
     pool: &SqlitePool,
     user_id: &str,
@@ -628,9 +663,9 @@ pub(super) async fn fetch_busy_times_for_user_opts(
     .unwrap_or_default()
 }
 
-/// Strict entry point for integrations (MCP `get_calendar_blocks`): any
-/// failing query, time off included, is an error, never a partial or empty
-/// calendar an assistant would schedule over.
+/// Strict entry point for integrations (MCP `get_calendar_blocks`) and every
+/// submit-time booking check: any failing query, time off included, is an
+/// error, never a partial or empty calendar someone would be booked over.
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn try_fetch_busy_times_for_user_opts(
     pool: &SqlitePool,
@@ -832,7 +867,16 @@ async fn busy_times(
     // A Microsoft source that has not delivered its first snapshot, or a
     // time past what its last one covered, says nothing about the host's
     // Outlook calendar: busy, rather than free.
-    busy.extend(
+    let gaps = if strict {
+        crate::commands::sync::try_microsoft_gap_intervals(
+            pool,
+            user_id,
+            window_start,
+            window_end,
+            host_tz,
+        )
+        .await?
+    } else {
         crate::commands::sync::microsoft_gap_intervals(
             pool,
             user_id,
@@ -841,9 +885,8 @@ async fn busy_times(
             host_tz,
         )
         .await
-        .into_iter()
-        .map(|(start, end, _)| (start, end)),
-    );
+    };
+    busy.extend(gaps.into_iter().map(|(start, end, _)| (start, end)));
 
     // Time off (#46): the user takes no bookings then, whatever the event
     // type, so every caller of this function (slot pages, submit-time
@@ -905,6 +948,12 @@ pub(super) fn busy_source_is_free(
 
 /// Compute available slots for an event type.
 /// Caller provides pre-fetched busy times via BusySource.
+///
+/// For slot grids: a failed read degrades (logged; overrides, interval and
+/// `first_slot_only` fall back to their defaults), and stale resource feeds
+/// are refreshed first. The submit-time [`is_offered_slot`] uses the strict,
+/// cache-only [`try_compute_slots_cached`] instead.
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn compute_slots(
     pool: &SqlitePool,
     et_id: &str,
@@ -920,6 +969,125 @@ pub(super) async fn compute_slots(
     busy: BusySource,
     exclude_booking_id: Option<&str>,
 ) -> Vec<SlotDay> {
+    let shape = SlotShape {
+        duration,
+        buffer_before,
+        buffer_after,
+        min_notice,
+        start_offset,
+        days_ahead,
+    };
+    slots(
+        pool,
+        et_id,
+        &shape,
+        window,
+        host_tz,
+        guest_tz,
+        busy,
+        exclude_booking_id,
+        false,
+    )
+    .await
+    .unwrap_or_else(|error| {
+        // Lenient mode reports no error; kept total for the type's sake.
+        tracing::error!(%error, %et_id, "slot computation failed");
+        Vec::new()
+    })
+}
+
+/// [`compute_slots`] for the submit-time check, which runs under the
+/// process-wide booking lock: any failing read is an error, and shared
+/// resources are read from the cached feed events only. It never fetches a
+/// feed (network I/O under the lock would hold every booking up behind
+/// one slow feed); the booking paths refresh feeds before taking the lock.
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn try_compute_slots_cached(
+    pool: &SqlitePool,
+    et_id: &str,
+    duration: i32,
+    buffer_before: i32,
+    buffer_after: i32,
+    min_notice: i32,
+    start_offset: i32,
+    days_ahead: i32,
+    window: BookingWindow,
+    host_tz: Tz,
+    guest_tz: Tz,
+    busy: BusySource,
+    exclude_booking_id: Option<&str>,
+) -> Result<Vec<SlotDay>, sqlx::Error> {
+    let shape = SlotShape {
+        duration,
+        buffer_before,
+        buffer_after,
+        min_notice,
+        start_offset,
+        days_ahead,
+    };
+    slots(
+        pool,
+        et_id,
+        &shape,
+        window,
+        host_tz,
+        guest_tz,
+        busy,
+        exclude_booking_id,
+        true,
+    )
+    .await
+}
+
+/// An event type's slot geometry, as [`compute_slots`] takes it.
+struct SlotShape {
+    duration: i32,
+    buffer_before: i32,
+    buffer_after: i32,
+    min_notice: i32,
+    start_offset: i32,
+    days_ahead: i32,
+}
+
+/// The read of a strict slot computation's query, or (lenient) its default
+/// and a log line.
+fn slot_read<T>(
+    result: Result<T, sqlx::Error>,
+    strict: bool,
+    what: &str,
+    et_id: &str,
+    default: T,
+) -> Result<T, sqlx::Error> {
+    match result {
+        Ok(value) => Ok(value),
+        Err(error) if strict => Err(error),
+        Err(error) => {
+            tracing::error!(%error, %et_id, query = what, "slot query failed; using its default");
+            Ok(default)
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn slots(
+    pool: &SqlitePool,
+    et_id: &str,
+    shape: &SlotShape,
+    window: BookingWindow,
+    host_tz: Tz,
+    guest_tz: Tz,
+    busy: BusySource,
+    exclude_booking_id: Option<&str>,
+    strict: bool,
+) -> Result<Vec<SlotDay>, sqlx::Error> {
+    let SlotShape {
+        duration,
+        buffer_before,
+        buffer_after,
+        min_notice,
+        start_offset,
+        days_ahead,
+    } = *shape;
     // Shared-resource blocking: intervals during which the event type's
     // required resources are unavailable ('all' mode: any resource busy;
     // 'round_robin': every resource busy). Extending every member's busy
@@ -927,15 +1095,27 @@ pub(super) async fn compute_slots(
     let now_host = chrono::Utc::now().with_timezone(&host_tz).naive_local();
     let resource_window_end =
         now_host + chrono::Duration::days((start_offset + days_ahead + 1) as i64);
-    let resource_block = crate::resources::blocking_intervals_for_event_type(
-        pool,
-        et_id,
-        now_host,
-        resource_window_end,
-        host_tz,
-        exclude_booking_id,
-    )
-    .await;
+    let resource_block = if strict {
+        crate::resources::try_cached_blocking_intervals_for_event_type(
+            pool,
+            et_id,
+            now_host,
+            resource_window_end,
+            host_tz,
+            exclude_booking_id,
+        )
+        .await?
+    } else {
+        crate::resources::blocking_intervals_for_event_type(
+            pool,
+            et_id,
+            now_host,
+            resource_window_end,
+            host_tz,
+            exclude_booking_id,
+        )
+        .await
+    };
     let busy = if resource_block.is_empty() {
         busy
     } else {
@@ -959,30 +1139,47 @@ pub(super) async fn compute_slots(
         }
     };
 
-    let rules: Vec<(i32, String, String)> = sqlx::query_as(
-        "SELECT day_of_week, start_time, end_time FROM availability_rules WHERE event_type_id = ?",
-    )
-    .bind(et_id)
-    .fetch_all(pool)
-    .await
-    .unwrap_or_default();
+    // No rules means no slots, in either mode.
+    let rules: Vec<(i32, String, String)> = slot_read(
+        sqlx::query_as(
+            "SELECT day_of_week, start_time, end_time FROM availability_rules WHERE event_type_id = ?",
+        )
+        .bind(et_id)
+        .fetch_all(pool)
+        .await,
+        strict,
+        "availability rules",
+        et_id,
+        Vec::new(),
+    )?;
 
     // Fetch availability overrides for this event type
-    let overrides: Vec<(String, Option<String>, Option<String>, i32)> = sqlx::query_as(
-        "SELECT date, start_time, end_time, is_blocked FROM availability_overrides WHERE event_type_id = ? ORDER BY date, start_time",
-    )
-    .bind(et_id)
-    .fetch_all(pool)
-    .await
-    .unwrap_or_default();
+    let overrides: Vec<(String, Option<String>, Option<String>, i32)> = slot_read(
+        sqlx::query_as(
+            "SELECT date, start_time, end_time, is_blocked FROM availability_overrides WHERE event_type_id = ? ORDER BY date, start_time",
+        )
+        .bind(et_id)
+        .fetch_all(pool)
+        .await,
+        strict,
+        "availability overrides",
+        et_id,
+        Vec::new(),
+    )?;
 
+    // One read for the two per-event-type slot settings.
     // slot_interval_min overrides the cursor step. NULL = use duration (legacy behavior).
-    let slot_interval: Option<i32> =
-        sqlx::query_scalar("SELECT slot_interval_min FROM event_types WHERE id = ?")
+    let settings: Option<(Option<i32>, i32)> = slot_read(
+        sqlx::query_as("SELECT slot_interval_min, first_slot_only FROM event_types WHERE id = ?")
             .bind(et_id)
-            .fetch_one(pool)
-            .await
-            .unwrap_or(None);
+            .fetch_optional(pool)
+            .await,
+        strict,
+        "slot settings",
+        et_id,
+        None,
+    )?;
+    let (slot_interval, first_only) = settings.unwrap_or((None, 0));
     let interval = slot_interval.filter(|v| *v > 0).unwrap_or(duration);
 
     let mut result = compute_slots_from_rules(
@@ -1004,24 +1201,17 @@ pub(super) async fn compute_slots(
     // Drop slots whose host-local period already meets/exceeds a configured
     // frequency cap. The submit-time check (would_exceed_frequency_limit)
     // stays as a backstop for the race where two guests grab the last slot
-    // at the same instant.
+    // at the same instant. Fails closed on its own (hides the slots).
     apply_frequency_limit_filter(pool, et_id, &mut result).await;
 
     // If first_slot_only is enabled, keep only the earliest slot per day
-    let first_only: i32 =
-        sqlx::query_scalar("SELECT first_slot_only FROM event_types WHERE id = ?")
-            .bind(et_id)
-            .fetch_one(pool)
-            .await
-            .unwrap_or(0);
-
     if first_only != 0 {
         for day in &mut result {
             day.slots.truncate(1);
         }
     }
 
-    result
+    Ok(result)
 }
 
 /// The span a submit-time [`is_offered_slot`] check recomputes slots over:
@@ -1062,7 +1252,8 @@ pub(super) fn offered_slot_window(host_tz: Tz, slot_start: NaiveDateTime) -> Off
 /// times in `busy` (fetched by the caller over `window`, with the same
 /// [`BusySource`] shape as the slot page for that URL). A submitted time is
 /// only ever a claim about what the page showed; this is what makes the
-/// server hold the page to it.
+/// server hold the page to it. Runs under the booking lock: any failing read
+/// is an error, and resource feeds are read from the cache, never fetched.
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn is_offered_slot(
     pool: &SqlitePool,
@@ -1077,9 +1268,9 @@ pub(super) async fn is_offered_slot(
     busy: BusySource,
     exclude_booking_id: Option<&str>,
     slot_start: NaiveDateTime,
-) -> bool {
-    let booking_window = get_booking_window(pool, et_id).await;
-    let days = compute_slots(
+) -> Result<bool, sqlx::Error> {
+    let booking_window = try_get_booking_window(pool, et_id).await?;
+    let days = try_compute_slots_cached(
         pool,
         et_id,
         duration,
@@ -1094,12 +1285,13 @@ pub(super) async fn is_offered_slot(
         busy,
         exclude_booking_id,
     )
-    .await;
+    .await?;
     let date = slot_start.format("%Y-%m-%d").to_string();
     let time = slot_start.format("%H:%M").to_string();
-    days.iter()
+    Ok(days
+        .iter()
         .flat_map(|d| &d.slots)
-        .any(|s| s.host_date == date && s.host_time == time)
+        .any(|s| s.host_date == date && s.host_time == time))
 }
 
 /// Busy times of a team event type's members over a window, as the team slot
@@ -1139,9 +1331,54 @@ pub(super) async fn team_busy_source(
     }
 }
 
+/// [`team_busy_source`] for the submit-time booking check: any read that
+/// fails is an error, never a member who looks free.
+pub(super) async fn try_team_busy_source(
+    pool: &SqlitePool,
+    et_id: &str,
+    team_id: &str,
+    collective: bool,
+    window_start: NaiveDateTime,
+    window_end: NaiveDateTime,
+    host_tz: Tz,
+) -> Result<BusySource, sqlx::Error> {
+    let mut member_busy = HashMap::new();
+    for user_id in try_team_member_ids(pool, et_id, team_id).await? {
+        let mut busy = try_fetch_busy_times_for_user(
+            pool,
+            &user_id,
+            window_start,
+            window_end,
+            host_tz,
+            Some(et_id),
+        )
+        .await?;
+        busy.extend(
+            try_user_avail_as_busy(pool, &user_id, window_start, window_end, host_tz).await?,
+        );
+        member_busy.insert(user_id, busy);
+    }
+    Ok(if collective {
+        BusySource::Team(member_busy)
+    } else {
+        BusySource::Group(member_busy)
+    })
+}
+
 /// The members a team event type can be booked with: enabled, and not
 /// excluded from this event type by a zero weight.
 pub(super) async fn team_member_ids(pool: &SqlitePool, et_id: &str, team_id: &str) -> Vec<String> {
+    try_team_member_ids(pool, et_id, team_id)
+        .await
+        .unwrap_or_default()
+}
+
+/// [`team_member_ids`], with an unreadable roster as an error.
+async fn try_team_member_ids(
+    pool: &SqlitePool,
+    et_id: &str,
+    team_id: &str,
+) -> Result<Vec<String>, sqlx::Error> {
     sqlx::query_scalar(
         "SELECT u.id FROM users u JOIN team_members tm ON tm.user_id = u.id \
          LEFT JOIN event_type_member_weights etw ON etw.user_id = u.id AND etw.event_type_id = ? \
@@ -1152,7 +1389,6 @@ pub(super) async fn team_member_ids(pool: &SqlitePool, et_id: &str, team_id: &st
     .bind(team_id)
     .fetch_all(pool)
     .await
-    .unwrap_or_default()
 }
 
 /// Busy times of a dynamic group link (`/u/alice+bob/slug`) over a window.
@@ -1180,6 +1416,39 @@ pub(super) async fn dynamic_group_busy_source(
         member_busy.insert(user_id.clone(), busy);
     }
     BusySource::Team(member_busy)
+}
+
+/// [`dynamic_group_busy_source`] for the submit-time booking check: any read
+/// that fails is an error, never a participant who looks free.
+pub(super) async fn try_dynamic_group_busy_source(
+    pool: &SqlitePool,
+    et_id: &str,
+    user_ids: &[String],
+    window_start: NaiveDateTime,
+    window_end: NaiveDateTime,
+    host_tz: Tz,
+) -> Result<BusySource, sqlx::Error> {
+    let mut member_busy = HashMap::new();
+    for (i, user_id) in user_ids.iter().enumerate() {
+        let et_filter = if i == 0 { Some(et_id) } else { None };
+        let mut busy = try_fetch_busy_times_for_user(
+            pool,
+            user_id,
+            window_start,
+            window_end,
+            host_tz,
+            et_filter,
+        )
+        .await?;
+        if i > 0 {
+            ensure_user_avail_seeded(pool, user_id).await;
+            busy.extend(
+                try_user_avail_as_busy(pool, user_id, window_start, window_end, host_tz).await?,
+            );
+        }
+        member_busy.insert(user_id.clone(), busy);
+    }
+    Ok(BusySource::Team(member_busy))
 }
 
 /// Remove slots that fall inside a host-local period already at/over a
@@ -1734,22 +2003,31 @@ pub(super) fn guest_to_host_local(
 /// Load an event type's booking window. A missing row yields the unlimited
 /// default, matching how the other per-event-type lookups degrade.
 pub(super) async fn get_booking_window(pool: &SqlitePool, et_id: &str) -> BookingWindow {
+    try_get_booking_window(pool, et_id)
+        .await
+        .unwrap_or_default()
+}
+
+/// [`get_booking_window`], with an unreadable row as an error rather than
+/// "no bounds": what the submit-time [`is_offered_slot`] uses.
+pub(super) async fn try_get_booking_window(
+    pool: &SqlitePool,
+    et_id: &str,
+) -> Result<BookingWindow, sqlx::Error> {
     let row: Option<(Option<i32>, Option<String>, Option<String>)> = sqlx::query_as(
         "SELECT booking_horizon_days, bookable_from, bookable_until FROM event_types WHERE id = ?",
     )
     .bind(et_id)
     .fetch_optional(pool)
-    .await
-    .ok()
-    .flatten();
-    match row {
+    .await?;
+    Ok(match row {
         Some((horizon_days, from, until)) => BookingWindow {
             horizon_days,
             bookable_from: parse_optional_date(from.as_deref()),
             bookable_until: parse_optional_date(until.as_deref()),
         },
         None => BookingWindow::default(),
-    }
+    })
 }
 
 /// Why a slot on host-local `date` falls outside the event type's booking
