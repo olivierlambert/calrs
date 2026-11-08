@@ -723,8 +723,6 @@ async fn sync_provider_calendars(
         fetched_calendars += 1;
         let needed = write_calendar.as_deref() == Some(cal_info.id.as_str())
             || calendar_counts_for_availability(pool, &cal_id).await;
-        // Bookings verified after this instant may not be in the snapshot.
-        let fetch_started = Utc::now();
 
         let snapshot = async {
             let raw_events = provider
@@ -762,7 +760,6 @@ async fn sync_provider_calendars(
                     &cal_id,
                     &raw_events,
                     (since_dt, until_dt),
-                    fetch_started,
                 )
                 .await?
             } else {
@@ -1270,7 +1267,6 @@ async fn remove_orphaned_provider_events(
     cal_id: &str,
     raw_events: &[ProviderRawEvent],
     (since, until): (chrono::DateTime<Utc>, chrono::DateTime<Utc>),
-    fetch_started: chrono::DateTime<Utc>,
 ) -> Result<u32> {
     // A calendar bookings go to: the source's write calendar, or one a
     // copy was recorded on as an event type's destination (#47).
@@ -1342,7 +1338,12 @@ async fn remove_orphaned_provider_events(
         if start < since || start >= until {
             continue;
         }
-        if is_write_calendar {
+        // Only a booking written to this very calendar of this source (its
+        // stored copy, or one recorded at a destination, #47) can be
+        // orphaned by the uid vanishing here: a copy of the same uid on
+        // another calendar proves nothing about the booking's own.
+        let mut cancelled = false;
+        if is_write_calendar && booking_written_here(pool, &uid, source_id, &cal_href).await {
             // Decide before dropping the cached event: there is no
             // booking-level sweep here, so when the provider could not say
             // whether the booking's event is gone, the cached row is what
@@ -1358,89 +1359,55 @@ async fn remove_orphaned_provider_events(
             if outcome == OrphanOutcome::Inconclusive {
                 continue;
             }
+            cancelled = outcome == OrphanOutcome::Cancelled;
         }
+        // A cancellation already dropped the host's cached copies with the
+        // booking's other copies; the row counts as removed either way.
         let result = sqlx::query("DELETE FROM events WHERE id = ?")
             .bind(&event_id)
             .execute(pool)
             .await?;
-        deleted += result.rows_affected() as u32;
-    }
-    if strict && is_write_calendar {
-        cancel_uncached_vanished_bookings(
-            pool,
-            key,
-            provider,
-            source_id,
-            &cal_href,
-            &seen_uids,
-            (since, until),
-            fetch_started,
-        )
-        .await?;
+        deleted += u32::from(cancelled || result.rows_affected() > 0);
     }
     Ok(deleted)
 }
 
-/// A booking whose event the host deleted before any snapshot cached it
-/// has no cached row for the sweep above to find. On Graph, a confirmed
-/// booking written to this calendar of this source (its write calendar or
-/// a destination, #47), whose write was verified by
-/// reading it back before this snapshot was fetched (`writeback_verified_at`,
-/// no `writeback_error`: a push still in progress, or one verified after
-/// the fetch began, proves nothing about the snapshot), whose uid no cached
-/// event holds and a clean snapshot does not contain, starting inside the
-/// fetched window, goes through [`cancel_orphaned_booking`] like any other:
-/// scoped to this source and host, and cancelled only once Graph confirms
-/// that no calendar of the mailbox holds the event. The evidence is the
-/// CalDAV booking sweep's (no cached copy anywhere, server confirms), plus a
-/// complete snapshot and a write verified before it.
-async fn cancel_uncached_vanished_bookings(
+/// Whether the booking with `uid` was written to calendar `cal_href` of
+/// source `source_id`: its stored copy (`caldav_source_id`, or none recorded
+/// for bookings written before #47, and `caldav_calendar_href`), or a copy
+/// recorded in `booking_write_copies`.
+async fn booking_written_here(
     pool: &SqlitePool,
-    key: &[u8; 32],
-    provider: &dyn crate::providers::CalendarProvider,
+    uid: &str,
     source_id: &str,
     cal_href: &str,
-    seen_uids: &std::collections::HashSet<(String, String)>,
-    (since, until): (chrono::DateTime<Utc>, chrono::DateTime<Utc>),
-    fetch_started: chrono::DateTime<Utc>,
-) -> Result<()> {
-    let candidates: Vec<(String, String)> = sqlx::query_as(
-        "SELECT b.uid, b.start_at FROM bookings b
-         JOIN event_types et ON et.id = b.event_type_id
-         JOIN accounts a ON a.id = et.account_id
-         JOIN caldav_sources cs ON cs.id = ?
-         JOIN accounts sa ON sa.id = cs.account_id
-                         AND sa.user_id = COALESCE(b.assigned_user_id, a.user_id)
-         WHERE b.status = 'confirmed'
-           AND b.time_version = 1
-           -- Written to this calendar of this source (#47); which copies
-           -- count is then cancel_orphaned_booking's rule.
-           AND b.caldav_calendar_href = ?
-           AND (b.caldav_source_id = cs.id OR b.caldav_source_id IS NULL)
-           AND b.writeback_error IS NULL
-           AND b.writeback_verified_at IS NOT NULL
-           AND b.writeback_verified_at < ?
-           AND b.uid NOT IN (SELECT uid FROM events)",
+) -> bool {
+    sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM bookings b
+                        WHERE b.uid = ?1 AND b.caldav_calendar_href = ?3
+                          AND (b.caldav_source_id = ?2 OR b.caldav_source_id IS NULL))
+             OR EXISTS (SELECT 1 FROM booking_write_copies bc
+                        WHERE bc.booking_uid = ?1 AND bc.source_id = ?2 AND bc.calendar_href = ?3)",
     )
+    .bind(uid)
     .bind(source_id)
     .bind(cal_href)
-    .bind(fetch_started.format("%Y-%m-%d %H:%M:%S").to_string())
-    .fetch_all(pool)
-    .await?;
-    for (uid, start_at) in candidates {
-        if seen_uids.iter().any(|(seen, _)| *seen == uid) {
-            continue;
-        }
-        let Ok(start) = chrono::DateTime::parse_from_rfc3339(&start_at) else {
-            continue;
-        };
-        let start = start.with_timezone(&Utc);
-        if start < since || start >= until {
-            continue;
-        }
-        cancel_orphaned_booking(pool, key, OrphanCheck::Provider(provider), source_id, &uid).await;
-    }
-    Ok(())
+    .fetch_one(pool)
+    .await
+    .unwrap_or(false)
+}
+
+/// [`cancel_orphaned_booking`] without a server check, for tests of what a
+/// cancellation of an orphaned booking does next.
+#[cfg(test)]
+pub(crate) async fn cancel_orphan_unverified(
+    pool: &SqlitePool,
+    key: &[u8; 32],
+    source_id: &str,
+    uid: &str,
+) -> bool {
+    cancel_orphaned_booking(pool, key, OrphanCheck::Caldav(None), source_id, uid).await
+        == OrphanOutcome::Cancelled
 }
 
 // --- Helper functions ---
@@ -1893,8 +1860,11 @@ pub(crate) async fn cancel_orphaned_booking(
         booking_id = %booking_id,
         "booking cancelled: calendar event deleted externally"
     );
-    // The host's event is already gone; a claimant's copy is not (#269).
-    crate::web::claimant_delete_booking(pool, key, &booking_uid).await;
+    // The host's event is gone from this calendar; its other copies are
+    // not: a claimant's (#269), copies recorded at a destination (#47) and
+    // the host's other write calendars. Same delete as any host
+    // cancellation; the copy already gone is simply not found.
+    crate::web::caldav_delete_booking(pool, key, &host_user_id, &booking_uid).await;
 
     // Send cancellation emails
     let smtp_config = match crate::email::load_smtp_config(pool, key).await {
@@ -2431,7 +2401,6 @@ mod tests {
                 &cal_id,
                 &other_event_snapshot(),
                 whole_window(),
-                Utc::now(),
             )
             .await
             .unwrap();
@@ -2468,7 +2437,6 @@ mod tests {
             &cal_id,
             &other_event_snapshot(),
             whole_window(),
-            Utc::now(),
         )
         .await
         .unwrap();
@@ -2519,7 +2487,6 @@ mod tests {
             &cal_id,
             &other_event_snapshot(),
             whole_window(),
-            Utc::now(),
         )
         .await
         .unwrap();
@@ -2847,7 +2814,6 @@ mod tests {
             &calendar,
             &[],
             (since, until),
-            Utc::now(),
         )
         .await
         .unwrap();
@@ -3384,178 +3350,52 @@ mod tests {
     /// cached it: cancelled once Graph confirms it gone, on the same
     /// evidence as the cached path; never when the lookup is inconclusive,
     /// the write was never verified, the snapshot still holds it, or on EWS.
-    #[tokio::test]
-    async fn a_vanished_booking_never_cached_is_cancelled_only_on_graphs_word() {
-        let soon = (Utc::now() + chrono::Duration::days(10))
-            .format("%Y-%m-%dT%H:%M:%SZ")
-            .to_string();
-        // `verified`: when the write was read back, relative to the sync
-        // (None: a push still in progress). `moved`: the event is in another
-        // calendar of the mailbox.
-        for (kind, exists, writeback_error, in_snapshot, verified, moved, expected) in [
-            (
-                kinds::MICROSOFT,
-                Some(false),
-                false,
-                false,
-                Some("-1 hour"),
-                false,
-                "cancelled",
-            ),
-            (
-                kinds::MICROSOFT,
-                None,
-                false,
-                false,
-                Some("-1 hour"),
-                false,
-                "confirmed",
-            ),
-            (
-                kinds::MICROSOFT,
-                Some(true),
-                false,
-                false,
-                Some("-1 hour"),
-                false,
-                "confirmed",
-            ),
-            (
-                kinds::MICROSOFT,
-                Some(false),
-                true,
-                false,
-                Some("-1 hour"),
-                false,
-                "confirmed",
-            ),
-            (
-                kinds::MICROSOFT,
-                Some(false),
-                false,
-                true,
-                Some("-1 hour"),
-                false,
-                "confirmed",
-            ),
-            (
-                kinds::MICROSOFT,
-                Some(false),
-                false,
-                false,
-                None,
-                false,
-                "confirmed",
-            ),
-            (
-                kinds::MICROSOFT,
-                Some(false),
-                false,
-                false,
-                Some("+1 hour"),
-                false,
-                "confirmed",
-            ),
-            (
-                kinds::MICROSOFT,
-                Some(false),
-                false,
-                false,
-                Some("-1 hour"),
-                true,
-                "confirmed",
-            ),
-            (
-                kinds::EWS,
-                Some(false),
-                false,
-                false,
-                Some("-1 hour"),
-                false,
-                "confirmed",
-            ),
-        ] {
-            let pool = setup_test_db().await;
-            let (source, et, _, _) = provider_fixture(&pool, kind).await;
-            let booking = provider_booking(&pool, &et, "never-cached").await;
-            sqlx::query("UPDATE bookings SET start_at = ?, end_at = ?, time_version = 1, writeback_error = ?, writeback_verified_at = datetime('now', ?) WHERE id = ?")
-                .bind(&soon)
-                .bind(&soon)
-                .bind(writeback_error.then_some("read-back failed"))
-                .bind(verified)
-                .bind(&booking)
-                .execute(&pool)
-                .await
-                .unwrap();
-            let mut provider = snapshot_with_other_event("write");
-            provider.exists = exists;
-            provider.moved = moved;
-            if in_snapshot {
-                provider.events.push(ProviderRawEvent {
-                    remote_id: "booking".into(),
-                    ical: "BEGIN:VEVENT\r\nUID:never-cached\r\nDTSTART:20300101T100000Z\r\nDTEND:20300101T110000Z\r\nEND:VEVENT\r\n".into(),
-                });
-            }
-            sync_provider_calendars(&pool, &[0; 32], &provider, &source)
-                .await
-                .unwrap();
-            assert_eq!(
-                booking_status(&pool, &booking).await,
-                expected,
-                "{kind} {exists:?} {writeback_error} {in_snapshot} {verified:?} {moved}"
-            );
-        }
-    }
-
     /// The never-cached sweep follows #47's record of where a booking was
     /// written: a booking stored on another source, under the same href,
     /// is not this calendar's to cancel.
+    /// A booking's uid vanishing from a calendar the booking was not written
+    /// to (here a destination holding another booking's copy, #47) does not
+    /// route the booking into a cancellation, whatever the provider says.
     #[tokio::test]
-    async fn a_never_cached_booking_of_another_source_is_left_alone() {
+    async fn a_uid_vanishing_from_another_calendar_cancels_nothing() {
         let pool = setup_test_db().await;
-        let (source, et, _, _) = provider_fixture(&pool, kinds::MICROSOFT).await;
-        let booking = provider_booking(&pool, &et, "elsewhere").await;
-        let soon = (Utc::now() + chrono::Duration::days(10))
-            .format("%Y-%m-%dT%H:%M:%SZ")
-            .to_string();
-        let other = Uuid::new_v4().to_string();
-        sqlx::query("INSERT INTO caldav_sources (id, account_id, name, url, username) SELECT ?, account_id, 'Other', 'https://other.example/', 'u' FROM caldav_sources WHERE id = ?")
-            .bind(&other)
+        let (source, et, user, _) = provider_fixture(&pool, kinds::MICROSOFT).await;
+        let booking = provider_booking(&pool, &et, "b1").await;
+        let et2 = Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO event_types (id, account_id, slug, title, duration_min) SELECT ?, account_id, 'other', 'Other', 30 FROM event_types WHERE id = ?")
+            .bind(&et2)
+            .bind(&et)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let other = provider_booking(&pool, &et2, "b2").await;
+        let (dest, _, _, _) = upsert_calendar_provider(&pool, &source, &remote_calendar("dest"))
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO booking_write_copies (booking_uid, user_id, source_id, calendar_href) VALUES ('b2', ?, ?, 'dest')")
+            .bind(&user)
             .bind(&source)
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query("UPDATE bookings SET start_at = ?1, end_at = ?1, time_version = 1, writeback_verified_at = datetime('now', '-1 hour'), caldav_source_id = ?2 WHERE id = ?3")
-            .bind(&soon)
-            .bind(&other)
-            .bind(&booking)
-            .execute(&pool)
+        let start = Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
+        cached_provider_event(&pool, &dest, "b1", &start).await;
+        // Still on the write calendar, gone from `dest`; the provider would
+        // even say "gone" if asked.
+        let mut provider = snapshot_provider("write");
+        provider.others.push(remote_calendar("dest"));
+        provider.events.push(ProviderRawEvent {
+            remote_id: "b1".into(),
+            ical: format!(
+                "BEGIN:VEVENT\r\nUID:b1\r\nDTSTART:{start}\r\nDTEND:{start}\r\nEND:VEVENT\r\n"
+            ),
+        });
+        sync_provider_calendars(&pool, &[0; 32], &provider, &source)
             .await
             .unwrap();
-        sync_provider_calendars(
-            &pool,
-            &[0; 32],
-            &snapshot_with_other_event("write"),
-            &source,
-        )
-        .await
-        .unwrap();
+        assert!(cached_uids(&pool, &dest).await.is_empty());
         assert_eq!(booking_status(&pool, &booking).await, "confirmed");
-        sqlx::query("UPDATE bookings SET caldav_source_id = ? WHERE id = ?")
-            .bind(&source)
-            .bind(&booking)
-            .execute(&pool)
-            .await
-            .unwrap();
-        sync_provider_calendars(
-            &pool,
-            &[0; 32],
-            &snapshot_with_other_event("write"),
-            &source,
-        )
-        .await
-        .unwrap();
-        assert_eq!(booking_status(&pool, &booking).await, "cancelled");
+        assert_eq!(booking_status(&pool, &other).await, "confirmed");
     }
 
     /// Lists no calendar at all, which a mailbox never really has.

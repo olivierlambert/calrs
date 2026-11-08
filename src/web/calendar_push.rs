@@ -363,16 +363,6 @@ pub(super) async fn push_to_sources(
         match written {
             Ok(()) => {
                 tracing::info!(uid = %booking_uid, calendar_href = %calendar_href, "calendar write-back succeeded (verified)");
-                // Only a host copy read back counts: the Graph orphan sweep
-                // trusts a snapshot taken after this instant to hold it.
-                if owner == CopyOwner::Host {
-                    let _ = sqlx::query(
-                        "UPDATE bookings SET writeback_verified_at = datetime('now') WHERE uid = ?",
-                    )
-                    .bind(booking_uid)
-                    .execute(pool)
-                    .await;
-                }
             }
             Err(e) => {
                 tracing::error!(uid = %booking_uid, calendar_href = %calendar_href, error = %e, "calendar write-back failed");
@@ -657,16 +647,19 @@ pub(crate) async fn caldav_delete_booking(
     if let Err(e) = delete_result {
         tracing::error!(uid = %booking_uid, error = %e, "calendar event delete failed");
     }
-    // A push under the source setting (no destination chosen, so no copy
-    // recorded) writes the booking to the write calendar of every source of
-    // the host, not only the one stored (a CalDAV source and a Microsoft
-    // one, say): delete those copies by uid too. Recorded copies were
-    // deleted above, where they were written.
-    if tracked.is_empty() {
-        for row in default_write_sources(pool, cache_user).await {
-            if row.0 != source_id {
-                delete_from(pool, key, &row, booking_uid).await;
-            }
+    // A push under the source setting writes the booking to the write
+    // calendar of every source of the host, not only the one stored (a
+    // CalDAV source and a Microsoft one, say), and those copies are not
+    // recorded: delete them by uid too, skipping each place already tried
+    // (the stored one, and the recorded copies deleted above), as
+    // `caldav_delete_for_user` does.
+    for row in default_write_sources(pool, cache_user).await {
+        let tried = (row.0 == source_id && row.4 == calendar_href)
+            || tracked
+                .iter()
+                .any(|(sid, href)| *sid == row.0 && *href == row.4);
+        if !tried {
+            delete_from(pool, key, &row, booking_uid).await;
         }
     }
 

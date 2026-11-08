@@ -932,6 +932,59 @@ async fn cancelling_deletes_the_copy_in_every_host_write_calendar() {
     assert_eq!((first.stored(), second.stored()), (0, 0));
 }
 
+/// A copy recorded at a former destination (#47) does not stop the
+/// cancellation from reaching the host's other write calendars: every place
+/// the booking was written loses it.
+#[tokio::test]
+async fn cancelling_with_a_recorded_copy_still_clears_every_write_calendar() {
+    let (pool, first, host, _, uid) = writeback_fixture(DavMode::Ok).await;
+    let (base, second) = spawn_mock_dav(DavMode::Ok).await;
+    seed_write_source(&pool, &host, &base).await;
+    let (base, third) = spawn_mock_dav(DavMode::Ok).await;
+    let former = seed_write_source(&pool, &host, &base).await;
+    push_fresh(&pool, &host, &uid).await;
+    assert_eq!((first.stored(), second.stored(), third.stored()), (1, 1, 1));
+    // The third calendar is now only a recorded copy, not a write calendar.
+    sqlx::query("UPDATE caldav_sources SET write_calendar_href = NULL WHERE id = ?")
+        .bind(&former)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO booking_write_copies (booking_uid, user_id, source_id, calendar_href) VALUES (?, ?, ?, '/dav/cal/')")
+        .bind(&uid)
+        .bind(&host)
+        .bind(&former)
+        .execute(&pool)
+        .await
+        .unwrap();
+    caldav_delete_booking(&pool, &[0u8; 32], &host, &uid).await;
+    assert_eq!((first.stored(), second.stored(), third.stored()), (0, 0, 0));
+}
+
+/// A booking cancelled because its event vanished from one calendar loses
+/// its other copies too, as on any host cancellation.
+#[tokio::test]
+async fn an_orphan_cancellation_deletes_the_other_copies() {
+    let (pool, first, host, id, uid) = writeback_fixture(DavMode::Ok).await;
+    let (base, second) = spawn_mock_dav(DavMode::Ok).await;
+    seed_write_source(&pool, &host, &base).await;
+    push_fresh(&pool, &host, &uid).await;
+    assert_eq!((first.stored(), second.stored()), (1, 1));
+    let stored_source: String =
+        sqlx::query_scalar("SELECT caldav_source_id FROM bookings WHERE id = ?")
+            .bind(&id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(
+        crate::commands::sync::cancel_orphan_unverified(&pool, &[0u8; 32], &stored_source, &uid)
+            .await
+    );
+    assert_eq!((first.stored(), second.stored()), (0, 0));
+    let (_, _, _, _, status) = writeback_state(&pool, &id).await;
+    assert_eq!(status, "cancelled");
+}
+
 /// Cancelling a claimed booking removes the claimant's copy with the host's.
 #[tokio::test]
 async fn cancelling_a_claimed_booking_deletes_the_claimants_copy() {
