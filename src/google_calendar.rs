@@ -1090,12 +1090,22 @@ mod tests {
         assert_eq!(time_max, "2027-11-08T12:30:45Z");
     }
 
+    /// The refresh throttle is process-wide and keyed by API base and
+    /// calendar id. These tests all use calendar `c` on fake servers whose
+    /// ports the OS hands out again once a server is dropped, so one test's
+    /// successful refresh could read as "fresh" in another, or
+    /// `forget_refresh("c")` clear another's entry. They take this lock and
+    /// start from an empty throttle for `c`.
+    static REFRESH_TESTS: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
     /// A failed out-of-office fetch is reported on the source, so sync
     /// health and the owner's alert see it, and a snapshot that has not
     /// been refreshed for a week stops blocking. A Calendar API that is
     /// simply not enabled, with nothing cached, is no failure.
     #[tokio::test]
     async fn out_of_office_failures_are_reported_and_stale_blocks_expire() {
+        let _serial = REFRESH_TESTS.lock().await;
+        forget_refresh("c");
         const PRIMARY: &str = "http://x/caldav/v2/host%40example.com/user";
         const CAL_HREF: &str = "/caldav/v2/host%40example.com/events";
         async fn cached(pool: &SqlitePool) -> i64 {
@@ -1128,6 +1138,7 @@ mod tests {
         for fake in [FakeGoogle::api_failing(503), FakeGoogle::without_api()] {
             let (base, server) = super::fake::serve(std::sync::Arc::new(fake)).await;
             let api = format!("{base}/api");
+            forget_refresh("c");
             let failure =
                 refresh_out_of_office(&pool, "c", PRIMARY, CAL_HREF, &api, "t", REFRESH_BUDGET)
                     .await
@@ -1169,6 +1180,8 @@ mod tests {
     /// (tried again on the next sync) instead of holding a slot page.
     #[tokio::test]
     async fn out_of_office_refreshes_are_spaced_and_bounded() {
+        let _serial = REFRESH_TESTS.lock().await;
+        forget_refresh("c");
         const PRIMARY: &str = "http://x/caldav/v2/host%40example.com/user";
         const CAL_HREF: &str = "/caldav/v2/host%40example.com/events";
         let pool = database().await;
@@ -1214,6 +1227,8 @@ mod tests {
     /// sync, even within five minutes of the last refresh.
     #[tokio::test]
     async fn a_forgotten_calendar_refreshes_again() {
+        let _serial = REFRESH_TESTS.lock().await;
+        forget_refresh("c");
         const PRIMARY: &str = "http://x/caldav/v2/host%40example.com/user";
         const CAL_HREF: &str = "/caldav/v2/host%40example.com/events";
         let pool = database().await;
