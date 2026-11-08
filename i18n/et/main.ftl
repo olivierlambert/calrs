@@ -1691,6 +1691,7 @@ bookings-error-reschedule-resend-too-soon = Palve saadeti külalisele vähem kui
 bookings-resend-reschedule = Saada palve uuesti
 bookings-resend-reschedule-hint = Saada külalisele sama link uuesti (kõige rohkem kord tunnis)
 troubleshoot-detail-pending-request = { $title } (ootel taotlus)
+troubleshoot-detail-claimed-booking = { $title } (üle võetud broneering)
 etf-pending-blocks-slot = Ootel taotlused blokeerivad aja
 etf-pending-blocks-slot-help = Kuni taotlus ootab sinu vastust, ei saa keegi teine seda aega broneerida, ei selles ega sinu teistes sündmuse tüüpides.
 etf-pending-expiry = Taotluste aegumine

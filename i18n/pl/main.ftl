@@ -1760,6 +1760,7 @@ bookings-error-reschedule-resend-too-soon = Prośba została wysłana gościowi 
 bookings-resend-reschedule = Wyślij prośbę ponownie
 bookings-resend-reschedule-hint = Wyślij gościowi ten sam link jeszcze raz (najwyżej raz na godzinę)
 troubleshoot-detail-pending-request = { $title } (oczekująca prośba)
+troubleshoot-detail-claimed-booking = { $title } (przejęta rezerwacja)
 etf-pending-blocks-slot = Oczekujące prośby blokują termin
 etf-pending-blocks-slot-help = Dopóki prośba czeka na twoją odpowiedź, nikt inny nie może zarezerwować tego czasu, ani w tym, ani w innych twoich typach wydarzeń.
 etf-pending-expiry = Wygasanie próśb

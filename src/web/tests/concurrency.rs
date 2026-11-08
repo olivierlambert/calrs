@@ -458,3 +458,72 @@ async fn unreadable_reschedule_hosts_are_an_error() {
         .unwrap();
     assert!(reschedule_hosts(&pool, &uid, &owner).await.is_err());
 }
+
+/// Six guests submit at once through the same single-use invite link, each
+/// for a different time, so nothing but the invite can refuse them (#373).
+/// The check and the count used to be two steps, so several could pass the
+/// check before any was counted. Exactly one booking is made, the invite is
+/// counted once, and the others are refused as a used invite.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_single_use_invite_books_once_under_concurrent_submissions() {
+    let (app, pool, et_id, _dir) = production_pool_app().await;
+    sqlx::query("UPDATE event_types SET visibility = 'private' WHERE id = ?")
+        .bind(&et_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO booking_invites (id, event_type_id, token, guest_name, guest_email, max_uses, created_by_user_id)
+         SELECT 'inv373', ?, 'tok373', '', '', 1, id FROM users WHERE username = 'testuser'",
+    )
+    .bind(&et_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // Hold the booking lock while the six read the invite, so every one of
+    // them has passed the early check before the first can book: the old
+    // two-step count then let all six through.
+    let lock = crate::resources::booking_lock().await;
+    let day = far_future_monday();
+    let mut requests = Vec::new();
+    for (ip, time) in ["09:00", "10:00", "11:00", "13:00", "14:00", "15:00"]
+        .into_iter()
+        .enumerate()
+    {
+        let app = app.clone();
+        let mut request = post_form_unauthed(
+            "/u/testuser/test-meeting/book",
+            "burst",
+            &format!(
+                "_csrf=burst&date={day}&time={time}&tz=UTC&name=Guest+{ip}&email=guest{ip}%40example.com&invite_token=tok373"
+            ),
+        );
+        request.headers_mut().insert(
+            "x-forwarded-for",
+            format!("198.51.100.{ip}").parse().unwrap(),
+        );
+        requests.push(tokio::spawn(async move {
+            app.oneshot(request).await.unwrap().status()
+        }));
+    }
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    drop(lock);
+    for request in requests {
+        let status = request.await.unwrap();
+        assert!(!status.is_server_error(), "{status}");
+    }
+
+    let bookings: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM bookings WHERE event_type_id = ?")
+        .bind(&et_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(bookings, 1, "a single-use invite books once");
+    let used: i64 =
+        sqlx::query_scalar("SELECT used_count FROM booking_invites WHERE id = 'inv373'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(used, 1);
+}

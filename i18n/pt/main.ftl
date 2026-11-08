@@ -1691,6 +1691,7 @@ bookings-error-reschedule-resend-too-soon = A solicitação foi enviada ao convi
 bookings-resend-reschedule = Reenviar solicitação
 bookings-resend-reschedule-hint = Enviar de novo o mesmo link ao convidado (no máximo uma vez por hora)
 troubleshoot-detail-pending-request = { $title } (pedido pendente)
+troubleshoot-detail-claimed-booking = { $title } (agendamento assumido)
 etf-pending-blocks-slot = Pedidos pendentes bloqueiam o horário
 etf-pending-blocks-slot-help = Enquanto um pedido aguarda sua resposta, ninguém mais pode agendar esse horário, nem neste nem nos seus outros tipos de evento.
 etf-pending-expiry = Expiração dos pedidos

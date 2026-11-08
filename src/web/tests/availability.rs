@@ -3429,3 +3429,277 @@ async fn a_failing_calendar_query_keeps_the_bookings_that_loaded() {
     // Only the booking can be busy here (no calendar rows, no time off).
     assert_eq!(busy.len(), 1, "{busy:?}");
 }
+
+// --- Claimed bookings (#374) and collective exclusions (#375) in busy time ---
+
+/// A confirmed booking on alice's event type, claimed by bob as a watcher,
+/// makes bob busy on every path: the lenient grid reader, the strict
+/// submit-time reader, and the approval re-check that ignores pending holds.
+/// A cancelled claimed booking does not.
+#[tokio::test]
+async fn a_claimed_booking_makes_the_claimant_busy() {
+    let pool = setup_test_db().await;
+    let alice = insert_role_user(&pool, "alice@claim374.test", "user").await;
+    let bob = insert_role_user(&pool, "bob@claim374.test", "user").await;
+    let alice_et = insert_personal_et(&pool, &alice, "claim374-et").await;
+    let start = NaiveDate::from_ymd_opt(2026, 3, 23)
+        .unwrap()
+        .and_hms_opt(10, 0, 0)
+        .unwrap();
+    let end = start + Duration::minutes(30);
+    insert_booking(&pool, &alice_et, None, start, "confirmed").await;
+
+    let bob_free =
+        fetch_busy_times_for_user(&pool, &bob, start, end, chrono_tz::Tz::UTC, None).await;
+    assert!(bob_free.is_empty(), "not claimed yet: bob is free");
+
+    sqlx::query("UPDATE bookings SET claimed_by_user_id = ? WHERE event_type_id = ?")
+        .bind(&bob)
+        .bind(&alice_et)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let lenient =
+        fetch_busy_times_for_user(&pool, &bob, start, end, chrono_tz::Tz::UTC, None).await;
+    assert_eq!(lenient, vec![(start, end)], "the claimant is busy (#374)");
+    let strict = try_fetch_busy_times_for_user(&pool, &bob, start, end, chrono_tz::Tz::UTC, None)
+        .await
+        .unwrap();
+    assert_eq!(strict, vec![(start, end)], "the strict reader agrees");
+    let approval = try_fetch_busy_times_for_user_opts(
+        &pool,
+        &bob,
+        start,
+        end,
+        chrono_tz::Tz::UTC,
+        None,
+        None,
+        None,
+        false,
+    )
+    .await
+    .unwrap();
+    assert_eq!(approval, vec![(start, end)], "the approval re-check agrees");
+    // The host is still busy, once.
+    let alice_busy =
+        fetch_busy_times_for_user(&pool, &alice, start, end, chrono_tz::Tz::UTC, None).await;
+    assert_eq!(alice_busy, vec![(start, end)]);
+
+    // Excluding the booking itself (a reschedule) frees the claimant.
+    let id: String = sqlx::query_scalar("SELECT id FROM bookings WHERE event_type_id = ?")
+        .bind(&alice_et)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let rescheduling = fetch_busy_times_for_user_ex(
+        &pool,
+        &bob,
+        start,
+        end,
+        chrono_tz::Tz::UTC,
+        None,
+        Some(&id),
+        None,
+    )
+    .await;
+    assert!(rescheduling.is_empty());
+
+    sqlx::query("UPDATE bookings SET status = 'cancelled' WHERE id = ?")
+        .bind(&id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let cancelled =
+        fetch_busy_times_for_user(&pool, &bob, start, end, chrono_tz::Tz::UTC, None).await;
+    assert!(cancelled.is_empty(), "a cancelled claimed booking is free");
+}
+
+/// A claimant who also hosts the booking (a collective member who claimed
+/// it) is busy for it once, not twice.
+#[tokio::test]
+async fn a_host_who_claimed_the_booking_is_busy_once() {
+    let pool = setup_test_db().await;
+    let alice = insert_role_user(&pool, "alice@claimhost374.test", "user").await;
+    let (_team, et_id) = insert_team_with_et(
+        &pool,
+        "claimhost374",
+        "claimhost374-et",
+        &[(&alice, "member")],
+    )
+    .await;
+    sqlx::query("UPDATE event_types SET scheduling_mode = 'collective' WHERE id = ?")
+        .bind(&et_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let start = NaiveDate::from_ymd_opt(2026, 3, 24)
+        .unwrap()
+        .and_hms_opt(10, 0, 0)
+        .unwrap();
+    let end = start + Duration::minutes(30);
+    insert_booking(&pool, &et_id, None, start, "confirmed").await;
+    sqlx::query("UPDATE bookings SET claimed_by_user_id = ?")
+        .bind(&alice)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let busy = fetch_busy_times_for_user(&pool, &alice, start, end, chrono_tz::Tz::UTC, None).await;
+    assert_eq!(busy, vec![(start, end)]);
+}
+
+/// The troubleshoot view lists a booking the user is busy for only because
+/// they claimed it, and says so.
+#[tokio::test]
+async fn troubleshoot_labels_a_claimed_booking() {
+    let (app, pool, session, _et_id) = setup_test_app().await;
+    let me: String = sqlx::query_scalar("SELECT id FROM users WHERE username = 'testuser'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let alice = insert_role_user(&pool, "alice@claimts374.test", "user").await;
+    let alice_et = insert_personal_et(&pool, &alice, "claimts374-et").await;
+    sqlx::query("UPDATE event_types SET title = 'Alice Demo' WHERE id = ?")
+        .bind(&alice_et)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let day = far_future_monday();
+    let start = NaiveDate::parse_from_str(&day, "%Y-%m-%d")
+        .unwrap()
+        .and_hms_opt(10, 0, 0)
+        .unwrap();
+    insert_booking(&pool, &alice_et, None, start, "confirmed").await;
+    sqlx::query("UPDATE bookings SET claimed_by_user_id = ? WHERE event_type_id = ?")
+        .bind(&me)
+        .bind(&alice_et)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let response = app
+        .oneshot(get_authed(
+            &format!("/dashboard/troubleshoot?date={day}&event_type=test-meeting"),
+            &session,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = body_string(response).await;
+    assert!(body.contains("Alice Demo (claimed booking)"), "{body}");
+}
+
+/// A member excluded from a collective event type (weight 0) is not made
+/// busy by its unassigned bookings, the owner included, while the other
+/// members are; and the excluded member's own busy time does not block the
+/// collective grid, since they are not on its roster (#375).
+#[tokio::test]
+async fn an_excluded_member_is_neither_blocked_by_nor_blocks_a_collective_booking() {
+    let pool = setup_test_db().await;
+    let alice = insert_role_user(&pool, "alice@excl375.test", "user").await;
+    let bob = insert_role_user(&pool, "bob@excl375.test", "user").await;
+    let carol = insert_role_user(&pool, "carol@excl375.test", "user").await;
+    let (team_id, et_id) = insert_team_with_et(
+        &pool,
+        "excl375",
+        "excl375-et",
+        &[(&alice, "member"), (&bob, "member"), (&carol, "member")],
+    )
+    .await;
+    // Carol owns the event type's account, as the creator of a team event
+    // type does, and is excluded from it along with bob.
+    sqlx::query("UPDATE accounts SET user_id = ? WHERE id = (SELECT account_id FROM event_types WHERE id = ?)")
+        .bind(&carol)
+        .bind(&et_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE event_types SET scheduling_mode = 'collective' WHERE id = ?")
+        .bind(&et_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    for excluded in [&bob, &carol] {
+        sqlx::query(
+            "INSERT INTO event_type_member_weights (event_type_id, user_id, weight) VALUES (?, ?, 0)",
+        )
+        .bind(&et_id)
+        .bind(excluded)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    let start = NaiveDate::from_ymd_opt(2026, 3, 25)
+        .unwrap()
+        .and_hms_opt(10, 0, 0)
+        .unwrap();
+    let end = start + Duration::minutes(30);
+    insert_booking(&pool, &et_id, None, start, "confirmed").await;
+
+    let alice_busy =
+        fetch_busy_times_for_user(&pool, &alice, start, end, chrono_tz::Tz::UTC, None).await;
+    assert_eq!(alice_busy, vec![(start, end)], "an included member is busy");
+    for excluded in [&bob, &carol] {
+        let lenient =
+            fetch_busy_times_for_user(&pool, excluded, start, end, chrono_tz::Tz::UTC, None).await;
+        assert!(lenient.is_empty(), "an excluded member is free (#375)");
+        let strict =
+            try_fetch_busy_times_for_user(&pool, excluded, start, end, chrono_tz::Tz::UTC, None)
+                .await
+                .unwrap();
+        assert!(strict.is_empty(), "the strict reader agrees");
+    }
+
+    // Bob, excluded, is busy at 11:00 on a personal booking of his own: the
+    // collective grid is built from alice alone, so 11:00 stays free.
+    let bob_et = insert_personal_et(&pool, &bob, "excl375-bob").await;
+    let eleven = start + Duration::hours(1);
+    insert_booking(&pool, &bob_et, None, eleven, "confirmed").await;
+    let busy = try_team_busy_source(
+        &pool,
+        &et_id,
+        &team_id,
+        true,
+        start - Duration::hours(2),
+        start + Duration::hours(4),
+        chrono_tz::Tz::UTC,
+    )
+    .await
+    .unwrap();
+    assert!(
+        busy_source_is_free(&busy, eleven, eleven + Duration::minutes(30)),
+        "an excluded member does not block the collective slot"
+    );
+    assert!(
+        !busy_source_is_free(&busy, start, end),
+        "the collective booking still blocks its own included member"
+    );
+}
+
+/// An unexcluded owner of a collective event type stays busy for its
+/// unassigned bookings, as before.
+#[tokio::test]
+async fn the_owner_of_a_collective_event_type_stays_busy_unless_excluded() {
+    let pool = setup_test_db().await;
+    let alice = insert_role_user(&pool, "alice@own375.test", "user").await;
+    let (_team, et_id) =
+        insert_team_with_et(&pool, "own375", "own375-et", &[(&alice, "member")]).await;
+    sqlx::query("UPDATE accounts SET user_id = ? WHERE id = (SELECT account_id FROM event_types WHERE id = ?)")
+        .bind(&alice)
+        .bind(&et_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE event_types SET scheduling_mode = 'collective' WHERE id = ?")
+        .bind(&et_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let start = NaiveDate::from_ymd_opt(2026, 3, 26)
+        .unwrap()
+        .and_hms_opt(10, 0, 0)
+        .unwrap();
+    let end = start + Duration::minutes(30);
+    insert_booking(&pool, &et_id, None, start, "confirmed").await;
+    let busy = fetch_busy_times_for_user(&pool, &alice, start, end, chrono_tz::Tz::UTC, None).await;
+    assert_eq!(busy, vec![(start, end)]);
+}
