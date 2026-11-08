@@ -357,8 +357,7 @@ impl CaldavClient {
 
         let status = resp.status();
         if !status.is_success() && status.as_u16() != 201 && status.as_u16() != 204 {
-            let body = body_snippet(resp).await;
-            bail!("PUT {} returned {} — {}", url, status, body);
+            bail!("PUT {} returned {}", url, status);
         }
 
         Ok(())
@@ -447,8 +446,7 @@ impl CaldavClient {
 
         let status = resp.status();
         if !status.is_success() && status.as_u16() != 204 && status.as_u16() != 404 {
-            let body = body_snippet(resp).await;
-            bail!("DELETE {} returned {} — {}", url, status, body);
+            bail!("DELETE {} returned {}", url, status);
         }
 
         Ok(())
@@ -585,17 +583,14 @@ impl CaldavClient {
 /// accepted, and 200 OK, which some servers send with the same multistatus
 /// body (the parse then requires one). Any other status is an error, so an
 /// error page, or an empty 5xx body, can never read as an empty calendar.
+///
+/// The error names the status code and reason only, never the body: on a
+/// shared calendar an error page can quote other people's event data, and
+/// the message is stored and shown on the sources page.
 async fn multistatus_body(resp: reqwest::Response, what: &str, url: &str) -> Result<String> {
     let status = resp.status();
     if status.as_u16() != 207 && status != reqwest::StatusCode::OK {
-        // Surface the response body. Servers like Google embed the actual
-        // reason (insufficient scope, API not enabled, etc.) in the body,
-        // not the status line.
-        let snippet = body_snippet(resp).await;
-        if snippet.is_empty() {
-            bail!("{what} {url} returned {status}");
-        }
-        bail!("{what} {url} returned {status}: {snippet}");
+        bail!("{what} {url} returned {status}");
     }
     read_body(resp, crate::xml::MAX_INPUT_BYTES).await
 }
@@ -649,24 +644,6 @@ where
             String::new(),
         ),
     }
-}
-
-/// The start of an error response's body, for the error message: at most
-/// 4 KiB is read, and 500 characters kept.
-async fn body_snippet(resp: reqwest::Response) -> String {
-    const READ: usize = 4096;
-    let mut resp = resp;
-    let encoding = response_encoding(resp.headers());
-    let mut body = Vec::new();
-    while body.len() < READ {
-        match resp.chunk().await {
-            Ok(Some(chunk)) => body.extend_from_slice(&chunk),
-            _ => break,
-        }
-    }
-    body.truncate(READ);
-    let (text, _, _) = encoding.decode(&body);
-    text.trim().chars().take(500).collect()
 }
 
 /// The encoding named by a `Content-Type` charset parameter, else UTF-8.
@@ -855,15 +832,28 @@ mod tests {
                 assert!(err.contains(&code), "call {n} on {status}: {err}");
             }
         }
-        // The error page's own text is surfaced, as Google puts the reason
-        // there.
-        let base = serve(|_, _| (503, "text/html", b"<p>quota exceeded</p>".to_vec())).await;
-        let err = CaldavClient::new(&base, "u", "p")
-            .fetch_events("/dav/cal/")
-            .await
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("quota exceeded"), "{err}");
+        // The body never reaches the message: on a shared calendar an error
+        // page can quote other people's events, and the message is stored.
+        let base = serve(|_, _| {
+            (
+                503,
+                "text/html",
+                b"<p>SUMMARY:Alice - medical appointment</p>".to_vec(),
+            )
+        })
+        .await;
+        let client = CaldavClient::new(&base, "u", "p");
+        let errors = [
+            client.fetch_events("/dav/cal/").await.map(|_| ()),
+            client.list_calendars("/dav/").await.map(|_| ()),
+            client.put_event("/dav/cal/", "x", "BEGIN:VCALENDAR").await,
+            client.delete_event("/dav/cal/", "x").await,
+        ];
+        for result in errors {
+            let err = format!("{:#}", result.unwrap_err());
+            assert!(err.contains("503 Service Unavailable"), "{err}");
+            assert!(!err.contains("Alice"), "{err}");
+        }
     }
 
     #[tokio::test]
