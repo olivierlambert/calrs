@@ -895,6 +895,49 @@ mod tests {
         assert_eq!(total as usize, LEGACY_MIGRATIONS.len() + 2);
     }
 
+    /// 20261108044303_managed_ews_unique builds its unique index even on a
+    /// development database holding duplicate managed Exchange sources: they
+    /// go first (20261108044304_ews_email_trust removes managed rows anyway),
+    /// and an ordinary source is left alone.
+    #[tokio::test]
+    async fn managed_ews_unique_index_builds_over_duplicates() {
+        let pool = memory_pool().await;
+        migrate(&pool).await.unwrap();
+        sqlx::raw_sql(
+            "DROP INDEX idx_caldav_sources_managed_ews_unique;
+             DROP INDEX idx_caldav_sources_managed_ews_mailbox;
+             DELETE FROM _migrations WHERE name = '20261108044303_managed_ews_unique';
+             INSERT INTO users (id, email, name, role, auth_provider, username, enabled)
+                 VALUES ('u1', 'h@example.com', 'Host', 'admin', 'local', 'host', 1);
+             INSERT INTO accounts (id, name, email, timezone, user_id)
+                 VALUES ('a1', 'Host', 'h@example.com', 'UTC', 'u1');
+             INSERT INTO caldav_sources (id, account_id, name, url, username, provider_type, managed, impersonate_email)
+                 VALUES ('m1', 'a1', 'Exchange (managed)', 'https://x/EWS', 'svc', 'ews', 1, 'h@example.com'),
+                        ('m2', 'a1', 'Exchange (managed)', 'https://x/EWS', 'svc', 'ews', 1, 'h@example.com'),
+                        ('own', 'a1', 'Mine', 'https://dav.example.com/', 'h', 'caldav', 0, NULL);
+             INSERT INTO calendars (id, source_id, href) VALUES ('c1', 'm1', 'cal');",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        migrate(&pool).await.unwrap();
+
+        let sources: Vec<String> = sqlx::query_scalar("SELECT id FROM caldav_sources")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        assert_eq!(sources, ["own"]);
+        let indexed: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM sqlite_master \
+             WHERE name = 'idx_caldav_sources_managed_ews_unique')",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(indexed);
+    }
+
     #[tokio::test]
     async fn migrate_tracks_applied_migrations() {
         let pool = memory_pool().await;

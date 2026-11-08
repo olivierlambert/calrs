@@ -59,8 +59,25 @@ pub struct EwsSyncDelta {
     pub includes_last: bool,
 }
 
-/// Parse a `FindFolderResponse` body into a vector of calendar folders.
-pub fn parse_find_folder_response(xml: &str) -> Result<Vec<EwsCalendarFolder>> {
+/// Parse one page of a `FindFolderResponse` body: its calendar folders,
+/// and the `RootFolder`'s `IncludesLastItemInRange` when the server sent it
+/// (`Some(false)`: more pages follow).
+///
+/// The answer must be a successful `FindFolderResponseMessage` with a
+/// `RootFolder`: anything else is an error, never an empty list, since the
+/// sync drops calendars a listing no longer shows.
+pub fn parse_find_folder_page(xml: &str) -> Result<(Vec<EwsCalendarFolder>, Option<bool>)> {
+    let message = find_first_open_tag(xml, "FindFolderResponseMessage").ok_or_else(|| {
+        anyhow::anyhow!("EWS FindFolder reply holds no FindFolderResponseMessage")
+    })?;
+    if attr(&message, "ResponseClass").as_deref() != Some("Success") {
+        anyhow::bail!("EWS FindFolder did not succeed");
+    }
+    let Some(root) = find_first_open_tag(xml, "RootFolder") else {
+        anyhow::bail!("EWS FindFolder reply holds no RootFolder");
+    };
+    let includes_last =
+        attr(&root, "IncludesLastItemInRange").map(|v| v.eq_ignore_ascii_case("true"));
     let mut out = Vec::new();
     for block in collect_blocks(xml, "CalendarFolder") {
         let id_tag = find_first_open_tag(&block, "FolderId");
@@ -81,7 +98,7 @@ pub fn parse_find_folder_response(xml: &str) -> Result<Vec<EwsCalendarFolder>> {
             display_name,
         });
     }
-    Ok(out)
+    Ok((out, includes_last))
 }
 
 /// Parse a `FindItemResponse` body for calendar items.
@@ -342,9 +359,47 @@ mod tests {
         assert_eq!(page(""), None);
     }
 
+    /// A reply that is not a successful FindFolder (an empty body, a
+    /// sign-in page, an error class, a message without its RootFolder) is an
+    /// error, never "no calendars".
+    #[test]
+    fn find_folder_refuses_anything_but_a_successful_listing() {
+        for xml in [
+            "",
+            "<html><body>Sign in</body></html>",
+            r#"<m:FindFolderResponseMessage ResponseClass="Error"><m:RootFolder/></m:FindFolderResponseMessage>"#,
+            r#"<m:FindFolderResponseMessage ResponseClass="Success"></m:FindFolderResponseMessage>"#,
+        ] {
+            assert!(parse_find_folder_page(xml).is_err(), "{xml:?}");
+        }
+        let empty = r#"<m:FindFolderResponseMessage ResponseClass="Success"><m:RootFolder TotalItemsInView="0"><t:Folders/></m:RootFolder></m:FindFolderResponseMessage>"#;
+        assert!(parse_find_folder_page(empty).unwrap().0.is_empty());
+    }
+
+    /// A paged listing says whether its last folder is in; a truncated
+    /// page (`IncludesLastItemInRange="false"`) is not the whole listing.
+    #[test]
+    fn find_folder_pages_say_whether_they_are_complete() {
+        let page = |attr: &str| {
+            format!(
+                r#"<m:FindFolderResponseMessage ResponseClass="Success"><m:RootFolder {attr}><t:Folders><t:CalendarFolder><t:FolderId Id="F1"/></t:CalendarFolder></t:Folders></m:RootFolder></m:FindFolderResponseMessage>"#
+            )
+        };
+        let (folders, last) =
+            parse_find_folder_page(&page(r#"IncludesLastItemInRange="false""#)).unwrap();
+        assert_eq!((folders.len(), last), (1, Some(false)));
+        assert_eq!(
+            parse_find_folder_page(&page(r#"IncludesLastItemInRange="true""#))
+                .unwrap()
+                .1,
+            Some(true)
+        );
+        assert_eq!(parse_find_folder_page(&page("")).unwrap().1, None);
+    }
+
     #[test]
     fn parses_find_folder_response() {
-        let xml = r#"<m:FindFolderResponseMessage>
+        let xml = r#"<m:FindFolderResponseMessage ResponseClass="Success">
   <m:RootFolder TotalItemsInView="1">
     <t:Folders>
       <t:CalendarFolder>
@@ -358,7 +413,7 @@ mod tests {
     </t:Folders>
   </m:RootFolder>
 </m:FindFolderResponseMessage>"#;
-        let folders = parse_find_folder_response(xml).unwrap();
+        let (folders, _) = parse_find_folder_page(xml).unwrap();
         assert_eq!(folders.len(), 2);
         assert_eq!(folders[0].id, "AAMkADUw");
         assert_eq!(folders[0].change_key, Some("CK1".into()));

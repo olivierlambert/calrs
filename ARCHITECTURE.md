@@ -69,7 +69,7 @@ Every user-facing string goes through Fluent (`i18n/`).
 | `src/caldav/mod.rs` | CalDAV client: discovery, fetch, sync-collection, PUT/DELETE |
 | `src/caldav/multistatus.rs` | Reading WebDAV multistatus answers by namespace: calendar listing, events, sync deltas, principal and home discovery (tests in `src/caldav/multistatus/tests.rs`) |
 | `src/xml.rs` | Bounded, namespace-aware XML tree over `quick-xml`, used by the CalDAV client |
-| `src/ews/` | Exchange Web Services client (SOAP, autodiscover, parsing) |
+| `src/ews/` | Exchange Web Services client (SOAP, autodiscover, parsing); `global.rs` holds the admin's global impersonation config, provisioning of managed sources, and the client for a managed source |
 | `src/providers/` | `CalendarProvider` trait (`mod.rs`), CalDAV adapter, dispatch in `src/providers/factory.rs` |
 | `src/sms/` | `SmsProvider` trait, gateway adapters, phone normalisation, message bodies |
 | `src/email/` | Every email calrs sends (see below) |
@@ -96,6 +96,7 @@ Every user-facing string goes through Fluent (`i18n/`).
 | `webhooks.rs` | Outgoing booking webhooks (#168): `enqueue` (called by every path that changes a booking, after it commits), payload, URL checks (SSRF), signed delivery with retries (`run_webhook_loop`, spawned by `src/main.rs`) |
 | `webhook_pages.rs` | The webhooks page (`/dashboard/webhooks`): add, edit, test, switch off, remove; who may manage which endpoint; the admin switch handler |
 | `captcha.rs` | Cap captcha config and server-side verification |
+| `ews_admin.rs` | Global Exchange impersonation: admin card, its save, confirm-address and remove-all handlers, the lock on user sources, guards on managed sources |
 | `dashboard.rs` | Dashboard overview, event types and bookings lists, host cancel/confirm, settings, avatar |
 | `booking_notes.rs` | Host notes on a booking (#173): who may read and edit them (`note_booking`, the one gate), the notes page and its POST |
 | `overview_stats.rs` | Dashboard overview data: masthead sentence, the day ruler (bookable hours from event type rules and overrides, calrs bookings, anonymous calendar busy time), the week list, the 12-week chart, the 30-day figures (tests in `tests/overview_stats.rs`). The dashboard identity (tokens, timetable rows, status marks) lives in `templates/dashboard_base.html`; `tests/guards.rs` fails if its tells come back |
@@ -121,7 +122,7 @@ with `use super::*` and sees those fixtures and every item of `web`:
 `security`, `auth_pages`, `branding`, `format`, `availability`, `resources`,
 `hosts`, `event_types`, `invites`, `booking`, `public_pages`,
 `booking_actions`, `booking_notes`, `dashboard`, `sources`, `admin`, `emails`,
-`page_language`, `guards`, plus `booking_time`, `pending_hold`,
+`ews_global`, `page_language`, `guards`, plus `booking_time`, `pending_hold`,
 `writeback_failures`, `write_destinations`, `organizer`, `duplicate_event_type`, `time_off` and `webhooks`.
 
 ### `src/email/`
@@ -229,6 +230,15 @@ Call sites use `crate::email::name` whatever file `name` lives in.
   action handlers, admin card in `src/web/admin.rs`).
 - **Captcha** (`src/web/captcha.rs`, CSP in `src/web/mod.rs`, widget in
   `templates/book.html`).
+- **Global Exchange impersonation** (`src/ews/global.rs`, web side in
+  `src/web/ews_admin.rs`, admin guide in `docs/src/ews-impersonation.md`). A
+  managed source (`caldav_sources.managed = 1`) has no credentials of its own:
+  every client for an EWS source goes through `ews::global::provider_for_source`,
+  which picks the service account and impersonated mailbox for managed rows
+  and rechecks the user (enabled, `users.email_trusted`, current address)
+  every time. Only `provision_managed_ews_source_for_user` creates or moves a
+  managed row; `ACTIVE_SOURCE_SQL` keeps idle managed rows out of sync and
+  write-back queries; their events are stored busy-only.
 - **Migrations** (`migrations/`, `build.rs`, `src/db.rs`). `build.rs` embeds
   every `.sql` file, sorted by name, and `migrate()` applies those not yet in
   `_migrations`. That table records the file stem, so a shipped migration is
