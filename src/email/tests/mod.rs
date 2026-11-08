@@ -6,6 +6,7 @@ use lettre::Address;
 
 use super::*;
 
+mod guest_footer;
 mod messages;
 mod render;
 mod transport;

@@ -1109,7 +1109,7 @@ mod tests {
         migrate(&pool).await.unwrap();
         sqlx::raw_sql(
             "ALTER TABLE oauth_credentials DROP COLUMN scope;
-             DELETE FROM _migrations WHERE name = '20261107211648_oauth_credential_scope';
+             DELETE FROM _migrations WHERE name = '20261108021013_oauth_credential_scope';
              INSERT INTO users (id, email, name) VALUES ('scope-user', 'scope@example.com', 'Scope');
              INSERT INTO oauth_clients (id, name, redirect_uris, created_at) VALUES ('scope-client', 'Client', '[]', 0);
              INSERT INTO oauth_grants (id, client_id, user_id, resource, scope, expires_at, created_at)

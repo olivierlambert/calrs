@@ -119,9 +119,10 @@ with `use super::*` and sees those fixtures and every item of `web`:
 | `mod.rs` | Shared data (`BookingDetails`, `CancellationDetails`, `RescheduleDetails`), language helpers, `pub use` of the files below |
 | `transport.rs` | `SmtpConfig` (env and DB), `Sender` (who an email comes from), `send_email` with its timeouts |
 | `render.rs` | HTML and plain-text layout, ICS generation, time conversion, `EmailParts` / `send_composed` |
+| `footer.rs` | The guest email footer (#223): length limit, the lookup (event type, else instance default), the markdown subset rendered to HTML and plain text, with a link scheme allowlist |
 | `guest.rs` | Guest emails: confirmation, pending, decline, cancellation, reminder, reschedule, pick a new time, invite |
 | `host.rs` | Host, member, watcher and claimant emails |
-| `tests/` | `transport.rs`, `render.rs`, `messages.rs`, shared fixtures in `tests/mod.rs` |
+| `tests/` | `transport.rs`, `render.rs`, `messages.rs`, `guest_footer.rs`, shared fixtures in `tests/mod.rs` |
 
 Call sites use `crate::email::name` whatever file `name` lives in.
 
@@ -144,7 +145,7 @@ Call sites use `crate::email::name` whatever file `name` lives in.
   `csp_middleware` (CSP rebuilt from captcha settings, relaxed for embeds and
   booking forms). Booking POSTs are rate limited per client IP
   (`client_ip_for_rate_limit`, rightmost `X-Forwarded-For`).
-- **OAuth integrations** (`src/oauth.rs`, migrations `20261107211647_oauth_server.sql` and `20261107211648_oauth_credential_scope.sql`).
+- **OAuth integrations** (`src/oauth.rs`, migrations `20261108021012_oauth_server.sql` and `20261108021013_oauth_credential_scope.sql`).
   Clients register automatically. Authorization uses the real browser session
   (never admin impersonation), explicit translated consent and S256 PKCE. An
   opaque, short-lived cookie resumes consent after local/SSO login. Credentials
