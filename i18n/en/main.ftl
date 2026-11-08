@@ -1049,6 +1049,9 @@ etf-vis-internal = Internal
 etf-reminder = Booking reminder
 etf-reminder-none = No reminder
 etf-reminder-help = Send a reminder email to both you and your guest before the meeting.
+etf-guest-footer = Email footer
+etf-guest-footer-placeholder = e.g. Questions? Phone: +1 555 0100
+etf-guest-footer-help = Added at the end of every email the guest receives about this booking, in every language. Replaces the default footer set by the admin. Bold, italic and links only.
 etf-dynamic-group = Dynamic Group Link
 etf-dynamic-group-help = Create an ad-hoc meeting link that checks availability for you and other users.
 etf-dynamic-group-search = Search for a user to add...
@@ -1324,6 +1327,13 @@ admin-sms-clear-confirm = Delete the database SMS configuration?
 admin-sms-allow-all = Let any user enable SMS on their event types
 admin-sms-allow-all-help = Off by default: SMS spends credit on the account configured here, so only admins may switch an event type into an SMS mode.
 admin-save-policy = Save policy
+admin-guest-footer = Guest email footer
+admin-guest-footer-help = A short text added at the end of every email sent to guests and attendees: confirmations, reminders, cancellations and so on. Emails to the host, and to a team member who claimed the booking, are not changed.
+admin-guest-footer-default = Default footer
+admin-guest-footer-default-help = Used when an event type has no footer of its own. The same text is sent in every language. Bold, italic and links only.
+admin-guest-footer-allow-all = Let all users set a footer on their own event types
+admin-guest-footer-allow-all-help = Off by default: the footer goes out under this instance's name, so only admins may write one. A footer set on an event type replaces the default above.
+admin-save-guest-footer = Save footer
 admin-page-of = Page %1 of %2
 admin-show-more-js = Show %1 more
 admin-show-fewer = Show fewer
@@ -1620,6 +1630,7 @@ validate-email-length = Email must be between 1 and 255 characters.
 validate-email-invalid = Please enter a valid email address.
 validate-notes-length = Notes must be 5000 characters or less.
 validate-date-too-far = Cannot book more than one year in advance.
+validate-guest-footer-too-long = The email footer must be 500 characters or less.
 
 # Additional guests and dynamic group links (src/web/mod.rs)
 

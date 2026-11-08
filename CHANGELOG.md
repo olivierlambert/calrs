@@ -188,6 +188,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added
+
+- **Guest email footer** (#223, #350) - Admins can set a short footer (bold, italic and links, 500 characters at most, one text for all languages) added to every email a guest or an additional attendee receives: confirmation, reminder, cancellation, pending notice, decline, expiry, "pick a new time", reschedule and invite. An event type can replace it with its own. Host, watcher and claimant emails never carry it. Only admins write footers, unless an admin turns on "Let all users set a footer on their own event types" (separate from the SMS policy). Two migrations (`20261107192406_guest_email_footer`, `20261107212745_claimant_attendee`). Thanks @optimistic5.
+
 ### Security
 
 - **New users always get a scheduling account of their own** - Under certain conditions, a new user (registration, single sign-on auto-registration or `calrs user create`) could be attached to an existing user's scheduling account, with its event types, bookings and calendars. A new user now always gets a new account. At startup, an account left without a user is only linked to a user with the same address who has no account yet; otherwise it stays unlinked and a warning names it in the log for the administrator to review. A single sign-on login that changes a user's address now also updates the copy kept on their account. Registration also stores the email address without surrounding spaces.
