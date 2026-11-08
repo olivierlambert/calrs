@@ -184,6 +184,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [1.23.2] - 2026-11-08
+
+Patch release for the 1.23 line. No migrations, no configuration change.
+
+### Fixed
+
+- **A booking is refused when its availability cannot be read** - Under heavy load, several booking submissions arriving at once could exhaust the database connections, and a busy time that could not be read in time counted as free, so a booking could land on a time the host was busy. Now, when the calendar, existing bookings, working hours, date overrides, the booking window or a required resource cannot be read, the booking is refused with the usual "please try again" page and nothing is created. This covers new bookings on every page (personal, team round robin and collective, group links, legacy links), guest reschedules, and approvals from the dashboard or the email link. Slot pages keep showing times as before.
+
 ## [1.23.1] - 2026-11-08
 
 Security release for the 1.23 line. It fixes three issues found while reviewing the 2.0 work; please upgrade. No migrations, no configuration change, except the note below for instances that reach calendars or resource feeds on private IPv6 or benchmark addresses.
