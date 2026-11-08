@@ -509,6 +509,7 @@ bookings-empty = Nog geen komende boekingen.<br>Deel je { $link } zodat mensen e
 bookings-empty-link-label = links naar afspraaktypes
 bookings-search-placeholder = Zoek gasten, e-mails of afspraken
 bookings-recent = Afgelopen 30 dagen
+bookings-cancelled = Geannuleerd en afgewezen
 
 # Host notes on a booking (templates/booking_notes.html, bookings page, overview, host emails)
 
@@ -978,6 +979,7 @@ team-settings-description-placeholder = Vertel mensen over dit team...
 team-settings-description-help = Wordt getoond op de openbare boekingspagina van het team. Ondersteunt **vet**, *cursief* en [links](url).
 team-settings-visibility-help = Openbare teams worden vermeld op de teamprofielpagina. Voor privéteams is een uitnodigingslink nodig.
 team-settings-members-help = Beheer wie bij dit team hoort. Voeg losse gebruikers toe of koppel OIDC-groepen voor automatische synchronisatie.
+team-settings-time-off-help = Geplande afwezigheid van de leden, in jouw tijdzone, { $timezone }. Hun notities blijven privé.
 team-settings-role-member = Lid
 team-settings-role-admin = Beheerder
 team-settings-oidc-group = OIDC-groep
@@ -2057,6 +2059,7 @@ time-off-time-optional = Tijd (optioneel)
 time-off-times-help = Laat de tijden leeg om hele dagen te blokkeren, beide datums inbegrepen. De tijden zijn in je tijdzone, { $timezone }.
 time-off-label = Notitie (optioneel)
 time-off-label-help = Alleen jij ziet die, hier en bij Probleemoplossing. Gasten en teamgenoten zien die nooit.
+time-off-team-admins-notice = De beheerders van je teams en die van de instantie zien de datums en tijden van je afwezigheid, nooit de notitie.
 time-off-add-submit = Afwezigheid toevoegen
 time-off-added = Afwezigheid toegevoegd.
 time-off-deleted = Afwezigheid verwijderd.
