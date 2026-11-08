@@ -435,9 +435,9 @@ pub(super) fn hsl_to_hex(h: f32, s: f32, l: f32) -> String {
     format!("#{:02x}{:02x}{:02x}", byte(r), byte(g), byte(b))
 }
 
-/// Lightness targets for a derived dark palette, matching the scale the
-/// built-in dark theme uses in `base.html` (bg #09090b, surface #18181b,
-/// border #27272a, border-hover #52525b, text #fafafa, muted #a1a1aa).
+/// Lightness targets for a derived dark palette, close to the scale the
+/// built-in dark theme uses in `base.html` (bg #0f0e0c, surface #1b1917,
+/// border #2e2a26, border-hover #57514a, text #faf8f5, muted #9d958c).
 const DARK_BG_L: f32 = 0.04;
 const DARK_SURFACE_L: f32 = 0.095;
 const DARK_TEXT_L: f32 = 0.97;
@@ -455,6 +455,14 @@ const DARK_TEXT_MAX_SAT: f32 = 0.15;
 /// the configured palette is unusual.
 const DARK_TEXT_MIN_L: f32 = 0.40;
 
+/// The light neutrals of a custom theme, mixed from its own text and
+/// surface (the same proportions as the built-in palettes, roughly).
+const LIGHT_NEUTRALS: &str = "--surface-hover:color-mix(in srgb,var(--text) 4%,var(--surface));\
+    --text-secondary:color-mix(in srgb,var(--text) 78%,var(--surface));\
+    --text-muted:color-mix(in srgb,var(--text) 64%,var(--surface));\
+    --border:color-mix(in srgb,var(--text) 13%,var(--surface));\
+    --border-hover:color-mix(in srgb,var(--text) 36%,var(--surface));";
+
 /// Build custom theme CSS from user-provided hex colors.
 ///
 /// The admin panel only collects one set of colors, which are taken to be the
@@ -463,6 +471,10 @@ const DARK_TEXT_MIN_L: f32 = 0.40;
 /// onto the built-in dark scale. Emitting the configured colors unchanged under
 /// `html.dark` used to leave dark mode fully light (issue #177). A palette that
 /// is already dark is passed through as configured.
+///
+/// The light palette's supporting neutrals (secondary and muted text,
+/// borders, hover) are mixed from its own text and surface, so a custom
+/// theme never inherits the default palette's warm greys.
 pub(super) fn custom_theme_css(
     accent: &str,
     accent_hover: &str,
@@ -530,7 +542,7 @@ pub(super) fn custom_theme_css(
 
     format!(
         ":root{{--bg:{bg};--surface:{surface};--text:{text};--accent:{accent};--accent-hover:{accent_hover};\
-         --accent-subtle:rgba({r},{g},{b},0.08);--accent-border:rgba({r},{g},{b},0.25);--accent-muted:rgba({r},{g},{b},0.5)}}\
+         {LIGHT_NEUTRALS}--accent-subtle:rgba({r},{g},{b},0.08);--accent-border:rgba({r},{g},{b},0.25);--accent-muted:rgba({r},{g},{b},0.5)}}\
          html.dark{{--bg:{dark_bg};--surface:{dark_surface};--surface-hover:{dark_border};--text:{dark_text};\
          --text-secondary:{dark_text_secondary};--text-muted:{dark_text_muted};--border:{dark_border};--border-hover:{dark_border_hover};\
          --accent:{accent};--accent-hover:{accent_hover};\

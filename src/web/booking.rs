@@ -307,11 +307,9 @@ pub(super) struct GuestRequest<'a> {
     pub(super) additional_guests: &'a Option<String>,
     pub(super) date: &'a str,
     pub(super) time: &'a str,
-    /// The booking questions' fields (#210), `q_<id>` and
-    /// `q_<id>__<option id>`, read against the event type's current form.
-    /// `None` for a manager booking through the API, which, like
-    /// `calrs booking create`, asks no questions: the host is booking.
-    pub(super) fields: Option<&'a HashMap<String, String>>,
+    /// The answers to the booking questions (#210): the form's fields, or
+    /// what the API's `answers` carried.
+    pub(super) posted: questions::Posted<'a>,
 }
 
 impl<'a> GuestRequest<'a> {
@@ -324,7 +322,7 @@ impl<'a> GuestRequest<'a> {
             additional_guests: &form.additional_guests,
             date: &form.date,
             time: &form.time,
-            fields: Some(&form.fields),
+            posted: questions::Posted::Form(&form.fields),
         }
     }
 }
@@ -656,7 +654,7 @@ pub(super) async fn book_team(
     // event type's current form once access is checked, so a guest without
     // the invite never learns what a private event type asks.
     let submission =
-        questions::read_submission(&state.pool, &et_id, guest.notes, guest.fields, lang).await?;
+        questions::read_submission(&state.pool, &et_id, guest.notes, guest.posted, lang).await?;
     let date = match NaiveDate::parse_from_str(guest.date, "%Y-%m-%d") {
         Ok(d) => d,
         Err(_) => return Err(BookingRefusal::Plain("error-invalid-date")),
@@ -1311,7 +1309,7 @@ async fn handle_dynamic_group_booking(
         &state.pool,
         &et_id,
         &form.notes,
-        Some(&form.fields),
+        questions::Posted::Form(&form.fields),
         lang,
     )
     .await
@@ -2033,7 +2031,7 @@ pub(super) async fn book_personal(
     // event type's current form once access is checked, so a guest without
     // the invite never learns what a private event type asks.
     let submission =
-        questions::read_submission(&state.pool, &et_id, guest.notes, guest.fields, lang).await?;
+        questions::read_submission(&state.pool, &et_id, guest.notes, guest.posted, lang).await?;
     let date = match NaiveDate::parse_from_str(guest.date, "%Y-%m-%d") {
         Ok(d) => d,
         Err(_) => return Err(BookingRefusal::Plain("error-invalid-date")),
@@ -2860,7 +2858,7 @@ pub(super) async fn handle_booking(
         &state.pool,
         &et_id,
         &form.notes,
-        Some(&form.fields),
+        questions::Posted::Form(&form.fields),
         lang,
     )
     .await

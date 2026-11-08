@@ -1039,7 +1039,7 @@
 
   {% if sms_configured %}
   <div style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 1rem;">
-    {{ t("admin-sms-sent-today") }} <strong>{{ sms_sent_today }}</strong>{% if sms_daily_cap > 0 %} {{ t("admin-sms-of-cap", cap=sms_daily_cap) }}{% endif %}{% if sms_cost_currency %} &middot; {{ sms_cost_today }} {{ sms_cost_currency }}{% endif %}
+    {{ t("admin-sms-sent-today") }} <strong>{{ sms_sent_today }}</strong> &middot; {{ t("admin-sms-segments-today") }} <strong>{{ sms_segments_today }}</strong>{% if sms_daily_cap > 0 %} {{ t("admin-sms-of-cap", cap=sms_daily_cap) }}{% endif %}{% if sms_unknown_today > 0 %} &middot; {{ t("admin-sms-unknown-today") }} <strong>{{ sms_unknown_today }}</strong>{% endif %}{% if sms_cost_currency %} &middot; {{ sms_cost_today }} {{ sms_cost_currency }}{% endif %}
   </div>
   {% endif %}
 
@@ -1511,7 +1511,7 @@
   <form id="theme-form" method="post" action="/dashboard/admin/accent" style="margin: 0;">
     <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 0.75rem; margin-bottom: 1rem;">
       {% set themes = [
-        {"id": "default", "label": t("admin-theme-default"), "desc": t("admin-theme-default-desc"), "colors": ["#2563eb", "#eff6ff", "#f4f4f5", "#18181b"]},
+        {"id": "default", "label": t("admin-theme-default"), "desc": t("admin-theme-default-desc"), "colors": ["#2563eb", "#eff6ff", "#f4f2ee", "#1c1917"]},
         {"id": "nord", "label": "Nord", "desc": t("admin-theme-nord-desc"), "colors": ["#5e81ac", "#e8eef5", "#eceff4", "#2e3440"]},
         {"id": "dracula", "label": "Dracula", "desc": t("admin-theme-dracula-desc"), "colors": ["#bd93f9", "#f3eefe", "#f0edf5", "#282a36"]},
         {"id": "gruvbox", "label": "Gruvbox", "desc": t("admin-theme-gruvbox-desc"), "colors": ["#d65d0e", "#fabd2f", "#f9f5d7", "#282828"]},

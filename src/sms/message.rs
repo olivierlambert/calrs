@@ -83,8 +83,14 @@ fn is_gsm7(body: &str) -> bool {
 /// Estimated billed segments for a body. Used for logging and to keep the
 /// catalogue honest in tests; the gateway's own count is authoritative.
 pub fn estimate_segments(body: &str) -> u32 {
-    let len = body.chars().count();
-    let (single, multi) = if is_gsm7(body) { (160, 153) } else { (70, 67) };
+    // GSM-7 bills characters (the basic set is all inside the BMP). UCS-2
+    // bills UTF-16 code units, so a character outside the BMP (an emoji in a
+    // host's event title) takes two.
+    let (len, single, multi) = if is_gsm7(body) {
+        (body.chars().count(), 160, 153)
+    } else {
+        (body.encode_utf16().count(), 70, 67)
+    };
     if len <= single {
         1
     } else {
@@ -169,5 +175,21 @@ mod tests {
         // One Polish character forces UCS-2, so the same length costs more.
         let polish = format!("{}ł", "a".repeat(159));
         assert!(estimate_segments(&polish) > 1);
+    }
+
+    #[test]
+    fn segment_estimate_counts_utf16_code_units_in_ucs2() {
+        // 70 BMP characters fit one UCS-2 segment, 71 do not.
+        assert_eq!(estimate_segments(&"ł".repeat(70)), 1);
+        assert_eq!(estimate_segments(&"ł".repeat(71)), 2);
+        // An emoji is two UTF-16 code units: 69 characters, 70 units.
+        assert_eq!(estimate_segments(&format!("{}🎉", "ł".repeat(68))), 1);
+        // 70 characters but 71 units: billed as two segments, which counting
+        // characters would have missed.
+        assert_eq!(estimate_segments(&format!("{}🎉", "ł".repeat(69))), 2);
+        // 34 emoji are 68 units, 36 are 72 (two parts of 67).
+        assert_eq!(estimate_segments(&"🎉".repeat(34)), 1);
+        assert_eq!(estimate_segments(&"🎉".repeat(36)), 2);
+        assert_eq!(estimate_segments(&"🎉".repeat(68)), 3);
     }
 }

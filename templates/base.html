@@ -54,15 +54,18 @@
       src: url(/fonts/inter-latin.woff2) format('woff2');
       unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
     }
+    /* The default palette: warm neutrals (a slightly warm paper, greys
+       with a touch of brown, a warm charcoal in dark mode). Presets and
+       custom themes replace these variables (branding.rs). */
     :root {
-      --bg: #f4f4f5;
-      --surface: #fff;
-      --surface-hover: #fafafa;
-      --text: #18181b;
-      --text-secondary: #52525b;
-      --text-muted: #6b7280;
-      --border: #e4e4e7;
-      --border-hover: #a1a1aa;
+      --bg: #f4f2ee;
+      --surface: #fcfbf8;
+      --surface-hover: #f5f2ec;
+      --text: #1c1917;
+      --text-secondary: #57514a;
+      --text-muted: #736b63;
+      --border: #e7e2da;
+      --border-hover: #a8a29e;
       --accent: #2563eb;
       --accent-hover: #1d4ed8;
       --accent-subtle: #eff6ff;
@@ -80,14 +83,14 @@
     }
 
     html.dark {
-      --bg: #09090b;
-      --surface: #18181b;
-      --surface-hover: #27272a;
-      --text: #fafafa;
-      --text-secondary: #a1a1aa;
-      --text-muted: #9ca3af;
-      --border: #27272a;
-      --border-hover: #52525b;
+      --bg: #0f0e0c;
+      --surface: #1b1917;
+      --surface-hover: #26231f;
+      --text: #faf8f5;
+      --text-secondary: #b0a89f;
+      --text-muted: #9d958c;
+      --border: #2e2a26;
+      --border-hover: #57514a;
       --accent: #3b82f6;
       --accent-hover: #60a5fa;
       --accent-subtle: rgba(59,130,246,0.1);

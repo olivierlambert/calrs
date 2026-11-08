@@ -30,6 +30,8 @@
 //! [`crate::providers::CalendarProvider`].
 
 pub mod autodiscover;
+#[cfg(test)]
+mod fixtures;
 pub mod global;
 pub mod ical;
 pub mod operations;
