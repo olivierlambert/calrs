@@ -3675,10 +3675,10 @@ async fn an_excluded_member_is_neither_blocked_by_nor_blocks_a_collective_bookin
     );
 }
 
-/// An unexcluded owner of a collective event type stays busy for its
-/// unassigned bookings, as before.
+/// The owner of a collective event type is busy for its unassigned bookings
+/// only while on its roster: a member not excluded from it (#375).
 #[tokio::test]
-async fn the_owner_of_a_collective_event_type_stays_busy_unless_excluded() {
+async fn the_owner_of_a_collective_event_type_is_busy_only_on_its_roster() {
     let pool = setup_test_db().await;
     let alice = insert_role_user(&pool, "alice@own375.test", "user").await;
     let (_team, et_id) =
@@ -3701,5 +3701,19 @@ async fn the_owner_of_a_collective_event_type_stays_busy_unless_excluded() {
     let end = start + Duration::minutes(30);
     insert_booking(&pool, &et_id, None, start, "confirmed").await;
     let busy = fetch_busy_times_for_user(&pool, &alice, start, end, chrono_tz::Tz::UTC, None).await;
+    assert_eq!(busy, vec![(start, end)], "an owner on the roster is busy");
+
+    // Alice leaves the team but still owns the event type: off the roster,
+    // she is free, while a member who stayed is busy.
+    let bob = insert_role_user(&pool, "bob@own375.test", "user").await;
+    sqlx::query("UPDATE team_members SET user_id = ? WHERE user_id = ?")
+        .bind(&bob)
+        .bind(&alice)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let busy = fetch_busy_times_for_user(&pool, &alice, start, end, chrono_tz::Tz::UTC, None).await;
+    assert!(busy.is_empty(), "an owner off the roster is free");
+    let busy = fetch_busy_times_for_user(&pool, &bob, start, end, chrono_tz::Tz::UTC, None).await;
     assert_eq!(busy, vec![(start, end)]);
 }

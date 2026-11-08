@@ -76,16 +76,52 @@ async fn spend_invite(
     };
     let mut tx = tx;
     let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
-    match consume_invite(&mut tx, token, et_id, &now).await {
-        Ok(true) => Ok(tx),
-        Ok(false) => {
-            let _ = tx.rollback().await;
-            Err(BookingRefusal::Plain("error-invite-used"))
-        }
-        Err(e) => {
-            let _ = tx.rollback().await;
-            Err(BookingRefusal::Internal("invite use", e.to_string()))
-        }
+    let refusal = match consume_invite(&mut tx, token, et_id, &now).await {
+        Ok(true) => return Ok(tx),
+        Ok(false) => match invite_refusal(&mut tx, token, et_id, &now).await {
+            Ok(key) => BookingRefusal::Plain(key),
+            Err(e) => BookingRefusal::Internal("invite use", e.to_string()),
+        },
+        Err(e) => BookingRefusal::Internal("invite use", e.to_string()),
+    };
+    let _ = tx.rollback().await;
+    Err(refusal)
+}
+
+/// Why [`consume_invite`] found nothing to spend, read in the same
+/// transaction: the invite is gone (deleted since the early check), has
+/// expired meanwhile, or has no use left.
+pub(super) async fn invite_refusal(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    token: &str,
+    et_id: &str,
+    now: &str,
+) -> Result<&'static str, sqlx::Error> {
+    let expires_at: Option<Option<String>> = sqlx::query_scalar(
+        "SELECT expires_at FROM booking_invites WHERE token = ? AND event_type_id = ?",
+    )
+    .bind(token)
+    .bind(et_id)
+    .fetch_optional(&mut **tx)
+    .await?;
+    Ok(match expires_at {
+        None => "error-invite-invalid",
+        Some(Some(exp)) if exp.as_str() < now => "error-invite-expired",
+        Some(_) => "error-invite-used",
+    })
+}
+
+/// Tokens that passed a booking's early invite check, one entry per pass, so
+/// a test can tell that every concurrent submission has read the invite
+/// before it lets the first one book (#373).
+#[cfg(test)]
+pub(super) static INVITE_CHECKS_PASSED: std::sync::Mutex<Vec<String>> =
+    std::sync::Mutex::new(Vec::new());
+
+#[cfg(test)]
+fn note_invite_check_passed(token: &str) {
+    if let Ok(mut passed) = INVITE_CHECKS_PASSED.lock() {
+        passed.push(token.to_string());
     }
 }
 
@@ -593,6 +629,8 @@ pub(super) async fn book_team(
                     if used_count >= max_uses {
                         return Err(BookingRefusal::Plain("error-invite-used"));
                     }
+                    #[cfg(test)]
+                    note_invite_check_passed(token);
                 }
             }
         } else if team_visibility == "private" {
@@ -1984,6 +2022,8 @@ pub(super) async fn book_personal(
                     if used_count >= max_uses {
                         return Err(BookingRefusal::Plain("error-invite-used"));
                     }
+                    #[cfg(test)]
+                    note_invite_check_passed(token);
                 }
             }
         }

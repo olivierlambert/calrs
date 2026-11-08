@@ -721,3 +721,106 @@ async fn reschedule_host_profile_shows_the_booking_host() {
         "the team card lists the eligible roster"
     );
 }
+
+// --- The claimant in reschedule and approval checks (#374) ---
+
+/// A claimant who is not a host is checked on the reschedule busy source and
+/// the approval re-check, with the booking's own row excluded; a claimant who
+/// hosts the booking is checked once, as a host.
+#[tokio::test]
+async fn reschedule_and_approval_checks_include_the_claimant() {
+    let pool = setup_test_db().await;
+    let (_owner, _, et_id) = seed_test_data(&pool).await;
+    let bob = insert_role_user(&pool, "bob@hosts374.test", "user").await;
+    let bob_et = insert_personal_et(&pool, &bob, "hosts374-bob").await;
+    let ten = NaiveDate::from_ymd_opt(2026, 3, 23)
+        .unwrap()
+        .and_hms_opt(10, 0, 0)
+        .unwrap();
+    let eleven = ten + Duration::hours(1);
+    let (booking_id, _, _) = insert_test_booking(
+        &pool,
+        &et_id,
+        "2026-03-23T10:00:00",
+        "2026-03-23T10:30:00",
+        "pending",
+    )
+    .await;
+    let uid: String = sqlx::query_scalar("SELECT uid FROM bookings WHERE id = ?")
+        .bind(&booking_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    insert_booking(&pool, &bob_et, None, eleven, "confirmed").await;
+
+    let hosts = reschedule_hosts(&pool, &uid, "unused").await.unwrap();
+    assert_eq!(hosts.claimant, None, "not claimed");
+
+    sqlx::query("UPDATE bookings SET claimed_by_user_id = ? WHERE id = ?")
+        .bind(&bob)
+        .bind(&booking_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let hosts = reschedule_hosts(&pool, &uid, "unused").await.unwrap();
+    assert_eq!(hosts.claimant.as_deref(), Some(bob.as_str()));
+
+    let utc = chrono_tz::Tz::UTC;
+    let busy = reschedule_busy_source(
+        &pool,
+        &hosts,
+        &et_id,
+        ten - Duration::hours(1),
+        ten + Duration::hours(3),
+        utc,
+        &booking_id,
+        &uid,
+        true,
+    )
+    .await
+    .unwrap();
+    assert!(
+        !busy_source_is_free(&busy, eleven, eleven + Duration::minutes(30)),
+        "the claimant is busy at 11:00"
+    );
+    assert!(
+        busy_source_is_free(&busy, ten, ten + Duration::minutes(30)),
+        "the booking's own row does not block it"
+    );
+
+    let fmt = |t: NaiveDateTime| t.format("%Y-%m-%dT%H:%M:%S").to_string();
+    let approve_at = |start: NaiveDateTime| {
+        let (pool, hosts, booking_id, uid, et_id) = (&pool, &hosts, &booking_id, &uid, &et_id);
+        async move {
+            approval_hosts_free(
+                pool,
+                hosts,
+                booking_id,
+                uid,
+                et_id,
+                &fmt(start),
+                &fmt(start + Duration::minutes(30)),
+            )
+            .await
+            .unwrap()
+        }
+    };
+    assert!(!approve_at(eleven).await, "approval refused: claimant busy");
+    assert!(approve_at(ten).await);
+
+    // The owner claimed it: checked as the host, not twice.
+    let owner: String = sqlx::query_scalar("SELECT user_id FROM accounts WHERE user_id IS NOT NULL AND id = (SELECT account_id FROM event_types WHERE id = ?)")
+        .bind(&et_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE bookings SET claimed_by_user_id = ? WHERE id = ?")
+        .bind(&owner)
+        .bind(&booking_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let hosts = reschedule_hosts(&pool, &uid, &owner).await.unwrap();
+    assert_eq!(hosts.user_ids, vec![owner.clone()]);
+    assert_eq!(hosts.claimant, None);
+}

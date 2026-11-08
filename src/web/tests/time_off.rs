@@ -381,6 +381,7 @@ async fn approval_recheck_refuses_a_host_on_time_off() {
         team_id: None,
         collective: false,
         participants: Vec::new(),
+        claimant: None,
     };
     assert!(approval_hosts_free(
         &pool,

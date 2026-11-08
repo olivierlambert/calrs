@@ -1142,3 +1142,39 @@ async fn overview_counts_every_pending_request_like_the_sidebar() {
         "both pending rows counted"
     );
 }
+
+/// The owner of a collective event type sees its bookings only when on its
+/// roster, as busy time counts them (#375): excluded from it (weight 0), or
+/// not in the team at all, the owner sees none of them.
+#[tokio::test]
+async fn an_owner_off_the_collective_roster_does_not_see_its_bookings() {
+    let pool = setup_test_db().await;
+    let me = insert_role_user(&pool, "me@example.com", "user").await;
+    let other = insert_role_user(&pool, "other@example.com", "user").await;
+    let outsider = insert_role_user(&pool, "outsider@example.com", "user").await;
+    let et = collective_with_excluded_member(&pool, &me, &other).await;
+    let start = Utc::now() + Duration::days(1);
+    insert_stat_booking(&pool, &et, "Collective", start, "confirmed", None, None).await;
+    let (from, to) = (
+        (start - Duration::days(1)).naive_utc(),
+        (start + Duration::days(1)).naive_utc(),
+    );
+    for owner in [&other, &outsider] {
+        sqlx::query("UPDATE accounts SET user_id = ? WHERE id = (SELECT account_id FROM event_types WHERE id = ?)")
+            .bind(owner)
+            .bind(&et)
+            .execute(&pool)
+            .await
+            .unwrap();
+        for (user, expected) in [(&me, 1), (owner, 0)] {
+            let rows = ov::fetch_stat_rows(&pool, user, Tz::UTC, Utc::now())
+                .await
+                .unwrap();
+            assert_eq!(rows.len(), expected, "stat rows for {user}");
+            let day = ov::fetch_day_bookings(&pool, user, Tz::UTC, from, to).await;
+            assert_eq!(day.len(), expected, "ruler bookings for {user}");
+            let agenda = ov::agenda(&pool, user, Tz::UTC, Utc::now(), "en").await;
+            assert_eq!(agenda.len(), expected, "agenda for {user}");
+        }
+    }
+}

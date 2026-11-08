@@ -268,6 +268,13 @@ pub(super) struct RescheduleHosts {
     /// too, but only their busy times are read: the booking stays the owner's
     /// for organizer, write-back and emails.
     pub(super) participants: Vec<String>,
+    /// The watcher who claimed the booking (#374), when they are not one of
+    /// the hosts above. A claim survives a reschedule, so the new time must
+    /// be free for them too: their busy times (all their calendars, as for a
+    /// co-host, but not their working hours, since they chose to join) are
+    /// read with the booking's own row and calendar copy excluded. The
+    /// booking stays the hosts' for organizer, write-back and emails.
+    pub(super) claimant: Option<String>,
 }
 
 /// The enabled co-hosts stored for a dynamic group booking.
@@ -303,8 +310,8 @@ pub(super) async fn reschedule_hosts(
     booking_uid: &str,
     owner_user_id: &str,
 ) -> Result<RescheduleHosts, sqlx::Error> {
-    let row: Option<(Option<String>, Option<String>, String)> = sqlx::query_as(
-        "SELECT b.assigned_user_id, et.team_id, et.scheduling_mode
+    let row: Option<(Option<String>, Option<String>, String, Option<String>)> = sqlx::query_as(
+        "SELECT b.assigned_user_id, et.team_id, et.scheduling_mode, b.claimed_by_user_id
          FROM bookings b JOIN event_types et ON et.id = b.event_type_id
          WHERE b.uid = ?",
     )
@@ -313,7 +320,7 @@ pub(super) async fn reschedule_hosts(
     .await?;
     // No row means the caller's own lookup raced a delete; treat it as a
     // personal booking on the owner, which is what happened before #166.
-    let (assigned, team_id, mode) = row.unwrap_or_default();
+    let (assigned, team_id, mode, claimed_by) = row.unwrap_or_default();
     // An assigned booking stays that member's even if the event type has since
     // been switched to collective.
     let collective = assigned.is_none() && team_id.is_some() && mode == "collective";
@@ -335,11 +342,13 @@ pub(super) async fn reschedule_hosts(
     } else {
         Vec::new()
     };
+    let claimant = claimed_by.filter(|c| !user_ids.contains(c) && !participants.contains(c));
     Ok(RescheduleHosts {
         user_ids,
         collective,
         team_id,
         participants,
+        claimant,
     })
 }
 
@@ -348,7 +357,12 @@ pub(super) async fn reschedule_hosts(
 /// this fan-out at most one CalDAV fetch per source is in flight.
 pub(super) async fn sync_reschedule_hosts(state: &Arc<AppState>, hosts: &RescheduleHosts) {
     let mut sync_tasks = tokio::task::JoinSet::new();
-    for user_id in hosts.user_ids.iter().chain(&hosts.participants) {
+    for user_id in hosts
+        .user_ids
+        .iter()
+        .chain(&hosts.participants)
+        .chain(&hosts.claimant)
+    {
         let pool = state.pool.clone();
         let key = state.secret_key;
         let user_id = user_id.clone();
@@ -402,10 +416,21 @@ pub(super) async fn reschedule_busy_source(
         }
     };
     let et = Some(et_id.to_string());
+    // The claimant's calendars, all of them (the event type's calendar
+    // selection is the hosts'), with this booking and its copy excluded.
+    let claimant_busy = match &hosts.claimant {
+        Some(claimant) => Some((claimant.clone(), calendars(claimant.clone(), None).await?)),
+        None => None,
+    };
     if hosts.team_id.is_none() {
         let owner = hosts.user_ids.first().cloned().unwrap_or_default();
-        let owner_busy = calendars(owner.clone(), et.clone()).await?;
+        let mut owner_busy = calendars(owner.clone(), et.clone()).await?;
         if hosts.participants.is_empty() {
+            // One person must be free: the claimant's busy times simply
+            // join the host's.
+            if let Some((_, busy)) = claimant_busy {
+                owner_busy.extend(busy);
+            }
             return Ok(BusySource::Individual(owner_busy));
         }
         // A dynamic group booking: everyone must be free, each co-host
@@ -419,6 +444,7 @@ pub(super) async fn reschedule_busy_source(
             busy.extend(hours(user_id.clone()).await?);
             member_busy.insert(user_id.clone(), busy);
         }
+        member_busy.extend(claimant_busy);
         return Ok(BusySource::Team(member_busy));
     }
     let mut member_busy = HashMap::new();
@@ -429,6 +455,11 @@ pub(super) async fn reschedule_busy_source(
         // plants a surprise 9-17 default.
         busy.extend(hours(user_id.clone()).await?);
         member_busy.insert(user_id.clone(), busy);
+    }
+    // An empty collective roster stays `Team(empty)`, never bookable: the
+    // claimant alone does not make a slot free.
+    if !member_busy.is_empty() {
+        member_busy.extend(claimant_busy);
     }
     Ok(BusySource::Team(member_busy))
 }
@@ -510,7 +541,12 @@ pub(super) async fn approval_hosts_awaiting_first_sync(
     pool: &SqlitePool,
     hosts: &RescheduleHosts,
 ) -> bool {
-    for user_id in hosts.user_ids.iter().chain(hosts.participants.iter()) {
+    for user_id in hosts
+        .user_ids
+        .iter()
+        .chain(hosts.participants.iter())
+        .chain(hosts.claimant.iter())
+    {
         if crate::commands::sync::microsoft_coverage_gap(pool, user_id, chrono::Utc::now()).await
             == Some(crate::commands::sync::CoverageGap::NotYetSynced)
         {
@@ -524,7 +560,8 @@ pub(super) async fn approval_hosts_awaiting_first_sync(
 /// under the booking lock right before an approval flips it to confirmed.
 ///
 /// Busy means a calendar event, a confirmed booking or time off (#46),
-/// excluding the booking itself and its own calendar copy. Other pending requests are not counted:
+/// excluding the booking itself and its own calendar copy, for every host and
+/// for the watcher who claimed the booking. Other pending requests are not counted:
 /// they hold slots against new guests, but between two waiting requests the
 /// host decides, and counting them would let two overlapping requests block
 /// each other's approval forever. Once one is approved it is confirmed, and
@@ -549,12 +586,15 @@ pub(super) async fn approval_hosts_free(
         return Ok(true);
     };
     // The co-hosts of a dynamic group booking read all their calendars, as
-    // on the dynamic group slot page (the calendar selection is the owner's).
+    // on the dynamic group slot page (the calendar selection is the owner's),
+    // and so does the watcher who claimed the booking (#374): a claim is kept
+    // through a reschedule, so its approval needs them free as well.
     let everyone = hosts
         .user_ids
         .iter()
         .map(|u| (u, Some(et_id)))
-        .chain(hosts.participants.iter().map(|u| (u, None)));
+        .chain(hosts.participants.iter().map(|u| (u, None)))
+        .chain(hosts.claimant.iter().map(|u| (u, None)));
     for (user_id, et_filter) in everyone {
         let busy = try_fetch_busy_times_for_user_opts(
             pool,

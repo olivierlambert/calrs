@@ -199,6 +199,7 @@ async fn strict_busy_readers_report_an_unreadable_table() {
         team_id: None,
         collective: false,
         participants: Vec::new(),
+        claimant: None,
     };
     assert!(
         reschedule_busy_source(&pool, &hosts, &et_id, start, end, utc, "", "", true)
@@ -483,7 +484,8 @@ async fn a_single_use_invite_books_once_under_concurrent_submissions() {
 
     // Hold the booking lock while the six read the invite, so every one of
     // them has passed the early check before the first can book: the old
-    // two-step count then let all six through.
+    // two-step count then let all six through. The early check comes before
+    // the lock on this path.
     let lock = crate::resources::booking_lock().await;
     let day = far_future_monday();
     let mut requests = Vec::new();
@@ -507,7 +509,24 @@ async fn a_single_use_invite_books_once_under_concurrent_submissions() {
             app.oneshot(request).await.unwrap().status()
         }));
     }
-    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    // Release the lock only once all six have passed the early check: each
+    // then waits on the lock, so none can have spent the invite yet.
+    tokio::time::timeout(std::time::Duration::from_secs(20), async {
+        loop {
+            let passed = INVITE_CHECKS_PASSED
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|t| t.as_str() == "tok373")
+                .count();
+            if passed == 6 {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("all six submissions pass the early invite check");
     drop(lock);
     for request in requests {
         let status = request.await.unwrap();

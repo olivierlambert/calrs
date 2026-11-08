@@ -9,21 +9,20 @@ use sqlx::SqlitePool;
 /// and binds the user id four times.
 ///
 /// A user hosts a booking when it is assigned to them, or when it is
-/// unassigned and they own the event type (personal bookings), or when it is
-/// an unassigned team booking (collective mode) and they are a member of that
-/// team. An assigned booking must NOT mark the event type owner busy: on a
-/// round-robin team the owner stays free when another member took the
-/// booking (#146). A member excluded from the event type (weight 0 or less in
-/// `event_type_member_weights`, as the slot engine and `hosts.rs` read it) is
-/// not one of its hosts, the owner included on a collective event type
-/// (#375). A co-host of a dynamic group booking (`booking_participants`, #46)
-/// hosts it too.
+/// unassigned and they own the event type (personal bookings, and legacy
+/// unassigned round-robin rows), or when it is an unassigned team booking and
+/// they are a member of that team. An assigned booking must NOT mark the
+/// event type owner busy: on a round-robin team the owner stays free when
+/// another member took the booking (#146). An unassigned collective booking
+/// is its roster's, as on the collective booking path: members of the team
+/// not excluded from the event type (weight 0 or less in
+/// `event_type_member_weights`, as the slot engine and `hosts.rs` read it).
+/// Its owner hosts it only when on that roster, so an owner excluded from it
+/// or no longer in the team is free (#375). A co-host of a dynamic group
+/// booking (`booking_participants`, #46) hosts it too.
 pub const USER_HOSTS_BOOKING: &str = "(b.assigned_user_id = ?
         OR (b.assigned_user_id IS NULL AND a.user_id = ?
-            AND NOT (et.team_id IS NOT NULL AND et.scheduling_mode = 'collective' AND EXISTS (
-                SELECT 1 FROM event_type_member_weights etw
-                WHERE etw.event_type_id = et.id AND etw.user_id = a.user_id
-                  AND etw.weight <= 0)))
+            AND NOT (et.team_id IS NOT NULL AND et.scheduling_mode = 'collective'))
         OR (b.assigned_user_id IS NULL AND et.team_id IS NOT NULL AND EXISTS (
               SELECT 1 FROM team_members tm
               WHERE tm.team_id = et.team_id AND tm.user_id = ?

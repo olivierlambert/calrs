@@ -304,3 +304,43 @@ async fn consume_invite_spends_a_use_only_while_one_is_left() {
     tx.commit().await.unwrap();
     assert_eq!(used("i-old").await, 0, "an expired invite is not spent");
 }
+
+/// A spend that finds nothing says why: deleted, expired, or used up.
+#[tokio::test]
+async fn invite_refusal_names_the_reason() {
+    let pool = setup_test_db().await;
+    let (user_id, _, et_id) = seed_test_data(&pool).await;
+    for (id, token, max_uses, used, expires_at) in [
+        ("r-used", "used", 1, 1, None),
+        ("r-old", "old", 5, 0, Some("2026-01-01 00:00:00")),
+    ] {
+        sqlx::query(
+            "INSERT INTO booking_invites (id, event_type_id, token, guest_name, guest_email, max_uses, used_count, expires_at, created_by_user_id)
+             VALUES (?, ?, ?, '', '', ?, ?, ?, ?)",
+        )
+        .bind(id)
+        .bind(&et_id)
+        .bind(token)
+        .bind(max_uses)
+        .bind(used)
+        .bind(expires_at)
+        .bind(&user_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    let now = "2026-06-01 12:00:00";
+    let mut tx = pool.begin().await.unwrap();
+    for (token, key) in [
+        ("used", "error-invite-used"),
+        ("old", "error-invite-expired"),
+        ("gone", "error-invite-invalid"),
+    ] {
+        assert!(!consume_invite(&mut tx, token, &et_id, now).await.unwrap());
+        assert_eq!(
+            invite_refusal(&mut tx, token, &et_id, now).await.unwrap(),
+            key
+        );
+    }
+    tx.rollback().await.unwrap();
+}
