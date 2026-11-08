@@ -1352,9 +1352,11 @@ async fn oidc_callback(
         .email()
         .map(|e: &openidconnect::EndUserEmail| e.to_string())
         .unwrap_or_default();
-    // `email_verified` is optional in the spec. If the IdP doesn't assert
-    // verification, we treat it as unverified (conservative).
-    let email_verified = claims.email_verified().unwrap_or(false);
+    // `email_verified` is optional in the spec (ADFS and Entra ID do not send
+    // it by default). Absent, it never links or creates an account; for a
+    // returning user it leaves an admin's confirmation of an unchanged
+    // address in place (see `find_or_create_oidc_user_with_claim`).
+    let email_verified_claim = claims.email_verified();
     let name = claims
         .name()
         .and_then(
@@ -1386,11 +1388,11 @@ async fn oidc_callback(
     let claims = extract_claims_from_id_token(id_token.to_string().as_str());
 
     // Find or create user
-    let user_id = match find_or_create_oidc_user(
+    let user_id = match find_or_create_oidc_user_with_claim(
         &state.pool,
         &subject,
         &email,
-        email_verified,
+        email_verified_claim,
         &name,
         &auth_config,
     )
@@ -1481,6 +1483,7 @@ async fn oidc_callback(
 /// the IdP-issued stable identifier and doesn't rely on the email being
 /// accurate, so a returning user can always sign in once their account
 /// exists.
+#[cfg(test)]
 async fn find_or_create_oidc_user(
     pool: &SqlitePool,
     subject: &str,
@@ -1489,6 +1492,33 @@ async fn find_or_create_oidc_user(
     name: &str,
     auth_config: &AuthConfig,
 ) -> Result<String> {
+    find_or_create_oidc_user_with_claim(
+        pool,
+        subject,
+        email,
+        Some(email_verified),
+        name,
+        auth_config,
+    )
+    .await
+}
+
+/// [`find_or_create_oidc_user`] with the `email_verified` claim as sent:
+/// `None` when the identity provider left it out. Linking and creating an
+/// account require it to be `true`. For a returning user it decides whether
+/// calrs still trusts the address (and may open its Exchange mailbox):
+/// `true` trusts it, `false` drops the trust, and an absent claim keeps the
+/// trust the account had (an admin's confirmation) as long as the address is
+/// unchanged, letter case aside; a changed address is no longer trusted.
+async fn find_or_create_oidc_user_with_claim(
+    pool: &SqlitePool,
+    subject: &str,
+    email: &str,
+    email_verified_claim: Option<bool>,
+    name: &str,
+    auth_config: &AuthConfig,
+) -> Result<String> {
+    let email_verified = email_verified_claim == Some(true);
     // 1. Try to find by oidc_subject — always allowed, subject is the stable
     //    IdP-issued identity. Email is only a display attribute at this point.
     if let Some((id,)) = sqlx::query_as::<_, (String,)>(
@@ -1500,14 +1530,20 @@ async fn find_or_create_oidc_user(
     {
         // Update email in case it changed on the IdP; only update name if
         // currently empty. Whether calrs trusts the address (and so may open
-        // its Exchange mailbox) follows this login's `email_verified` claim.
+        // its Exchange mailbox) follows this login's `email_verified` claim;
+        // without one, an unchanged address keeps the trust it had.
         sqlx::query(
-            "UPDATE users SET name = CASE WHEN name IS NULL OR name = '' THEN ? ELSE name END, email = ?, email_trusted = ?, email_verified_by_idp = ?, updated_at = datetime('now') WHERE id = ?",
+            "UPDATE users SET name = CASE WHEN name IS NULL OR name = '' THEN ?1 ELSE name END, \
+                 email = ?2, \
+                 email_trusted = CASE WHEN ?3 = 1 THEN 1 \
+                     WHEN ?3 IS NULL AND lower(email) = lower(?2) THEN email_trusted ELSE 0 END, \
+                 email_verified_by_idp = CASE WHEN ?3 = 1 THEN 1 \
+                     WHEN ?3 IS NULL AND lower(email) = lower(?2) THEN email_verified_by_idp ELSE 0 END, \
+                 updated_at = datetime('now') WHERE id = ?4",
         )
         .bind(name)
         .bind(email)
-        .bind(email_verified)
-        .bind(email_verified)
+        .bind(email_verified_claim)
         .bind(&id)
         .execute(pool)
         .await?;
@@ -3295,6 +3331,59 @@ mod tests {
         .await
         .unwrap();
         assert_eq!((users, by_idp), (1, true));
+    }
+
+    /// ADFS and Entra ID do not send `email_verified` by default. Without
+    /// it, an admin's confirmation of an unchanged address (letter case
+    /// aside) survives a login; an explicit `false`, or a new address, drops it.
+    #[tokio::test]
+    async fn an_absent_email_verified_claim_keeps_an_admin_confirmation() {
+        let pool = setup_db().await;
+        let cfg = auth_config_with_oidc(&pool, true).await;
+        let id = find_or_create_oidc_user(&pool, "sub-adfs", "jo@corp.com", true, "Jo", &cfg)
+            .await
+            .unwrap();
+        // The admin confirmed it; the IdP's own verification is not on record.
+        sqlx::query("UPDATE users SET email_trusted = 1, email_verified_by_idp = 0 WHERE id = ?")
+            .bind(&id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let trust = || async {
+            sqlx::query_as::<_, (bool, bool)>(
+                "SELECT email_trusted, email_verified_by_idp FROM users WHERE id = ?",
+            )
+            .bind(&id)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        };
+        let login = |email: &'static str, claim: Option<bool>| {
+            let pool = pool.clone();
+            let cfg = cfg.clone();
+            async move {
+                find_or_create_oidc_user_with_claim(&pool, "sub-adfs", email, claim, "Jo", &cfg)
+                    .await
+                    .unwrap()
+            }
+        };
+        login("Jo@Corp.com", None).await;
+        assert_eq!(trust().await, (true, false), "absent, same address: kept");
+        login("jo@corp.com", Some(false)).await;
+        assert_eq!(trust().await, (false, false), "explicitly false: dropped");
+        sqlx::query("UPDATE users SET email_trusted = 1 WHERE id = ?")
+            .bind(&id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        login("joanna@corp.com", None).await;
+        assert_eq!(
+            trust().await,
+            (false, false),
+            "absent, new address: dropped"
+        );
+        login("joanna@corp.com", Some(true)).await;
+        assert_eq!(trust().await, (true, true), "verified: trusted");
     }
 
     #[tokio::test]
