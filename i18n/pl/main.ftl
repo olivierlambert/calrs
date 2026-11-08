@@ -1395,6 +1395,7 @@ admin-sms-test-error = Bramka SMS odrzuciła żądanie.
 admin-sms-captcha-warning = Formularz rezerwacji jest publiczny, a numer odbiorcy podaje gość, więc SMS bez captchy to otwarty przekaźnik, za który ktoś inny może obciążyć twój rachunek. Skonfiguruj captchę powyżej i ogranicz kraje docelowe w ustawieniach swojej bramki.
 admin-sms-sent-today = Wysłane dzisiaj:
 admin-sms-segments-today = Rozliczone segmenty dzisiaj:
+admin-sms-unknown-today = Bez odpowiedzi bramki, wliczone do limitu:
 admin-sms-of-cap = z { $cap }
 admin-sms-config-error = Błąd konfiguracji SMS:
 admin-sms-gateway = Bramka:

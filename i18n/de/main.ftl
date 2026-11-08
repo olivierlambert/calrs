@@ -1333,6 +1333,7 @@ admin-sms-test-error = Das SMS-Gateway hat die Anfrage abgelehnt.
 admin-sms-captcha-warning = Das Buchungsformular ist öffentlich und die Empfängernummer kommt vom Gast. SMS ohne Captcha sind daher ein offenes Relay, das jemand anderes auf deine Kosten nutzen kann. Richte oben das Captcha ein und beschränke die Zielländer in den Einstellungen deines Gateways.
 admin-sms-sent-today = Heute gesendet:
 admin-sms-segments-today = Heute abgerechnete Segmente:
+admin-sms-unknown-today = Ohne Antwort des Gateways, auf das Limit angerechnet:
 admin-sms-of-cap = von { $cap }
 admin-sms-config-error = Fehler in der SMS-Konfiguration:
 admin-sms-gateway = Gateway:

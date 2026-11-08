@@ -1039,7 +1039,7 @@
 
   {% if sms_configured %}
   <div style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 1rem;">
-    {{ t("admin-sms-sent-today") }} <strong>{{ sms_sent_today }}</strong> &middot; {{ t("admin-sms-segments-today") }} <strong>{{ sms_segments_today }}</strong>{% if sms_daily_cap > 0 %} {{ t("admin-sms-of-cap", cap=sms_daily_cap) }}{% endif %}{% if sms_cost_currency %} &middot; {{ sms_cost_today }} {{ sms_cost_currency }}{% endif %}
+    {{ t("admin-sms-sent-today") }} <strong>{{ sms_sent_today }}</strong> &middot; {{ t("admin-sms-segments-today") }} <strong>{{ sms_segments_today }}</strong>{% if sms_daily_cap > 0 %} {{ t("admin-sms-of-cap", cap=sms_daily_cap) }}{% endif %}{% if sms_unknown_today > 0 %} &middot; {{ t("admin-sms-unknown-today") }} <strong>{{ sms_unknown_today }}</strong>{% endif %}{% if sms_cost_currency %} &middot; {{ sms_cost_today }} {{ sms_cost_currency }}{% endif %}
   </div>
   {% endif %}
 

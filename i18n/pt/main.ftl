@@ -1333,6 +1333,7 @@ admin-sms-test-error = O gateway de SMS recusou a requisição.
 admin-sms-captcha-warning = O formulário de agendamento é público e o número do destinatário vem do convidado, então SMS sem captcha é um relay aberto que outra pessoa pode cobrar de você. Configure o captcha acima e restrinja os países de destino nas configurações do seu gateway.
 admin-sms-sent-today = Enviados hoje:
 admin-sms-segments-today = Segmentos cobrados hoje:
+admin-sms-unknown-today = Sem resposta do gateway, contados no limite:
 admin-sms-of-cap = de { $cap }
 admin-sms-config-error = Erro na configuração de SMS:
 admin-sms-gateway = Gateway:

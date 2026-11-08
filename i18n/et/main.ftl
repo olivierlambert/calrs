@@ -1333,6 +1333,7 @@ admin-sms-test-error = SMS-lüüs lükkas päringu tagasi.
 admin-sms-captcha-warning = Broneerimisvorm on avalik ja saaja numbri annab külaline, seega on captchata SMS avatud edastuskanal, mille eest võib arve tulla sinule. Seadista ülal captcha ja piira sihtriike oma lüüsi enda seadetes.
 admin-sms-sent-today = Täna saadetud:
 admin-sms-segments-today = Täna arveldatud segmente:
+admin-sms-unknown-today = Lüüsilt vastuseta, limiidi sisse arvestatud:
 admin-sms-of-cap = { $cap }-st
 admin-sms-config-error = Viga SMS-i seadistuses:
 admin-sms-gateway = Lüüs:

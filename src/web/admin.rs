@@ -801,6 +801,7 @@ pub(super) async fn admin_dashboard(
     let (sms_cost_today, sms_cost_currency) = crate::sms::cost_today(&state.pool).await;
     let sms_sent_today = crate::sms::sent_today(&state.pool).await;
     let sms_segments_today = crate::sms::segments_today(&state.pool).await;
+    let sms_unknown_today = crate::sms::unknown_today(&state.pool).await;
     let sms_allow_all_users: bool =
         sqlx::query_scalar("SELECT sms_allow_all_users FROM auth_config WHERE id = 'singleton'")
             .fetch_optional(&state.pool)
@@ -996,6 +997,7 @@ pub(super) async fn admin_dashboard(
             sms_daily_cap => sms_daily_cap,
             sms_sent_today => sms_sent_today,
             sms_segments_today => sms_segments_today,
+            sms_unknown_today => sms_unknown_today,
             sms_cost_today => format!("{:.2}", sms_cost_today),
             sms_cost_currency => sms_cost_currency,
             sms_allow_all_users => sms_allow_all_users,

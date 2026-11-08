@@ -119,7 +119,15 @@ impl TwilioProvider {
             .and_then(|cache| cached_full_account(&cache, key, Instant::now()));
         let full = match cached {
             Some(full) => full,
-            None => is_full_account(&self.fetch_account().await?),
+            // Nothing has been sent yet, so a failed lookup is a definite
+            // refusal (`Other`), never `Transport`: the cap gives its
+            // reservation back.
+            None => is_full_account(&self.fetch_account().await.map_err(|e| {
+                SmsError::Other(format!(
+                    "could not read the Twilio account type, so trial mode sent nothing: {}",
+                    e
+                ))
+            })?),
         };
         if full {
             let error = full_account_error();
@@ -554,6 +562,20 @@ mod tests {
             assert_eq!(receipt.segments, Some(1));
         }
         assert_eq!(*counts.lock().unwrap(), (1, 2));
+    }
+
+    /// Nothing was sent when the account lookup fails, so the guard reports
+    /// a definite refusal (`Other`), which releases the cap's reservation,
+    /// never a transport failure, which would keep it.
+    #[tokio::test]
+    async fn a_failed_account_lookup_refuses_without_sending() {
+        let dead = {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            listener.local_addr().unwrap().port()
+        };
+        let provider = trial_provider(format!("http://127.0.0.1:{dead}"));
+        let result = provider.send("+33612345678", "Booking confirmed").await;
+        assert!(matches!(result, Err(SmsError::Other(_))), "{:?}", result);
     }
 
     #[tokio::test]

@@ -1335,6 +1335,7 @@ admin-sms-test-error = De SMS-gateway heeft het verzoek geweigerd.
 admin-sms-captcha-warning = Het boekingsformulier is openbaar en het ontvangende nummer komt van de gast, dus SMS zonder captcha is een open relay waarvoor iemand anders jou kosten kan laten maken. Stel hierboven de captcha in en beperk de bestemmingslanden in de instellingen van je gateway zelf.
 admin-sms-sent-today = Vandaag verzonden:
 admin-sms-segments-today = Vandaag gefactureerde segmenten:
+admin-sms-unknown-today = Zonder antwoord van de gateway, meegeteld voor de limiet:
 admin-sms-of-cap = van { $cap }
 admin-sms-config-error = Fout in SMS-configuratie:
 admin-sms-gateway = Gateway:

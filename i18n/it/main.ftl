@@ -1333,6 +1333,7 @@ admin-sms-test-error = Il gateway SMS ha rifiutato la richiesta.
 admin-sms-captcha-warning = Il modulo di prenotazione è pubblico e il numero del destinatario lo indica l'ospite, quindi gli SMS senza captcha sono un relay aperto che qualcun altro può farti pagare. Configura il captcha qui sopra e limita i paesi di destinazione nelle impostazioni del tuo gateway.
 admin-sms-sent-today = Inviati oggi:
 admin-sms-segments-today = Segmenti fatturati oggi:
+admin-sms-unknown-today = Senza risposta dal gateway, conteggiati nel limite:
 admin-sms-of-cap = su { $cap }
 admin-sms-config-error = Errore nella configurazione SMS:
 admin-sms-gateway = Gateway:

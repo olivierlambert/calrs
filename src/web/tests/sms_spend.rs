@@ -155,14 +155,89 @@ async fn a_refused_message_gives_its_reservation_back() {
         let result =
             crate::sms::send_metered(&pool, &config, "confirmed", "+33612345678", &body_of(50))
                 .await;
+        // A parsed 4xx is a definite refusal, not a transport failure.
         assert!(matches!(
             result,
-            Err(crate::sms::MeteredSendError::Gateway(_))
+            Err(crate::sms::MeteredSendError::Gateway(
+                crate::sms::SmsError::Other(_)
+            ))
         ));
     }
     // Both reached the gateway: the first refusal did not use up the cap.
     assert_eq!(received.load(std::sync::atomic::Ordering::SeqCst), 2);
     assert_eq!(crate::sms::sent_today(&pool).await, 0);
+}
+
+async fn usage_rows(pool: &SqlitePool) -> Vec<(String, Option<i64>)> {
+    sqlx::query_as("SELECT status, segments FROM sms_usage ORDER BY sent_at, status")
+        .fetch_all(pool)
+        .await
+        .unwrap()
+}
+
+/// A request that fails in transit (a 5xx, a dropped connection) may have
+/// been sent and billed anyway, so its reservation is kept, with its
+/// estimate, as `unknown`, and counts against the cap.
+#[tokio::test]
+async fn a_send_lost_in_transit_stays_counted() {
+    let pool = setup_test_db().await;
+    let (url, received) = spawn_gateway(503, std::time::Duration::ZERO).await;
+    let config = webhook_config(&url, 3);
+
+    let result =
+        crate::sms::send_metered(&pool, &config, "confirmed", "+33612345678", &body_of(200)).await;
+    assert!(matches!(
+        result,
+        Err(crate::sms::MeteredSendError::Gateway(
+            crate::sms::SmsError::Transport(_)
+        ))
+    ));
+    assert_eq!(
+        usage_rows(&pool).await,
+        vec![("unknown".to_string(), Some(2))]
+    );
+    assert_eq!(crate::sms::unknown_today(&pool).await, 1);
+    assert_eq!(crate::sms::segments_today(&pool).await, 2);
+
+    // The two uncertain segments still count: two more do not fit.
+    let result =
+        crate::sms::send_metered(&pool, &config, "confirmed", "+33612345678", &body_of(200)).await;
+    assert!(matches!(result, Err(crate::sms::MeteredSendError::OverCap)));
+    assert_eq!(received.load(std::sync::atomic::Ordering::SeqCst), 1);
+
+    // No answer at all (nothing listening) is kept the same way.
+    let dead = {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.local_addr().unwrap().port()
+    };
+    let config = webhook_config(&format!("http://127.0.0.1:{dead}/sms"), 0);
+    let result =
+        crate::sms::send_metered(&pool, &config, "reminder", "+33612345678", &body_of(10)).await;
+    assert!(matches!(
+        result,
+        Err(crate::sms::MeteredSendError::Gateway(
+            crate::sms::SmsError::Transport(_)
+        ))
+    ));
+    assert_eq!(crate::sms::unknown_today(&pool).await, 2);
+    assert_eq!(crate::sms::segments_today(&pool).await, 3);
+}
+
+#[tokio::test]
+async fn an_accepted_message_is_settled_as_sent() {
+    let pool = setup_test_db().await;
+    let (url, _) = spawn_gateway(200, std::time::Duration::ZERO).await;
+    crate::sms::send_metered(
+        &pool,
+        &webhook_config(&url, 10),
+        "confirmed",
+        "+33612345678",
+        &body_of(200),
+    )
+    .await
+    .expect("accepted");
+    assert_eq!(usage_rows(&pool).await, vec![("sent".to_string(), Some(2))]);
+    assert_eq!(crate::sms::unknown_today(&pool).await, 0);
 }
 
 /// Twenty sends at once on the production pool shape, against a gateway
@@ -264,6 +339,42 @@ async fn the_admin_test_message_is_metered_and_capped() {
     assert!(
         html.contains("Billed segments today:"),
         "segment figure missing"
+    );
+    assert!(
+        !html.contains("No answer from the gateway"),
+        "no unknown sends yet"
+    );
+
+    // A send whose outcome is unknown is shown, and counted.
+    sqlx::query(
+        "INSERT INTO sms_usage (id, event, provider, segments, status) \
+             VALUES ('lost', 'confirmed', 'webhook', 2, 'unknown')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let response = app
+        .clone()
+        .oneshot(get_authed("/dashboard/admin", &session))
+        .await
+        .unwrap();
+    let html = body_string(response).await;
+    let figures = html
+        .split("Sent today:")
+        .nth(1)
+        .and_then(|rest| rest.split("</div>").next())
+        .unwrap_or_default()
+        .to_string();
+    assert!(
+        figures
+            .contains("No answer from the gateway, counted against the limit: <strong>1</strong>"),
+        "{}",
+        figures
+    );
+    assert!(
+        figures.contains("Billed segments today: <strong>3</strong>"),
+        "{}",
+        figures
     );
 }
 

@@ -575,8 +575,9 @@ pub enum MeteredSendError {
 /// plus that estimate still fits the cap (one `INSERT ... SELECT`, which SQLite
 /// runs under its write lock, so concurrent sends cannot all pass a check none
 /// of them has recorded yet). The gateway is then called with no connection
-/// held, and the row is settled with what the gateway reported, or deleted
-/// when the gateway refused the message.
+/// held, and the row is settled with what the gateway reported, kept with its
+/// estimate as `unknown` when the request failed in transit (the message may
+/// have gone out), or deleted when the gateway definitely refused it.
 ///
 /// Used by [`notify_guest`] and by the admin panel's test button (event
 /// `test`), so test messages are counted and capped like any other.
@@ -598,6 +599,10 @@ pub async fn send_metered(
             settle_usage(pool, &reservation, estimate, &receipt).await;
             Ok(receipt)
         }
+        Err(e) if outcome_unknown(&e) => {
+            mark_usage_unknown(pool, &reservation).await;
+            Err(MeteredSendError::Gateway(e))
+        }
         Err(e) => {
             release_usage(pool, &reservation).await;
             Err(MeteredSendError::Gateway(e))
@@ -605,13 +610,35 @@ pub async fn send_metered(
     }
 }
 
-/// Messages accepted by the gateway since midnight (UTC, matching how the
-/// rest of the schema stores timestamps).
+/// Whether a failed send may still have gone out (and been billed). A
+/// transport failure (timeout, reset connection, a 5xx) can come after the
+/// gateway accepted the message, so its reservation is kept: a spend cap errs
+/// toward over-counting. Every other error is a definite refusal (bad
+/// credentials, recipient or sender, no credit, throttled, a parsed 4xx, or a
+/// check calrs made before sending), and gives its reservation back.
+fn outcome_unknown(error: &SmsError) -> bool {
+    matches!(error, SmsError::Transport(_))
+}
+
+/// Messages metered since midnight (UTC, matching how the rest of the schema
+/// stores timestamps): accepted, in flight, or of unknown outcome.
 pub async fn sent_today(pool: &SqlitePool) -> i64 {
     sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM sms_usage WHERE sent_at >= date('now')")
         .fetch_one(pool)
         .await
         .unwrap_or(0)
+}
+
+/// Messages since midnight (UTC) whose send failed in transit, so the gateway
+/// may have sent them. Already included in [`sent_today`] and
+/// [`segments_today`].
+pub async fn unknown_today(pool: &SqlitePool) -> i64 {
+    sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM sms_usage WHERE status = 'unknown' AND sent_at >= date('now')",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap_or(0)
 }
 
 /// Billed segments since midnight (UTC): what the daily cap counts. A row
@@ -659,8 +686,8 @@ async fn reserve_usage(
     let id = uuid::Uuid::new_v4().to_string();
     let segments = i64::from(segments);
     let inserted = sqlx::query(
-        "INSERT INTO sms_usage (id, event, provider, segments) \
-         SELECT ?, ?, ?, ? \
+        "INSERT INTO sms_usage (id, event, provider, segments, status) \
+         SELECT ?, ?, ?, ?, 'pending' \
          WHERE ? <= 0 \
             OR (SELECT COALESCE(SUM(COALESCE(segments, 1)), 0) FROM sms_usage \
                 WHERE sent_at >= date('now')) + ? <= ?",
@@ -683,18 +710,33 @@ async fn reserve_usage(
 /// the cap still counts the message. Deliberately records no recipient: this
 /// is metering, not a message log.
 async fn settle_usage(pool: &SqlitePool, id: &str, estimate: u32, receipt: &SendReceipt) {
-    let result =
-        sqlx::query("UPDATE sms_usage SET segments = ?, cost = ?, currency = ? WHERE id = ?")
-            .bind(i64::from(receipt.segments.unwrap_or(estimate)))
-            .bind(receipt.cost)
-            .bind(receipt.currency.as_deref())
-            .bind(id)
-            .execute(pool)
-            .await;
+    let result = sqlx::query(
+        "UPDATE sms_usage SET segments = ?, cost = ?, currency = ?, status = 'sent' WHERE id = ?",
+    )
+    .bind(i64::from(receipt.segments.unwrap_or(estimate)))
+    .bind(receipt.cost)
+    .bind(receipt.currency.as_deref())
+    .bind(id)
+    .execute(pool)
+    .await;
 
     if let Err(e) = result {
         // The reservation stays, with its estimate: still counted.
         tracing::warn!(error = %e, "could not record SMS usage");
+    }
+}
+
+/// Keep a reservation whose send failed in transit, with its estimated
+/// segments, as `unknown`: still counted against the cap and shown on the
+/// admin panel.
+async fn mark_usage_unknown(pool: &SqlitePool, id: &str) {
+    if let Err(e) = sqlx::query("UPDATE sms_usage SET status = 'unknown' WHERE id = ?")
+        .bind(id)
+        .execute(pool)
+        .await
+    {
+        // The row stays 'pending', which counts the same.
+        tracing::warn!(error = %e, "could not mark an SMS usage reservation as unknown");
     }
 }
 

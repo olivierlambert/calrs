@@ -1343,6 +1343,7 @@ admin-sms-test-error = The SMS gateway refused the request.
 admin-sms-captcha-warning = The booking form is public and the recipient number comes from the guest, so SMS without a captcha is an open relay someone else can bill you for. Configure the captcha above, and restrict destination countries in your gateway's own settings.
 admin-sms-sent-today = Sent today:
 admin-sms-segments-today = Billed segments today:
+admin-sms-unknown-today = No answer from the gateway, counted against the limit:
 admin-sms-of-cap = of { $cap }
 admin-sms-config-error = SMS configuration error:
 admin-sms-gateway = Gateway:

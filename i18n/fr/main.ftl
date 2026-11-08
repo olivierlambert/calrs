@@ -1333,6 +1333,7 @@ admin-sms-test-error = La passerelle SMS a refusé la requête.
 admin-sms-captcha-warning = Le formulaire de réservation est public et le numéro du destinataire vient de l'invité : sans captcha, les SMS forment un relais ouvert que quelqu'un peut vous facturer. Configurez le captcha ci-dessus et restreignez les pays de destination dans les réglages de votre passerelle.
 admin-sms-sent-today = Envoyés aujourd'hui :
 admin-sms-segments-today = Segments facturés aujourd'hui :
+admin-sms-unknown-today = Sans réponse de la passerelle, comptés dans la limite :
 admin-sms-of-cap = sur { $cap }
 admin-sms-config-error = Erreur de configuration SMS :
 admin-sms-gateway = Passerelle :
