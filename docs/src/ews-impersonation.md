@@ -15,9 +15,12 @@ calendar starts syncing with zero manual setup.
 A managed source keeps **busy times only**. For an event synced from a managed
 mailbox calrs stores its times, time zone, all-day flag, recurrence, status and
 transparency, and nothing about what the meeting is: no title, description,
-location or iCal text. The user's own troubleshoot view shows those events as
-"Unavailable (your calendar)", and an admin cannot read anyone's mailbox
-content through calrs, impersonating the user included.
+location or iCal text (a recurring event keeps only the start, exception
+dates and moved-occurrence ids its expansion needs). Calendar folder names are
+not stored either: a managed source's calendars are called "Exchange calendar
+1", "Exchange calendar 2" and so on. The user's own troubleshoot view shows
+those events as "Unavailable (your calendar)", and an admin cannot read
+anyone's mailbox content through calrs, impersonating the user included.
 
 > When global impersonation is disabled (the default), calrs behaves exactly as
 > before: users add their own per-user EWS or CalDAV sources.
@@ -66,9 +69,9 @@ Go to **Admin dashboard → EWS** (the global impersonation section). Fields:
 | Field | Notes |
 |---|---|
 | **Enabled** | Master switch. When off, the feature is fully inert and per-user sources are used. |
-| **EWS URL** | The endpoint, e.g. `https://mail.example.com/EWS/Exchange.asmx`. Validated on save: an invalid URL is rejected rather than silently stored. Enabling the feature without a URL, a service account and a password is refused too, with a message on the card. |
+| **EWS URL** | The endpoint, e.g. `https://mail.example.com/EWS/Exchange.asmx`. Must be `https://` (the service account password goes out with every request). Validated on save: an invalid URL is rejected rather than silently stored. Enabling the feature without a URL, a service account and a password is refused too, with a message on the card. |
 | **Service account username** | The impersonation account, e.g. `svc-calrs@example.com`. |
-| **Service account password** | Encrypted at rest (AES-256-GCM, same scheme as CalDAV/OIDC secrets). **Keep-current**: leave blank on save to preserve the stored value. |
+| **Service account password** | Encrypted at rest (AES-256-GCM, same scheme as CalDAV/OIDC secrets). **Keep-current**: leave blank on save to preserve the stored value, as long as the endpoint and the account stay the same. Saving a new endpoint or a new service account without typing the password clears the stored one (the card says so), so it is never sent to a server it was not typed for; the feature then idles until it is entered again. |
 | **Lock user sources** | When on, non-admin users can no longer add their own calendar sources (CalDAV, EWS or Google): their Exchange calendar is managed centrally. Admins are exempt, and sources users added before stay until deleted. The Sources page shows an explanatory notice and hides the "Add" button. |
 | **Auto-provision** | When on, a managed Exchange source is created for every enabled user whose address is trusted (see [Who gets a mailbox](#who-gets-a-mailbox)): existing ones on save, then each new one as it appears. |
 | **Users' domain** and **Mailbox domain** | Optional override, both or neither. See [Domain mismatch](#domain-mismatch) below. A leading `@` is stripped automatically. |
@@ -112,11 +115,16 @@ managed source they had was removed by the upgrade: confirm each one once
 (the card lists them), or let SSO users sign in again.
 
 One mailbox serves at most one user. Addresses are compared without regard to
-case, and the impersonated mailbox is stored lowercased. When a second user's
-address maps to a mailbox another user's managed source already reads, the
-second user gets no source and the status table shows the conflict. An
-address that does not have exactly one `@` names no mailbox and is never
-provisioned.
+(ASCII) letter case and surrounding spaces, and the impersonated mailbox is
+stored lowercased. When a second user's address maps to a mailbox another
+user's managed source already reads, the second user gets no source and the
+status table shows the conflict, with one exception: an owner whose address
+the identity provider verified takes the mailbox over from an account that is
+only admin-confirmed (that account's managed source is removed and the event
+logged). An address that does not have exactly one `@`, or that holds a
+non-ASCII character (Exchange 2019 has no SMTPUTF8), names no mailbox and is
+never provisioned. The list of addresses to confirm shows the mailbox each
+confirmation would open.
 
 A suspended account keeps its managed source but is neither synced nor
 written to until it is enabled again.
@@ -151,8 +159,9 @@ explicit button and the confirmation), and only ever for trusted users:
 4. **Confirming an address** on the card or with `calrs user trust-email`.
 
 Managed sources cannot be edited (their endpoint and credentials come from this
-card). Only an admin can remove one, and auto-provision recreates it at the
-user's next OIDC login.
+card). Only an admin can remove one, with **Remove** in the per-user status
+table; auto-provision recreates it at the next save, confirmation or SSO
+login, so suspend the account to keep someone out.
 
 Users keep the actions that are theirs on a managed source: sync it, test it,
 and choose which of its calendars their confirmed bookings are written to.

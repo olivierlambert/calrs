@@ -197,6 +197,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
   - Managed sources keep busy times only: no title, description, location or iCal text is stored for events from a managed mailbox, so admins cannot read mailbox content through calrs.
   - Suspended users, and every managed source while the feature is off, are neither synced nor written to, without counting as failures. "Remove managed sources and clear the service password" takes the feature out of service; bookings already written into mailboxes stay there.
   - The write calendar of a source must be one of its own calendars.
+  - The global endpoint must be https, and saving a new endpoint or service account without retyping the password clears the stored one, so it is never sent to a server it was not typed for.
+  - Addresses are compared as ASCII (a non-ASCII address names no mailbox), registration stores the address it checked, SSO linking by email ignores case, and an owner verified by the identity provider takes a mailbox over from an account that is only admin-confirmed.
+  - A sync that started on a mailbox the source no longer reads stores nothing, calendars the mailbox no longer lists are dropped, and calendar folder names are replaced by neutral ones.
+  - An admin can remove one user's managed source from the status table.
 
   Thanks @huntervcx. See "EWS Impersonation (Exchange)" in the docs.
 
