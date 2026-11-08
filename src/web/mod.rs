@@ -1,6 +1,7 @@
 mod admin;
 mod admin_stats;
 mod api;
+mod api_doc;
 mod api_tokens;
 mod availability;
 mod booking;
@@ -1063,6 +1064,12 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
         .route(
             "/static/intl-tel-input/{file}",
             get(serve_intl_tel_input_asset),
+        )
+        // Interactive reference of the REST API, and its vendored viewer.
+        .route("/api/docs", get(api_doc::api_docs_page))
+        .route(
+            "/static/swagger-ui/{file}",
+            get(api_doc::serve_swagger_ui_asset),
         )
         // Group public routes
         .route("/team/{team_slug}", get(team_profile_page))

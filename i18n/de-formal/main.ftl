@@ -486,6 +486,7 @@ api-tokens-created = Kopieren Sie dieses Token jetzt: Es wird nur einmal angezei
 api-tokens-error-name = Geben Sie dem Token einen Namen mit höchstens 100 Zeichen.
 api-tokens-error-scope = Wählen Sie mindestens eine Berechtigung.
 api-tokens-error-limit = Sie haben bereits 20 Tokens. Widerrufen Sie zuerst eines.
+api-docs-try = Um eine Anfrage auszuprobieren, wählen Sie Authorize und fügen Sie ein persönliches Zugriffstoken ein. Diese Seite sendet Ihre Sitzung nie an die API.
 bookings-error-reschedule-resend-too-soon = Die Anfrage wurde dem Gast vor weniger als einer Stunde gesendet. Versuchen Sie es später erneut.
 
 # Write destination per event type (#47)

@@ -89,6 +89,9 @@ pulldown-cmark = { version = "0.12", default-features = false, features = ["html
 # Browser launch (CLI OAuth2)
 open = "5"
 
+# OpenAPI document of the REST API (#169), generated from the handlers
+utoipa = { version = "6", features = ["preserve_order", "preserve_path_order"] }
+
 # Localization (Fluent)
 fluent-bundle = "0.15"
 unic-langid = "0.9"

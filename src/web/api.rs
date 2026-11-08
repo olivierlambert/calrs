@@ -8,7 +8,9 @@
 //! `host_request_reschedule`). Documented in `docs/src/api.md`.
 use super::*;
 use axum::{body::Bytes, http::StatusCode, Json};
+use serde::Serialize;
 use serde_json::{json, Value};
+use utoipa::ToSchema;
 
 /// Personal access tokens start with this, so a leaked one is recognisable
 /// (secret scanners) and never mistaken for an OAuth access token.
@@ -37,6 +39,7 @@ pub(super) fn router() -> Router<Arc<AppState>> {
             "/bookings/{id}/request-reschedule",
             post(request_reschedule_api),
         )
+        .route("/openapi.json", get(super::api_doc::openapi_json))
         .fallback(not_found)
         .method_not_allowed_fallback(method_not_allowed);
     // Only `/api/v1` is claimed: `/api` and `/api/book` stay the legacy
@@ -48,19 +51,72 @@ pub(super) fn router() -> Router<Arc<AppState>> {
 
 // --- Errors ---
 
-/// The one error shape: `{"error": {"code", "message"}}`. `code` is stable,
-/// `message` is English prose for a person reading the logs.
+/// The stable `code` of an error answer. Every refusal of the API names one
+/// of these, so the OpenAPI document (`ErrorCode`) lists them all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum ErrorCode {
+    InvalidRequest,
+    InvalidJson,
+    InvalidStart,
+    InvalidTimezone,
+    InvalidPhone,
+    InvalidAttendees,
+    InvalidRange,
+    InvalidCursor,
+    InvalidIdempotencyKey,
+    Unauthorized,
+    InsufficientScope,
+    Forbidden,
+    OriginNotAllowed,
+    NotFound,
+    MethodNotAllowed,
+    SlotUnavailable,
+    LimitReached,
+    BookingNotActive,
+    NoBookableDates,
+    RescheduleAlreadyRequested,
+    ResendTooSoon,
+    NoReschedulePending,
+    IdempotencyInProgress,
+    PayloadTooLarge,
+    UnsupportedMediaType,
+    TooSoon,
+    OutsideBookingWindow,
+    BookingRefused,
+    TooManyAttendees,
+    IdempotencyKeyReused,
+    RateLimited,
+    DailyLimitReached,
+    InternalError,
+}
+
+/// The one error shape: `{"error": {"code", "message"}}`.
+#[derive(Serialize, ToSchema)]
+pub(super) struct ErrorBody {
+    error: ErrorDetail,
+}
+
+#[derive(Serialize, ToSchema)]
+pub(super) struct ErrorDetail {
+    /// Stable: what a client branches on.
+    code: ErrorCode,
+    /// English text for a person reading the logs; may change.
+    message: String,
+}
+
+/// An error answer: its status, `code` and `message`.
 #[derive(Debug)]
 pub(super) struct ApiError {
     status: StatusCode,
-    code: &'static str,
+    code: ErrorCode,
     message: String,
     /// `WWW-Authenticate` value for 401 and 403.
     challenge: Option<String>,
 }
 
 impl ApiError {
-    fn new(status: StatusCode, code: &'static str, message: impl Into<String>) -> Self {
+    fn new(status: StatusCode, code: ErrorCode, message: impl Into<String>) -> Self {
         Self {
             status,
             code,
@@ -68,17 +124,17 @@ impl ApiError {
             challenge: None,
         }
     }
-    fn bad(code: &'static str, message: impl Into<String>) -> Self {
+    fn bad(code: ErrorCode, message: impl Into<String>) -> Self {
         Self::new(StatusCode::BAD_REQUEST, code, message)
     }
     fn not_found() -> Self {
-        Self::new(StatusCode::NOT_FOUND, "not_found", "Not found.")
+        Self::new(StatusCode::NOT_FOUND, ErrorCode::NotFound, "Not found.")
     }
     fn internal(context: &str, error: &dyn std::fmt::Display) -> Self {
         tracing::error!(%error, context, "API request failed");
         Self::new(
             StatusCode::INTERNAL_SERVER_ERROR,
-            "internal_error",
+            ErrorCode::InternalError,
             "Something went wrong on the server; try again later.",
         )
     }
@@ -90,13 +146,26 @@ impl From<sqlx::Error> for ApiError {
     }
 }
 
+impl ApiError {
+    /// The answer's body.
+    fn body(&self) -> Value {
+        to_json(&ErrorBody {
+            error: ErrorDetail {
+                code: self.code,
+                message: self.message.clone(),
+            },
+        })
+    }
+}
+
+/// An answer type as JSON. Serializing these plain structs cannot fail.
+fn to_json(value: &impl Serialize) -> Value {
+    serde_json::to_value(value).unwrap_or(Value::Null)
+}
+
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        let mut response = (
-            self.status,
-            Json(json!({"error": {"code": self.code, "message": self.message}})),
-        )
-            .into_response();
+        let mut response = (self.status, Json(self.body())).into_response();
         let headers = response.headers_mut();
         headers.insert("cache-control", "no-store".parse().unwrap());
         if let Some(challenge) = self.challenge.and_then(|c| c.parse().ok()) {
@@ -126,7 +195,7 @@ async fn not_found() -> ApiError {
 async fn method_not_allowed() -> ApiError {
     ApiError::new(
         StatusCode::METHOD_NOT_ALLOWED,
-        "method_not_allowed",
+        ErrorCode::MethodNotAllowed,
         "Method not allowed.",
     )
 }
@@ -162,11 +231,15 @@ impl Caller {
     }
 
     fn booking_answer(&self, booking: Value) -> Value {
-        if self.has("bookings:read") {
-            json!({ "booking": booking })
+        let booking = if self.has("bookings:read") {
+            booking
         } else {
-            json!({"booking": {"id": booking["id"], "status": booking["status"]}})
-        }
+            to_json(&BookingRef {
+                id: booking["id"].clone(),
+                status: booking["status"].clone(),
+            })
+        };
+        to_json(&WriteAnswer { booking })
     }
 }
 
@@ -240,7 +313,7 @@ async fn authenticate(
         if origin.to_str().ok() != expected.as_deref() {
             return Err(ApiError::new(
                 StatusCode::FORBIDDEN,
-                "origin_not_allowed",
+                ErrorCode::OriginNotAllowed,
                 "Cross-origin browser requests are not accepted.",
             ));
         }
@@ -271,7 +344,7 @@ async fn authenticate(
     let Some((user, scope_list, credential)) = found else {
         let mut error = ApiError::new(
             StatusCode::UNAUTHORIZED,
-            "unauthorized",
+            ErrorCode::Unauthorized,
             "A valid Bearer token is required.",
         );
         // RFC 6750 section 3.1: no error code when no token was presented.
@@ -289,7 +362,7 @@ async fn authenticate(
     if !scope_list.split_whitespace().any(|s| s == scope) {
         let mut error = ApiError::new(
             StatusCode::FORBIDDEN,
-            "insufficient_scope",
+            ErrorCode::InsufficientScope,
             format!("This token lacks the {scope} scope."),
         );
         error.challenge = Some(challenge_value("insufficient_scope", scope));
@@ -312,7 +385,7 @@ async fn authenticate(
 fn rate_limited() -> ApiError {
     ApiError::new(
         StatusCode::TOO_MANY_REQUESTS,
-        "rate_limited",
+        ErrorCode::RateLimited,
         "Too many requests; slow down.",
     )
 }
@@ -336,10 +409,11 @@ type QueryParams = Result<Query<HashMap<String, String>>, axum::extract::rejecti
 
 /// The query parameters, refusing any not in `allowed`.
 fn query_params(query: QueryParams, allowed: &[&str]) -> Result<HashMap<String, String>, ApiError> {
-    let Query(params) = query.map_err(|_| ApiError::bad("invalid_request", "Malformed query."))?;
+    let Query(params) =
+        query.map_err(|_| ApiError::bad(ErrorCode::InvalidRequest, "Malformed query."))?;
     if let Some(unknown) = params.keys().find(|k| !allowed.contains(&k.as_str())) {
         return Err(ApiError::bad(
-            "invalid_request",
+            ErrorCode::InvalidRequest,
             format!("Unknown parameter {unknown}."),
         ));
     }
@@ -354,11 +428,11 @@ fn body_bytes(body: BodyBytes) -> Result<Bytes, ApiError> {
         if rejection.status() == StatusCode::PAYLOAD_TOO_LARGE {
             ApiError::new(
                 StatusCode::PAYLOAD_TOO_LARGE,
-                "payload_too_large",
+                ErrorCode::PayloadTooLarge,
                 format!("The body is limited to {BODY_LIMIT} bytes."),
             )
         } else {
-            ApiError::bad("invalid_request", "Unreadable body.")
+            ApiError::bad(ErrorCode::InvalidRequest, "Unreadable body.")
         }
     })
 }
@@ -372,7 +446,7 @@ fn json_body<T: serde::de::DeserializeOwned>(
 ) -> Result<T, ApiError> {
     if empty_ok && body.is_empty() {
         return serde_json::from_str("{}")
-            .map_err(|e| ApiError::bad("invalid_json", e.to_string()));
+            .map_err(|e| ApiError::bad(ErrorCode::InvalidJson, e.to_string()));
     }
     let content_type = headers
         .get("content-type")
@@ -385,11 +459,11 @@ fn json_body<T: serde::de::DeserializeOwned>(
     {
         return Err(ApiError::new(
             StatusCode::UNSUPPORTED_MEDIA_TYPE,
-            "unsupported_media_type",
+            ErrorCode::UnsupportedMediaType,
             "Send the body as application/json.",
         ));
     }
-    serde_json::from_slice(body).map_err(|e| ApiError::bad("invalid_json", e.to_string()))
+    serde_json::from_slice(body).map_err(|e| ApiError::bad(ErrorCode::InvalidJson, e.to_string()))
 }
 
 type ApiPath = Result<Path<String>, axum::extract::rejection::PathRejection>;
@@ -413,7 +487,7 @@ fn check_id(id: &str) -> Result<(), ApiError> {
 fn parse_timezone(value: &str) -> Result<Tz, ApiError> {
     value.parse::<Tz>().map_err(|_| {
         ApiError::bad(
-            "invalid_timezone",
+            ErrorCode::InvalidTimezone,
             "timezone must be an IANA name such as Europe/Paris.",
         )
     })
@@ -422,6 +496,278 @@ fn parse_timezone(value: &str) -> Result<Tz, ApiError> {
 /// A stored instant (`created_at`, `datetime('now')` in UTC) as RFC 3339.
 fn utc_text(value: &str) -> Option<String> {
     crate::booking_time::naive(value).map(|t| t.and_utc().format("%Y-%m-%dT%H:%M:%SZ").to_string())
+}
+
+// --- Answers ---
+//
+// The types the handlers serialize, which are also the OpenAPI schemas
+// (`api_doc.rs`). Every field is always present, null when it has no value.
+
+/// A string schema limited to `values`, plus null when `nullable`.
+fn string_enum(values: &[&str], nullable: bool, description: &str) -> utoipa::openapi::Object {
+    let mut values: Vec<Value> = values.iter().map(|v| json!(v)).collect();
+    let schema_type = if nullable {
+        values.push(Value::Null);
+        utoipa::openapi::schema::SchemaType::from_iter([
+            utoipa::openapi::Type::String,
+            utoipa::openapi::Type::Null,
+        ])
+    } else {
+        utoipa::openapi::schema::SchemaType::new(utoipa::openapi::Type::String)
+    };
+    utoipa::openapi::ObjectBuilder::new()
+        .schema_type(schema_type)
+        .enum_values(Some(values))
+        .description(Some(description))
+        .build()
+}
+
+fn visibility_schema() -> utoipa::openapi::Object {
+    string_enum(
+        &["public", "internal", "private"],
+        false,
+        "Who can see the event type: listed on profile pages, offered in the booking directory to signed-in users, or reachable by invite only.",
+    )
+}
+
+fn scheduling_mode_schema() -> utoipa::openapi::Object {
+    string_enum(
+        &["round_robin", "collective"],
+        true,
+        "For a team event type: one free member is enough (`round_robin`), or every member must be free (`collective`). Null for a personal event type.",
+    )
+}
+
+fn phone_mode_schema() -> utoipa::openapi::Object {
+    string_enum(
+        &["off", "optional", "required"],
+        false,
+        "Whether a booking asks for the guest's phone number (for SMS notifications).",
+    )
+}
+
+fn booking_status_schema() -> utoipa::openapi::Object {
+    string_enum(
+        &["pending", "confirmed", "cancelled", "declined"],
+        false,
+        "`pending` awaits the host's approval; `declined` is a request the host refused or that expired.",
+    )
+}
+
+/// An event type in the list.
+#[derive(Serialize, ToSchema)]
+pub(super) struct EventTypeSummary {
+    /// Its id, for the other event type operations and `POST /bookings`.
+    id: String,
+    /// The last segment of its booking page URL.
+    slug: String,
+    title: String,
+    /// Length of a meeting, in minutes.
+    duration_min: i32,
+    #[schema(schema_with = visibility_schema)]
+    visibility: String,
+    /// The team of a team event type; null for a personal one.
+    #[schema(required = true)]
+    team_id: Option<String>,
+    /// True for the event types you manage (you own it, or administer its
+    /// team): their slots can be read and they can be booked for a guest.
+    /// False for an internal event type the booking directory offers you,
+    /// which is listed read-only.
+    manageable: bool,
+}
+
+/// A page of event types.
+#[derive(Serialize, ToSchema)]
+pub(super) struct EventTypeList {
+    event_types: Vec<EventTypeSummary>,
+    /// Pass it back as `cursor` for the next page; null on the last page.
+    #[schema(required = true)]
+    next_cursor: Option<String>,
+}
+
+/// An event type in full.
+#[derive(Serialize, ToSchema)]
+pub(super) struct EventTypeDetail {
+    id: String,
+    slug: String,
+    title: String,
+    #[schema(required = true)]
+    description: Option<String>,
+    /// Length of a meeting, in minutes.
+    duration_min: i32,
+    #[schema(schema_with = visibility_schema)]
+    visibility: String,
+    /// The team of a team event type; null for a personal one.
+    #[schema(required = true)]
+    team_id: Option<String>,
+    /// Whether you manage it (see `EventTypeSummary`).
+    manageable: bool,
+    /// A booking is a pending request until a host approves it.
+    requires_confirmation: bool,
+    /// Kind of meeting place: `link`, `jitsi_auto`, `webhook_auto`,
+    /// `google_meet`, `phone`, `in_person` or `custom`. Its value (a link,
+    /// an address) is not returned here.
+    location_type: String,
+    /// IANA timezone of its availability, the default of `timezone` in the
+    /// slot and booking operations.
+    timezone: String,
+    #[schema(schema_with = scheduling_mode_schema, required = true)]
+    scheduling_mode: Option<String>,
+    /// Additional attendees a guest may add on its booking page.
+    max_additional_guests: i32,
+    #[schema(schema_with = phone_mode_schema)]
+    phone: String,
+}
+
+#[derive(Serialize, ToSchema)]
+pub(super) struct EventTypeAnswer {
+    event_type: EventTypeDetail,
+}
+
+/// A bookable time.
+#[derive(Serialize, ToSchema)]
+pub(super) struct Slot {
+    /// Start, in UTC. Pass it as `start` to `POST /bookings`.
+    #[schema(format = DateTime)]
+    start: String,
+    /// End, in UTC.
+    #[schema(format = DateTime)]
+    end: String,
+    /// The start's day in the requested timezone.
+    #[schema(format = Date)]
+    date: String,
+    /// The start's wall time in the requested timezone, `HH:MM`.
+    #[schema(pattern = r"^\d{2}:\d{2}$")]
+    time: String,
+}
+
+/// The bookable times of an event type over a range of days.
+#[derive(Serialize, ToSchema)]
+pub(super) struct SlotList {
+    event_type_id: String,
+    /// The timezone `date`, `time`, `from` and `to` are in.
+    timezone: String,
+    #[schema(format = Date)]
+    from: String,
+    #[schema(format = Date)]
+    to: String,
+    /// In start order.
+    slots: Vec<Slot>,
+}
+
+/// The event type a booking is of.
+#[derive(Serialize, ToSchema)]
+pub(super) struct BookingEventType {
+    id: String,
+    slug: String,
+    title: String,
+    #[schema(required = true)]
+    team_id: Option<String>,
+}
+
+/// The guest who booked.
+#[derive(Serialize, ToSchema)]
+pub(super) struct BookingGuest {
+    name: String,
+    email: String,
+    /// E.164, when the guest gave one.
+    #[schema(required = true)]
+    phone: Option<String>,
+    /// IANA timezone of the guest's emails.
+    timezone: String,
+    /// Language of the guest's emails and SMS.
+    #[schema(required = true)]
+    language: Option<String>,
+    /// What the guest wrote with the booking.
+    #[schema(required = true)]
+    notes: Option<String>,
+}
+
+/// Where the meeting takes place.
+#[derive(Serialize, ToSchema)]
+pub(super) struct BookingLocation {
+    /// As `location_type` of the event type.
+    #[serde(rename = "type")]
+    kind: String,
+    /// The meeting link (the booking's own one when it has one), phone
+    /// number or address.
+    #[schema(required = true)]
+    value: Option<String>,
+}
+
+/// A booking, as its hosts see it. Never its guest's cancel, reschedule or
+/// approval links, nor anything about calendars.
+#[derive(Serialize, ToSchema)]
+pub(super) struct Booking {
+    id: String,
+    /// iCalendar UID of the invitation, the one webhooks carry.
+    uid: String,
+    #[schema(schema_with = booking_status_schema)]
+    status: String,
+    /// Start, in UTC. Null only when the stored time cannot be read.
+    #[schema(format = DateTime, required = true)]
+    start: Option<String>,
+    /// End, in UTC.
+    #[schema(format = DateTime, required = true)]
+    end: Option<String>,
+    /// When the booking was made, in UTC.
+    #[schema(format = DateTime, required = true)]
+    created_at: Option<String>,
+    event_type: BookingEventType,
+    guest: BookingGuest,
+    /// Email addresses of the additional attendees.
+    attendees: Vec<String>,
+    location: BookingLocation,
+    /// The hosts' own notes on the booking. Always null in the answer of
+    /// `POST /bookings`.
+    #[schema(required = true)]
+    host_notes: Option<String>,
+}
+
+/// A page of bookings.
+#[derive(Serialize, ToSchema)]
+pub(super) struct BookingList {
+    bookings: Vec<Booking>,
+    /// Pass it back as `cursor` for the next page; null on the last page.
+    #[schema(required = true)]
+    next_cursor: Option<String>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub(super) struct BookingAnswer {
+    booking: Booking,
+}
+
+/// What a write answers to a token without `bookings:read`.
+#[derive(Serialize, ToSchema)]
+pub(super) struct BookingRef {
+    /// Copied from the booking as read back (null only if it vanished
+    /// meanwhile), as the answer always was.
+    #[schema(value_type = String)]
+    id: Value,
+    #[schema(schema_with = booking_status_schema)]
+    status: Value,
+}
+
+/// `anyOf`, not `oneOf`: OpenAPI 3.1 objects are open, so a whole `Booking`
+/// also matches `BookingRef`, and a `oneOf` would make strict validators
+/// refuse every full answer.
+fn written_booking_schema() -> utoipa::openapi::Schema {
+    let any_of = utoipa::openapi::schema::AnyOfBuilder::new()
+        .item(utoipa::openapi::Ref::from_schema_name("Booking"))
+        .item(utoipa::openapi::Ref::from_schema_name("BookingRef"))
+        .description(Some(
+            "The whole booking when the token also has `bookings:read`, else only its id and status.",
+        ))
+        .build();
+    utoipa::openapi::Schema::AnyOf(any_of)
+}
+
+/// The answer of a write on a booking.
+#[derive(Serialize, ToSchema)]
+pub(super) struct WriteAnswer {
+    #[schema(schema_with = written_booking_schema)]
+    booking: Value,
 }
 
 // --- Event types ---
@@ -453,7 +799,24 @@ async fn event_type_access(
     })
 }
 
-async fn list_event_types(
+/// List event types
+///
+/// The event types you manage (your own, and those of the teams you
+/// administer), then the internal event types the booking directory offers
+/// you, read-only. Disabled event types are left out. Scope: `event-types:read`.
+#[utoipa::path(
+    get,
+    path = "/event-types",
+    tag = "event-types",
+    operation_id = "listEventTypes",
+    params(("cursor" = Option<String>, Query, description = "`next_cursor` of the previous page.")),
+    responses(
+        (status = 200, description = "A page of event types.", body = EventTypeList),
+        (status = 400, description = "`invalid_request`: an unknown or malformed query parameter. `invalid_cursor`."),
+    ),
+    security(("oauth2" = ["event-types:read"]), ("personalAccessToken" = ["event-types:read"])),
+)]
+pub(super) async fn list_event_types(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     query: QueryParams,
@@ -462,25 +825,44 @@ async fn list_event_types(
     let params = query_params(query, &["cursor"])?;
     let cursor = params.get("cursor").map(String::as_str);
     if cursor.is_some_and(|c| c.is_empty() || c.len() > 64) {
-        return Err(ApiError::bad("invalid_cursor", "Invalid cursor."));
+        return Err(ApiError::bad(ErrorCode::InvalidCursor, "Invalid cursor."));
     }
     let (listed, next) = distributable_event_types(&state.pool, &caller.user.id, cursor).await?;
-    let items: Vec<Value> = listed
+    let event_types = listed
         .into_iter()
-        .map(|e| {
-            json!({
-                "id": e.id, "slug": e.slug, "title": e.title, "duration_min": e.duration_min,
-                "visibility": e.visibility, "team_id": e.team_id, "manageable": e.manages,
-            })
+        .map(|e| EventTypeSummary {
+            id: e.id,
+            slug: e.slug,
+            title: e.title,
+            duration_min: e.duration_min,
+            visibility: e.visibility,
+            team_id: e.team_id,
+            manageable: e.manages,
         })
         .collect();
-    Ok(ok(
-        StatusCode::OK,
-        json!({"event_types": items, "next_cursor": next}),
-    ))
+    let answer = EventTypeList {
+        event_types,
+        next_cursor: next,
+    };
+    Ok(ok(StatusCode::OK, to_json(&answer)))
 }
 
-async fn get_event_type(
+/// Read an event type
+///
+/// Any event type `GET /event-types` lists. Scope: `event-types:read`.
+#[utoipa::path(
+    get,
+    path = "/event-types/{id}",
+    tag = "event-types",
+    operation_id = "getEventType",
+    params(("id" = String, Path, description = "The event type's id."),),
+    responses(
+        (status = 200, description = "The event type.", body = EventTypeAnswer),
+        (status = 404, description = "`not_found`: no such event type, a disabled one, or one you cannot see."),
+    ),
+    security(("oauth2" = ["event-types:read"]), ("personalAccessToken" = ["event-types:read"])),
+)]
+pub(super) async fn get_event_type(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     path: ApiPath,
@@ -526,22 +908,56 @@ async fn get_event_type(
         phone_mode,
     ) = row;
     let timezone = get_host_tz(&state.pool, &id).await;
-    Ok(ok(
-        StatusCode::OK,
-        json!({"event_type": {
-            "id": id, "slug": slug, "title": title, "description": description,
-            "duration_min": duration, "visibility": visibility, "team_id": team_id,
-            "manageable": manages, "requires_confirmation": requires_confirmation != 0,
-            "location_type": location_type, "timezone": timezone.name(),
-            "scheduling_mode": team_id.as_ref().map(|_| scheduling_mode),
-            "max_additional_guests": max_guests, "phone": phone_mode,
-        }}),
-    ))
+    let event_type = EventTypeDetail {
+        id,
+        slug,
+        title,
+        description,
+        duration_min: duration,
+        visibility,
+        scheduling_mode: team_id.as_ref().map(|_| scheduling_mode),
+        team_id,
+        manageable: manages,
+        requires_confirmation: requires_confirmation != 0,
+        location_type,
+        timezone: timezone.name().to_string(),
+        max_additional_guests: max_guests,
+        phone: phone_mode,
+    };
+    Ok(ok(StatusCode::OK, to_json(&EventTypeAnswer { event_type })))
 }
 
 // --- Slots ---
 
-async fn event_type_slots(
+/// List bookable times
+///
+/// The slots of an event type you manage, computed by the booking page's own
+/// engine after the same on-demand calendar sync: weekly hours and date
+/// overrides, minimum notice, buffers, the booking horizon and bookable
+/// dates, frequency limits, time off, synced calendar events and bookings,
+/// shared resources, and for a team event type its members by scheduling
+/// mode. Wall times that do not name a single instant (the hour repeated when
+/// clocks go back) are left out. Scope: `slots:read`.
+#[utoipa::path(
+    get,
+    path = "/event-types/{id}/slots",
+    tag = "slots",
+    operation_id = "listSlots",
+    params(
+        ("id" = String, Path, description = "The event type's id."),
+        ("from" = String, Query, format = Date, description = "First day, `YYYY-MM-DD`, in `timezone`: from yesterday to a year ahead."),
+        ("to" = String, Query, format = Date, description = "Last day, inclusive: on or after `from`, at most 31 days in all."),
+        ("timezone" = Option<String>, Query, description = "IANA timezone of the days and of `date` and `time`, such as `Europe/Paris`. The event type's by default."),
+    ),
+    responses(
+        (status = 200, description = "The slots whose start falls on those days.", body = SlotList),
+        (status = 400, description = "`invalid_request`: `from` or `to` missing or not a date, or an unknown parameter. `invalid_range`. `invalid_timezone`."),
+        (status = 403, description = "`forbidden`: an internal event type listed read-only; only its owner or a team admin can read its slots."),
+        (status = 404, description = "`not_found`: no such event type, a disabled one, or one you cannot see."),
+    ),
+    security(("oauth2" = ["slots:read"]), ("personalAccessToken" = ["slots:read"])),
+)]
+pub(super) async fn event_type_slots(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     path: ApiPath,
@@ -551,12 +967,12 @@ async fn event_type_slots(
     let id = path_id(path)?;
     let params = query_params(query, &["from", "to", "timezone"])?;
     let date = |name: &str| -> Result<NaiveDate, ApiError> {
-        let value = params
-            .get(name)
-            .ok_or_else(|| ApiError::bad("invalid_request", format!("{name} is required.")))?;
+        let value = params.get(name).ok_or_else(|| {
+            ApiError::bad(ErrorCode::InvalidRequest, format!("{name} is required."))
+        })?;
         NaiveDate::parse_from_str(value, "%Y-%m-%d").map_err(|_| {
             ApiError::bad(
-                "invalid_request",
+                ErrorCode::InvalidRequest,
                 format!("{name} must be a YYYY-MM-DD date."),
             )
         })
@@ -564,7 +980,7 @@ async fn event_type_slots(
     let (from, to) = (date("from")?, date("to")?);
     if to < from || (to - from).num_days() >= MAX_SLOT_DAYS {
         return Err(ApiError::bad(
-            "invalid_range",
+            ErrorCode::InvalidRange,
             format!("to must be on or after from, at most {MAX_SLOT_DAYS} days in all."),
         ));
     }
@@ -573,7 +989,7 @@ async fn event_type_slots(
         Some(false) => {
             return Err(ApiError::new(
                 StatusCode::FORBIDDEN,
-                "forbidden",
+                ErrorCode::Forbidden,
                 "Only the owner or a team admin of this event type can read its slots.",
             ))
         }
@@ -588,16 +1004,19 @@ async fn event_type_slots(
     let today = Utc::now().with_timezone(&guest_tz).date_naive();
     if from < today - Duration::days(1) || from > today + Duration::days(MAX_DAYS_AHEAD + 1) {
         return Err(ApiError::bad(
-            "invalid_range",
+            ErrorCode::InvalidRange,
             "from must be between yesterday and a year ahead.",
         ));
     }
     let slots = api_slots(&state, &id, host_tz, guest_tz, from, to).await?;
-    Ok(ok(
-        StatusCode::OK,
-        json!({"event_type_id": id, "timezone": guest_tz.name(),
-               "from": from.to_string(), "to": to.to_string(), "slots": slots}),
-    ))
+    let answer = SlotList {
+        event_type_id: id,
+        timezone: guest_tz.name().to_string(),
+        from: from.to_string(),
+        to: to.to_string(),
+        slots,
+    };
+    Ok(ok(StatusCode::OK, to_json(&answer)))
 }
 
 /// The slots of event type `id` whose guest-local day is in `from..=to`,
@@ -611,7 +1030,7 @@ async fn api_slots(
     guest_tz: Tz,
     from: NaiveDate,
     to: NaiveDate,
-) -> Result<Vec<Value>, ApiError> {
+) -> Result<Vec<Slot>, ApiError> {
     let et: (i32, i32, i32, i32, Option<String>, String, String) = sqlx::query_as(
         "SELECT et.duration_min, et.buffer_before, et.buffer_after, et.min_notice_min, et.team_id,
                 et.scheduling_mode, COALESCE(a.user_id, '')
@@ -702,12 +1121,12 @@ async fn api_slots(
             continue;
         }
         let end = start + Duration::minutes(duration as i64);
-        slots.push(json!({
-            "start": start.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
-            "end": end.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
-            "date": guest_start.format("%Y-%m-%d").to_string(),
-            "time": guest_start.format("%H:%M").to_string(),
-        }));
+        slots.push(Slot {
+            start: start.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
+            end: end.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
+            date: guest_start.format("%Y-%m-%d").to_string(),
+            time: guest_start.format("%H:%M").to_string(),
+        });
     }
     Ok(slots)
 }
@@ -760,7 +1179,7 @@ struct BookingRow {
 
 /// A booking as the API shows it to one of its hosts. Never its cancel,
 /// reschedule or approval tokens, nor anything about calendars.
-fn booking_json(row: BookingRow, with_host_notes: bool) -> Value {
+fn booking_json(row: BookingRow, with_host_notes: bool) -> Booking {
     let stored_tz: Tz = row.stored_tz.parse().unwrap_or(Tz::UTC);
     let instant = |value: &str| {
         crate::booking_time::local(value, stored_tz, Tz::UTC)
@@ -777,17 +1196,34 @@ fn booking_json(row: BookingRow, with_host_notes: bool) -> Value {
     } else {
         None
     };
-    json!({
-        "id": row.id, "uid": row.uid, "status": row.status,
-        "start": instant(&row.start_at), "end": instant(&row.end_at),
-        "created_at": utc_text(&row.created_at),
-        "event_type": {"id": row.et_id, "slug": row.et_slug, "title": row.et_title, "team_id": row.team_id},
-        "guest": {"name": row.guest_name, "email": row.guest_email, "phone": row.guest_phone,
-                  "timezone": row.guest_tz, "language": row.language, "notes": row.notes},
-        "attendees": attendees,
-        "location": {"type": row.location_type, "value": row.location_value},
-        "host_notes": host_notes,
-    })
+    Booking {
+        id: row.id,
+        uid: row.uid,
+        status: row.status,
+        start: instant(&row.start_at),
+        end: instant(&row.end_at),
+        created_at: utc_text(&row.created_at),
+        event_type: BookingEventType {
+            id: row.et_id,
+            slug: row.et_slug,
+            title: row.et_title,
+            team_id: row.team_id,
+        },
+        guest: BookingGuest {
+            name: row.guest_name,
+            email: row.guest_email,
+            phone: row.guest_phone,
+            timezone: row.guest_tz,
+            language: row.language,
+            notes: row.notes,
+        },
+        attendees,
+        location: BookingLocation {
+            kind: row.location_type,
+            value: row.location_value,
+        },
+        host_notes,
+    }
 }
 
 /// Booking `id` when `user_id` hosts it (the host-notes rule, `NOTE_HOSTS`).
@@ -795,7 +1231,7 @@ async fn hosted_booking(
     pool: &SqlitePool,
     user_id: &str,
     id: &str,
-) -> Result<Option<Value>, sqlx::Error> {
+) -> Result<Option<Booking>, sqlx::Error> {
     let row: Option<BookingRow> = sqlx::query_as(&format!(
         "{BOOKING_COLUMNS} WHERE b.id = ? AND {NOTE_HOSTS}"
     ))
@@ -827,7 +1263,30 @@ fn decode_cursor(cursor: &str) -> Option<(String, String)> {
     Some((start.to_string(), id.to_string()))
 }
 
-async fn list_bookings(
+/// List bookings
+///
+/// The bookings you host: those of event types you own, those a round-robin
+/// team assigned to you, collective bookings of your teams (unless you are
+/// excluded from that event type), and bookings you claimed as a watcher.
+/// Ordered by start. Scope: `bookings:read`.
+#[utoipa::path(
+    get,
+    path = "/bookings",
+    tag = "bookings",
+    operation_id = "listBookings",
+    params(
+        ("cursor" = Option<String>, Query, description = "`next_cursor` of the previous page."),
+        ("status" = Option<String>, Query, description = "Only bookings in this status: `pending`, `confirmed`, `cancelled` or `declined`."),
+        ("from" = Option<String>, Query, format = DateTime, description = "Only bookings starting at or after this RFC 3339 instant."),
+        ("to" = Option<String>, Query, format = DateTime, description = "Only bookings starting before this RFC 3339 instant."),
+    ),
+    responses(
+        (status = 200, description = "A page of bookings. It can be short, even empty, and still have a next cursor.", body = BookingList),
+        (status = 400, description = "`invalid_request`: a bad `status`, `from` or `to`, or an unknown parameter. `invalid_cursor`."),
+    ),
+    security(("oauth2" = ["bookings:read"]), ("personalAccessToken" = ["bookings:read"])),
+)]
+pub(super) async fn list_bookings(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     query: QueryParams,
@@ -837,7 +1296,7 @@ async fn list_bookings(
     let status = params.get("status").map(String::as_str);
     if status.is_some_and(|s| !matches!(s, "pending" | "confirmed" | "cancelled" | "declined")) {
         return Err(ApiError::bad(
-            "invalid_request",
+            ErrorCode::InvalidRequest,
             "status must be pending, confirmed, cancelled or declined.",
         ));
     }
@@ -848,16 +1307,18 @@ async fn list_bookings(
                 chrono::DateTime::parse_from_rfc3339(v)
                     .map(|t| t.with_timezone(&Utc))
                     .map_err(|_| {
-                        ApiError::bad("invalid_request", format!("{name} must be RFC 3339."))
+                        ApiError::bad(
+                            ErrorCode::InvalidRequest,
+                            format!("{name} must be RFC 3339."),
+                        )
                     })
             })
             .transpose()
     };
     let (from, to) = (instant("from")?, instant("to")?);
     let (after_start, after_id) = match params.get("cursor") {
-        Some(c) => {
-            decode_cursor(c).ok_or_else(|| ApiError::bad("invalid_cursor", "Invalid cursor."))?
-        }
+        Some(c) => decode_cursor(c)
+            .ok_or_else(|| ApiError::bad(ErrorCode::InvalidCursor, "Invalid cursor."))?,
         None => (String::new(), String::new()),
     };
     // Stored times are UTC instants, or wall clocks in the event type's zone
@@ -901,9 +1362,10 @@ async fn list_bookings(
         (rows.len() > PAGE).then(|| encode_cursor(&rows[PAGE - 1].raw_start, &rows[PAGE - 1].id));
     let mut bookings = Vec::new();
     for row in rows.into_iter().take(PAGE) {
-        let value = booking_json(row, true);
-        let start = value["start"]
-            .as_str()
+        let booking = booking_json(row, true);
+        let start = booking
+            .start
+            .as_deref()
             .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
             .map(|t| t.with_timezone(&Utc));
         let inside = match start {
@@ -911,16 +1373,32 @@ async fn list_bookings(
             None => from.is_none() && to.is_none(),
         };
         if inside {
-            bookings.push(value);
+            bookings.push(booking);
         }
     }
-    Ok(ok(
-        StatusCode::OK,
-        json!({"bookings": bookings, "next_cursor": next}),
-    ))
+    let answer = BookingList {
+        bookings,
+        next_cursor: next,
+    };
+    Ok(ok(StatusCode::OK, to_json(&answer)))
 }
 
-async fn get_booking(
+/// Read a booking
+///
+/// A booking you host (see `GET /bookings`). Scope: `bookings:read`.
+#[utoipa::path(
+    get,
+    path = "/bookings/{id}",
+    tag = "bookings",
+    operation_id = "getBooking",
+    params(("id" = String, Path, description = "The booking's id."),),
+    responses(
+        (status = 200, description = "The booking.", body = BookingAnswer),
+        (status = 404, description = "`not_found`: no such booking, or one you do not host."),
+    ),
+    security(("oauth2" = ["bookings:read"]), ("personalAccessToken" = ["bookings:read"])),
+)]
+pub(super) async fn get_booking(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     path: ApiPath,
@@ -928,30 +1406,83 @@ async fn get_booking(
     let caller = authenticate(&state, &headers, "bookings:read").await?;
     let id = path_id(path)?;
     match hosted_booking(&state.pool, &caller.user.id, &id).await? {
-        Some(booking) => Ok(ok(StatusCode::OK, json!({ "booking": booking }))),
+        Some(booking) => Ok(ok(StatusCode::OK, to_json(&BookingAnswer { booking }))),
         None => Err(ApiError::not_found()),
     }
 }
 
-#[derive(Deserialize)]
+/// A booking to make for a guest.
+#[derive(Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
-struct CreateBooking {
+pub(super) struct CreateBooking {
+    /// An event type you manage.
     event_type_id: String,
-    /// RFC 3339 instant.
+    /// RFC 3339 instant on a whole minute: one of the event type's slots,
+    /// as `GET /event-types/{id}/slots` lists them.
+    #[schema(format = DateTime)]
     start: String,
-    /// IANA zone the guest books in; the event type's by default.
+    /// IANA zone the guest books in, stored with the booking and used in the
+    /// guest's emails; the event type's by default.
     timezone: Option<String>,
+    /// The guest's name, 1 to 255 characters.
+    #[schema(min_length = 1, max_length = 255)]
     name: String,
+    /// The guest's email address.
+    #[schema(format = Email, max_length = 255)]
     email: String,
+    /// What the guest wants to discuss, at most 5000 characters.
+    #[schema(max_length = 5000)]
     notes: Option<String>,
+    /// The guest's phone number, in any common format, stored in E.164.
+    /// Follows the event type's `phone`: required, optional, or ignored.
     phone: Option<String>,
+    /// Email addresses of additional attendees, within the event type's
+    /// `max_additional_guests` and at most 10.
     #[serde(default)]
+    #[schema(max_items = 10)]
     attendees: Vec<String>,
-    /// Language of the guest's emails and SMS.
+    /// Language of the guest's emails and SMS: `en`, `fr`, `es`, `pl`,
+    /// `de`, `de-formal`, `it`, `et`, `pt` or `nl`. By default yours, else
+    /// English. `de` becomes `de-formal` when the instance addresses German
+    /// speakers formally.
     language: Option<String>,
 }
 
-async fn create_booking(
+/// Book for a guest
+///
+/// Books an event type you manage for a guest, through the booking page's
+/// own code: the same validation, a re-check of the time against the slot
+/// engine and of the shared resources, the same pending-or-confirmed
+/// decision, emails, calendar write-back, meeting link, SMS and webhooks. No
+/// invite is needed for an internal or private event type, and none is used
+/// up. At most 50 bookings per user per 24 hours. Scope: `bookings:write`.
+///
+/// With an `Idempotency-Key`, the first answer is kept 24 hours per user and
+/// replayed for a retry with the same body; server errors are not kept.
+#[utoipa::path(
+    post,
+    path = "/bookings",
+    tag = "bookings",
+    operation_id = "createBooking",
+    params(
+        ("Idempotency-Key" = Option<String>, Header, max_length = 255, description = "1 to 255 visible ASCII characters making a retry safe."),
+    ),
+    request_body(content = CreateBooking, content_type = "application/json"),
+    responses(
+        (status = 201, description = "Booked: confirmed, or a pending request when the event type requires approval.", body = WriteAnswer,
+            headers(("Idempotency-Replayed" = String, description = "`true` when this is the kept answer of an earlier request with the same key."))),
+        (status = 400, description = "`invalid_request`: a missing or invalid field (name, email, notes, language, attendees). `invalid_json`: not a JSON object of the documented fields. `invalid_start`: not an RFC 3339 instant on a whole minute. `invalid_timezone`. `invalid_phone`: missing when the event type requires one, or unreadable. `invalid_attendees`: over the event type's limit, or not email addresses. `invalid_idempotency_key`."),
+        (status = 403, description = "`forbidden`: an internal event type listed read-only; only its owner or a team admin can book it for a guest."),
+        (status = 404, description = "`not_found`: no such event type, a disabled one, or one you cannot see; also on a replay once you may no longer book it."),
+        (status = 409, description = "`slot_unavailable`: the time is not, or no longer, offered. `limit_reached`: a booking frequency limit. `idempotency_in_progress`: the first request with this key still runs."),
+        (status = 413, description = "`payload_too_large`: the body is over 16 KiB."),
+        (status = 415, description = "`unsupported_media_type`: the body is not `application/json`."),
+        (status = 422, description = "`too_soon`: inside the minimum notice. `outside_booking_window`. `booking_refused`: refused for another reason the booking page gives. `too_many_attendees`: over 10 additional attendees. `idempotency_key_reused`: the key came with another body."),
+        (status = 429, description = "`daily_limit_reached`: 50 bookings through the API in 24 hours."),
+    ),
+    security(("oauth2" = ["bookings:write"]), ("personalAccessToken" = ["bookings:write"])),
+)]
+pub(super) async fn create_booking(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     body: BodyBytes,
@@ -1007,22 +1538,30 @@ fn refusal_error(refusal: BookingRefusal) -> ApiError {
     match refusal {
         BookingRefusal::Plain(key) => match key {
             "error-slot-unavailable" | "error-no-members-available" => {
-                ApiError::new(StatusCode::CONFLICT, "slot_unavailable", en(key))
+                ApiError::new(StatusCode::CONFLICT, ErrorCode::SlotUnavailable, en(key))
             }
-            "error-slot-too-soon" => {
-                ApiError::new(StatusCode::UNPROCESSABLE_ENTITY, "too_soon", en(key))
+            "error-slot-too-soon" => ApiError::new(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                ErrorCode::TooSoon,
+                en(key),
+            ),
+            "error-invalid-date" | "error-invalid-time" => {
+                ApiError::bad(ErrorCode::InvalidStart, en(key))
             }
-            "error-invalid-date" | "error-invalid-time" => ApiError::bad("invalid_start", en(key)),
-            _ => ApiError::new(StatusCode::UNPROCESSABLE_ENTITY, "booking_refused", en(key)),
+            _ => ApiError::new(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                ErrorCode::BookingRefused,
+                en(key),
+            ),
         },
         BookingRefusal::Keys("bae-title-unavailable", body) => {
-            ApiError::new(StatusCode::CONFLICT, "limit_reached", en(body))
+            ApiError::new(StatusCode::CONFLICT, ErrorCode::LimitReached, en(body))
         }
-        BookingRefusal::Keys(_, body) => ApiError::bad("invalid_request", en(body)),
-        BookingRefusal::Message(_, message) => ApiError::bad("invalid_request", message),
+        BookingRefusal::Keys(_, body) => ApiError::bad(ErrorCode::InvalidRequest, en(body)),
+        BookingRefusal::Message(_, message) => ApiError::bad(ErrorCode::InvalidRequest, message),
         BookingRefusal::Html(_) => ApiError::new(
             StatusCode::UNPROCESSABLE_ENTITY,
-            "outside_booking_window",
+            ErrorCode::OutsideBookingWindow,
             "This time is outside the event type's booking window.",
         ),
         BookingRefusal::Internal(context, error) => ApiError::internal(context, &error),
@@ -1041,18 +1580,18 @@ async fn create_booking_inner(
         Some(false) => {
             return Err(ApiError::new(
                 StatusCode::FORBIDDEN,
-                "forbidden",
+                ErrorCode::Forbidden,
                 "Only the owner or a team admin of this event type can book it for a guest.",
             ))
         }
         None => return Err(ApiError::not_found()),
     }
     if let Err(key) = validate_booking_input(&request.name, &request.email, &request.notes) {
-        return Err(ApiError::bad("invalid_request", en(key)));
+        return Err(ApiError::bad(ErrorCode::InvalidRequest, en(key)));
     }
     let lang = match request.language.as_deref() {
         Some(code) => crate::i18n::supported_code(code)
-            .ok_or_else(|| ApiError::bad("invalid_request", "Unsupported language."))?,
+            .ok_or_else(|| ApiError::bad(ErrorCode::InvalidRequest, "Unsupported language."))?,
         None => user
             .language
             .as_deref()
@@ -1071,7 +1610,12 @@ async fn create_booking_inner(
         lang
     };
     let start = chrono::DateTime::parse_from_rfc3339(&request.start)
-        .map_err(|_| ApiError::bad("invalid_start", "start must be an RFC 3339 instant."))?
+        .map_err(|_| {
+            ApiError::bad(
+                ErrorCode::InvalidStart,
+                "start must be an RFC 3339 instant.",
+            )
+        })?
         .with_timezone(&Utc);
     let host_tz = get_host_tz(&state.pool, &request.event_type_id).await;
     let guest_tz = match request.timezone.as_deref() {
@@ -1081,14 +1625,14 @@ async fn create_booking_inner(
     let local = start.with_timezone(&guest_tz).naive_local();
     if local.second() != 0 || start.timestamp_subsec_nanos() != 0 {
         return Err(ApiError::bad(
-            "invalid_start",
+            ErrorCode::InvalidStart,
             "start must fall on a whole minute.",
         ));
     }
     if request.attendees.len() > API_MAX_ATTENDEES {
         return Err(ApiError::new(
             StatusCode::UNPROCESSABLE_ENTITY,
-            "too_many_attendees",
+            ErrorCode::TooManyAttendees,
             format!(
                 "At most {API_MAX_ATTENDEES} additional attendees per booking through the API."
             ),
@@ -1099,7 +1643,10 @@ async fn create_booking_inner(
         .iter()
         .any(|a| a.contains(',') || a.len() > 255)
     {
-        return Err(ApiError::bad("invalid_request", "Invalid attendees."));
+        return Err(ApiError::bad(
+            ErrorCode::InvalidRequest,
+            "Invalid attendees.",
+        ));
     }
     let date = local.format("%Y-%m-%d").to_string();
     let time = local.format("%H:%M").to_string();
@@ -1191,10 +1738,8 @@ async fn create_booking_inner(
         .bind(&booked.id)
         .fetch_one(&state.pool)
         .await?;
-    Ok((
-        StatusCode::CREATED,
-        json!({"booking": booking_json(row, false)}),
-    ))
+    let booking = booking_json(row, false);
+    Ok((StatusCode::CREATED, to_json(&BookingAnswer { booking })))
 }
 
 /// Take one of `user_id`'s `API_DAILY_BOOKINGS` places for the next 24 hours,
@@ -1225,7 +1770,7 @@ pub(super) async fn reserve_api_booking(
     if inserted.rows_affected() == 0 {
         return Err(ApiError::new(
             StatusCode::TOO_MANY_REQUESTS,
-            "daily_limit_reached",
+            ErrorCode::DailyLimitReached,
             format!("At most {API_DAILY_BOOKINGS} bookings per user per 24 hours through the API."),
         ));
     }
@@ -1243,7 +1788,7 @@ async fn precheck_guest(
 ) -> Result<(), ApiError> {
     let country = crate::sms::default_country_code(&state.pool).await;
     if let Err((_, message)) = resolve_guest_phone(phone_mode, guest.phone, &country, "en") {
-        return Err(ApiError::bad("invalid_phone", message));
+        return Err(ApiError::bad(ErrorCode::InvalidPhone, message));
     }
     if let Err(message) = parse_additional_guests(
         guest.additional_guests,
@@ -1251,21 +1796,26 @@ async fn precheck_guest(
         guest.email,
         "en",
     ) {
-        return Err(ApiError::bad("invalid_attendees", message));
+        return Err(ApiError::bad(ErrorCode::InvalidAttendees, message));
     }
     Ok(())
 }
 
-#[derive(Deserialize)]
+/// How a booking is cancelled.
+#[derive(Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
-struct CancelBody {
+pub(super) struct CancelBody {
+    /// Told to the guest and the attendees, at most 5000 characters.
+    #[schema(max_length = 5000)]
     reason: Option<String>,
 }
 
-#[derive(Deserialize)]
+/// How a reschedule is asked for.
+#[derive(Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
-struct RescheduleBody {
-    /// Email the guest the pending request again instead of making one.
+pub(super) struct RescheduleBody {
+    /// Email the guest the waiting request again, with the same link,
+    /// instead of making one; at most once an hour.
     #[serde(default)]
     resend: bool,
 }
@@ -1288,7 +1838,7 @@ async fn write_refusal(pool: &SqlitePool, caller: &Caller, id: &str, action: &st
     let not_active = || {
         ApiError::new(
             StatusCode::CONFLICT,
-            "booking_not_active",
+            ErrorCode::BookingNotActive,
             "This booking is no longer confirmed or pending.",
         )
     };
@@ -1301,12 +1851,10 @@ async fn write_refusal(pool: &SqlitePool, caller: &Caller, id: &str, action: &st
         return ApiError::not_found();
     }
     match hosted_booking(pool, &caller.user.id, id).await {
-        Ok(Some(booking))
-            if matches!(booking["status"].as_str(), Some("confirmed" | "pending")) =>
-        {
+        Ok(Some(booking)) if matches!(booking.status.as_str(), "confirmed" | "pending") => {
             ApiError::new(
                 StatusCode::FORBIDDEN,
-                "forbidden",
+                ErrorCode::Forbidden,
                 format!("Only the owner of the event type can {action} this booking."),
             )
         }
@@ -1316,7 +1864,32 @@ async fn write_refusal(pool: &SqlitePool, caller: &Caller, id: &str, action: &st
     }
 }
 
-async fn cancel_booking_api(
+/// Cancel a booking
+///
+/// What the dashboard's cancel button does: a confirmed booking is cancelled,
+/// a pending request declined; the calendar copies and resource reservations
+/// are deleted, the guest, the attendees and the host are emailed (with the
+/// reason) and the guest texted. Only the owner of the event type can cancel.
+/// Scope: `bookings:write`.
+#[utoipa::path(
+    post,
+    path = "/bookings/{id}/cancel",
+    tag = "bookings",
+    operation_id = "cancelBooking",
+    params(("id" = String, Path, description = "The booking's id."),),
+    request_body(content = Option<CancelBody>, content_type = "application/json", description = "Optional: an empty body is `{}`."),
+    responses(
+        (status = 200, description = "Cancelled or declined.", body = WriteAnswer),
+        (status = 400, description = "`invalid_request`: a reason over 5000 characters. `invalid_json`."),
+        (status = 403, description = "`forbidden`: you host the booking but do not own its event type (with `bookings:read` only; else 404)."),
+        (status = 404, description = "`not_found`: no such booking, or one you cannot change."),
+        (status = 409, description = "`booking_not_active`: no longer confirmed or pending."),
+        (status = 413, description = "`payload_too_large`."),
+        (status = 415, description = "`unsupported_media_type`: a body that is not `application/json`."),
+    ),
+    security(("oauth2" = ["bookings:write"]), ("personalAccessToken" = ["bookings:write"])),
+)]
+pub(super) async fn cancel_booking_api(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     path: ApiPath,
@@ -1329,7 +1902,7 @@ async fn cancel_booking_api(
     let request: CancelBody = json_body(&headers, &body, true)?;
     if request.reason.as_ref().is_some_and(|r| r.len() > 5000) {
         return Err(ApiError::bad(
-            "invalid_request",
+            ErrorCode::InvalidRequest,
             en("validate-notes-length"),
         ));
     }
@@ -1339,19 +1912,43 @@ async fn cancel_booking_api(
             let booking = hosted_booking(&state.pool, &caller.user.id, &id).await?;
             Ok(ok(
                 StatusCode::OK,
-                caller.booking_answer(booking.unwrap_or(Value::Null)),
+                caller.booking_answer(booking.map(|b| to_json(&b)).unwrap_or(Value::Null)),
             ))
         }
         HostCancel::Unchanged => Err(ApiError::new(
             StatusCode::CONFLICT,
-            "booking_not_active",
+            ErrorCode::BookingNotActive,
             "This booking changed state meanwhile.",
         )),
         HostCancel::NotFound => Err(write_refusal(&state.pool, &caller, &id, "cancel").await),
     }
 }
 
-async fn request_reschedule_api(
+/// Ask the guest for a new time
+///
+/// What the dashboard's reschedule button does: the guest gets a new link and
+/// the "pick a new time" email, and the booking keeps its time until they
+/// choose one. Moving a booking to a time you choose is not in v1. Only the
+/// owner of the event type can ask. Scope: `bookings:write`.
+#[utoipa::path(
+    post,
+    path = "/bookings/{id}/request-reschedule",
+    tag = "bookings",
+    operation_id = "requestReschedule",
+    params(("id" = String, Path, description = "The booking's id."),),
+    request_body(content = Option<RescheduleBody>, content_type = "application/json", description = "Optional: an empty body is `{}`."),
+    responses(
+        (status = 200, description = "Requested, or the request emailed again.", body = WriteAnswer),
+        (status = 400, description = "`invalid_json`. `invalid_request`: an unreadable body."),
+        (status = 403, description = "`forbidden`: you host the booking but do not own its event type (with `bookings:read` only; else 404)."),
+        (status = 404, description = "`not_found`: no such booking, or one you cannot change."),
+        (status = 409, description = "`booking_not_active`: no longer confirmed or pending. `reschedule_already_requested`: the guest has not answered an earlier request. `resend_too_soon`: resent less than an hour ago. `no_reschedule_pending`: `resend` with no request waiting. `no_bookable_dates`: the event type has no bookable day left."),
+        (status = 413, description = "`payload_too_large`."),
+        (status = 415, description = "`unsupported_media_type`: a body that is not `application/json`."),
+    ),
+    security(("oauth2" = ["bookings:write"]), ("personalAccessToken" = ["bookings:write"])),
+)]
+pub(super) async fn request_reschedule_api(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     path: ApiPath,
@@ -1368,27 +1965,27 @@ async fn request_reschedule_api(
             let booking = hosted_booking(&state.pool, &caller.user.id, &id).await?;
             Ok(ok(
                 StatusCode::OK,
-                caller.booking_answer(booking.unwrap_or(Value::Null)),
+                caller.booking_answer(booking.map(|b| to_json(&b)).unwrap_or(Value::Null)),
             ))
         }
         HostReschedule::AlreadyRequested => Err(ApiError::new(
             StatusCode::CONFLICT,
-            "reschedule_already_requested",
+            ErrorCode::RescheduleAlreadyRequested,
             en("bookings-error-reschedule-pending"),
         )),
         HostReschedule::ResendTooSoon => Err(ApiError::new(
             StatusCode::CONFLICT,
-            "resend_too_soon",
+            ErrorCode::ResendTooSoon,
             en("bookings-error-reschedule-resend-too-soon"),
         )),
         HostReschedule::NotRequested => Err(ApiError::new(
             StatusCode::CONFLICT,
-            "no_reschedule_pending",
+            ErrorCode::NoReschedulePending,
             "No reschedule request is waiting for the guest.",
         )),
         HostReschedule::NoBookableDates => Err(ApiError::new(
             StatusCode::CONFLICT,
-            "no_bookable_dates",
+            ErrorCode::NoBookableDates,
             en("bookings-error-no-bookable-dates"),
         )),
         HostReschedule::NotFound => {
@@ -1453,7 +2050,7 @@ fn idempotency_key(headers: &HeaderMap) -> Result<Option<&str>, ApiError> {
             Ok(Some(key))
         }
         _ => Err(ApiError::bad(
-            "invalid_idempotency_key",
+            ErrorCode::InvalidIdempotencyKey,
             "Idempotency-Key must be 1 to 255 visible ASCII characters.",
         )),
     }
@@ -1504,14 +2101,14 @@ async fn idempotency_begin(
     let Some((stored_hash, status, response)) = row else {
         return Err(ApiError::new(
             StatusCode::CONFLICT,
-            "idempotency_in_progress",
+            ErrorCode::IdempotencyInProgress,
             "A request with this Idempotency-Key is in progress.",
         ));
     };
     if stored_hash != request_hash {
         return Err(ApiError::new(
             StatusCode::UNPROCESSABLE_ENTITY,
-            "idempotency_key_reused",
+            ErrorCode::IdempotencyKeyReused,
             "This Idempotency-Key was used with a different request.",
         ));
     }
@@ -1523,7 +2120,7 @@ async fn idempotency_begin(
         }
         _ => Err(ApiError::new(
             StatusCode::CONFLICT,
-            "idempotency_in_progress",
+            ErrorCode::IdempotencyInProgress,
             "A request with this Idempotency-Key is in progress.",
         )),
     }
@@ -1539,11 +2136,7 @@ async fn idempotency_finish(
 ) -> (StatusCode, Value) {
     let (status, value) = match result {
         Ok(answer) => answer,
-        Err(error) => {
-            let status = error.status;
-            let value = json!({"error": {"code": error.code, "message": error.message}});
-            (status, value)
-        }
+        Err(error) => (error.status, error.body()),
     };
     let stored = if status.is_server_error() || status == StatusCode::TOO_MANY_REQUESTS {
         sqlx::query("DELETE FROM api_idempotency WHERE user_id = ? AND key = ?")
