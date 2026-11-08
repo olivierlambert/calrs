@@ -1952,6 +1952,20 @@ pub(crate) mod fake {
         delete_delay: Option<std::time::Duration>,
     }
 
+    /// Decrements `counter` if it is above zero, saying whether it did: one
+    /// more injected failure to hand out. A compare-exchange loop rather than
+    /// `fetch_update`, which newer toolchains deprecate under another name.
+    fn take_one(counter: &AtomicU32) -> bool {
+        let mut n = counter.load(Ordering::SeqCst);
+        while n > 0 {
+            match counter.compare_exchange(n, n - 1, Ordering::SeqCst, Ordering::SeqCst) {
+                Ok(_) => return true,
+                Err(current) => n = current,
+            }
+        }
+        false
+    }
+
     /// Google's answer when the Calendar API is not enabled in the project.
     pub(crate) const ACCESS_NOT_CONFIGURED: &str = r#"{"error": {"code": 403, "message": "Google Calendar API has not been used in project 123 before or it is disabled.", "errors": [{"domain": "usageLimits", "reason": "accessNotConfigured"}], "status": "PERMISSION_DENIED", "details": [{"@type": "type.googleapis.com/google.rpc.ErrorInfo", "reason": "SERVICE_DISABLED"}]}}"#;
 
@@ -2166,12 +2180,7 @@ pub(crate) mod fake {
                 {
                     return StatusCode::BAD_REQUEST.into_response();
                 }
-                if body.contains("\"email\"")
-                    && fake
-                        .failing_adds
-                        .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
-                        .is_ok()
-                {
+                if body.contains("\"email\"") && take_one(&fake.failing_adds) {
                     return StatusCode::SERVICE_UNAVAILABLE.into_response();
                 }
                 let patch: Value = serde_json::from_str(&body).unwrap();
