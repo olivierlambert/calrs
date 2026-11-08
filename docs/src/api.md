@@ -10,6 +10,25 @@ booking page already does, through the same code: a booking made through the
 API is checked, stored, emailed, written to calendars and texted exactly like
 one made on the booking page.
 
+## OpenAPI document and interactive reference
+
+- **`/api/v1/openapi.json`**: the OpenAPI 3.1 description of the API, generated
+  by calrs from its own handlers, so it always matches the version you run.
+  Every operation, its parameters and request body, the answer of each status
+  with the error codes it can carry, the headers, and the two security schemes
+  with the scope each operation needs. Its `servers` entry and OAuth URLs are
+  your base URL (`CALRS_BASE_URL`). It is public (it describes the API and
+  holds no data): point a client generator or an API tool at it.
+- **`/api/docs`**: an interactive reference built from that document, for
+  signed-in users (also linked from **Profile & Settings → API tokens**). It
+  is Swagger UI, shipped inside the calrs binary: the page loads nothing from
+  another site. To try a request, choose **Authorize**, paste a personal access
+  token into `personalAccessToken`, then **Try it out** on an operation. The
+  page never sends your session cookie (the API would ignore it anyway), and
+  the token stays in the page's memory until you leave it. The requests are
+  real: `POST /bookings` books, and emails the guest. The `oauth2` scheme is
+  listed for applications; the page cannot complete that flow itself.
+
 ## Authentication
 
 Every request carries a Bearer token:
@@ -140,7 +159,7 @@ slot computation makes of it (no event titles, no calendar names).
 | 403 | `insufficient_scope`, `forbidden`, `origin_not_allowed` |
 | 404 | `not_found` |
 | 405 | `method_not_allowed` |
-| 409 | `slot_unavailable`, `limit_reached`, `booking_not_active`, `no_bookable_dates`, `reschedule_already_requested`, `idempotency_in_progress` |
+| 409 | `slot_unavailable`, `limit_reached`, `booking_not_active`, `no_bookable_dates`, `reschedule_already_requested`, `resend_too_soon`, `no_reschedule_pending`, `idempotency_in_progress` |
 | 413 | `payload_too_large` |
 | 415 | `unsupported_media_type` |
 | 422 | `too_soon`, `outside_booking_window`, `booking_refused`, `too_many_attendees`, `idempotency_key_reused` |
@@ -398,4 +417,5 @@ would break a client gets `/api/v2`.
 
 ```bash
 cargo test web::tests::api
+cargo test web::tests::api_doc
 ```

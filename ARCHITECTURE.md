@@ -108,6 +108,7 @@ Every user-facing string goes through Fluent (`i18n/`).
 | `connected_apps.rs` | Connected apps page (`/dashboard/settings/apps`): the user's OAuth grants with revoke, and the admin's revoke-all for a user |
 | `mcp.rs` | Stateless Streamable HTTP `/mcp`, JSON-RPC lifecycle, three scoped tools; reuses invites and availability services |
 | `api.rs` | REST API v1 under `/api/v1` (#169): Bearer authentication (OAuth tokens for `<base>/api/v1`, personal access tokens), scopes, JSON errors, rate limits, idempotency keys; event types, slots (`compute_slots`), bookings; writes call `book_personal`/`book_team` (`booking.rs`), `host_cancel_booking` (`dashboard.rs`) and `host_request_reschedule` (`booking_actions.rs`) |
+| `api_doc.rs` | OpenAPI 3.1 document of the REST API, generated with `utoipa` from the `#[utoipa::path]` and `ToSchema` in `api.rs` plus the shared answers (`CommonAnswers`) and the instance's server and OAuth URLs; served at `/api/v1/openapi.json` (public); `/api/docs`, the interactive reference (Swagger UI vendored in `assets/swagger-ui/`, served from `/static/swagger-ui/`) for signed-in users. Tests in `tests/api_doc.rs` keep router, scopes and schemas in step |
 | `api_tokens.rs` | API tokens page (`/dashboard/settings/api-tokens`): create (shown once), list, revoke personal access tokens; the admin switch letting every user create them |
 | `teams.rs` | Teams listing, creation, settings, avatars |
 | `sources.rs` | Calendar sources: add, edit, test, sync, remove, write-back setup, calendars to sync, Google connect |
@@ -127,7 +128,7 @@ with `use super::*` and sees those fixtures and every item of `web`:
 `security`, `auth_pages`, `branding`, `format`, `availability`, `resources`,
 `hosts`, `event_types`, `invites`, `booking`, `public_pages`,
 `booking_actions`, `booking_notes`, `dashboard`, `sources`, `admin`, `emails`,
-`ews_global`, `page_language`, `guards`, `api`, `oauth`, `mcp`, plus `booking_time`, `pending_hold`,
+`ews_global`, `page_language`, `guards`, `api`, `api_doc`, `oauth`, `mcp`, plus `booking_time`, `pending_hold`,
 `writeback_failures`, `write_destinations`, `organizer`, `duplicate_event_type`, `time_off` and `webhooks`.
 
 ### `src/email/`
