@@ -88,11 +88,14 @@ The script uses the Python standard library and an isolated real calrs server.
 It imports synthetic Google and Microsoft client credentials through the CLI,
 checks encrypted storage and secret-free configuration dumps, registers two
 local users through HTTP, and exercises Microsoft CSRF protection, PKCE,
-requested scopes, account-bound state, localized consent denial, and replay
-rejection, reading the stored state through its own SQLite connection.
+requested scopes, account-bound state, localized consent denial (the state
+row is gone after the denied callback), and replay rejection, reading the
+stored state through its own SQLite connection.
 Trace-level logs are checked for callback-query and client-secret leakage.
-That state consumption is committed before the callback returns is checked by
-the Rust test `consumed_state_is_committed_before_callback_returns`.
+That `consume_state`, which the callback calls, commits the consumed state
+before it returns is checked by the Rust test
+`consumed_state_is_committed_before_callback_returns`, which calls it
+directly rather than going through the callback.
 
 No external redirect is followed and no provider is contacted. This checks
 local authorization boundaries, not Microsoft consent, token exchange, or

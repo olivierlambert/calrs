@@ -167,8 +167,11 @@ The input is one JSON object, at most 64 KiB:
 ```
 
 Both client fields are required and must be non-empty. Unknown fields are
-rejected. For Microsoft, `tenant` defaults to `common`; the supported values
-are described in the Microsoft guide. For Google, omit `tenant` entirely.
+rejected. For Microsoft, `tenant` is optional: an import without it, or with an empty
+value, keeps the tenant already stored (`common` on a fresh instance). A
+replacement import therefore keeps authorizing against the previous tenant;
+to change it, including back to `common`, give it explicitly. The supported
+values are described in the Microsoft guide. For Google, omit `tenant` entirely.
 This is the normalized object above, not the nested JSON downloaded from
 Google Cloud Console.
 

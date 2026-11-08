@@ -60,7 +60,7 @@ When you have multiple CalDAV calendars, you can choose **which calendars block 
 
 From the dashboard form, select the calendars under the **Calendars** section. Every synced calendar of your sources appears there: a calendar turned off under **Calendars** on its source is never read, so it cannot block an event type. If none of the calendars an event type selected is synced any more, the event type checks every busy calendar again.
 
-**Default behavior:** If no calendars are selected, all busy calendars are checked — same as before. This is fully backward-compatible.
+**Default behavior:** If no calendars are selected, every busy calendar is checked, as before. That leaves out calendars colleagues shared with you, which start outside the busy calendars: to check one, select every calendar that should block, shared ones included.
 
 A Microsoft 365 calendar a colleague shared with you starts outside the busy calendars, and calrs has no setting that adds it: it counts only for the event types that select it (see [Microsoft Calendar](./microsoft-calendar.md#calendars-shared-by-colleagues)).
 
