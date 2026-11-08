@@ -4,7 +4,10 @@
 //! Elements are matched by namespace URI and local name, so any prefix, an
 //! uppercase one, a default namespace, or a namespace declared on the
 //! element itself (Kerio Connect declares CalDAV's on each `<response>`) all
-//! read the same. Properties are only taken from a `<propstat>` whose status
+//! read the same. Two names are the exception, `calendar` (a resourcetype)
+//! and `calendar-data`: no other namespace defines them, so they are read
+//! in any namespace (see `caldav_local_name`). Properties are only taken
+//! from a `<propstat>` whose status
 //! is 2xx: a property a server reports as 404 is absent, not empty. The
 //! resource-level `<status>`, a direct child of `<response>`, is kept apart
 //! from the property-level ones inside each propstat, which is what tells a
@@ -102,13 +105,21 @@ impl<'a> Response<'a> {
         self.props().find(|prop| prop.is(ns, name))
     }
 
+    /// The first non-empty value of the property: Kerio Connect's
+    /// status-less propstats can carry an empty placeholder before the
+    /// real one.
     fn prop_text(self, ns: &str, name: &str) -> Option<String> {
-        self.prop(ns, name).and_then(Element::trimmed_text)
+        self.props()
+            .filter(|prop| prop.is(ns, name))
+            .find_map(Element::trimmed_text)
     }
 
-    /// The event's iCalendar data, line endings normalised to CRLF.
+    /// The event's iCalendar data, line endings normalised to CRLF. Read by
+    /// local name in any namespace, see [`caldav_local_name`].
     fn calendar_data(self) -> Option<String> {
-        self.prop_text(CALDAV, "calendar-data")
+        self.props()
+            .filter(|prop| caldav_local_name(prop, "calendar-data"))
+            .find_map(Element::trimmed_text)
             .map(|ics| crate::utils::normalize_line_endings(&ics).into_owned())
     }
 
@@ -118,6 +129,31 @@ impl<'a> Response<'a> {
             .find(DAV, "href")
             .and_then(Element::trimmed_text)
     }
+}
+
+/// Whether `el` is CalDAV's `name`, matched on the local name alone.
+///
+/// `calendar` (in a resourcetype) and `calendar-data` are defined by no
+/// other namespace, and some servers write them in DAV: or under a default
+/// namespace without declaring CalDAV's (`<D:calendar/>`). Requiring the
+/// CalDAV namespace would silently drop such a calendar from the listing,
+/// leaving its busy time stale, so any namespace is accepted, with one
+/// warning per process when it is not CalDAV's.
+fn caldav_local_name(el: &Element, name: &str) -> bool {
+    if el.local_name() != name {
+        return false;
+    }
+    if el.namespace().is_some_and(|ns| ns != CALDAV) {
+        static WARNED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+        if !WARNED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+            tracing::warn!(
+                element = name,
+                namespace = el.namespace().unwrap_or_default(),
+                "CalDAV server sent this element outside the CalDAV namespace; reading it anyway"
+            );
+        }
+    }
+    true
 }
 
 /// Whether a propstat's properties were returned: its status is 2xx, or it
@@ -149,9 +185,11 @@ pub(super) fn parse_calendar_list(body: &str) -> Result<Vec<CalendarInfo>> {
     let ms = Multistatus::parse(body)?;
     let mut calendars = Vec::new();
     for response in ms.responses() {
-        let is_calendar = response
-            .prop(DAV, "resourcetype")
-            .is_some_and(|types| types.child(CALDAV, "calendar").is_some());
+        let is_calendar = response.prop(DAV, "resourcetype").is_some_and(|types| {
+            types
+                .elements()
+                .any(|kind| caldav_local_name(kind, "calendar"))
+        });
         if !is_calendar {
             continue;
         }

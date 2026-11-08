@@ -164,9 +164,6 @@ fn prefixes_are_read_by_namespace_not_spelling() {
 
 #[test]
 fn a_prefix_bound_to_another_namespace_does_not_match() {
-    // `C:` is CardDAV here: an addressbook-like `C:calendar` is not CalDAV's.
-    let xml = r#"<d:multistatus xmlns:d="DAV:" xmlns:C="urn:ietf:params:xml:ns:carddav"><d:response><d:href>/x/</d:href><d:propstat><d:prop><d:resourcetype><C:calendar/></d:resourcetype><d:displayname>Not a calendar</d:displayname></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response></d:multistatus>"#;
-    assert!(cals(xml).is_empty());
     // A colour in another namespace is not Apple's calendar-color.
     let cal = cals(&listing_with_props(
         r#"<x:calendar-color xmlns:x="urn:other">#000000</x:calendar-color>"#,
@@ -235,8 +232,30 @@ fn calendar_resourcetype_distinguishes_lookalikes() {
     assert!(!listed("<CR:addressbook /><d:collection />"));
     assert!(!listed("<d:collection/>"));
     assert!(!listed("<C:schedule-inbox/><d:collection/>"));
-    assert!(!listed(r#"<calendar xmlns="http://groupdav.org/"/>"#));
-    assert!(!listed("<d:calendar/>"));
+    assert!(!listed(
+        r#"<vevent-collection xmlns="http://groupdav.org/"/>"#
+    ));
+}
+
+#[test]
+fn calendar_and_calendar_data_are_read_outside_the_caldav_namespace() {
+    // No other namespace defines these names, and servers that write them
+    // in DAV: (or under a default namespace without declaring CalDAV's)
+    // must keep their calendars listed and their events read.
+    assert!(listed("<d:calendar/>"));
+    assert!(listed("<d:collection/><calendar/>"));
+    let xml = r#"<multistatus xmlns="DAV:"><response><href>/cal/</href><propstat><prop><resourcetype><collection/><calendar/></resourcetype><displayname>Work</displayname></prop><status>HTTP/1.1 200 OK</status></propstat></response></multistatus>"#;
+    assert_eq!(cals(xml)[0].display_name.as_deref(), Some("Work"));
+    let xml = r#"<multistatus xmlns="DAV:"><response><href>/cal/e.ics</href><propstat><prop><getetag>"1"</getetag><calendar-data>BEGIN:VCALENDAR</calendar-data></prop><status>HTTP/1.1 200 OK</status></propstat></response></multistatus>"#;
+    assert_eq!(events(xml)[0].ical_data, "BEGIN:VCALENDAR");
+}
+
+#[test]
+fn the_first_non_empty_property_value_wins() {
+    // Kerio's status-less propstats: an empty placeholder, then the value.
+    let xml = r#"<a:multistatus xmlns:a="DAV:" xmlns:g="urn:ietf:params:xml:ns:caldav"><a:response><a:href>/u/CAL/</a:href><a:propstat><a:prop><a:displayname/><g:calendar-data/></a:prop></a:propstat><a:propstat><a:prop><a:resourcetype><g:calendar/></a:resourcetype><a:displayname>Calendar</a:displayname><g:calendar-data>BEGIN:VCALENDAR</g:calendar-data></a:prop></a:propstat></a:response></a:multistatus>"#;
+    assert_eq!(cals(xml)[0].display_name.as_deref(), Some("Calendar"));
+    assert_eq!(events(xml)[0].ical_data, "BEGIN:VCALENDAR");
 }
 
 #[test]
