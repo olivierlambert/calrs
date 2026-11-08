@@ -588,7 +588,8 @@ pub(crate) async fn attendee_copy_source(pool: &SqlitePool, booking_uid: &str) -
 /// `sendUpdates=none`; one without (or not visible to the API) through
 /// CalDAV, as for any server. When the API cannot be reached the CalDAV
 /// DELETE still runs: a meeting left on the host's calendar after the guest
-/// was told it is cancelled is worse than Google's duplicate notice.
+/// was told it is cancelled is worse than Google's duplicate notice. The
+/// same goes for a Calendar API delete that fails.
 pub(crate) async fn delete_event_without_cancellations(
     client: &crate::caldav::CaldavClient,
     api: &EventsApi<'_>,
@@ -596,9 +597,16 @@ pub(crate) async fn delete_event_without_cancellations(
     uid: &str,
 ) -> Result<()> {
     match tokio::time::timeout(api.deadline, api.find(uid)).await {
-        Ok(Ok(Some(found))) if found.has_attendees => {
-            api.delete(&found.id).await.map_err(anyhow::Error::new)
-        }
+        Ok(Ok(Some(found))) if found.has_attendees => match api.delete(&found.id).await {
+            Ok(()) => Ok(()),
+            // Nothing retries a delete (`caldav_delete_booking` only logs),
+            // so returning the error would leave the cancelled meeting on
+            // the host's calendar and on the guests' Google calendars.
+            Err(e) => {
+                tracing::warn!(uid = %uid, error = %e, "google calendar: Calendar API delete failed, deleting over CalDAV; Google may notify the attendees");
+                client.delete_event_raw(calendar_href, uid).await
+            }
+        },
         Ok(Ok(_)) => client.delete_event_raw(calendar_href, uid).await,
         Ok(Err(e)) => {
             tracing::warn!(uid = %uid, error = %e, "google calendar: Calendar API unavailable, deleting over CalDAV; Google may notify the attendees");
@@ -1139,6 +1147,33 @@ mod tests {
         assert!(!log(&fake).iter().any(|e| e.starts_with("PUT ")));
     }
 
+    /// A Calendar API delete that fails falls back to CalDAV: nothing
+    /// retries a delete, and the cancelled meeting must not stay on the
+    /// host's calendar.
+    #[tokio::test]
+    async fn a_failed_api_delete_still_deletes_the_event() {
+        let fake = std::sync::Arc::new(FakeGoogle::delete_failing(503));
+        fake.insert(
+            CAL,
+            "guests@calrs",
+            "ev1",
+            vec![json!({"email": "jane@example.com"})],
+        );
+        let (client, server) = serve_fake(fake.clone()).await;
+        client.delete_event(HREF, "guests@calrs").await.unwrap();
+        server.abort();
+        let log = log(&fake);
+        assert!(log
+            .iter()
+            .any(|e| e.starts_with("DELETE /api/calendars/host%40example.com/events/ev1?")));
+        assert!(
+            log.iter()
+                .any(|e| e
+                    .starts_with("DELETE /caldav/v2/host%40example.com/events/guests@calrs.ics"))
+        );
+        assert!(fake.is_empty());
+    }
+
     /// Any other CalDAV server keeps the ATTENDEE lines (with
     /// SCHEDULE-AGENT=CLIENT) and sees no Calendar API call.
     #[tokio::test]
@@ -1182,6 +1217,8 @@ pub(crate) mod fake {
         api_failure: Option<(u16, &'static str)>,
         /// Every Calendar API call waits this long first.
         api_delay: Option<std::time::Duration>,
+        /// Calendar API deletes (only) answer this status.
+        api_delete_failure: Option<u16>,
     }
 
     /// Google's answer when the Calendar API is not enabled in the project.
@@ -1200,6 +1237,14 @@ pub(crate) mod fake {
         pub(crate) fn slow(delay: std::time::Duration) -> Self {
             Self {
                 api_delay: Some(delay),
+                ..Default::default()
+            }
+        }
+
+        /// A Google whose Calendar API answers `status` to every delete.
+        pub(crate) fn delete_failing(status: u16) -> Self {
+            Self {
+                api_delete_failure: Some(status),
                 ..Default::default()
             }
         }
@@ -1340,6 +1385,9 @@ pub(crate) mod fake {
                 Json(json!({ "id": id })).into_response()
             }
             "DELETE" => {
+                if let Some(status) = fake.api_delete_failure {
+                    return StatusCode::from_u16(status).unwrap().into_response();
+                }
                 events.remove(&key);
                 StatusCode::NO_CONTENT.into_response()
             }
