@@ -168,6 +168,7 @@ async fn a_user_deletes_only_their_own_periods() {
         None,
     )
     .await
+    .unwrap()
     .unwrap();
     assert!(!delete(&pool, &bob, &id).await.unwrap());
     assert_eq!(upcoming(&pool, &alice, utc(NOW)).await.unwrap().len(), 1);
@@ -290,4 +291,111 @@ fn every_refusal_key_is_translated() {
     ] {
         assert_ne!(crate::i18n::translate("en", key, None), key);
     }
+}
+
+#[test]
+fn far_years_are_refused() {
+    let now = utc(NOW);
+    // A five-digit year would be stored as "+20261-..." and block nothing.
+    assert_eq!(
+        parse_period("20261-12-21", "", "", "", PARIS, now),
+        Err(InputError::Date)
+    );
+    assert_eq!(
+        parse_period("2026-12-21", "", "20261-12-21", "", PARIS, now),
+        Err(InputError::Date)
+    );
+    // More than about five years ahead is a typo too.
+    assert_eq!(
+        parse_period("2032-01-01", "", "", "", PARIS, now),
+        Err(InputError::Date)
+    );
+    assert!(parse_period("2031-11-01", "", "", "", PARIS, now).is_ok());
+}
+
+#[test]
+fn whole_days_survive_a_clock_change_at_midnight() {
+    // Chile moves its clocks forward at midnight: 6 September 2026 starts
+    // at 01:00 in Santiago.
+    let santiago = chrono_tz::America::Santiago;
+    let now = utc("2026-08-01T00:00:00Z");
+    let (start, end) = parse_period("2026-09-06", "", "2026-09-07", "", santiago, now).unwrap();
+    let p = Period {
+        id: String::new(),
+        start,
+        end,
+        tz: santiago,
+        timezone: "America/Santiago".into(),
+        label: None,
+    };
+    assert_eq!(p.local_start(), local("2026-09-06T01:00"));
+    assert!(p.whole_days(), "a day that starts at 01:00 is still a day");
+    // A real time on that day is not a day boundary.
+    let (start, end) =
+        parse_period("2026-09-06", "14:00", "2026-09-07", "", santiago, now).unwrap();
+    let p = Period { start, end, ..p };
+    assert!(!p.starts_on_day_boundary());
+    assert!(p.ends_on_day_boundary());
+}
+
+#[tokio::test]
+async fn a_user_holds_at_most_the_cap_of_upcoming_periods() {
+    let pool = database().await;
+    let alice = user(&pool, "alice@example.com").await;
+    let now = utc(NOW);
+    // Ended periods do not count.
+    add_capped(
+        &pool,
+        &alice,
+        utc("2026-10-01T00:00:00Z"),
+        utc("2026-10-02T00:00:00Z"),
+        "UTC",
+        None,
+        now,
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    for i in 0..MAX_UPCOMING {
+        let start = utc("2027-01-01T00:00:00Z") + Duration::days(i);
+        add_capped(
+            &pool,
+            &alice,
+            start,
+            start + Duration::hours(1),
+            "UTC",
+            None,
+            now,
+        )
+        .await
+        .unwrap()
+        .expect("under the cap");
+    }
+    let start = utc("2028-01-01T00:00:00Z");
+    let over = add_capped(
+        &pool,
+        &alice,
+        start,
+        start + Duration::hours(1),
+        "UTC",
+        None,
+        now,
+    )
+    .await
+    .unwrap();
+    assert!(over.is_none(), "the cap refuses the next one");
+    // Someone else is not affected.
+    let bob = user(&pool, "bob@example.com").await;
+    assert!(add_capped(
+        &pool,
+        &bob,
+        start,
+        start + Duration::hours(1),
+        "UTC",
+        None,
+        now
+    )
+    .await
+    .unwrap()
+    .is_some());
 }

@@ -11,7 +11,9 @@
 //! entered in so they can be shown back as typed. The label is private to its
 //! owner: guests only ever see that a time is not available.
 
-use chrono::{DateTime, Duration, LocalResult, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Utc};
+use chrono::{
+    DateTime, Datelike, Duration, LocalResult, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Utc,
+};
 use chrono_tz::Tz;
 use sqlx::SqlitePool;
 
@@ -24,6 +26,14 @@ pub const MAX_DAYS: i64 = 366;
 
 /// Ended periods are kept this long, then pruned by the background loop.
 pub const KEEP_ENDED_DAYS: i64 = 30;
+
+/// How far ahead a period may start, in days (about five years). Further
+/// out is a typo, like a five-digit year.
+pub const MAX_START_AHEAD_DAYS: i64 = 5 * 366;
+
+/// Upcoming periods a user may hold at once. Far above any real use; it only
+/// stops a scripted form from filling the table.
+pub const MAX_UPCOMING: i64 = 100;
 
 const STORED: &str = "%Y-%m-%dT%H:%M:%SZ";
 
@@ -50,9 +60,28 @@ impl Period {
         self.end.with_timezone(&self.tz).naive_local()
     }
 
-    /// Whole days only: starts and ends at midnight where it was entered.
+    /// Whether `instant` is the start of its local day where the period was
+    /// entered. Compared as instants, not as a 00:00 wall clock: in a zone
+    /// whose clock change falls at midnight (America/Santiago, Havana,
+    /// Asuncion) a day can start at 01:00.
+    fn is_day_start(&self, instant: DateTime<Utc>, is_end: bool) -> bool {
+        let day = instant.with_timezone(&self.tz).date_naive();
+        to_utc(self.tz, day.and_time(NaiveTime::MIN), is_end) == Some(instant)
+    }
+
+    /// Starts at the start of a day where it was entered.
+    pub fn starts_on_day_boundary(&self) -> bool {
+        self.is_day_start(self.start, false)
+    }
+
+    /// Ends at the start of a day (so its last day is the one before).
+    pub fn ends_on_day_boundary(&self) -> bool {
+        self.is_day_start(self.end, true)
+    }
+
+    /// Whole days only: starts and ends on day boundaries where it was entered.
     pub fn whole_days(&self) -> bool {
-        self.local_start().time() == NaiveTime::MIN && self.local_end().time() == NaiveTime::MIN
+        self.starts_on_day_boundary() && self.ends_on_day_boundary()
     }
 
     pub fn in_progress(&self, now: DateTime<Utc>) -> bool {
@@ -138,6 +167,14 @@ pub fn parse_period(
     } else {
         NaiveDate::parse_from_str(end_date.trim(), "%Y-%m-%d").map_err(|_| InputError::Date)?
     };
+    // chrono reads a five-digit year ("20261") and would store it as
+    // "+20261-...", which sorts before every real date and so blocks nothing.
+    if start_day.year() > 9999
+        || end_day.year() > 9999
+        || start_day > now.date_naive() + Duration::days(MAX_START_AHEAD_DAYS)
+    {
+        return Err(InputError::Date);
+    }
     let start_local = start_day.and_time(parse_time(start_time)?.unwrap_or(NaiveTime::MIN));
     let end_local = match parse_time(end_time)? {
         Some(t) => end_day.and_time(t),
@@ -193,7 +230,9 @@ fn from_row((id, start, end, timezone, label): Row) -> Option<Period> {
     })
 }
 
-/// Store a period for `user_id`. Returns its id.
+/// Store a period for `user_id`. Returns its id, or `None` when the user
+/// already holds [`MAX_UPCOMING`] periods that have not ended. The count and
+/// the insert are one statement, so two concurrent adds cannot both pass.
 pub async fn add(
     pool: &SqlitePool,
     user_id: &str,
@@ -201,11 +240,24 @@ pub async fn add(
     end: DateTime<Utc>,
     timezone: &str,
     label: Option<&str>,
-) -> Result<String, sqlx::Error> {
+) -> Result<Option<String>, sqlx::Error> {
+    add_capped(pool, user_id, start, end, timezone, label, Utc::now()).await
+}
+
+async fn add_capped(
+    pool: &SqlitePool,
+    user_id: &str,
+    start: DateTime<Utc>,
+    end: DateTime<Utc>,
+    timezone: &str,
+    label: Option<&str>,
+    now: DateTime<Utc>,
+) -> Result<Option<String>, sqlx::Error> {
     let id = uuid::Uuid::new_v4().to_string();
-    sqlx::query(
+    let done = sqlx::query(
         "INSERT INTO user_time_off (id, user_id, start_at, end_at, timezone, label) \
-         VALUES (?, ?, ?, ?, ?, ?)",
+         SELECT ?, ?, ?, ?, ?, ? \
+         WHERE (SELECT COUNT(*) FROM user_time_off WHERE user_id = ? AND end_at > ?) < ?",
     )
     .bind(&id)
     .bind(user_id)
@@ -213,9 +265,12 @@ pub async fn add(
     .bind(end.format(STORED).to_string())
     .bind(timezone)
     .bind(label)
+    .bind(user_id)
+    .bind(now.format(STORED).to_string())
+    .bind(MAX_UPCOMING)
     .execute(pool)
     .await?;
-    Ok(id)
+    Ok((done.rows_affected() > 0).then_some(id))
 }
 
 /// Delete one of `user_id`'s periods. A period of someone else is left

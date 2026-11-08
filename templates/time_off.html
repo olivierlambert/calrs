@@ -20,6 +20,9 @@
   </div>
 </header>
 
+{% if impersonating %}
+<div class="notice">{{ t("time-off-impersonating", name=impersonating_name) }}</div>
+{% endif %}
 {% if flash %}
 <div class="notice notice--success" data-flash="success">{{ flash }}</div>
 {% endif %}
@@ -40,10 +43,12 @@
         </div>
         {% endif %}
       </div>
+      {% if not impersonating %}
       <div class="ui-row-actions">
         <button type="button" class="ui-btn ui-btn--sm ui-btn--danger" data-confirm="{{ t('time-off-delete-confirm') }}" data-confirm-form="delete-time-off-{{ p.id }}">{{ t("time-off-delete") }}</button>
         <form method="post" action="/dashboard/time-off/{{ p.id }}/delete" id="delete-time-off-{{ p.id }}" style="display: none;"></form>
       </div>
+      {% endif %}
     </li>
     {% endfor %}
   </ul>
@@ -53,6 +58,7 @@
   <p class="to-kept">{{ t("time-off-kept-notice") }} {{ t("time-off-pending-notice") }}</p>
 </section>
 
+{% if not impersonating %}
 <section class="sec">
   <div class="sec-h"><h2>{{ t("time-off-add-heading") }}</h2></div>
   {% if error %}
@@ -86,6 +92,7 @@
     <button type="submit" class="ui-btn ui-btn--primary">{{ t("time-off-add-submit") }}</button>
   </form>
 </section>
+{% endif %}
 
 <script>
 (function() {

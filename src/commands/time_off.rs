@@ -91,8 +91,15 @@ pub async fn run(pool: &SqlitePool, cmd: TimeOffCommands) -> Result<()> {
                 Utc::now(),
             )
             .map_err(|e| anyhow::anyhow!(e.message()))?;
-            let id = crate::time_off::add(pool, &user_id, start, end, tz.name(), label.as_deref())
-                .await?;
+            let Some(id) =
+                crate::time_off::add(pool, &user_id, start, end, tz.name(), label.as_deref())
+                    .await?
+            else {
+                bail!(
+                    "{email} already has {} periods planned; remove some first",
+                    crate::time_off::MAX_UPCOMING
+                );
+            };
             println!("{} Time off added for {} ({})", "✓".green(), email, id);
             println!(
                 "{}",

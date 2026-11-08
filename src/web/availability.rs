@@ -2611,7 +2611,8 @@ pub(super) async fn troubleshoot(
     );
 
     // Time off (#46) with the user's own note: this view only ever shows the
-    // signed-in user's own event types, so the note is theirs to read.
+    // signed-in user's own event types, so the note is theirs to read (not an
+    // impersonating admin's).
     let time_off: Vec<(NaiveDateTime, NaiveDateTime, String)> = crate::time_off::overlapping(
         &state.pool,
         &user.id,
@@ -2625,7 +2626,12 @@ pub(super) async fn troubleshoot(
         (
             p.start.with_timezone(&host_tz).naive_local(),
             p.end.with_timezone(&host_tz).naive_local(),
-            p.label.unwrap_or_default(),
+            // An admin viewing as the user does not read their notes.
+            if auth_user.impersonation.is_some() {
+                String::new()
+            } else {
+                p.label.unwrap_or_default()
+            },
         )
     })
     .collect();
@@ -2714,42 +2720,6 @@ pub(super) async fn troubleshoot(
             continue;
         }
 
-        // 2d. Check time off (with buffers, like a calendar event)
-        let off_conflict = time_off.iter().find(|(s, e, _)| {
-            let buf_s = *s - Duration::minutes(buf_before as i64);
-            let buf_e = *e + Duration::minutes(buf_after as i64);
-            tick_dt < buf_e && tick_end > buf_s
-        });
-        if let Some((off_s, off_e, note)) = off_conflict {
-            if tick_dt < *off_e && tick_end > *off_s {
-                ticks.push(Tick {
-                    time: cursor,
-                    status: "time_off".to_string(),
-                    label: time_off_label.clone(),
-                    detail: note.clone(),
-                });
-            } else {
-                ticks.push(Tick {
-                    time: cursor,
-                    status: "buffer".to_string(),
-                    label: tr1(
-                        lang,
-                        "troubleshoot-label-buffer",
-                        "minutes",
-                        &if tick_dt < *off_s {
-                            buf_before
-                        } else {
-                            buf_after
-                        }
-                        .to_string(),
-                    ),
-                    detail: tr1(lang, "troubleshoot-detail-around", "label", &time_off_label),
-                });
-            }
-            cursor = (tick_dt + tick_size).time();
-            continue;
-        }
-
         // 3. Check calendar events (with buffers)
         let event_conflict = busy_parsed.iter().find(|(s, e, _, _)| {
             let buf_s = *s - Duration::minutes(buf_before as i64);
@@ -2826,6 +2796,44 @@ pub(super) async fn troubleshoot(
                         "guest",
                         bk_guest,
                     ),
+                });
+            }
+            cursor = (tick_dt + tick_size).time();
+            continue;
+        }
+
+        // 4b. Check time off (with buffers, like a calendar event). After
+        // events and bookings: a booking kept inside a period is the more
+        // specific reason for its own slot.
+        let off_conflict = time_off.iter().find(|(s, e, _)| {
+            let buf_s = *s - Duration::minutes(buf_before as i64);
+            let buf_e = *e + Duration::minutes(buf_after as i64);
+            tick_dt < buf_e && tick_end > buf_s
+        });
+        if let Some((off_s, off_e, note)) = off_conflict {
+            if tick_dt < *off_e && tick_end > *off_s {
+                ticks.push(Tick {
+                    time: cursor,
+                    status: "time_off".to_string(),
+                    label: time_off_label.clone(),
+                    detail: note.clone(),
+                });
+            } else {
+                ticks.push(Tick {
+                    time: cursor,
+                    status: "buffer".to_string(),
+                    label: tr1(
+                        lang,
+                        "troubleshoot-label-buffer",
+                        "minutes",
+                        &if tick_dt < *off_s {
+                            buf_before
+                        } else {
+                            buf_after
+                        }
+                        .to_string(),
+                    ),
+                    detail: tr1(lang, "troubleshoot-detail-around", "label", &time_off_label),
                 });
             }
             cursor = (tick_dt + tick_size).time();

@@ -1090,6 +1090,28 @@ mod tests {
         assert!(err.to_string().contains("Conflict"), "{err}");
     }
 
+    /// The host's time off (#46) refuses a CLI booking, as on the web.
+    #[tokio::test]
+    async fn create_refuses_the_hosts_time_off() {
+        let pool = setup_db().await;
+        let (user_id, _account, _et_id) = seed_event_type(&pool).await;
+        sqlx::query(
+            "INSERT INTO user_time_off (id, user_id, start_at, end_at, timezone) \
+             VALUES ('off', ?, '2030-03-18T10:00:00Z', '2030-03-18T11:00:00Z', 'UTC')",
+        )
+        .bind(&user_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let err = run(&pool, &[0u8; 32], create_at("10:00", "off@test.com"))
+            .await
+            .expect_err("the host is off at 10:00");
+        assert!(err.to_string().contains("time off"), "{err}");
+        run(&pool, &[0u8; 32], create_at("11:00", "on@test.com"))
+            .await
+            .expect("the host is back at 11:00");
+    }
+
     /// The CLI used to ignore the bookable date range: a fair limited to a
     /// few days could still be booked weeks later from the command line.
     #[tokio::test]

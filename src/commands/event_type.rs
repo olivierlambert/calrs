@@ -1007,6 +1007,45 @@ mod tests {
 
     /// The CLI used to count every booking on the instance as busy for every
     /// host. It now follows the web rule: only what makes this host busy.
+    /// `event-type slots` adds the host's time off (#46), and only theirs.
+    #[tokio::test]
+    async fn host_time_off_counts_only_the_host() {
+        let pool = setup_db().await;
+        sqlx::raw_sql(
+            "INSERT INTO users (id, email, name, role, auth_provider, username, enabled) VALUES
+                 ('host', 'host@x', 'Host', 'admin', 'local', 'host', 1),
+                 ('other', 'other@x', 'Other', 'user', 'local', 'other', 1);
+             INSERT INTO accounts (id, name, email, timezone, user_id) VALUES
+                 ('acc-host', 'Host', 'host@x', 'UTC', 'host'),
+                 ('acc-other', 'Other', 'other@x', 'UTC', 'other');
+             INSERT INTO event_types (id, account_id, slug, title, duration_min) VALUES
+                 ('et-host', 'acc-host', 'mine', 'Mine', 30),
+                 ('et-other', 'acc-other', 'theirs', 'Theirs', 30);
+             INSERT INTO user_time_off (id, user_id, start_at, end_at, timezone) VALUES
+                 ('off-host', 'host', '2030-03-18T09:00:00Z', '2030-03-18T12:00:00Z', 'UTC'),
+                 ('off-other', 'other', '2030-03-18T13:00:00Z', '2030-03-18T15:00:00Z', 'UTC');",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let at = |h| {
+            NaiveDate::from_ymd_opt(2030, 3, 18)
+                .unwrap()
+                .and_hms_opt(h, 0, 0)
+                .unwrap()
+        };
+        let paris = chrono_tz::Europe::Paris;
+        let busy = host_time_off(&pool, "et-host", at(0), at(23), paris)
+            .await
+            .unwrap();
+        // In the host's zone: Paris is UTC+1 in March.
+        assert_eq!(busy, vec![(at(10), at(13))]);
+        assert!(host_time_off(&pool, "missing", at(0), at(23), paris)
+            .await
+            .unwrap()
+            .is_empty());
+    }
+
     #[tokio::test]
     async fn host_busy_bookings_only_counts_the_host() {
         let pool = setup_db().await;

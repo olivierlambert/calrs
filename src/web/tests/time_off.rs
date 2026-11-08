@@ -14,6 +14,7 @@ async fn add_off(
     crate::time_off::add(pool, user_id, start.and_utc(), end.and_utc(), "UTC", label)
         .await
         .unwrap()
+        .expect("under the cap")
 }
 
 async fn test_user_id(pool: &SqlitePool) -> String {
@@ -418,6 +419,20 @@ async fn troubleshoot_labels_time_off_with_the_users_note() {
         Some("Lunch with Sam"),
     )
     .await;
+    // A booking kept inside the period is labelled as the booking.
+    let et_id: String =
+        sqlx::query_scalar("SELECT id FROM event_types WHERE slug = 'test-meeting'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    insert_booking(
+        &pool,
+        &et_id,
+        None,
+        day.and_hms_opt(13, 0, 0).unwrap(),
+        "confirmed",
+    )
+    .await;
     let response = app
         .oneshot(get_authed(
             &format!("/dashboard/troubleshoot?date={day}&event_type=test-meeting"),
@@ -428,7 +443,12 @@ async fn troubleshoot_labels_time_off_with_the_users_note() {
     assert_eq!(response.status(), 200);
     let body = body_string(response).await;
     assert!(body.contains("ts-time_off"), "time off block drawn");
-    assert!(body.contains("12:00&ndash;14:00"), "{body}");
+    assert!(body.contains("12:00&ndash;13:00: Time off"), "{body}");
+    assert!(
+        body.contains("13:00&ndash;13:30: G"),
+        "the booking wins its slot"
+    );
+    assert!(body.contains("13:30&ndash;14:00: Time off"));
     assert!(body.contains("Lunch with Sam"));
 }
 
@@ -501,9 +521,126 @@ fn periods_read_as_typed() {
         period_range_label(&afternoon, "en"),
         "December 21, 2026, 14:00 to 17:30"
     );
+    // A start time alone runs to the end of that day, an end time alone
+    // from its start.
+    let from = period("2026-12-21T13:00:00Z", "2026-12-21T23:00:00Z");
+    assert_eq!(
+        period_range_label(&from, "en"),
+        "December 21, 2026, from 14:00"
+    );
+    assert_eq!(
+        period_range_label(&from, "fr"),
+        "21 décembre 2026, à partir de 14:00"
+    );
+    let until = period("2026-12-20T23:00:00Z", "2026-12-21T11:00:00Z");
+    assert_eq!(
+        period_range_label(&until, "en"),
+        "December 21, 2026, until 12:00"
+    );
+    let from_to_day = period("2026-12-21T13:00:00Z", "2026-12-23T23:00:00Z");
+    assert_eq!(
+        period_range_label(&from_to_day, "en"),
+        "December 21, 2026, 14:00 to December 23, 2026"
+    );
     let across = period("2026-12-21T13:00:00Z", "2026-12-23T11:00:00Z");
     assert_eq!(
         period_range_label(&across, "en"),
         "December 21, 2026, 14:00 to December 23, 2026, 12:00"
     );
+}
+
+/// In Santiago 6 September 2026 starts at 01:00 (the clock change is at
+/// midnight): a whole day there is still shown as a date, not as times.
+#[test]
+fn whole_days_read_as_dates_across_a_midnight_clock_change() {
+    let santiago = chrono_tz::America::Santiago;
+    let (start, end) = crate::time_off::parse_period(
+        "2026-09-06",
+        "",
+        "",
+        "",
+        santiago,
+        chrono::DateTime::parse_from_rfc3339("2026-08-01T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc),
+    )
+    .unwrap();
+    let p = crate::time_off::Period {
+        id: String::new(),
+        start,
+        end,
+        tz: santiago,
+        timezone: "America/Santiago".into(),
+        label: None,
+    };
+    assert_eq!(period_range_label(&p, "en"), "September 6, 2026");
+}
+
+#[tokio::test]
+async fn an_impersonating_admin_reads_without_notes_and_cannot_change() {
+    let (app, pool, admin_session, _) = setup_test_app().await;
+    let (bob, _) = insert_test_user_with_session(&pool, "Bob", "bob@test.com", "bob").await;
+    let day = monday().and_time(NaiveTime::MIN);
+    let id = add_off(
+        &pool,
+        &bob,
+        day,
+        day + Duration::days(1),
+        Some("Bob private"),
+    )
+    .await;
+    let as_bob = |method: &str, uri: &str, body: &str| {
+        axum::http::Request::builder()
+            .method(method)
+            .uri(uri)
+            .header(
+                "cookie",
+                format!(
+                    "__Host-calrs_session={admin_session}; __Host-calrs_impersonate={bob}; __Host-calrs_csrf=tok"
+                ),
+            )
+            .header("content-type", "application/x-www-form-urlencoded")
+            .body(Body::from(body.to_string()))
+            .unwrap()
+    };
+
+    let response = app
+        .clone()
+        .oneshot(as_bob("GET", "/dashboard/time-off", ""))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let page = body_string(response).await;
+    assert!(page.contains("You are viewing this page as Bob"));
+    assert!(!page.contains("Bob private"), "the note stays the user's");
+    assert!(
+        !page.contains("action=\"/dashboard/time-off\""),
+        "no add form"
+    );
+    assert!(!page.contains("/delete"), "no delete button");
+
+    let start = monday();
+    for (uri, body) in [
+        (
+            "/dashboard/time-off".to_string(),
+            format!("_csrf=tok&start_date={start}"),
+        ),
+        (
+            format!("/dashboard/time-off/{id}/delete"),
+            "_csrf=tok".to_string(),
+        ),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(as_bob("POST", &uri, &body))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 403, "{uri}");
+    }
+    assert_eq!(time_off_count(&pool).await, 1);
+    let label: Option<String> = sqlx::query_scalar("SELECT label FROM user_time_off")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(label.as_deref(), Some("Bob private"));
 }

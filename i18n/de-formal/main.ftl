@@ -432,3 +432,4 @@ time-off-error-date = Geben Sie die Daten als JJJJ-MM-TT und die Uhrzeiten als H
 time-off-error-too-many = Sie haben bereits 100 Zeiträume geplant. Löschen Sie einige, bevor Sie weitere hinzufügen.
 time-off-hint = Um Daten für alle Terminarten auf einmal zu sperren, nutzen Sie { $link }.
 time-off-pending-notice = Anfragen, die in einem Zeitraum auf Ihre Bestätigung warten, lassen sich nicht mehr annehmen: Lehnen Sie sie ab oder löschen Sie zuerst die Abwesenheit.
+time-off-impersonating = Sie sehen diese Seite als { $name }. Die Abwesenheiten sind für Sie hier nur lesbar, die Notizen sind ausgeblendet.
