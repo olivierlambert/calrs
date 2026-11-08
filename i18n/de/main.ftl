@@ -1971,3 +1971,11 @@ admin-ews-trust-help = Diese aktiven Konten in den erlaubten Domains haben eine 
 admin-ews-trust-confirm = Bestätigen
 admin-ews-trust-more = { $shown } von { $total } angezeigt.
 admin-ews-http-warning = Der Endpunkt verwendet http://: Das Passwort des Dienstkontos wird unverschlüsselt gesendet. Verwende besser https://.
+
+directory-all-favorites = Alle Favoriten
+pager-label = Seiten
+pager-range = { $from } bis { $to } von { $total }
+pager-previous = Zurück
+pager-next = Weiter
+admin-users-search = Suchen
+admin-figures-cached = Buchungszahlen vor { $seconds } s berechnet.

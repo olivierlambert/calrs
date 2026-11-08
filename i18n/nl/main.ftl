@@ -1973,3 +1973,11 @@ admin-ews-trust-help = Deze actieve accounts in de toegestane domeinen hebben ee
 admin-ews-trust-confirm = Bevestigen
 admin-ews-trust-more = { $shown } van { $total } getoond.
 admin-ews-http-warning = Het endpoint gebruikt http://: het wachtwoord van het serviceaccount wordt onversleuteld verzonden. Gebruik bij voorkeur https://.
+
+directory-all-favorites = Alle favorieten
+pager-label = Pagina’s
+pager-range = { $from } tot { $to } van { $total }
+pager-previous = Vorige
+pager-next = Volgende
+admin-users-search = Zoeken
+admin-figures-cached = Boekingscijfers { $seconds } s geleden berekend.

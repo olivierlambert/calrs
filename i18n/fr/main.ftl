@@ -1971,3 +1971,11 @@ admin-ews-trust-help = Ces comptes actifs des domaines autorisés ont une adress
 admin-ews-trust-confirm = Confirmer
 admin-ews-trust-more = { $shown } affichées sur { $total }.
 admin-ews-http-warning = Le point de terminaison utilise http:// : le mot de passe du compte de service circule en clair. Préférez https://.
+
+directory-all-favorites = Tous les favoris
+pager-label = Pages
+pager-range = { $from } à { $to } sur { $total }
+pager-previous = Précédent
+pager-next = Suivant
+admin-users-search = Rechercher
+admin-figures-cached = Chiffres des réservations calculés il y a { $seconds } s.

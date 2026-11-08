@@ -2042,3 +2042,11 @@ admin-ews-trust-help = Te aktywne konta w dozwolonych domenach mają adres, za k
 admin-ews-trust-confirm = Potwierdź
 admin-ews-trust-more = Wyświetlono { $shown } z { $total }.
 admin-ews-http-warning = Punkt końcowy używa http://: hasło konta usługi jest wysyłane bez szyfrowania. Lepiej użyj https://.
+
+directory-all-favorites = Wszystkie ulubione
+pager-label = Strony
+pager-range = Od { $from } do { $to } z { $total }
+pager-previous = Poprzednia
+pager-next = Następna
+admin-users-search = Szukaj
+admin-figures-cached = Dane o rezerwacjach obliczone { $seconds } s temu.

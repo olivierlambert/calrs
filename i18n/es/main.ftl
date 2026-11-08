@@ -1971,3 +1971,11 @@ admin-ews-trust-help = Estas cuentas activas de los dominios permitidos tienen u
 admin-ews-trust-confirm = Confirmar
 admin-ews-trust-more = Se muestran { $shown } de { $total }.
 admin-ews-http-warning = El punto de conexión usa http://: la contraseña de la cuenta de servicio se envía sin cifrar. Es preferible https://.
+
+directory-all-favorites = Todos los favoritos
+pager-label = Páginas
+pager-range = { $from } a { $to } de { $total }
+pager-previous = Anterior
+pager-next = Siguiente
+admin-users-search = Buscar
+admin-figures-cached = Cifras de reservas calculadas hace { $seconds } s.

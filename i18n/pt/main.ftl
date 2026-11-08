@@ -1971,3 +1971,11 @@ admin-ews-trust-help = Estas contas ativas nos domínios permitidos têm um ende
 admin-ews-trust-confirm = Confirmar
 admin-ews-trust-more = Mostrando { $shown } de { $total }.
 admin-ews-http-warning = O endpoint usa http://: a palavra-passe da conta de serviço é enviada sem cifragem. Prefira https://.
+
+directory-all-favorites = Todos os favoritos
+pager-label = Páginas
+pager-range = { $from } a { $to } de { $total }
+pager-previous = Anterior
+pager-next = Próxima
+admin-users-search = Buscar
+admin-figures-cached = Números de agendamentos calculados há { $seconds } s.

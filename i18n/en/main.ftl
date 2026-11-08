@@ -1973,3 +1973,11 @@ admin-ews-trust-help = These enabled accounts in the allowed email domains have 
 admin-ews-trust-confirm = Confirm
 admin-ews-trust-more = Showing { $shown } of { $total }.
 admin-ews-http-warning = The endpoint uses http://: the service account password is sent unencrypted. Prefer https://.
+
+directory-all-favorites = All favorites
+pager-label = Pages
+pager-range = { $from } to { $to } of { $total }
+pager-previous = Previous
+pager-next = Next
+admin-users-search = Search
+admin-figures-cached = Booking figures computed { $seconds } s ago.

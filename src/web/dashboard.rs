@@ -39,10 +39,16 @@ pub(super) async fn dashboard(
     let user = &auth_user.user;
     let lang = auth_user.lang;
 
-    let favorites = match directory_entries(&state.pool, &user.id, true, None).await {
-        Ok(entries) => entries,
-        Err(e) => return internal_error_html("load dashboard favorites", &e),
+    let favorites_filter = DirectoryFilter {
+        favorites_only: true,
+        limit: Some(OVERVIEW_FAVORITES),
+        ..DirectoryFilter::default()
     };
+    let (favorites, favorites_total) =
+        match directory_page(&state.pool, &user.id, &favorites_filter).await {
+            Ok(page) => (page.entries, page.total),
+            Err(e) => return internal_error_html("load dashboard favorites", &e),
+        };
 
     let event_type_count: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM event_types et JOIN accounts a ON a.id = et.account_id WHERE a.user_id = ? AND et.team_id IS NULL")
@@ -221,6 +227,7 @@ pub(super) async fn dashboard(
             calendar_external => calendar_url.as_deref().is_some_and(|u| u.starts_with("http")),
             pending_bookings => pending_ctx,
             favorites => favorites,
+            favorites_total => favorites_total,
             own_links => links_ctx,
             stats => stats_ctx,
             agenda => agenda,

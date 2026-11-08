@@ -1971,3 +1971,11 @@ admin-ews-trust-help = Nendel lubatud domeenide aktiivsetel kontodel on aadress,
 admin-ews-trust-confirm = Kinnita
 admin-ews-trust-more = Kuvatakse { $shown } / { $total }.
 admin-ews-http-warning = Lõpp-punkt kasutab http://: teenusekonto parool saadetakse krüptimata kujul. Eelista https://.
+
+directory-all-favorites = Kõik lemmikud
+pager-label = Lehed
+pager-range = { $from } kuni { $to }, kokku { $total }
+pager-previous = Eelmine
+pager-next = Järgmine
+admin-users-search = Otsi
+admin-figures-cached = Broneeringute arvud arvutati { $seconds } s tagasi.
