@@ -222,6 +222,20 @@ When an owner the identity provider verified takes a mailbox over from an
 account that was only admin-confirmed, the status table shows "Taken over
 from" that account, with the time, and the server log has a warning.
 
+The status table lists 50 sources a page, failing ones first, and the
+addresses waiting for confirmation 20 a page. Once either list runs over one
+page, a search box finds a user or a mailbox.
+
+**Sync cadence on large organizations.** The background loop syncs one
+calendar source a minute, the stalest one, and every provisioned user has a
+source of their own. With N sources, each one is synced in the background
+about every N minutes, and its daily full resync only runs when its turn
+comes: past about 1,440 sources (one a minute for a day), full resyncs come
+less often than daily. Booking pages still refresh a host's calendars on
+demand once they are 5 minutes old, so hosts whose pages are visited stay
+current. This is tracked in
+[#388](https://github.com/olivierlambert/calrs/issues/388).
+
 ## Switching it off
 
 While the feature is off (or its configuration incomplete), managed sources are
