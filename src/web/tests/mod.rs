@@ -31,6 +31,7 @@ mod public_pages;
 mod resources;
 mod security;
 mod sources;
+mod time_off;
 mod write_destinations;
 mod writeback_failures;
 

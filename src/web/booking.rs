@@ -1246,6 +1246,22 @@ async fn handle_dynamic_group_booking(
         }
     }
 
+    // The co-hosts by id, so a reschedule or an approval checks that every
+    // one of them is still free, not only the owner.
+    for (participant_id, ..) in dg_users.iter().skip(1) {
+        if let Err(e) = sqlx::query(
+            "INSERT OR IGNORE INTO booking_participants (booking_id, user_id) VALUES (?, ?)",
+        )
+        .bind(&id)
+        .bind(participant_id)
+        .execute(&mut *tx)
+        .await
+        {
+            let _ = tx.rollback().await;
+            return internal_error_response("store booking participants", &e);
+        }
+    }
+
     // Combine co-participant emails with guest-provided additional attendees
     let co_participant_emails: Vec<String> = dg_users
         .iter()

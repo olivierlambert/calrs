@@ -1903,6 +1903,47 @@ directory-manual-copy = Kopiere diesen Link manuell:
 directory-empty = Keine Termine gefunden. Versuche eine andere Suche.
 directory-favorites-empty = Keine Favoriten gefunden. Markiere Termine im Verzeichnis als Favoriten, um sie hier zu sehen.
 directory-with-hosts = Mit { $names }
+
+# Time off (templates/time_off.html, src/web/time_off.rs, troubleshoot view)
+
+nav-time-off = Abwesenheit
+time-off-page-title = Abwesenheit
+time-off-heading = Abwesenheit
+time-off-subtitle = Zeiträume, in denen du keine Buchungen annimmst. Alle Terminarten, die du anbietest, persönliche wie die deiner Teams, richten sich danach. Gäste sehen nur, dass diese Zeiten nicht verfügbar sind.
+time-off-upcoming = Geplant
+time-off-empty = Keine Abwesenheit geplant.
+time-off-kept-notice = Termine, die in einem Zeitraum bereits gebucht sind, bleiben bestehen: Eine Abwesenheit sagt nichts ab. Sage sie bei Bedarf unter Buchungen ab oder verschiebe sie.
+time-off-pending-notice = Anfragen, die in einem Zeitraum auf deine Bestätigung warten, lassen sich nicht mehr annehmen: Lehne sie ab oder lösche zuerst die Abwesenheit.
+time-off-in-progress = Läuft gerade
+time-off-entered-in = Eingegeben in { $timezone }
+time-off-delete = Löschen
+time-off-delete-confirm = Diese Abwesenheit löschen? Der Zeitraum wird wieder buchbar.
+time-off-add-heading = Abwesenheit hinzufügen
+time-off-from = Von
+time-off-to = Bis
+time-off-time-optional = Uhrzeit (optional)
+time-off-times-help = Lass die Uhrzeiten leer, um ganze Tage zu sperren, beide Daten eingeschlossen. Die Uhrzeiten gelten in deiner Zeitzone, { $timezone }.
+time-off-label = Notiz (optional)
+time-off-label-help = Nur du siehst sie, hier und unter Diagnose. Gäste und Teammitglieder sehen sie nie.
+time-off-add-submit = Abwesenheit hinzufügen
+time-off-added = Abwesenheit hinzugefügt.
+time-off-deleted = Abwesenheit gelöscht.
+time-off-range = { $start } bis { $end }
+time-off-at = { $date }, { $time }
+time-off-same-day = { $date }, { $start } bis { $end }
+time-off-from-time = { $date }, ab { $time }
+time-off-until-time = { $date }, bis { $time }
+time-off-impersonating = Du siehst diese Seite als { $name }. Die Abwesenheiten sind für dich hier nur lesbar, die Notizen sind ausgeblendet.
+time-off-error-date = Gib die Daten als JJJJ-MM-TT und die Uhrzeiten als HH:MM ein.
+time-off-error-order = Das Ende muss nach dem Beginn liegen.
+time-off-error-too-long = Ein Zeitraum darf höchstens ein Jahr lang sein.
+time-off-error-past = Dieser Zeitraum ist bereits vorbei.
+time-off-error-label = Die Notiz darf höchstens 200 Zeichen lang sein.
+time-off-error-too-many = Du hast bereits 100 Zeiträume geplant. Lösche einige, bevor du weitere hinzufügst.
+time-off-hint = Um Daten für alle Terminarten auf einmal zu sperren, nutze { $link }.
+troubleshoot-label-time-off = Abwesenheit
+troubleshoot-legend-time-off = Abwesenheit
+
 directory-all-favorites = Alle Favoriten
 pager-label = Seiten
 pager-range = { $from } bis { $to } von { $total }
