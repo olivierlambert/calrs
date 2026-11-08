@@ -1975,3 +1975,4 @@ webhooks-signature-help = Elk verzoek is ondertekend: <code>X-Calrs-Signature: s
 webhooks-state-suspended = Opgeschort: wie hem heeft toegevoegd, kan dit afspraaktype niet meer beheren. Neem hem over om hem te hervatten.
 webhooks-adopt = Overnemen
 webhooks-notice-adopted = Webhook overgenomen en hervat.
+webhooks-event-claimed = Geclaimd door een volger

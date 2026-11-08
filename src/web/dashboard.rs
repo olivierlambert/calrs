@@ -1449,18 +1449,7 @@ pub(super) async fn cancel_booking(
     }
 
     tracing::info!(booking_id = %bid, status = new_status, "booking {}", new_status);
-
-    if !was_pending {
-        caldav_delete_booking(&state.pool, &state.secret_key, &user.id, &uid).await;
-        resource_delete_booking(&state.pool, &state.secret_key, &uid).await;
-    }
-
-    // Convert event-type-local stored times into the guest's tz; see #101.
-    // Computed once, outside the SMTP-only block, so SMS can use it too.
-    let stored_tz = get_host_tz(&state.pool, &et_id).await;
-    let guest_tz_parsed = guest_timezone.parse::<Tz>().unwrap_or(Tz::UTC);
-    let (date, start_time, end_time) =
-        booking_strings_in_guest_tz(&start_at, &end_at, stored_tz, guest_tz_parsed);
+    // Queued before the calendar deletes below, which can take a while.
     let reason = form.reason.filter(|r| !r.trim().is_empty());
     let (event, ctx) = if was_pending {
         (
@@ -1474,6 +1463,18 @@ pub(super) async fn cancel_booking(
         )
     };
     webhooks::enqueue(&state.pool, &bid, event, ctx).await;
+
+    if !was_pending {
+        caldav_delete_booking(&state.pool, &state.secret_key, &user.id, &uid).await;
+        resource_delete_booking(&state.pool, &state.secret_key, &uid).await;
+    }
+
+    // Convert event-type-local stored times into the guest's tz; see #101.
+    // Computed once, outside the SMTP-only block, so SMS can use it too.
+    let stored_tz = get_host_tz(&state.pool, &et_id).await;
+    let guest_tz_parsed = guest_timezone.parse::<Tz>().unwrap_or(Tz::UTC);
+    let (date, start_time, end_time) =
+        booking_strings_in_guest_tz(&start_at, &end_at, stored_tz, guest_tz_parsed);
 
     let sequence = booking_ics_sequence(&state.pool, &uid).await;
     // Built before the SMTP block so the SMS path can borrow the same strings:
@@ -1732,6 +1733,8 @@ pub(super) async fn confirm_booking(
     }
 
     tracing::info!(booking_id = %bid, "booking confirmed by host");
+    // Take the webhook queue's place before the meeting link is minted (#168).
+    let webhook = webhooks::reserve(&state.pool, &bid, webhooks::Event::Confirmed).await;
 
     // Mirror the email-token approve path: now that the booking is confirmed,
     // generate (or load via idempotency) the auto meeting URL so the host
@@ -1752,13 +1755,7 @@ pub(super) async fn confirm_booking(
         true,
     )
     .await;
-    webhooks::enqueue(
-        &state.pool,
-        &bid,
-        webhooks::Event::Confirmed,
-        webhooks::Context::default(),
-    )
-    .await;
+    webhook.fill(webhooks::Context::default()).await;
 
     // start_at/end_at are naive in the event type's timezone; convert to the
     // guest's tz so the confirmation email body and the ICS attachment match

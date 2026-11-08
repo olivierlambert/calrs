@@ -56,6 +56,7 @@ receives events added in later versions of calrs.
 | `booking.expired` | A pending request reached its deadline unanswered. calrs declines it. |
 | `booking.cancelled` | The guest or the host cancelled. `cancelled_by` says who. |
 | `booking.rescheduled` | The booking moved. `previous` holds the old times; `status` is `pending` when the new time waits for approval. |
+| `booking.claimed` | A member of a watcher team claimed the booking. `claimed_by` names them. |
 | `ping` | The **Send test** button. `test` is `true`, the booking is made up. |
 
 Bookings and cancellations made with the CLI (`calrs booking create`,
@@ -97,6 +98,7 @@ X-Calrs-Signature: sha256=4f0c...e9
     },
     "attendees": ["paul@example.com"],
     "hosts": [{ "name": "Alice", "email": "alice@example.com" }],
+    "claimed_by": null,
     "location": { "type": "link", "value": "https://meet.example.com/abc" },
     "previous": null,
     "cancelled_by": null,
@@ -124,8 +126,12 @@ X-Calrs-Signature: sha256=4f0c...e9
   guest booked in.
 - **`booking.uid`** is the iCalendar UID of the invitation, stable for the
   life of the booking: use it to match later events to the first one.
-- **`status`** is the booking's status at that moment: `confirmed`,
-  `pending`, `cancelled` or `declined`.
+- **`status`** is the status the event left the booking in: `confirmed`,
+  `pending`, `cancelled` or `declined`. A `booking.created` that arrives
+  after the booking was already cancelled still says `confirmed`; the
+  cancellation follows it.
+- **`claimed_by`** is `{ "name", "email" }` once a watcher claimed the
+  booking, else `null`.
 - **`hosts`** lists the host, the assigned member of a round-robin team, or
   every member of a collective team.
 - **`guest.phone`** is set only when the event type asks for a phone number,

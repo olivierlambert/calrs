@@ -2050,3 +2050,4 @@ webhooks-signature-help = Każde żądanie jest podpisane: <code>X-Calrs-Signatu
 webhooks-state-suspended = Wstrzymany: osoba, która go dodała, nie może już zarządzać tym typem wydarzenia. Przejmij go, aby go wznowić.
 webhooks-adopt = Przejmij
 webhooks-notice-adopted = Przejęto i wznowiono webhook.
+webhooks-event-claimed = Przejęta przez obserwatora

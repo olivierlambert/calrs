@@ -1973,3 +1973,4 @@ webhooks-signature-help = Iga päring on allkirjastatud: <code>X-Calrs-Signature
 webhooks-state-suspended = Peatatud: selle lisaja ei saa enam seda sündmuse tüüpi hallata. Võta see üle, et seda jätkata.
 webhooks-adopt = Võta üle
 webhooks-notice-adopted = Veebihaak üle võetud ja jätkatud.
+webhooks-event-claimed = Jälgija võttis üle

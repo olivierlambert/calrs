@@ -499,7 +499,7 @@ async fn reschedule_carries_the_previous_times() {
         &pool,
         &booking_id,
         Event::Rescheduled,
-        Context::rescheduled("2026-07-01T14:00:00", "2026-07-01T14:30:00"),
+        Context::rescheduled("2026-07-01T14:00:00", "2026-07-01T14:30:00", "pending"),
     )
     .await;
     let rows = deliveries(&pool).await;
@@ -508,6 +508,8 @@ async fn reschedule_carries_the_previous_times() {
     assert_eq!(v["booking"]["previous"]["start"], "2026-07-01T12:00:00Z");
     assert_eq!(v["booking"]["previous"]["end"], "2026-07-01T12:30:00Z");
     assert_eq!(v["booking"]["start"], utc_stamp(start));
+    // The status the reschedule left it in, not the row's.
+    assert_eq!(v["booking"]["status"], "pending");
 }
 
 #[tokio::test]
@@ -1488,4 +1490,108 @@ fn the_webhook_client_ignores_proxy_settings() {
         .expect("the webhook client builder");
     let chain = &builder[..builder.find(';').unwrap()];
     assert!(chain.contains(".no_proxy()"), "{chain}");
+}
+
+#[tokio::test]
+async fn an_event_keeps_its_place_and_its_status_while_its_payload_waits() {
+    let pool = setup_test_db().await;
+    let (user_id, _, et_id) = seed_test_data(&pool).await;
+    let (url, got, _) = spawn_receiver(200).await;
+    insert_webhook(&pool, &user_id, None, &url).await;
+    let (booking_id, _, _) = insert_test_booking(
+        &pool,
+        &et_id,
+        "2030-01-07T10:00:00",
+        "2030-01-07T10:30:00",
+        "confirmed",
+    )
+    .await;
+    // The booking commits; its meeting link is still being minted when the
+    // guest cancels.
+    let created = wh::reserve(&pool, &booking_id, Event::Created).await;
+    sqlx::query("UPDATE bookings SET status = 'cancelled' WHERE id = ?")
+        .bind(&booking_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    wh::enqueue(
+        &pool,
+        &booking_id,
+        Event::Cancelled,
+        Context::cancelled(Actor::Guest, None),
+    )
+    .await;
+    // The cancellation waits behind the unfinished creation.
+    assert_eq!(
+        wh::deliver_due_with(&pool, &[0u8; 32], Utc::now(), &local()).await,
+        0
+    );
+    created.fill(Context::default()).await;
+    assert_eq!(
+        wh::deliver_due_with(&pool, &[0u8; 32], Utc::now(), &local()).await,
+        2
+    );
+    let got = got.lock().unwrap().clone();
+    let bodies: Vec<serde_json::Value> = got
+        .iter()
+        .map(|r| serde_json::from_slice(&r.body).unwrap())
+        .collect();
+    assert_eq!(bodies[0]["event"], "booking.created");
+    assert_eq!(bodies[0]["booking"]["status"], "confirmed");
+    assert_eq!(bodies[1]["event"], "booking.cancelled");
+    assert_eq!(bodies[1]["booking"]["status"], "cancelled");
+}
+
+#[tokio::test]
+async fn a_reservation_dropped_unfilled_is_filled_anyway() {
+    let pool = setup_test_db().await;
+    let (user_id, _, et_id) = seed_test_data(&pool).await;
+    insert_webhook(&pool, &user_id, None, "https://93.184.215.14/hook").await;
+    let (booking_id, _, _) = insert_test_booking(
+        &pool,
+        &et_id,
+        "2030-01-07T10:00:00",
+        "2030-01-07T10:30:00",
+        "confirmed",
+    )
+    .await;
+    drop(wh::reserve(&pool, &booking_id, Event::Created).await);
+    let started = std::time::Instant::now();
+    loop {
+        let rows = deliveries(&pool).await;
+        if rows.len() == 1 && rows[0].2 == "pending" {
+            assert_eq!(json(&rows[0].1)["event"], "booking.created");
+            break;
+        }
+        assert!(started.elapsed() < std::time::Duration::from_secs(5));
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+}
+
+#[tokio::test]
+async fn a_claim_is_sent_with_the_claimant() {
+    let pool = setup_test_db().await;
+    let (user_id, _, et_id) = seed_test_data(&pool).await;
+    let claimant = insert_role_user(&pool, "watcher@example.com", "user").await;
+    insert_webhook(&pool, &user_id, None, "https://93.184.215.14/hook").await;
+    let (booking_id, _, _) = insert_test_booking(
+        &pool,
+        &et_id,
+        "2030-01-07T10:00:00",
+        "2030-01-07T10:30:00",
+        "confirmed",
+    )
+    .await;
+    sqlx::query("UPDATE bookings SET claimed_by_user_id = ? WHERE id = ?")
+        .bind(&claimant)
+        .bind(&booking_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    wh::enqueue(&pool, &booking_id, Event::Claimed, Context::default()).await;
+    let rows = deliveries(&pool).await;
+    let v = json(&rows[0].1);
+    assert_eq!(v["event"], "booking.claimed");
+    assert_eq!(v["booking"]["claimed_by"]["email"], "watcher@example.com");
+    assert_eq!(v["booking"]["hosts"][0]["email"], "test@example.com");
 }

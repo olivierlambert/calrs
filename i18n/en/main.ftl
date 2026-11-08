@@ -1975,3 +1975,4 @@ webhooks-signature-help = Each request is signed: <code>X-Calrs-Signature: sha25
 webhooks-state-suspended = Suspended: the person who added it can no longer manage this event type. Take it over to resume it.
 webhooks-adopt = Take over
 webhooks-notice-adopted = Webhook taken over and resumed.
+webhooks-event-claimed = Claimed by a watcher

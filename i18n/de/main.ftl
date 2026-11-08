@@ -1973,3 +1973,4 @@ webhooks-signature-help = Jede Anfrage ist signiert: <code>X-Calrs-Signature: sh
 webhooks-state-suspended = Ausgesetzt: Die Person, die ihn hinzugefügt hat, kann diese Terminart nicht mehr verwalten. Übernimm ihn, um ihn fortzusetzen.
 webhooks-adopt = Übernehmen
 webhooks-notice-adopted = Webhook übernommen und fortgesetzt.
+webhooks-event-claimed = Von einem Beobachter übernommen

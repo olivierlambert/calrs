@@ -117,6 +117,8 @@ pub enum Event {
     Cancelled,
     /// The booking moved to another time (possibly waiting for approval).
     Rescheduled,
+    /// A watcher claimed the booking (`claimed_by`).
+    Claimed,
     /// The "Send test" button.
     Ping,
 }
@@ -131,6 +133,7 @@ impl Event {
             Event::Expired => "booking.expired",
             Event::Cancelled => "booking.cancelled",
             Event::Rescheduled => "booking.rescheduled",
+            Event::Claimed => "booking.claimed",
             Event::Ping => "ping",
         }
     }
@@ -149,7 +152,21 @@ impl Event {
             Event::Expired => "webhooks-event-expired",
             Event::Cancelled => "webhooks-event-cancelled",
             Event::Rescheduled => "webhooks-event-rescheduled",
+            Event::Claimed => "webhooks-event-claimed",
             Event::Ping => "webhooks-send-test",
+        }
+    }
+
+    /// The status this event leaves the booking in, whatever happened to
+    /// it before its payload was built. `None` when it depends (a
+    /// reschedule passes it in its context).
+    fn status(self) -> Option<&'static str> {
+        match self {
+            Event::Created | Event::Confirmed | Event::Claimed => Some("confirmed"),
+            Event::Requested => Some("pending"),
+            Event::Declined | Event::Expired => Some("declined"),
+            Event::Cancelled => Some("cancelled"),
+            Event::Rescheduled | Event::Ping => None,
         }
     }
 
@@ -164,7 +181,7 @@ impl Event {
 }
 
 /// The events a webhook can subscribe to, in the order the page lists them.
-pub const ALL_EVENTS: [Event; 7] = [
+pub const ALL_EVENTS: [Event; 8] = [
     Event::Created,
     Event::Requested,
     Event::Confirmed,
@@ -172,6 +189,7 @@ pub const ALL_EVENTS: [Event; 7] = [
     Event::Expired,
     Event::Cancelled,
     Event::Rescheduled,
+    Event::Claimed,
 ];
 
 /// The `webhooks.events` value for the boxes ticked on the form: `None`
@@ -223,6 +241,8 @@ pub struct Context {
     pub reason: Option<String>,
     /// The times before a reschedule, as stored (`start_at`, `end_at`).
     pub previous: Option<(String, String)>,
+    /// The status a reschedule left the booking in (pending or confirmed).
+    pub status: Option<&'static str>,
 }
 
 impl Context {
@@ -241,9 +261,10 @@ impl Context {
         }
     }
 
-    pub fn rescheduled(old_start: &str, old_end: &str) -> Self {
+    pub fn rescheduled(old_start: &str, old_end: &str, new_status: &'static str) -> Self {
         Self {
             previous: Some((old_start.to_string(), old_end.to_string())),
+            status: Some(new_status),
             ..Self::default()
         }
     }
@@ -290,6 +311,7 @@ struct BookingPayload {
     guest: Guest,
     attendees: Vec<String>,
     hosts: Vec<Host>,
+    claimed_by: Option<Host>,
     location: Option<Location>,
     previous: Option<Times>,
     cancelled_by: Option<&'static str>,
@@ -326,7 +348,6 @@ struct Envelope<'a> {
 /// The booking as a webhook sees it, read back from the database once per
 /// event and shared by every endpoint it goes to.
 struct Snapshot {
-    event_type_id: String,
     booking: BookingPayload,
     event_type: EventTypePayload,
     /// The event type's zone, to read legacy wall-clock `previous` times.
@@ -353,6 +374,7 @@ struct SnapshotRow {
     team_slug: Option<String>,
     team_name: Option<String>,
     owner_id: Option<String>,
+    claimed_by_user_id: Option<String>,
 }
 
 /// A stored booking time as a UTC instant (`2026-11-10T09:00:00Z`). Rows
@@ -377,7 +399,8 @@ async fn snapshot(pool: &SqlitePool, booking_key: &str) -> Option<Snapshot> {
                 et.id AS et_id, et.slug AS et_slug, et.title AS et_title,
                 NULLIF(et.location_type, '') AS location_type,
                 COALESCE(NULLIF(b.meeting_url, ''), NULLIF(et.location_value, '')) AS location_value,
-                t.id AS team_id, t.slug AS team_slug, t.name AS team_name, a.user_id AS owner_id
+                t.id AS team_id, t.slug AS team_slug, t.name AS team_name, a.user_id AS owner_id,
+                b.claimed_by_user_id
          FROM bookings b
          JOIN event_types et ON et.id = b.event_type_id
          JOIN accounts a ON a.id = et.account_id
@@ -402,12 +425,17 @@ async fn snapshot(pool: &SqlitePool, booking_key: &str) -> Option<Snapshot> {
             hosts.push(Host { name, email });
         }
     }
+    let claimed_by = match &row.claimed_by_user_id {
+        Some(id) => super::host_contact(pool, id)
+            .await
+            .map(|(name, email, _)| Host { name, email }),
+        None => None,
+    };
     let team = match (row.team_id, row.team_slug, row.team_name) {
         (Some(id), Some(slug), Some(name)) => Some(Team { id, slug, name }),
         _ => None,
     };
     Some(Snapshot {
-        event_type_id: row.et_id.clone(),
         booking: BookingPayload {
             start: utc_iso(&row.start_at, tz),
             end: utc_iso(&row.end_at, tz),
@@ -424,6 +452,7 @@ async fn snapshot(pool: &SqlitePool, booking_key: &str) -> Option<Snapshot> {
             },
             attendees,
             hosts,
+            claimed_by,
             location: row.location_type.map(|kind| Location {
                 kind,
                 value: row.location_value,
@@ -457,6 +486,9 @@ fn render(
         end: utc_iso(end, snap.tz),
     });
     booking.cancelled_by = ctx.cancelled_by.map(Actor::as_str);
+    if let Some(status) = event.status().or(ctx.status) {
+        booking.status = status.to_string();
+    }
     booking.reason = ctx.reason.clone();
     let envelope = Envelope {
         version: PAYLOAD_VERSION,
@@ -483,7 +515,6 @@ fn ping_snapshot(event_type: Option<(String, String, String, Tz)>) -> Snapshot {
         )
     });
     Snapshot {
-        event_type_id: id.clone(),
         booking: BookingPayload {
             uid: "test@calrs".to_string(),
             status: "confirmed".to_string(),
@@ -503,6 +534,7 @@ fn ping_snapshot(event_type: Option<(String, String, String, Tz)>) -> Snapshot {
                 name: "Test Host".to_string(),
                 email: "host@example.com".to_string(),
             }],
+            claimed_by: None,
             location: Some(Location {
                 kind: "link".to_string(),
                 value: Some("https://meet.example.com/test".to_string()),
@@ -530,17 +562,49 @@ static KICK: tokio::sync::Notify = tokio::sync::Notify::const_new();
 /// its id or uid). Call it after the change has committed. Never fails: a
 /// webhook must not cost anyone a booking.
 pub async fn enqueue(pool: &SqlitePool, booking_key: &str, event: Event, ctx: Context) {
+    reserve(pool, booking_key, event).await.fill(ctx).await;
+}
+
+/// Delivery rows taken for an event right after its change commits, before
+/// slow work such as minting a meeting link, and filled with the payload
+/// once that is done ([`Reserved::fill`]). The rows hold the event's place
+/// in the queue: a cancellation that lands meanwhile is ordered after it,
+/// as it happened after it. Dropped unfilled (an early return), they are
+/// filled in the background with an empty context.
+pub struct Reserved {
+    pool: SqlitePool,
+    booking_key: String,
+    event: Event,
+    ids: Vec<String>,
+}
+
+/// Take the queue rows for `event` (see [`Reserved`]). With no webhook
+/// configured this is one `SELECT EXISTS`.
+pub async fn reserve(pool: &SqlitePool, booking_key: &str, event: Event) -> Reserved {
+    let mut reserved = Reserved {
+        pool: pool.clone(),
+        booking_key: booking_key.to_string(),
+        event,
+        ids: Vec::new(),
+    };
     // The whole cost of the feature on an instance that does not use it.
     let any: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM webhooks WHERE enabled = 1)")
         .fetch_one(pool)
         .await
         .unwrap_or(false);
     if !any {
-        return;
+        return reserved;
     }
-    let Some(snap) = snapshot(pool, booking_key).await else {
+    let booking: Option<(String, String)> =
+        sqlx::query_as("SELECT uid, event_type_id FROM bookings WHERE id = ?1 OR uid = ?1")
+            .bind(booking_key)
+            .fetch_optional(pool)
+            .await
+            .ok()
+            .flatten();
+    let Some((uid, event_type_id)) = booking else {
         tracing::warn!(booking = %booking_key, event = event.name(), "webhook: booking not found, nothing queued");
-        return;
+        return reserved;
     };
     let endpoints: Vec<String> = sqlx::query_scalar(&format!(
         "SELECT w.id FROM webhooks w LEFT JOIN users u ON u.id = w.user_id
@@ -552,35 +616,114 @@ pub async fn enqueue(pool: &SqlitePool, booking_key: &str, event: Event, ctx: Co
                     WHERE et.id = ?1 AND et.team_id IS NULL AND a.user_id = w.user_id)))
          ORDER BY w.created_at, w.id"
     ))
-    .bind(&snap.event_type_id)
+    .bind(&event_type_id)
     .bind(event.name())
     .fetch_all(pool)
     .await
     .unwrap_or_default();
     if endpoints.is_empty() {
-        return;
+        return reserved;
     }
-    let now = Utc::now();
-    for webhook_id in &endpoints {
-        let id = uuid::Uuid::new_v4().to_string();
-        let payload = render(&id, event, now, &snap, &ctx);
-        let inserted = sqlx::query(
-            "INSERT INTO webhook_deliveries (id, webhook_id, booking_uid, event, payload, next_attempt_at)
-             VALUES (?, ?, ?, ?, ?, ?)",
-        )
-        .bind(&id)
-        .bind(webhook_id)
-        .bind(&snap.booking.uid)
-        .bind(event.name())
-        .bind(&payload)
-        .bind(iso(now))
-        .execute(pool)
-        .await;
-        if let Err(e) = inserted {
-            tracing::warn!(error = %e, webhook = %webhook_id, "webhook: delivery not queued");
+    // All the rows or none, in one transaction.
+    let now = iso(Utc::now());
+    let ids: Vec<String> = endpoints
+        .iter()
+        .map(|_| uuid::Uuid::new_v4().to_string())
+        .collect();
+    let written = async {
+        let mut tx = pool.begin().await?;
+        for (id, webhook_id) in ids.iter().zip(&endpoints) {
+            sqlx::query(
+                "INSERT INTO webhook_deliveries (id, webhook_id, booking_uid, event, payload, state, next_attempt_at)
+                 VALUES (?, ?, ?, ?, '', 'reserved', ?)",
+            )
+            .bind(id)
+            .bind(webhook_id)
+            .bind(&uid)
+            .bind(event.name())
+            .bind(&now)
+            .execute(&mut *tx)
+            .await?;
+        }
+        tx.commit().await
+    }
+    .await;
+    match written {
+        Ok(()) => reserved.ids = ids,
+        Err(e) => tracing::warn!(error = %e, booking = %uid, "webhook: deliveries not queued"),
+    }
+    reserved
+}
+
+impl Reserved {
+    /// Write the payloads (the booking as it is now, the status of this
+    /// event) and release the rows to the delivery task.
+    pub async fn fill(mut self, ctx: Context) {
+        let ids = std::mem::take(&mut self.ids);
+        fill_rows(&self.pool, &self.booking_key, self.event, ids, ctx).await;
+    }
+}
+
+impl Drop for Reserved {
+    fn drop(&mut self) {
+        if self.ids.is_empty() {
+            return;
+        }
+        let (pool, key, event, ids) = (
+            self.pool.clone(),
+            self.booking_key.clone(),
+            self.event,
+            std::mem::take(&mut self.ids),
+        );
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            runtime.spawn(async move {
+                fill_rows(&pool, &key, event, ids, Context::default()).await;
+            });
         }
     }
-    tracing::debug!(booking = %snap.booking.uid, event = event.name(), endpoints = endpoints.len(), "webhook deliveries queued");
+}
+
+async fn fill_rows(
+    pool: &SqlitePool,
+    booking_key: &str,
+    event: Event,
+    ids: Vec<String>,
+    ctx: Context,
+) {
+    if ids.is_empty() {
+        return;
+    }
+    let Some(snap) = snapshot(pool, booking_key).await else {
+        for id in &ids {
+            let _ = sqlx::query("DELETE FROM webhook_deliveries WHERE id = ?")
+                .bind(id)
+                .execute(pool)
+                .await;
+        }
+        return;
+    };
+    let now = Utc::now();
+    let written = async {
+        let mut tx = pool.begin().await?;
+        for id in &ids {
+            sqlx::query(
+                "UPDATE webhook_deliveries SET payload = ?, state = 'pending', next_attempt_at = ?
+                 WHERE id = ? AND state = 'reserved'",
+            )
+            .bind(render(id, event, now, &snap, &ctx))
+            .bind(iso(now))
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        }
+        tx.commit().await
+    }
+    .await;
+    if let Err(e) = written {
+        tracing::warn!(error = %e, booking = %snap.booking.uid, "webhook: payloads not written");
+        return;
+    }
+    tracing::debug!(booking = %snap.booking.uid, event = event.name(), endpoints = ids.len(), "webhook deliveries queued");
     KICK.notify_one();
 }
 
@@ -953,7 +1096,7 @@ async fn due_rows(pool: &SqlitePool, now: DateTime<Utc>, only: Option<&str>) -> 
                AND NOT EXISTS (
                    SELECT 1 FROM webhook_deliveries o
                    WHERE o.webhook_id = d.webhook_id AND o.booking_uid = d.booking_uid
-                     AND o.state = 'pending' AND o.seq < d.seq))
+                     AND o.state IN ('pending', 'reserved') AND o.seq < d.seq))
          WHERE rn <= ?3
          ORDER BY seq"
     ))
@@ -1065,7 +1208,7 @@ pub(crate) async fn deliver_due_with(
 /// guest data must not sit here, nor be replayed if it comes back.
 pub(crate) async fn drop_inactive_queues(pool: &SqlitePool) {
     let dropped = sqlx::query(&format!(
-        "DELETE FROM webhook_deliveries WHERE state = 'pending' AND webhook_id IN (
+        "DELETE FROM webhook_deliveries WHERE state IN ('pending', 'reserved') AND webhook_id IN (
              SELECT w.id FROM webhooks w LEFT JOIN users u ON u.id = w.user_id
              WHERE NOT ({ACTIVE_ENDPOINT}))"
     ))
@@ -1092,6 +1235,12 @@ pub(crate) async fn prune(pool: &SqlitePool, now: DateTime<Utc>) {
     .bind(stamp(now - chrono::Duration::hours(PENDING_MAX_HOURS)))
     .execute(pool)
     .await;
+    // A reservation is filled within seconds; one this old was lost.
+    let _ =
+        sqlx::query("DELETE FROM webhook_deliveries WHERE state = 'reserved' AND created_at < ?")
+            .bind(stamp(now - chrono::Duration::hours(1)))
+            .execute(pool)
+            .await;
     let _ = sqlx::query("DELETE FROM webhook_deliveries WHERE state = 'failed' AND created_at < ?")
         .bind(stamp(now - chrono::Duration::days(FAILED_RETENTION_DAYS)))
         .execute(pool)
@@ -1185,6 +1334,7 @@ mod tests {
             Event::Expired,
             Event::Cancelled,
             Event::Rescheduled,
+            Event::Claimed,
             Event::Ping,
         ]
         .iter()
@@ -1200,6 +1350,7 @@ mod tests {
                 "booking.expired",
                 "booking.cancelled",
                 "booking.rescheduled",
+                "booking.claimed",
                 "ping"
             ]
         );
@@ -1352,6 +1503,7 @@ mod tests {
             "guest",
             "attendees",
             "hosts",
+            "claimed_by",
             "location",
             "previous",
             "cancelled_by",

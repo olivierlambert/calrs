@@ -1973,3 +1973,4 @@ webhooks-signature-help = Cada petición va firmada: <code>X-Calrs-Signature: sh
 webhooks-state-suspended = Suspendido: quien lo añadió ya no puede gestionar este tipo de evento. Hazte cargo de él para reanudarlo.
 webhooks-adopt = Hacerse cargo
 webhooks-notice-adopted = Webhook asumido y reanudado.
+webhooks-event-claimed = Asumida por un observador

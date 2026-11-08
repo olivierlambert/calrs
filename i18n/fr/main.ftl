@@ -1973,3 +1973,4 @@ webhooks-signature-help = Chaque requête est signée : <code>X-Calrs-Signature:
 webhooks-state-suspended = Suspendu : la personne qui l'a ajouté ne peut plus gérer ce type d'événement. Reprenez-le pour le réactiver.
 webhooks-adopt = Reprendre
 webhooks-notice-adopted = Webhook repris et réactivé.
+webhooks-event-claimed = Prise par un observateur
