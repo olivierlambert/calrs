@@ -552,6 +552,7 @@ bookings-empty = Nie ma jeszcze nadchodzących rezerwacji.<br>Udostępnij swoje 
 bookings-empty-link-label = linki do typów wydarzeń
 bookings-search-placeholder = Szukaj gości, e-maili lub spotkań
 bookings-recent = Ostatnie 30 dni
+bookings-cancelled = Odwołane i odrzucone
 
 # Host notes on a booking (templates/booking_notes.html, bookings page, overview, host emails)
 
@@ -1033,6 +1034,7 @@ team-settings-description-placeholder = Opowiedz o tym zespole...
 team-settings-description-help = Widoczny na publicznej stronie rezerwacji zespołu. Obsługuje **pogrubienie**, *kursywę* i [linki](url).
 team-settings-visibility-help = Zespoły publiczne są widoczne na stronie profilu zespołu. Prywatne wymagają linku z zaproszeniem.
 team-settings-members-help = Zarządzaj składem tego zespołu. Dodaj pojedynczych użytkowników albo powiąż grupy OIDC, aby synchronizowały się automatycznie.
+team-settings-time-off-help = Zaplanowane nieobecności członków, w twojej strefie czasowej, { $timezone }. Ich notatki pozostają prywatne.
 team-settings-role-member = Członek
 team-settings-role-admin = Administrator
 team-settings-oidc-group = Grupa OIDC
@@ -2126,6 +2128,7 @@ time-off-time-optional = Godzina (opcjonalnie)
 time-off-times-help = Zostaw godziny puste, aby zablokować całe dni, łącznie z obiema datami. Godziny są w twojej strefie czasowej, { $timezone }.
 time-off-label = Notatka (opcjonalnie)
 time-off-label-help = Widzisz ją tylko ty, tutaj i w Diagnostyce. Goście i członkowie zespołu nigdy jej nie widzą.
+time-off-team-admins-notice = Administratorzy twoich zespołów i administratorzy instancji widzą daty i godziny twoich nieobecności, nigdy notatkę.
 time-off-add-submit = Dodaj nieobecność
 time-off-added = Nieobecność dodana.
 time-off-deleted = Nieobecność usunięta.

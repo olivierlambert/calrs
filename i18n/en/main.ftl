@@ -518,6 +518,7 @@ bookings-empty = No upcoming bookings yet.<br>Share your { $link } so people can
 bookings-empty-link-label = event type links
 bookings-search-placeholder = Search guests, emails or meetings
 bookings-recent = Last 30 days
+bookings-cancelled = Cancelled and declined
 
 # Host notes on a booking (templates/booking_notes.html, bookings page, overview, host emails)
 
@@ -987,6 +988,7 @@ team-settings-description-placeholder = Tell people about this team...
 team-settings-description-help = Shown on the team's public booking page. Supports **bold**, *italic*, and [links](url).
 team-settings-visibility-help = Public teams are listed on the team profile page. Private teams require an invite link to access.
 team-settings-members-help = Manage who belongs to this team. Add individual users or link OIDC groups for automatic sync.
+team-settings-time-off-help = Members' planned time off, shown in your time zone, { $timezone }. Their notes stay private.
 team-settings-role-member = Member
 team-settings-role-admin = Admin
 team-settings-oidc-group = OIDC group
@@ -2067,6 +2069,7 @@ time-off-time-optional = Time (optional)
 time-off-times-help = Leave the times empty to block whole days, both dates included. Times are in your time zone, { $timezone }.
 time-off-label = Note (optional)
 time-off-label-help = Only you see it, here and in Troubleshoot. Guests and teammates never do.
+time-off-team-admins-notice = The admins of your teams and the instance admins see the dates and times of your time off, never the note.
 time-off-add-submit = Add time off
 time-off-added = Time off added.
 time-off-deleted = Time off deleted.

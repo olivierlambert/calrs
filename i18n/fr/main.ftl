@@ -508,6 +508,7 @@ bookings-empty = Aucune réservation à venir pour le moment.<br>Partagez vos { 
 bookings-empty-link-label = liens de types d'événement
 bookings-search-placeholder = Rechercher un invité, un e-mail ou un rendez-vous
 bookings-recent = 30 derniers jours
+bookings-cancelled = Annulées et refusées
 
 # Host notes on a booking (templates/booking_notes.html, bookings page, overview, host emails)
 
@@ -977,6 +978,7 @@ team-settings-description-placeholder = Présentez cette équipe...
 team-settings-description-help = Affichée sur la page de réservation publique de l'équipe. Prend en charge **gras**, *italique* et [liens](url).
 team-settings-visibility-help = Les équipes publiques sont listées sur la page de profil d'équipe. Les équipes privées nécessitent un lien d'invitation.
 team-settings-members-help = Gérez les membres de cette équipe. Ajoutez des utilisateurs ou liez des groupes OIDC pour une synchronisation automatique.
+team-settings-time-off-help = Absences prévues des membres, affichées dans votre fuseau horaire, { $timezone }. Leurs notes restent privées.
 team-settings-role-member = Membre
 team-settings-role-admin = Administrateur
 team-settings-oidc-group = Groupe OIDC
@@ -2055,6 +2057,7 @@ time-off-time-optional = Heure (facultative)
 time-off-times-help = Laissez les heures vides pour bloquer des journées entières, les deux dates comprises. Les heures sont dans votre fuseau horaire, { $timezone }.
 time-off-label = Note (facultative)
 time-off-label-help = Elle n'est visible que par vous, ici et dans Diagnostic. Les invités et les membres de vos équipes ne la voient jamais.
+time-off-team-admins-notice = Les administrateurs de vos équipes et ceux de l'instance voient les dates et heures de vos absences, jamais la note.
 time-off-add-submit = Ajouter l'absence
 time-off-added = Absence ajoutée.
 time-off-deleted = Absence supprimée.

@@ -226,6 +226,7 @@ team-form-you = (Sie)
 team-settings-invite-link-help = Teilen Sie diesen Link, um Zugang zur Buchungsseite dieses privaten Teams zu geben.
 team-settings-description-placeholder = Beschreiben Sie dieses Team...
 team-settings-members-help = Verwalten Sie die Mitglieder dieses Teams. Fügen Sie einzelne Benutzer hinzu oder verknüpfen Sie OIDC-Gruppen für die automatische Synchronisierung.
+team-settings-time-off-help = Geplante Abwesenheiten der Mitglieder, in Ihrer Zeitzone, { $timezone }. Die Notizen bleiben privat.
 
 # Event type form (templates/event_type_form.html)
 
@@ -456,6 +457,7 @@ time-off-subtitle = Zeiträume, in denen Sie keine Buchungen annehmen. Alle Term
 time-off-kept-notice = Termine, die in einem Zeitraum bereits gebucht sind, bleiben bestehen: Eine Abwesenheit sagt nichts ab. Sagen Sie sie bei Bedarf unter Buchungen ab oder verschieben Sie sie.
 time-off-times-help = Lassen Sie die Uhrzeiten leer, um ganze Tage zu sperren, beide Daten eingeschlossen. Die Uhrzeiten gelten in Ihrer Zeitzone, { $timezone }.
 time-off-label-help = Nur Sie sehen sie, hier und unter Diagnose. Gäste und Teammitglieder sehen sie nie.
+time-off-team-admins-notice = Die Administratoren Ihrer Teams und die der Instanz sehen Datum und Uhrzeit Ihrer Abwesenheiten, nie die Notiz.
 time-off-error-date = Geben Sie die Daten als JJJJ-MM-TT und die Uhrzeiten als HH:MM ein.
 time-off-error-too-many = Sie haben bereits 100 Zeiträume geplant. Löschen Sie einige, bevor Sie weitere hinzufügen.
 time-off-hint = Um Daten für alle Terminarten auf einmal zu sperren, nutzen Sie { $link }.

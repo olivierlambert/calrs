@@ -508,6 +508,7 @@ bookings-empty = Tulevasi broneeringuid veel pole.<br>Jaga oma { $link }, et tei
 bookings-empty-link-label = sündmuse tüüpide linke
 bookings-search-placeholder = Otsi külalisi, e-posti või kohtumisi
 bookings-recent = Viimased 30 päeva
+bookings-cancelled = Tühistatud ja tagasi lükatud
 
 # Host notes on a booking (templates/booking_notes.html, bookings page, overview, host emails)
 
@@ -977,6 +978,7 @@ team-settings-description-placeholder = Räägi sellest meeskonnast...
 team-settings-description-help = Kuvatakse meeskonna avalikul broneerimislehel. Toetab **rasvast**, *kaldkirja* ja [linke](url).
 team-settings-visibility-help = Avalikud meeskonnad on näha meeskonna profiililehel. Privaatsed vajavad kutselinki.
 team-settings-members-help = Halda selle meeskonna koosseisu. Lisa üksikuid kasutajaid või seo OIDC-rühmi automaatseks sünkroonimiseks.
+team-settings-time-off-help = Liikmete planeeritud eemalolekud sinu ajavööndis, { $timezone }. Nende märkmed jäävad privaatseks.
 team-settings-role-member = Liige
 team-settings-role-admin = Haldaja
 team-settings-oidc-group = OIDC-rühm
@@ -2055,6 +2057,7 @@ time-off-time-optional = Kellaaeg (valikuline)
 time-off-times-help = Jäta kellaajad tühjaks, et blokeerida terved päevad, mõlemad kuupäevad kaasa arvatud. Kellaajad on sinu ajavööndis, { $timezone }.
 time-off-label = Märkus (valikuline)
 time-off-label-help = Seda näed ainult sina, siin ja jaotises Tõrkeotsing. Külalised ja meeskonnakaaslased ei näe seda kunagi.
+time-off-team-admins-notice = Sinu meeskondade haldajad ja instantsi haldajad näevad sinu eemalolekute kuupäevi ja kellaaegu, kuid mitte kunagi märget.
 time-off-add-submit = Lisa eemalolek
 time-off-added = Eemalolek lisatud.
 time-off-deleted = Eemalolek kustutatud.
