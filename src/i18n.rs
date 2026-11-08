@@ -901,8 +901,11 @@ mod tests {
         let mut keys = Vec::new();
         // Helpers that take message ids as arguments instead of resolving them
         // inline. Add one here when you add one to the code.
-        const KEY_TAKING_HELPERS: &[&str] =
-            &["render_booking_action_error_keys_in(", "status_subject("];
+        const KEY_TAKING_HELPERS: &[&str] = &[
+            "render_booking_action_error_keys_in(",
+            "status_subject(",
+            "microsoft_failure(",
+        ];
         for call in KEY_TAKING_HELPERS {
             let mut i = 0;
             while let Some(pos) = src[i..].find(call) {

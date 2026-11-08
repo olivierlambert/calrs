@@ -75,6 +75,13 @@ pub async fn save_config(
     Ok(())
 }
 
+/// Whether a stored Graph user id belongs to a personal Microsoft account
+/// (Outlook.com, Hotmail, Live): those ids are 16 hexadecimal digits, while
+/// work and school accounts (Entra ID) are identified by a GUID.
+pub fn is_personal_account(microsoft_user_id: &str) -> bool {
+    microsoft_user_id.len() == 16 && microsoft_user_id.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
 fn http_client() -> Result<reqwest::Client> {
     // Never forward credentials through a redirect, even from a trusted endpoint.
     Ok(reqwest::Client::builder()
@@ -268,6 +275,10 @@ impl std::fmt::Display for TokenRefused {
 
 impl std::error::Error for TokenRefused {}
 
+/// Largest token or profile response read from Microsoft: both are a few
+/// kilobytes.
+const MAX_TOKEN_RESPONSE_BYTES: usize = 256 * 1024;
+
 const RECONNECT: &str =
     "Microsoft sign-in for this calendar expired or was revoked; reconnect the source";
 
@@ -296,13 +307,16 @@ async fn request_tokens(
     // Do not propagate provider response bodies, codes, URLs or request
     // errors: they may contain secrets. Only the OAuth error code is read.
     if !response.status().is_success() {
-        let body = response.bytes().await.unwrap_or_default();
+        let body = crate::providers::graph::read_capped(response, MAX_TOKEN_RESPONSE_BYTES)
+            .await
+            .unwrap_or_default();
         return Err(TokenRefused::from_body(&body).into());
     }
-    let tokens: Tokens = response
-        .json()
+    let tokens: Tokens = crate::providers::graph::read_capped(response, MAX_TOKEN_RESPONSE_BYTES)
         .await
-        .map_err(|_| anyhow!("Microsoft returned an invalid token response"))?;
+        .ok()
+        .and_then(|body| serde_json::from_slice(&body).ok())
+        .ok_or_else(|| anyhow!("Microsoft returned an invalid token response"))?;
     tokens.validate()?;
     Ok(tokens)
 }
@@ -353,10 +367,11 @@ pub async fn finish_authorization(
         response.status().is_success(),
         "Microsoft profile access failed; grant User.Read consent"
     );
-    let profile: Profile = response
-        .json()
+    let profile: Profile = crate::providers::graph::read_capped(response, MAX_TOKEN_RESPONSE_BYTES)
         .await
-        .map_err(|_| anyhow!("Microsoft returned an invalid profile"))?;
+        .ok()
+        .and_then(|body| serde_json::from_slice(&body).ok())
+        .ok_or_else(|| anyhow!("Microsoft returned an invalid profile"))?;
     ensure!(
         !profile.id.is_empty() && profile.id.len() <= 256,
         "Microsoft profile has no stable identity"
@@ -484,6 +499,19 @@ async fn access_token(
             return Ok(access);
         }
     }
+    // A suspended user's refresh token stays unused until an administrator
+    // re-enables them: no sync and no write-back renews their access.
+    let suspended: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM caldav_sources cs JOIN accounts a ON a.id = cs.account_id
+         JOIN users u ON u.id = a.user_id WHERE cs.id = ? AND u.enabled = 0)",
+    )
+    .bind(source_id)
+    .fetch_one(pool)
+    .await?;
+    ensure!(
+        !suspended,
+        "The owner of this Microsoft calendar is suspended; its access is not renewed"
+    );
     // Cleared after the token endpoint refused it for good: until the user
     // reconnects, no sync or write-back retry calls the endpoint again.
     let encrypted = stored
@@ -1146,6 +1174,60 @@ mod tests {
             .unwrap();
         let error = access_token(&pool, &[1; 32], &id, false).await.unwrap_err();
         assert_eq!(error.to_string(), "Microsoft Calendar is not configured");
+    }
+
+    /// A suspended owner's refresh token is not used: the source keeps it
+    /// for when they are re-enabled, and a still-fresh access token works.
+    #[tokio::test]
+    async fn a_suspended_owners_tokens_are_not_refreshed() {
+        let pool = database().await;
+        let id = save_authorized_source(
+            &pool,
+            &[1; 32],
+            &pending("a1"),
+            &profile("ms-1"),
+            &grant(Some("refresh")),
+        )
+        .await
+        .unwrap();
+        sqlx::query("UPDATE users SET enabled = 0 WHERE id = 'u1'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            access_token(&pool, &[1; 32], &id, false).await.unwrap(),
+            "new-access"
+        );
+        sqlx::query(
+            "UPDATE caldav_sources SET token_expires_at = '2000-01-01T00:00:00+00:00' WHERE id = ?",
+        )
+        .bind(&id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        // Cleared so that a refresh attempt would say "not configured"
+        // rather than reach the network.
+        save_config(&pool, &[1; 32], "", "", "common")
+            .await
+            .unwrap();
+        for force in [false, true] {
+            let error = access_token(&pool, &[1; 32], &id, force).await.unwrap_err();
+            assert!(error.to_string().contains("suspended"), "{error}");
+        }
+        let stored: StoredTokens = sqlx::query_as(TOKEN_QUERY)
+            .bind(&id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert!(stored.refresh_token_enc.is_some());
+    }
+
+    #[test]
+    fn personal_accounts_are_told_apart_by_their_graph_id() {
+        assert!(is_personal_account("4b0c4d0f0a6a3e29"));
+        assert!(!is_personal_account("6e4f1d3a-2b5c-4d7e-8f90-1a2b3c4d5e6f"));
+        assert!(!is_personal_account("ms-1"));
+        assert!(!is_personal_account(""));
     }
 
     #[tokio::test]

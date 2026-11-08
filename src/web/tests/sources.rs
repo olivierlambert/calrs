@@ -214,6 +214,77 @@ async fn source_form_error_keeps_the_microsoft_card_configured() {
     assert!(body.contains("action=\"/dashboard/sources/microsoft/connect\""));
 }
 
+/// A callback that fails (here a state that was never issued) renders the
+/// error in the user's language with a way back to the sources page, not a
+/// bare text response.
+#[tokio::test]
+async fn a_failed_microsoft_callback_renders_a_page_with_a_way_back() {
+    let (app, pool, session, _) = setup_test_app().await;
+    sqlx::query("UPDATE users SET language = 'es'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let response = app
+        .oneshot(get_authed(
+            "/dashboard/sources/microsoft/callback?state=unknown&code=abc",
+            &session,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), axum::http::StatusCode::BAD_REQUEST);
+    assert!(response
+        .headers()
+        .get("content-type")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .starts_with("text/html"));
+    assert_eq!(response.headers().get("cache-control").unwrap(), "no-store");
+    let body = body_string(response).await;
+    assert!(
+        body.contains(&crate::i18n::translate("es", "microsoft-error-state", None)),
+        "{body}"
+    );
+    // minijinja escapes the slashes; the browser reads it as /dashboard/sources.
+    assert!(
+        body.contains("href=\"&#x2f;dashboard&#x2f;sources\""),
+        "{body}"
+    );
+    assert!(body.contains(&crate::i18n::translate("es", "source-calendars-back", None)));
+}
+
+#[test]
+fn microsoft_sources_open_outlook_on_the_web() {
+    use crate::web::dashboard::calendar_web_url;
+    let graph = "https://graph.microsoft.com/v1.0";
+    assert_eq!(
+        calendar_web_url(
+            graph,
+            "oauth2",
+            "microsoft",
+            Some("6e4f1d3a-2b5c-4d7e-8f90-1a2b3c4d5e6f")
+        ),
+        "https://outlook.office.com/calendar/"
+    );
+    assert_eq!(
+        calendar_web_url(graph, "oauth2", "microsoft", Some("4b0c4d0f0a6a3e29")),
+        "https://outlook.live.com/calendar/"
+    );
+    assert_eq!(
+        calendar_web_url(graph, "oauth2", "microsoft", None),
+        "https://outlook.office.com/calendar/"
+    );
+    assert_eq!(
+        calendar_web_url(
+            "https://apidata.googleusercontent.com/caldav/v2/",
+            "oauth2",
+            "caldav",
+            None
+        ),
+        "https://calendar.google.com/"
+    );
+}
+
 async fn seed_calendar(pool: &SqlitePool, source: &str, href: &str, read_only: bool, events: u32) {
     let id = uuid::Uuid::new_v4().to_string();
     sqlx::query("INSERT INTO calendars (id, source_id, href, display_name, read_only) VALUES (?, ?, ?, ?, ?)")

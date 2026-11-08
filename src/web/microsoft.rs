@@ -7,15 +7,51 @@ pub(super) struct ConnectForm {
     source_id: Option<String>,
 }
 
-fn failure(message: String) -> Response {
-    // Plain text and fixed messages: no provider-controlled HTML or token errors.
+/// Where a failed step sends the user back to.
+#[derive(Clone, Copy)]
+enum Back {
+    Sources,
+    Admin,
+}
+
+/// The error page for a failed connection step, in the user's language, with
+/// a link back. Only fixed, translated messages: no provider-controlled text,
+/// token or error detail reaches the page.
+fn microsoft_failure(state: &AppState, lang: &str, message_key: &str, back: Back) -> Response {
+    use crate::i18n::translate;
+    let (heading, href, label) = match back {
+        Back::Sources => (
+            translate(lang, "microsoft-error-heading", None),
+            "/dashboard/sources",
+            translate(lang, "source-calendars-back", None),
+        ),
+        Back::Admin => (
+            translate(lang, "microsoft-error-settings-heading", None),
+            "/dashboard/admin",
+            translate(lang, "microsoft-error-back-admin", None),
+        ),
+    };
+    let tmpl = match state.templates.get_template("booking_action_error.html") {
+        Ok(t) => t,
+        Err(e) => return internal_error_response("internal", &e),
+    };
+    let body = tmpl
+        .render(context! {
+            page_title => heading,
+            title => heading,
+            message => translate(lang, message_key, None),
+            back_href => href,
+            back_label => label,
+            lang => lang,
+        })
+        .unwrap_or_else(|e| internal_error_body("template render", &e));
     (
         axum::http::StatusCode::BAD_REQUEST,
         [
             ("Cache-Control", "no-store"),
             ("Referrer-Policy", "no-referrer"),
         ],
-        message,
+        Html(body),
     )
         .into_response()
 }
@@ -30,11 +66,12 @@ pub(super) async fn microsoft_connect(
         return response;
     }
     if auth.impersonation.is_some() {
-        return failure(crate::i18n::translate(
+        return microsoft_failure(
+            &state,
             auth.lang,
             "microsoft-error-impersonation",
-            None,
-        ));
+            Back::Sources,
+        );
     }
     match crate::microsoft_oauth::start_authorization(
         &state.pool,
@@ -53,11 +90,10 @@ pub(super) async fn microsoft_connect(
             Redirect::to(&url),
         )
             .into_response(),
-        Err(_) => failure(crate::i18n::translate(
-            auth.lang,
-            "microsoft-error-start",
-            None,
-        )),
+        Err(error) => {
+            tracing::warn!(user_id = %auth.user.id, error = %format!("{error:#}"), "could not start Microsoft authorization");
+            microsoft_failure(&state, auth.lang, "microsoft-error-start", Back::Sources)
+        }
     }
 }
 
@@ -74,11 +110,12 @@ pub(super) async fn microsoft_callback(
     Query(query): Query<CallbackQuery>,
 ) -> Response {
     if auth.impersonation.is_some() {
-        return failure(crate::i18n::translate(
+        return microsoft_failure(
+            &state,
             auth.lang,
             "microsoft-error-impersonation",
-            None,
-        ));
+            Back::Sources,
+        );
     }
     let pending = match crate::microsoft_oauth::consume_state(
         &state.pool,
@@ -88,28 +125,24 @@ pub(super) async fn microsoft_callback(
     .await
     {
         Ok(pending) => pending,
-        Err(_) => {
-            return failure(crate::i18n::translate(
-                auth.lang,
-                "microsoft-error-state",
-                None,
-            ))
+        Err(error) => {
+            tracing::warn!(user_id = %auth.user.id, error = %format!("{error:#}"), "Microsoft authorization callback refused");
+            return microsoft_failure(&state, auth.lang, "microsoft-error-state", Back::Sources);
         }
     };
     // Consume state even for denial or missing code; it must never be replayable.
-    if query.error.is_some() {
-        return failure(crate::i18n::translate(
-            auth.lang,
-            "microsoft-error-consent",
-            None,
-        ));
+    if let Some(error) = &query.error {
+        // The OAuth error code (RFC 6749 4.1.2.1), logged only when it looks
+        // like one: the query string is the visitor's to write.
+        let code = Some(error.as_str())
+            .filter(|e| e.len() <= 64 && e.bytes().all(|b| b.is_ascii_lowercase() || b == b'_'))
+            .unwrap_or("unrecognised");
+        tracing::warn!(user_id = %auth.user.id, oauth_error = code, "Microsoft authorization not granted");
+        return microsoft_failure(&state, auth.lang, "microsoft-error-consent", Back::Sources);
     }
     let Some(code) = query.code.filter(|code| !code.is_empty()) else {
-        return failure(crate::i18n::translate(
-            auth.lang,
-            "microsoft-error-consent",
-            None,
-        ));
+        tracing::warn!(user_id = %auth.user.id, "Microsoft authorization callback without a code");
+        return microsoft_failure(&state, auth.lang, "microsoft-error-consent", Back::Sources);
     };
     let source_id = match crate::microsoft_oauth::finish_authorization(
         &state.pool,
@@ -120,12 +153,11 @@ pub(super) async fn microsoft_callback(
     .await
     {
         Ok(source_id) => source_id,
-        Err(_) => {
-            return failure(crate::i18n::translate(
-                auth.lang,
-                "microsoft-error-connect",
-                None,
-            ))
+        Err(error) => {
+            // TokenRefused::AppCredentials here is an expired or wrong
+            // client secret: the operator has to see it.
+            tracing::warn!(user_id = %auth.user.id, error = %format!("{error:#}"), "could not connect a Microsoft calendar");
+            return microsoft_failure(&state, auth.lang, "microsoft-error-connect", Back::Sources);
         }
     };
     // A disabled source keeps its new tokens and stays disabled: nothing syncs.
@@ -156,27 +188,20 @@ pub(super) async fn microsoft_callback(
     .await
     {
         Ok(provider) => provider,
-        Err(_) => {
-            return failure(crate::i18n::translate(
-                auth.lang,
-                "microsoft-error-sync",
-                None,
-            ))
+        Err(error) => {
+            tracing::warn!(user_id = %auth.user.id, source_id = %source_id, error = %format!("{error:#}"), "could not use a newly connected Microsoft calendar");
+            return microsoft_failure(&state, auth.lang, "microsoft-error-sync", Back::Sources);
         }
     };
-    if crate::commands::sync::discover_provider_calendars(
+    if let Err(error) = crate::commands::sync::discover_provider_calendars(
         &state.pool,
         provider.as_ref(),
         &source_id,
     )
     .await
-    .is_err()
     {
-        return failure(crate::i18n::translate(
-            auth.lang,
-            "microsoft-error-sync",
-            None,
-        ));
+        tracing::warn!(user_id = %auth.user.id, source_id = %source_id, error = %format!("{error:#}"), "could not list the calendars of a newly connected Microsoft account");
+        return microsoft_failure(&state, auth.lang, "microsoft-error-sync", Back::Sources);
     }
     {
         let (pool, key, source_id) = (state.pool.clone(), state.secret_key, source_id.clone());
@@ -184,21 +209,24 @@ pub(super) async fn microsoft_callback(
             crate::commands::sync::sync_source_by_id(&pool, &key, &source_id).await;
         });
     }
-    let selected: Option<String> =
-        match sqlx::query_scalar("SELECT write_calendar_href FROM caldav_sources WHERE id = ?")
-            .bind(&source_id)
-            .fetch_one(&state.pool)
-            .await
-        {
-            Ok(selected) => selected,
-            Err(_) => {
-                return failure(crate::i18n::translate(
-                    auth.lang,
-                    "microsoft-error-selection",
-                    None,
-                ))
-            }
-        };
+    let selected: Option<String> = match sqlx::query_scalar(
+        "SELECT write_calendar_href FROM caldav_sources WHERE id = ?",
+    )
+    .bind(&source_id)
+    .fetch_one(&state.pool)
+    .await
+    {
+        Ok(selected) => selected,
+        Err(error) => {
+            tracing::warn!(user_id = %auth.user.id, source_id = %source_id, error = %error, "could not read the Microsoft source's write calendar");
+            return microsoft_failure(
+                &state,
+                auth.lang,
+                "microsoft-error-selection",
+                Back::Sources,
+            );
+        }
+    };
     let destination = if selected.as_ref().is_some_and(|href| !href.is_empty()) {
         "/dashboard/sources".to_string()
     } else {
@@ -241,10 +269,9 @@ pub(super) async fn admin_update_microsoft_oauth2(
     .await
     {
         Ok(()) => Redirect::to("/dashboard/admin").into_response(),
-        Err(_) => failure(crate::i18n::translate(
-            admin.lang,
-            "microsoft-error-settings",
-            None,
-        )),
+        Err(error) => {
+            tracing::warn!(user_id = %admin.user.id, error = %format!("{error:#}"), "Microsoft settings not saved");
+            microsoft_failure(&state, admin.lang, "microsoft-error-settings", Back::Admin)
+        }
     }
 }
