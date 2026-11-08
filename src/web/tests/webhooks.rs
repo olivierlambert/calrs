@@ -49,6 +49,23 @@ async fn spawn_receiver(
     (format!("http://127.0.0.1:{port}/hook"), got, code)
 }
 
+/// A receiver that waits `delay` before answering 200.
+async fn spawn_slow_receiver(delay: std::time::Duration) -> String {
+    let app = Router::new().route(
+        "/hook",
+        post(move || async move {
+            tokio::time::sleep(delay).await;
+            "ok"
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    format!("http://127.0.0.1:{port}/hook")
+}
+
 fn local() -> Vec<String> {
     vec!["127.0.0.1".to_string()]
 }
@@ -1249,4 +1266,130 @@ async fn send_test_is_rate_limited_per_user() {
         "webhooks-error-test-limit",
         None
     )));
+}
+
+async fn pending_for(pool: &SqlitePool, webhook_id: &str) -> Vec<(i64, String)> {
+    sqlx::query_as(
+        "SELECT attempts, next_attempt_at FROM webhook_deliveries WHERE webhook_id = ? AND state = 'pending' ORDER BY seq",
+    )
+    .bind(webhook_id)
+    .fetch_all(pool)
+    .await
+    .unwrap()
+}
+
+#[tokio::test]
+async fn a_slow_endpoint_does_not_hold_up_the_others() {
+    let pool = setup_test_db().await;
+    let (user_id, _, et_id) = seed_test_data(&pool).await;
+    let slow_url = spawn_slow_receiver(std::time::Duration::from_secs(3)).await;
+    let (fast_url, fast_got, _) = spawn_receiver(200).await;
+    let slow = insert_webhook(&pool, &user_id, None, &slow_url).await;
+    let fast = insert_webhook(&pool, &user_id, Some(&et_id), &fast_url).await;
+    let (booking_id, _, _) = insert_test_booking(
+        &pool,
+        &et_id,
+        "2030-01-07T10:00:00",
+        "2030-01-07T10:30:00",
+        "confirmed",
+    )
+    .await;
+    wh::enqueue(&pool, &booking_id, Event::Created, Context::default()).await;
+
+    let now = Utc::now();
+    let handles = wh::start_pass(&pool, &[0u8; 32], now, &local()).await;
+    assert_eq!(handles.len(), 2);
+    // The healthy endpoint is served while the slow one still waits.
+    let started = std::time::Instant::now();
+    while fast_got.lock().unwrap().is_empty() || !pending_for(&pool, &fast).await.is_empty() {
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(2),
+            "fast endpoint waited"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    assert_eq!(pending_for(&pool, &slow).await.len(), 1);
+    // A pass meanwhile starts nothing for the endpoint already in flight.
+    assert!(wh::start_pass(&pool, &[0u8; 32], now, &local())
+        .await
+        .is_empty());
+    for h in handles {
+        h.await.unwrap();
+    }
+    assert!(pending_for(&pool, &slow).await.is_empty());
+}
+
+#[tokio::test]
+async fn a_failing_endpoint_gets_one_request_per_retry() {
+    let pool = setup_test_db().await;
+    let (user_id, _, et_id) = seed_test_data(&pool).await;
+    let (url, got, _) = spawn_receiver(500).await;
+    let wid = insert_webhook(&pool, &user_id, None, &url).await;
+    for day in 7..10 {
+        let (booking_id, _, _) = insert_test_booking(
+            &pool,
+            &et_id,
+            &format!("2030-01-{day:02}T10:00:00"),
+            &format!("2030-01-{day:02}T10:30:00"),
+            "confirmed",
+        )
+        .await;
+        wh::enqueue(&pool, &booking_id, Event::Created, Context::default()).await;
+    }
+    let now = Utc::now();
+    wh::deliver_due_with(&pool, &[0u8; 32], now, &local()).await;
+    assert_eq!(got.lock().unwrap().len(), 1);
+    let rows = pending_for(&pool, &wid).await;
+    let attempts: Vec<i64> = rows.iter().map(|r| r.0).collect();
+    assert_eq!(attempts, [1, 0, 0]);
+    // All three wait for the same retry.
+    assert!(rows.iter().all(|r| r.1 == rows[0].1));
+    assert!(rows[0].1 > utc_stamp(now));
+}
+
+#[tokio::test]
+async fn errors_never_carry_the_url() {
+    let pool = setup_test_db().await;
+    let (user_id, _, et_id) = seed_test_data(&pool).await;
+    // A port nobody listens on, with a token in the path.
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    drop(listener);
+    let url = format!("http://127.0.0.1:{port}/hooks/T0KEN-s3cret");
+    let wid = insert_webhook(&pool, &user_id, None, &url).await;
+    let (booking_id, _, _) = insert_test_booking(
+        &pool,
+        &et_id,
+        "2030-01-07T10:00:00",
+        "2030-01-07T10:30:00",
+        "confirmed",
+    )
+    .await;
+    wh::enqueue(&pool, &booking_id, Event::Created, Context::default()).await;
+    wh::deliver_due_with(&pool, &[0u8; 32], Utc::now(), &local()).await;
+    let (endpoint_error, delivery_error): (Option<String>, Option<String>) = sqlx::query_as(
+        "SELECT w.last_error, d.last_error FROM webhooks w JOIN webhook_deliveries d ON d.webhook_id = w.id WHERE w.id = ?",
+    )
+    .bind(&wid)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    for error in [endpoint_error.unwrap(), delivery_error.unwrap()] {
+        assert!(!error.contains("T0KEN"), "{error}");
+        assert!(!error.contains("127.0.0.1"), "{error}");
+    }
+}
+
+#[test]
+fn the_webhook_client_ignores_proxy_settings() {
+    // A proxy resolves the host itself and would bypass the address pinning.
+    // The environment is process-wide, so this is checked on the source
+    // rather than by setting HTTPS_PROXY under parallel tests.
+    let source = include_str!("../webhooks.rs");
+    let builder = source
+        .split("reqwest::Client::builder()")
+        .nth(1)
+        .expect("the webhook client builder");
+    let chain = &builder[..builder.find(';').unwrap()];
+    assert!(chain.contains(".no_proxy()"), "{chain}");
 }

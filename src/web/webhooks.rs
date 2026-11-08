@@ -62,8 +62,11 @@ const ERROR_BODY_READ_BYTES: usize = 1024;
 const ERROR_SNIPPET_CHARS: usize = 200;
 /// Deliveries that ran out of attempts stay visible this long.
 const FAILED_RETENTION_DAYS: i64 = 7;
-/// Deliveries handled per pass of the delivery task.
-const BATCH: i64 = 100;
+/// Deliveries one endpoint picks up per query.
+const PER_ENDPOINT: i64 = 5;
+/// How long one endpoint may keep delivering before it waits for the next
+/// pass, so a backlog cannot keep an endpoint task alive for ever.
+const ENDPOINT_BUDGET: Duration = Duration::from_secs(30);
 
 /// SQL condition for an endpoint that may receive deliveries. Expects the
 /// aliases `w` (webhooks) and `u` (the user who added it, `LEFT JOIN`ed:
@@ -737,7 +740,11 @@ async fn post(
         Ok(t) => t,
         Err(e) => return Attempt::failed(None, format!("refused: {e}")),
     };
+    // No proxy: reqwest honours HTTP(S)_PROXY and ALL_PROXY by default, and a
+    // proxy resolves the host itself, which would undo the address checks
+    // and the pinning below.
     let mut builder = reqwest::Client::builder()
+        .no_proxy()
         .timeout(REQUEST_TIMEOUT)
         .connect_timeout(CONNECT_TIMEOUT)
         .redirect(reqwest::redirect::Policy::none());
@@ -746,7 +753,7 @@ async fn post(
     }
     let client = match builder.build() {
         Ok(c) => c,
-        Err(e) => return Attempt::failed(None, format!("client: {e}")),
+        Err(e) => return Attempt::failed(None, format!("client: {}", e.without_url())),
     };
     let signature = super::meeting::sign_hmac_sha256(secret.as_bytes(), &body);
     let response = client
@@ -765,12 +772,14 @@ async fn post(
     let mut response = match response {
         Ok(r) => r,
         Err(e) => {
+            // Never the URL: it often carries a token in its path (Slack,
+            // n8n), and this text is logged and shown on the page.
             let what = if e.is_timeout() {
                 "timed out".to_string()
             } else if e.is_connect() {
                 "connection failed".to_string()
             } else {
-                e.to_string()
+                e.without_url().to_string()
             };
             return Attempt::failed(None, snippet(&what));
         }
@@ -877,6 +886,17 @@ async fn deliver_one(
             .bind(&due.id)
             .execute(pool)
             .await;
+            // The endpoint is failing: its other deliveries wait for the same
+            // retry instead of each costing a request (and a timeout) now.
+            let _ = sqlx::query(
+                "UPDATE webhook_deliveries SET next_attempt_at = ?1
+                 WHERE webhook_id = ?2 AND state = 'pending' AND id <> ?3 AND next_attempt_at < ?1",
+            )
+            .bind(iso(next))
+            .bind(&due.webhook_id)
+            .bind(&due.id)
+            .execute(pool)
+            .await;
         }
         None => {
             let _ = sqlx::query(
@@ -894,81 +914,125 @@ async fn deliver_one(
     false
 }
 
-/// Deliver everything that is due. Endpoints are served concurrently, each
-/// one's deliveries in order; an endpoint that fails is left alone for the
-/// rest of the pass. A booking's later events wait for its earlier ones (a
-/// receiver never sees "cancelled" before "created"), until those succeed
-/// or run out of attempts. Returns the number delivered.
+/// Up to [`PER_ENDPOINT`] due deliveries per endpoint (of one endpoint when
+/// `only` is set), oldest first. A booking's later events wait for its
+/// earlier ones (a receiver never sees "cancelled" before "created"), until
+/// those succeed or run out of attempts.
+async fn due_rows(pool: &SqlitePool, now: DateTime<Utc>, only: Option<&str>) -> Vec<Due> {
+    sqlx::query_as(&format!(
+        "SELECT id, webhook_id, event, payload, attempts, url, secret_enc FROM (
+             SELECT d.id, d.webhook_id, d.event, d.payload, d.attempts, w.url, w.secret_enc, d.seq,
+                    ROW_NUMBER() OVER (PARTITION BY d.webhook_id ORDER BY d.seq) AS rn
+             FROM webhook_deliveries d
+             JOIN webhooks w ON w.id = d.webhook_id
+             LEFT JOIN users u ON u.id = w.user_id
+             WHERE d.state = 'pending' AND d.next_attempt_at <= ?1 AND {ACTIVE_ENDPOINT}
+               AND (?2 IS NULL OR d.webhook_id = ?2)
+               AND NOT EXISTS (
+                   SELECT 1 FROM webhook_deliveries o
+                   WHERE o.webhook_id = d.webhook_id AND o.booking_uid = d.booking_uid
+                     AND o.state = 'pending' AND o.seq < d.seq))
+         WHERE rn <= ?3
+         ORDER BY seq"
+    ))
+    .bind(iso(now))
+    .bind(only)
+    .bind(PER_ENDPOINT)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default()
+}
+
+/// Endpoints with a task running, so a pass never starts a second one for
+/// an endpoint that is still busy (slow, or working through a backlog).
+static IN_FLIGHT: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+struct InFlight(String);
+
+impl InFlight {
+    fn claim(webhook_id: &str) -> Option<Self> {
+        let mut busy = IN_FLIGHT.lock().unwrap_or_else(|e| e.into_inner());
+        if busy.iter().any(|w| w == webhook_id) {
+            return None;
+        }
+        busy.push(webhook_id.to_string());
+        Some(Self(webhook_id.to_string()))
+    }
+}
+
+impl Drop for InFlight {
+    fn drop(&mut self) {
+        let mut busy = IN_FLIGHT.lock().unwrap_or_else(|e| e.into_inner());
+        busy.retain(|w| *w != self.0);
+    }
+}
+
+/// One endpoint's task: its due deliveries in order, until one fails,
+/// nothing is due, or [`ENDPOINT_BUDGET`] is spent.
+async fn serve_endpoint(
+    pool: SqlitePool,
+    key: [u8; 32],
+    webhook_id: String,
+    mut batch: Vec<Due>,
+    now: DateTime<Utc>,
+    allowlist: Vec<String>,
+) -> usize {
+    let started = std::time::Instant::now();
+    let mut delivered = 0;
+    while !batch.is_empty() {
+        for d in &batch {
+            if started.elapsed() >= ENDPOINT_BUDGET
+                || !deliver_one(&pool, &key, d, now, &allowlist).await
+            {
+                return delivered;
+            }
+            delivered += 1;
+        }
+        batch = due_rows(&pool, now, Some(&webhook_id)).await;
+    }
+    delivered
+}
+
+/// Start one task per endpoint with something due and no task running.
+/// Endpoints never wait for each other: a dead or slow one only holds its
+/// own task. The handles may be dropped (the tasks carry on).
+pub(crate) async fn start_pass(
+    pool: &SqlitePool,
+    key: &[u8; 32],
+    now: DateTime<Utc>,
+    allowlist: &[String],
+) -> Vec<tokio::task::JoinHandle<usize>> {
+    let mut by_endpoint: Vec<(String, Vec<Due>)> = Vec::new();
+    for d in due_rows(pool, now, None).await {
+        match by_endpoint.iter_mut().find(|(w, _)| *w == d.webhook_id) {
+            Some((_, list)) => list.push(d),
+            None => by_endpoint.push((d.webhook_id.clone(), vec![d])),
+        }
+    }
+    let mut handles = Vec::new();
+    for (webhook_id, list) in by_endpoint {
+        let Some(guard) = InFlight::claim(&webhook_id) else {
+            continue;
+        };
+        let (pool, key, allowlist) = (pool.clone(), *key, allowlist.to_vec());
+        handles.push(tokio::spawn(async move {
+            let _guard = guard;
+            serve_endpoint(pool, key, webhook_id, list, now, allowlist).await
+        }));
+    }
+    handles
+}
+
+/// Deliver what is due and wait for it. Returns the number delivered.
 pub(crate) async fn deliver_due_with(
     pool: &SqlitePool,
     key: &[u8; 32],
     now: DateTime<Utc>,
     allowlist: &[String],
 ) -> usize {
-    // A success can release the next event of the same booking, held back
-    // by the ordering rule: go again until a pass delivers nothing. Every
-    // success deletes a row, so this ends.
-    let mut total = 0;
-    loop {
-        let delivered = deliver_pass(pool, key, now, allowlist).await;
-        if delivered == 0 {
-            return total;
-        }
-        total += delivered;
-    }
-}
-
-async fn deliver_pass(
-    pool: &SqlitePool,
-    key: &[u8; 32],
-    now: DateTime<Utc>,
-    allowlist: &[String],
-) -> usize {
-    let due: Vec<Due> = sqlx::query_as(&format!(
-        "SELECT d.id, d.webhook_id, d.event, d.payload, d.attempts, w.url, w.secret_enc
-         FROM webhook_deliveries d
-         JOIN webhooks w ON w.id = d.webhook_id
-         LEFT JOIN users u ON u.id = w.user_id
-         WHERE d.state = 'pending' AND d.next_attempt_at <= ? AND {ACTIVE_ENDPOINT}
-           AND NOT EXISTS (
-               SELECT 1 FROM webhook_deliveries o
-               WHERE o.webhook_id = d.webhook_id AND o.booking_uid = d.booking_uid
-                 AND o.state = 'pending' AND o.seq < d.seq)
-         ORDER BY d.seq
-         LIMIT ?"
-    ))
-    .bind(iso(now))
-    .bind(BATCH)
-    .fetch_all(pool)
-    .await
-    .unwrap_or_default();
-    if due.is_empty() {
-        return 0;
-    }
-    let mut by_endpoint: Vec<(String, Vec<Due>)> = Vec::new();
-    for d in due {
-        match by_endpoint.iter_mut().find(|(w, _)| *w == d.webhook_id) {
-            Some((_, list)) => list.push(d),
-            None => by_endpoint.push((d.webhook_id.clone(), vec![d])),
-        }
-    }
-    let mut tasks = tokio::task::JoinSet::new();
-    for (_, list) in by_endpoint {
-        let (pool, key, allowlist) = (pool.clone(), *key, allowlist.to_vec());
-        tasks.spawn(async move {
-            let mut delivered = 0;
-            for d in &list {
-                if !deliver_one(&pool, &key, d, now, &allowlist).await {
-                    break;
-                }
-                delivered += 1;
-            }
-            delivered
-        });
-    }
     let mut delivered = 0;
-    while let Some(result) = tasks.join_next().await {
-        delivered += result.unwrap_or(0);
+    for handle in start_pass(pool, key, now, allowlist).await {
+        delivered += handle.await.unwrap_or(0);
     }
     delivered
 }
@@ -995,7 +1059,8 @@ pub async fn run_webhook_loop(pool: SqlitePool, key: [u8; 32]) {
             _ = tokio::time::sleep(Duration::from_secs(30)) => {}
         }
         let allowlist = crate::settings::private_host_allowlist();
-        deliver_due_with(&pool, &key, Utc::now(), &allowlist).await;
+        // Not awaited: endpoint tasks run on their own.
+        drop(start_pass(&pool, &key, Utc::now(), &allowlist).await);
         if last_prune.elapsed() >= Duration::from_secs(3600) {
             prune(&pool, Utc::now()).await;
             last_prune = std::time::Instant::now();

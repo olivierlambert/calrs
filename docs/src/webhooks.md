@@ -192,6 +192,9 @@ within a second.
   up and kept for a week, shown on the webhook's row, then deleted.
 - The events of one booking are delivered in order: a later event waits until
   the earlier one is delivered or given up.
+- Each webhook is served on its own: a slow or unreachable receiver never
+  delays the others. While a receiver is failing, its other deliveries wait
+  for the same retry, so it gets one request per retry, not one per booking.
 - Each webhook shows the time and result of its last attempt, the error (with
   at most 200 characters of the response body), and how many deliveries wait
   for a retry or were given up.
@@ -215,4 +218,7 @@ A webhook URL must be:
 The URL is checked when it is saved and again before every delivery, and the
 request connects to the addresses that were checked, so a DNS answer that
 changes between the check and the connection cannot redirect it. Redirects are
-not followed (a 3xx answer is a failure).
+not followed (a 3xx answer is a failure). Webhook requests ignore the
+`HTTP_PROXY`, `HTTPS_PROXY` and `ALL_PROXY` environment variables: a proxy
+resolves the host itself, which would undo the address checks. Error messages
+never include the URL, since it often carries a token.
