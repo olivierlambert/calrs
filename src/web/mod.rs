@@ -25,6 +25,7 @@ mod sources;
 mod teams;
 mod time_off;
 mod week_start;
+mod write_targets;
 pub(crate) mod writeback;
 
 use crate::booking_window::{
@@ -85,6 +86,7 @@ use public_pages::*;
 use sources::*;
 use teams::*;
 use time_off::*;
+use write_targets::*;
 
 /// Simple per-IP rate limiter for login attempts.
 /// Tracks (attempt_count, window_start) per IP.
@@ -815,6 +817,10 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
         .route(
             "/dashboard/sources/{id}/calendars",
             get(source_calendars_form).post(update_source_calendars),
+        )
+        .route(
+            "/dashboard/sources/destinations",
+            post(save_write_destinations),
         )
         // Settings & avatar
         .route(

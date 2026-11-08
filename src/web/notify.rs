@@ -368,6 +368,9 @@ pub async fn run_reminder_loop(pool: SqlitePool, secret_key: [u8; 32]) {
         // Calendar write-backs that failed earlier and are due another try
         // (#162).
         writeback::retry_failed_writebacks(&pool, &secret_key, Utc::now()).await;
+        // Copies on a chosen calendar whose delete failed when the booking
+        // ended (#47).
+        sweep_leftover_copies(&pool, &secret_key, Utc::now()).await;
 
         // Background sync: pick the stalest enabled source and sync it, once
         // its last attempt is at least `sync_min_age` old (#310). With ctag +

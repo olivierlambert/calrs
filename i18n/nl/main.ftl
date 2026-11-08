@@ -1999,3 +1999,15 @@ apps-revoke-confirm = Toegang van { $name } intrekken? De app moet opnieuw worde
 apps-revoked = Toegang ingetrokken.
 apps-empty = Er is geen app gekoppeld. Een MCP-client vraagt je om toestemming wanneer hij voor het eerst verbinding maakt.
 admin-revoke-apps = Gekoppelde apps intrekken ({ $count })
+
+# Write destination per event type (#47)
+etf-write-destination = Bevestigde boekingen schrijven naar
+etf-write-destination-default = Standaard (instelling van de bron)
+etf-write-destination-help = Alleen voor dit afspraaktype. Standaard komen ze in de schrijfagenda van elk van je bronnen. Bij een teamafspraaktype geldt dit alleen voor de boekingen die je zelf begeleidt.
+etf-write-destination-team = Elk lid kiest zelf onder { $link } waar de boekingen die het begeleidt worden geschreven.
+sources-destinations-heading = Boekingen per afspraaktype
+sources-destinations-help = Kies per afspraaktype de agenda waarin de bevestigde boekingen worden geschreven. Bij een teamafspraaktype geldt dit voor de boekingen die je zelf begeleidt; de andere leden kiezen hun eigen agenda. Boekingen die al geschreven zijn, verhuizen bij de volgende schrijfactie: verzetten, goedkeuren, opnieuw proberen of claimen.
+sources-destinations-saved = Opgeslagen. Nieuwe boekingen gaan naar de hier gekozen agenda's.
+write-destination-not-yours = Er is niets opgeslagen: kies een van je eigen agenda's, voor een afspraaktype dat je begeleidt.
+write-destination-unavailable = { $name } (niet beschikbaar)
+write-destination-refused = Deze agenda weigerde de laatste boeking ({ $error }), die volgens de instelling van de bron is geschreven. De volgende boeking probeert het opnieuw.

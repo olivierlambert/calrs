@@ -1997,3 +1997,15 @@ apps-revoke-confirm = Zugriff für { $name } widerrufen? Die Anwendung muss erne
 apps-revoked = Zugriff widerrufen.
 apps-empty = Keine Anwendung verbunden. Ein MCP-Client bittet beim ersten Verbinden um deine Zustimmung.
 admin-revoke-apps = Verbundene Anwendungen widerrufen ({ $count })
+
+# Write destination per event type (#47)
+etf-write-destination = Bestätigte Buchungen schreiben nach
+etf-write-destination-default = Standard (Einstellung der Quelle)
+etf-write-destination-help = Nur für diese Terminart. Standardmäßig landen sie im Schreibkalender jeder deiner Quellen. Bei einer Team-Terminart gilt das nur für die Buchungen, die du übernimmst.
+etf-write-destination-team = Jedes Mitglied wählt unter { $link }, wohin die Buchungen geschrieben werden, die es übernimmt.
+sources-destinations-heading = Buchungen nach Terminart
+sources-destinations-help = Wähle für jede Terminart den Kalender, in den ihre bestätigten Buchungen geschrieben werden. Bei einer Team-Terminart gilt das für die Buchungen, die du übernimmst; die anderen Mitglieder wählen ihren eigenen. Bereits geschriebene Buchungen ziehen beim nächsten Schreiben um: bei einer Verschiebung, Freigabe, Wiederholung oder Übernahme.
+sources-destinations-saved = Gespeichert. Neue Buchungen landen in den hier gewählten Kalendern.
+write-destination-not-yours = Nichts wurde gespeichert: Wähle einen deiner eigenen Kalender, für eine Terminart, die du übernimmst.
+write-destination-unavailable = { $name } (nicht verfügbar)
+write-destination-refused = Dieser Kalender hat die letzte Buchung abgelehnt ({ $error }); sie wurde stattdessen nach der Einstellung der Quelle geschrieben. Die nächste Buchung versucht es erneut.
