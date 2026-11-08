@@ -232,6 +232,30 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
                 }
             }
 
+            // The host's Microsoft calendars must have been read for this
+            // time: not before their first snapshot, nor past the Graph sync
+            // window (the web path treats both as busy).
+            let host_user: String = sqlx::query_scalar(
+                "SELECT a.user_id FROM event_types et JOIN accounts a ON a.id = et.account_id WHERE et.id = ?",
+            )
+            .bind(&et_id)
+            .fetch_one(pool)
+            .await?;
+            let end_utc = chrono::DateTime::parse_from_rfc3339(&end_at)?.with_timezone(&Utc)
+                + Duration::minutes(buffer_after as i64);
+            match crate::commands::sync::microsoft_coverage_gap(pool, &host_user, end_utc).await {
+                Some(crate::commands::sync::CoverageGap::NotYetSynced) => bail!(
+                    "The host's Microsoft calendar has not finished its first sync; \
+                     its busy times are unknown. Run `calrs sync` and try again"
+                ),
+                Some(crate::commands::sync::CoverageGap::BeyondWindow) => bail!(
+                    "This time is past {}, the end of the window the host's Microsoft calendar is synced for, \
+                     so its conflicts cannot be checked",
+                    crate::commands::sync::microsoft_horizon().format("%Y-%m-%d")
+                ),
+                None => {}
+            }
+
             // Validate: no conflicts with existing bookings
             // Only the host's own busy bookings, same rule as the web path.
             let booking_conflicts = crate::commands::event_type::host_busy_bookings(
@@ -1079,6 +1103,40 @@ mod tests {
             .await
             .expect_err("the host's own event still blocks");
         assert!(err.to_string().contains("Conflict"), "{err}");
+    }
+
+    /// A host's Microsoft calendar is only read up to the Graph sync window,
+    /// and not at all before its first snapshot: the CLI refuses such times
+    /// rather than book over an Outlook event it never saw.
+    #[tokio::test]
+    async fn create_refuses_times_a_microsoft_calendar_was_not_read_for() {
+        let pool = setup_db().await;
+        let (_user_id, host_account, _et_id) = seed_event_type(&pool).await;
+        sqlx::query("INSERT INTO caldav_sources (id, account_id, name, url, username, provider_type) VALUES ('ms', ?, 'M', 'https://graph.microsoft.com/v1.0', 'u', 'microsoft')")
+            .bind(&host_account)
+            .execute(&pool)
+            .await
+            .unwrap();
+        // 2030-03-18 is past the 730-day window from today.
+        let err = run(&pool, &[0u8; 32], create_at("10:00", "a@test.com"))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("first sync"), "{err}");
+        sqlx::query("UPDATE caldav_sources SET last_full_sync = datetime('now') WHERE id = 'ms'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let err = run(&pool, &[0u8; 32], create_at("10:00", "a@test.com"))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("past"), "{err}");
+        sqlx::query("UPDATE caldav_sources SET enabled = 0 WHERE id = 'ms'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        run(&pool, &[0u8; 32], create_at("10:00", "a@test.com"))
+            .await
+            .expect("a disabled Microsoft source vouches for nothing and blocks nothing");
     }
 
     /// The CLI used to ignore the bookable date range: a fair limited to a

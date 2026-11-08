@@ -648,6 +648,24 @@ async fn sync_provider_calendars(
     .fetch_one(pool)
     .await?;
     let strict = strict_snapshots(&provider_type);
+    // The calendars' sync generations once the listing is applied: a sync
+    // that ends with another total saw a calendar's setting change (#324),
+    // and must not mark the source fresh over it.
+    let generations = source_generations(pool, source_id).await;
+    // A write calendar Graph no longer lists is kept (its bookings are
+    // tracked by it), but nothing reads it any more and every write to it
+    // fails: the owner has to pick another one.
+    if strict && !calendars.is_empty() {
+        if let Some(write) = write_calendar.as_deref() {
+            if !calendars.iter().any(|c| c.id == write) {
+                calendar_failures.push(
+                    "the calendar bookings are written to is no longer listed by Microsoft; \
+                     choose another one under Write bookings to"
+                        .to_string(),
+                );
+            }
+        }
+    }
     let mut unreadable_calendars = 0usize;
     // Calendars this sync tried to fetch: the ones not turned off (#324).
     let mut fetched_calendars = 0usize;
@@ -696,7 +714,13 @@ async fn sync_provider_calendars(
             } else {
                 (raw_events, 0)
             };
-            let count = upsert_provider_events(pool, &cal_id, &raw_events).await;
+            let count = upsert_provider_events(pool, &cal_id, generation, &raw_events).await;
+            // Written only while the generation held (see
+            // upsert_provider_events); a change since then means this
+            // snapshot proves nothing gone either.
+            if calendar_generation(pool, &cal_id).await != generation {
+                return Ok(None);
+            }
             // An item calrs could not read may be any cached event, so a
             // snapshot with one cannot prove that a cached event is gone.
             let deleted = if unreadable == 0 {
@@ -770,7 +794,9 @@ async fn sync_provider_calendars(
             }
             // A calendar the granted access cannot read (shared by someone
             // else) is skipped, and its cache kept, rather than failing the
-            // source for good. The write calendar is never skipped.
+            // source for good. The write calendar is never skipped, and one
+            // that counts for availability (busy, or selected by an event
+            // type) is reported: new events on it are missed meanwhile.
             Err(e)
                 if e.downcast_ref::<crate::providers::CalendarUnreadable>()
                     .is_some()
@@ -782,6 +808,12 @@ async fn sync_provider_calendars(
                     "skipped a calendar calrs cannot read with the granted access"
                 );
                 println!("  {} {}: skipped, {}", "…".dimmed(), cal_label, e);
+                if calendar_counts_for_availability(pool, &cal_id).await {
+                    calendar_failures.push(format!(
+                        "{cal_label}: {e}; it counts for availability, so its new events are missed \
+                         until it can be read or is no longer checked"
+                    ));
+                }
             }
             Err(e) => {
                 println!("  {} {} — failed: {}", "✗".red(), cal_label, e);
@@ -793,16 +825,104 @@ async fn sync_provider_calendars(
         calendar_failures.push(crate::providers::CalendarUnreadable.to_string());
     }
 
-    let _ = sqlx::query("UPDATE caldav_sources SET last_full_sync = datetime('now') WHERE id = ?")
+    // On Graph, `last_full_sync` also says the source has delivered a
+    // complete snapshot at least once: until then its calendars cannot
+    // vouch for any time (see [`microsoft_coverage_gap`]).
+    if !strict || calendar_failures.is_empty() {
+        let _ = sqlx::query(
+            "UPDATE caldav_sources SET last_full_sync = datetime('now') WHERE id = ?1
+               AND (SELECT COALESCE(SUM(sync_generation), 0) FROM calendars WHERE source_id = ?1) = ?2",
+        )
         .bind(source_id)
+        .bind(generations)
         .execute(pool)
         .await;
-    sqlx::query("UPDATE caldav_sources SET last_synced = datetime('now') WHERE id = ?")
-        .bind(source_id)
-        .execute(pool)
-        .await?;
+    }
+    // In one statement with the generation check: a calendar turned on
+    // during this sync left the source stale, and it stays so.
+    let fresh = sqlx::query(
+        "UPDATE caldav_sources SET last_synced = datetime('now') WHERE id = ?1
+           AND (SELECT COALESCE(SUM(sync_generation), 0) FROM calendars WHERE source_id = ?1) = ?2",
+    )
+    .bind(source_id)
+    .bind(generations)
+    .execute(pool)
+    .await?;
+    if fresh.rows_affected() == 0 {
+        tracing::info!(source_id = %source_id, "a calendar sync setting changed during the sync; the source stays stale");
+    }
     tracing::info!(source_id = %source_id, "calendar provider sync completed");
     calendar_failures_result(&calendar_failures)
+}
+
+/// The sum of the sync generations of a source's calendars. Generations
+/// only grow, and new calendars start at 0, so the sum changes whenever a
+/// calendar's sync setting does.
+async fn source_generations(pool: &SqlitePool, source_id: &str) -> i64 {
+    sqlx::query_scalar(
+        "SELECT COALESCE(SUM(sync_generation), 0) FROM calendars WHERE source_id = ?",
+    )
+    .bind(source_id)
+    .fetch_one(pool)
+    .await
+    .unwrap_or(-1)
+}
+
+/// Whether a calendar's events can block a slot: it is busy, or an event
+/// type selects it.
+async fn calendar_counts_for_availability(pool: &SqlitePool, cal_id: &str) -> bool {
+    sqlx::query_scalar(
+        "SELECT c.is_busy = 1 OR EXISTS (SELECT 1 FROM event_type_calendars WHERE calendar_id = c.id)
+         FROM calendars c WHERE c.id = ?",
+    )
+    .bind(cal_id)
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten()
+    .unwrap_or(true)
+}
+
+/// Why a host's Microsoft calendars cannot vouch for a time (see
+/// [`microsoft_coverage_gap`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CoverageGap {
+    /// A Microsoft source has not delivered its first complete snapshot.
+    NotYetSynced,
+    /// The time lies past the Graph sync window: no snapshot covers it.
+    BeyondWindow,
+}
+
+/// The end of the time a host's Microsoft calendars cover, from now: the
+/// Graph sync window. Later times are never fetched.
+pub(crate) fn microsoft_horizon() -> chrono::DateTime<Utc> {
+    Utc::now() + chrono::Duration::days(crate::providers::graph::SYNC_WINDOW_DAYS)
+}
+
+/// Whether the host's enabled Microsoft sources can vouch for a time ending
+/// at `end`. A host with no Microsoft source has no gap. Busy computations
+/// treat a gap as busy, so a guest is never offered a time the host's
+/// Outlook calendar was never read for.
+pub(crate) async fn microsoft_coverage_gap(
+    pool: &SqlitePool,
+    user_id: &str,
+    end: chrono::DateTime<Utc>,
+) -> Option<CoverageGap> {
+    let sources: Vec<Option<String>> = sqlx::query_scalar(
+        "SELECT cs.last_full_sync FROM caldav_sources cs JOIN accounts a ON a.id = cs.account_id
+         WHERE a.user_id = ? AND cs.enabled = 1 AND cs.provider_type = 'microsoft'",
+    )
+    .bind(user_id)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
+    if sources.is_empty() {
+        return None;
+    }
+    if sources.iter().any(Option::is_none) {
+        return Some(CoverageGap::NotYetSynced);
+    }
+    (end > microsoft_horizon()).then_some(CoverageGap::BeyondWindow)
 }
 
 /// Lists a provider source's calendars into the cache without fetching any
@@ -939,9 +1059,14 @@ async fn upsert_calendar_provider(
 /// Provider-trait equivalent of [`upsert_raw_events`]. Splits the iCal blob
 /// into VEVENTs and upserts into the `events` table (same composite key:
 /// calendar_id + uid + recurrence_id).
+///
+/// Each row is written only while the calendar's sync generation is still
+/// `generation`, in the same statement: a calendar turned off (or off and on)
+/// mid-way gets no part of a snapshot fetched before the change (#324).
 async fn upsert_provider_events(
     pool: &SqlitePool,
     cal_id: &str,
+    generation: i64,
     raw_events: &[ProviderRawEvent],
 ) -> u32 {
     let mut count = 0u32;
@@ -969,9 +1094,10 @@ async fn upsert_provider_events(
             .unwrap_or_default();
 
             let event_id = Uuid::new_v4().to_string();
-            let _ = sqlx::query(
+            let written = sqlx::query(
                 "INSERT INTO events (id, calendar_id, uid, summary, start_at, end_at, location, description, status, rrule, raw_ical, recurrence_id, timezone, transp)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                 WHERE (SELECT sync_generation FROM calendars WHERE id = ?) = ?
                  ON CONFLICT(calendar_id, uid, COALESCE(recurrence_id, '')) DO UPDATE SET
                    summary = excluded.summary,
                    start_at = excluded.start_at,
@@ -1000,10 +1126,17 @@ async fn upsert_provider_events(
             .bind(&recurrence_id)
             .bind(&timezone)
             .bind(&transp)
+            .bind(cal_id)
+            .bind(generation)
             .execute(pool)
             .await;
 
-            count += 1;
+            if let Err(error) = &written {
+                tracing::warn!(%error, "could not cache a provider event");
+            }
+            if matches!(written, Ok(ref r) if r.rows_affected() > 0) {
+                count += 1;
+            }
         }
     }
     count
@@ -1151,7 +1284,68 @@ async fn remove_orphaned_provider_events(
             .await?;
         deleted += result.rows_affected() as u32;
     }
+    if strict && is_write_calendar {
+        cancel_uncached_vanished_bookings(
+            pool,
+            key,
+            provider,
+            source_id,
+            &seen_uids,
+            (since, until),
+        )
+        .await?;
+    }
     Ok(deleted)
+}
+
+/// A booking whose event the host deleted before any snapshot cached it
+/// has no cached row for the sweep above to find. On Graph, a confirmed
+/// booking written to this write calendar, whose write was verified by
+/// reading it back (no `writeback_error`), whose uid no cached event holds
+/// and a clean snapshot does not contain, starting inside the fetched
+/// window, goes through [`cancel_orphaned_booking`] like any other: scoped to
+/// this source and host, and cancelled only once Graph confirms by UID that
+/// the event is gone. The evidence is the CalDAV booking sweep's (no cached
+/// copy anywhere, server confirms), plus a complete snapshot and a verified
+/// write.
+async fn cancel_uncached_vanished_bookings(
+    pool: &SqlitePool,
+    key: &[u8; 32],
+    provider: &dyn crate::providers::CalendarProvider,
+    source_id: &str,
+    seen_uids: &std::collections::HashSet<(String, String)>,
+    (since, until): (chrono::DateTime<Utc>, chrono::DateTime<Utc>),
+) -> Result<()> {
+    let candidates: Vec<(String, String)> = sqlx::query_as(
+        "SELECT b.uid, b.start_at FROM bookings b
+         JOIN event_types et ON et.id = b.event_type_id
+         JOIN accounts a ON a.id = et.account_id
+         JOIN caldav_sources cs ON cs.id = ?
+         JOIN accounts sa ON sa.id = cs.account_id
+                         AND sa.user_id = COALESCE(b.assigned_user_id, a.user_id)
+         WHERE b.status = 'confirmed'
+           AND b.time_version = 1
+           AND b.caldav_calendar_href = cs.write_calendar_href
+           AND b.writeback_error IS NULL
+           AND b.uid NOT IN (SELECT uid FROM events)",
+    )
+    .bind(source_id)
+    .fetch_all(pool)
+    .await?;
+    for (uid, start_at) in candidates {
+        if seen_uids.iter().any(|(seen, _)| *seen == uid) {
+            continue;
+        }
+        let Ok(start) = chrono::DateTime::parse_from_rfc3339(&start_at) else {
+            continue;
+        };
+        let start = start.with_timezone(&Utc);
+        if start < since || start >= until {
+            continue;
+        }
+        cancel_orphaned_booking(pool, key, OrphanCheck::Provider(provider), source_id, &uid).await;
+    }
+    Ok(())
 }
 
 // --- Helper functions ---
@@ -2618,22 +2812,45 @@ mod tests {
     #[tokio::test]
     async fn a_calendar_shared_without_read_access_is_skipped_not_failed() {
         let pool = setup_test_db().await;
-        let (source, _, _, write_calendar) = provider_fixture(&pool, kinds::MICROSOFT).await;
-        let (shared, _, _, _) =
-            upsert_calendar_provider(&pool, &source, &remote_calendar("shared"))
-                .await
-                .unwrap();
+        let (source, event_type, _, write_calendar) =
+            provider_fixture(&pool, kinds::MICROSOFT).await;
+        let mut colleague = remote_calendar("shared");
+        colleague.shared = true;
+        let (shared, _, _, _) = upsert_calendar_provider(&pool, &source, &colleague)
+            .await
+            .unwrap();
         let start = Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
         cached_provider_event(&pool, &shared, "colleague-meeting", &start).await;
 
         let mut provider = snapshot_provider("write");
-        provider.others.push(remote_calendar("shared"));
+        provider.others.push(colleague);
         provider.unreadable.push("shared".into());
         sync_provider_calendars(&pool, &[0; 32], &provider, &source)
             .await
             .unwrap();
         assert_eq!(cached_uids(&pool, &shared).await, ["colleague-meeting"]);
         assert!(cached_uids(&pool, &write_calendar).await.is_empty());
+
+        // Once an event type checks it, its new events would be missed: the
+        // sync reports it, and still keeps the cache and syncs the rest.
+        sqlx::query("INSERT INTO event_type_calendars (event_type_id, calendar_id) VALUES (?, ?)")
+            .bind(&event_type)
+            .bind(&shared)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let error = sync_provider_calendars(&pool, &[0; 32], &provider, &source)
+            .await
+            .unwrap_err();
+        assert!(
+            error.to_string().contains("counts for availability"),
+            "{error}"
+        );
+        assert_eq!(cached_uids(&pool, &shared).await, ["colleague-meeting"]);
+        sqlx::query("DELETE FROM event_type_calendars")
+            .execute(&pool)
+            .await
+            .unwrap();
 
         // The write calendar is where bookings go: never skipped.
         provider.unreadable = vec!["write".into()];
@@ -2909,6 +3126,9 @@ mod tests {
             .await
             .unwrap();
         assert!(cached_uids(&pool, &calendar).await.is_empty());
+        // Turning it on marked the source stale; the discarded sync must not
+        // mark it fresh again, or the next slot page would skip the refetch.
+        assert_eq!(source_stamps(&pool, &source).await, (None, None));
 
         let mut provider = snapshot_provider("write");
         provider.events = other_event_snapshot();
@@ -2916,6 +3136,120 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(cached_uids(&pool, &calendar).await, ["still-there"]);
+        let (synced, full) = source_stamps(&pool, &source).await;
+        assert!(synced.is_some() && full.is_some());
+    }
+
+    async fn source_stamps(pool: &SqlitePool, source: &str) -> (Option<String>, Option<String>) {
+        sqlx::query_as("SELECT last_synced, last_full_sync FROM caldav_sources WHERE id = ?")
+            .bind(source)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
+    /// The generation check and the write are one statement: a snapshot
+    /// read for an older generation writes nothing, whatever happened
+    /// between the check and the write.
+    #[tokio::test]
+    async fn a_snapshot_for_an_older_generation_writes_nothing() {
+        let pool = setup_test_db().await;
+        let (source, _, _, calendar) = provider_fixture(&pool, kinds::MICROSOFT).await;
+        let generation = calendar_generation(&pool, &calendar).await;
+        set_calendar_sync_enabled(&pool, &source, &calendar, false)
+            .await
+            .unwrap();
+        set_calendar_sync_enabled(&pool, &source, &calendar, true)
+            .await
+            .unwrap();
+        let written =
+            upsert_provider_events(&pool, &calendar, generation, &other_event_snapshot()).await;
+        assert_eq!(written, 0);
+        assert!(cached_uids(&pool, &calendar).await.is_empty());
+        let current = calendar_generation(&pool, &calendar).await;
+        upsert_provider_events(&pool, &calendar, current, &other_event_snapshot()).await;
+        assert_eq!(cached_uids(&pool, &calendar).await, ["still-there"]);
+    }
+
+    /// A Graph source counts as read only once a sync completed without a
+    /// calendar failure; until then its hosts are busy (see
+    /// `microsoft_coverage_gap`). EWS stamps every completed sync, as before.
+    #[tokio::test]
+    async fn only_a_clean_graph_snapshot_makes_the_source_ready() {
+        let pool = setup_test_db().await;
+        let (source, _, user, _) = provider_fixture(&pool, kinds::MICROSOFT).await;
+        let mut failing = snapshot_provider("write");
+        failing.fetch_fails = true;
+        assert!(sync_provider_calendars(&pool, &[0; 32], &failing, &source)
+            .await
+            .is_err());
+        assert_eq!(source_stamps(&pool, &source).await.1, None);
+        assert_eq!(
+            microsoft_coverage_gap(&pool, &user, Utc::now()).await,
+            Some(CoverageGap::NotYetSynced)
+        );
+        sync_provider_calendars(&pool, &[0; 32], &snapshot_provider("write"), &source)
+            .await
+            .unwrap();
+        assert!(source_stamps(&pool, &source).await.1.is_some());
+        assert_eq!(microsoft_coverage_gap(&pool, &user, Utc::now()).await, None);
+
+        let (ews, _, ews_user, _) = provider_fixture(&pool, kinds::EWS).await;
+        assert!(sync_provider_calendars(&pool, &[0; 32], &failing, &ews)
+            .await
+            .is_err());
+        assert!(source_stamps(&pool, &ews).await.1.is_some());
+        assert_eq!(
+            microsoft_coverage_gap(&pool, &ews_user, Utc::now()).await,
+            None
+        );
+    }
+
+    /// A booking whose Graph event the host deleted before any snapshot
+    /// cached it: cancelled once Graph confirms it gone, on the same
+    /// evidence as the cached path; never when the lookup is inconclusive,
+    /// the write was never verified, the snapshot still holds it, or on EWS.
+    #[tokio::test]
+    async fn a_vanished_booking_never_cached_is_cancelled_only_on_graphs_word() {
+        let soon = (Utc::now() + chrono::Duration::days(10))
+            .format("%Y-%m-%dT%H:%M:%SZ")
+            .to_string();
+        for (kind, exists, writeback_error, in_snapshot, expected) in [
+            (kinds::MICROSOFT, Some(false), false, false, "cancelled"),
+            (kinds::MICROSOFT, None, false, false, "confirmed"),
+            (kinds::MICROSOFT, Some(true), false, false, "confirmed"),
+            (kinds::MICROSOFT, Some(false), true, false, "confirmed"),
+            (kinds::MICROSOFT, Some(false), false, true, "confirmed"),
+            (kinds::EWS, Some(false), false, false, "confirmed"),
+        ] {
+            let pool = setup_test_db().await;
+            let (source, et, _, _) = provider_fixture(&pool, kind).await;
+            let booking = provider_booking(&pool, &et, "never-cached").await;
+            sqlx::query("UPDATE bookings SET start_at = ?, end_at = ?, time_version = 1, writeback_error = ? WHERE id = ?")
+                .bind(&soon)
+                .bind(&soon)
+                .bind(writeback_error.then_some("read-back failed"))
+                .bind(&booking)
+                .execute(&pool)
+                .await
+                .unwrap();
+            let mut provider = snapshot_with_other_event("write");
+            provider.exists = exists;
+            if in_snapshot {
+                provider.events.push(ProviderRawEvent {
+                    remote_id: "booking".into(),
+                    ical: "BEGIN:VEVENT\r\nUID:never-cached\r\nDTSTART:20300101T100000Z\r\nDTEND:20300101T110000Z\r\nEND:VEVENT\r\n".into(),
+                });
+            }
+            sync_provider_calendars(&pool, &[0; 32], &provider, &source)
+                .await
+                .unwrap();
+            assert_eq!(
+                booking_status(&pool, &booking).await,
+                expected,
+                "{kind} {exists:?} {writeback_error} {in_snapshot}"
+            );
+        }
     }
 
     /// Lists no calendar at all, which a mailbox never really has.
@@ -3005,9 +3339,11 @@ mod tests {
             .await
             .unwrap();
 
-        sync_provider_calendars(&pool, &[0; 32], &snapshot_provider("other"), &source)
+        // Kept, but the owner is told to pick another one.
+        let error = sync_provider_calendars(&pool, &[0; 32], &snapshot_provider("other"), &source)
             .await
-            .unwrap();
+            .unwrap_err();
+        assert!(error.to_string().contains("no longer listed"), "{error}");
         discover_provider_calendars(&pool, &snapshot_provider("other"), &source)
             .await
             .unwrap();

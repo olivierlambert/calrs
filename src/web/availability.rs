@@ -733,6 +733,26 @@ pub(super) async fn fetch_busy_times_for_user_opts(
         }
     }
 
+    // A Microsoft source that has not delivered its first snapshot, or a
+    // time past the Graph sync window, says nothing about the host's
+    // Outlook calendar: busy, rather than free.
+    let window_end_utc = chrono::TimeZone::from_local_datetime(&host_tz, &window_end)
+        .latest()
+        .map(|end| end.with_timezone(&chrono::Utc))
+        .unwrap_or_else(|| window_end.and_utc());
+    match crate::commands::sync::microsoft_coverage_gap(pool, user_id, window_end_utc).await {
+        Some(crate::commands::sync::CoverageGap::NotYetSynced) => {
+            busy.push((window_start, window_end));
+        }
+        Some(crate::commands::sync::CoverageGap::BeyondWindow) => {
+            let horizon = crate::commands::sync::microsoft_horizon()
+                .with_timezone(&host_tz)
+                .naive_local();
+            busy.push((horizon.max(window_start), window_end));
+        }
+        None => {}
+    }
+
     busy
 }
 

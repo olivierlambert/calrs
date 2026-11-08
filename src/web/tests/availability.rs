@@ -176,6 +176,42 @@ async fn fetch_busy_times_empty_calendar() {
     assert!(busy.is_empty(), "No events or bookings → no busy times");
 }
 
+/// A Microsoft source that has not delivered its first snapshot makes the
+/// host busy for the whole window, and a window reaching past the Graph sync
+/// window is busy from its end: either way calrs never read that time.
+#[tokio::test]
+async fn an_unread_microsoft_calendar_blocks_rather_than_frees() {
+    let pool = setup_test_db().await;
+    let (user_id, account_id, _) = seed_test_data(&pool).await;
+    sqlx::query("INSERT INTO caldav_sources (id, account_id, name, url, username, provider_type) VALUES ('ms', ?, 'M', 'https://graph.microsoft.com/v1.0', 'u', 'microsoft')")
+        .bind(&account_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let today = chrono::Utc::now().date_naive();
+    let (start, end) = (
+        today.and_hms_opt(0, 0, 0).unwrap() + chrono::Duration::days(1),
+        today.and_hms_opt(0, 0, 0).unwrap() + chrono::Duration::days(8),
+    );
+    let busy = |start, end| fetch_busy_times_for_user(&pool, &user_id, start, end, Tz::UTC, None);
+    assert_eq!(busy(start, end).await, [(start, end)]);
+
+    sqlx::query("UPDATE caldav_sources SET last_full_sync = datetime('now') WHERE id = 'ms'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert!(busy(start, end).await.is_empty());
+
+    let far = start + chrono::Duration::days(800);
+    let blocked = busy(start, far).await;
+    assert_eq!(blocked.len(), 1);
+    assert!(
+        blocked[0].0 > start + chrono::Duration::days(700),
+        "{blocked:?}"
+    );
+    assert_eq!(blocked[0].1, far);
+}
+
 #[tokio::test]
 async fn fetch_busy_times_includes_bookings() {
     let pool = setup_test_db().await;
