@@ -413,7 +413,6 @@ overview-avail-banner-cta = Controleer je beschikbaarheid
 overview-dismiss = Sluiten
 overview-step-connect-calendar = Koppel een agenda
 overview-step-first-event-type = Maak je eerste afspraaktype aan
-overview-step-share-link = Deel je boekingslink
 overview-pending-approval = In afwachting van goedkeuring
 overview-confirm = Bevestigen
 overview-decline = Afwijzen
@@ -460,6 +459,7 @@ overview-time-range = { $from } tot { $to }
 overview-until = tot { $time }
 overview-expires = Verloopt { $when }
 overview-guest-and-more = { $name } en { $count } anderen
+overview-greeting-night = Hallo, { $name }
 overview-greeting-morning = Goedemorgen, { $name }
 overview-greeting-afternoon = Goedemiddag, { $name }
 overview-greeting-evening = Goedenavond, { $name }
@@ -491,12 +491,15 @@ overview-when-hours = { $count ->
     [one] over 1 uur
    *[other] over { $count } uur
 }
+overview-when-today-night = later vannacht
 overview-when-today-morning = vanochtend
 overview-when-today-afternoon = vanmiddag
 overview-when-today-evening = vanavond
+overview-when-tomorrow-night = morgen heel vroeg
 overview-when-tomorrow-morning = morgenochtend
 overview-when-tomorrow-afternoon = morgenmiddag
 overview-when-tomorrow-evening = morgenavond
+overview-when-weekday-night = { $day } heel vroeg
 overview-when-weekday-morning = { $day }ochtend
 overview-when-weekday-afternoon = { $day }middag
 overview-when-weekday-evening = { $day }avond

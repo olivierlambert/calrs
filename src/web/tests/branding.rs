@@ -37,6 +37,16 @@ fn custom_theme_derives_a_dark_palette_for_a_light_one() {
     let (light, dark) = theme_blocks(&css);
     assert!(light.contains("--bg:#f5f4f0"), "{}", light);
     assert!(light.contains("--surface:#ffffff"), "{}", light);
+    // The light neutrals come from the theme's own text and surface, not
+    // from the default palette.
+    for var in [
+        "--text-secondary:color-mix(in srgb,var(--text) 78%,var(--surface))",
+        "--text-muted:color-mix(in srgb,var(--text) 64%,var(--surface))",
+        "--border:color-mix(in srgb,var(--text) 13%,var(--surface))",
+        "--surface-hover:color-mix(in srgb,var(--text) 4%,var(--surface))",
+    ] {
+        assert!(light.contains(var), "{var} in {light}");
+    }
     assert!(
         !dark.contains("--bg:#f5f4f0"),
         "dark bg must differ: {}",

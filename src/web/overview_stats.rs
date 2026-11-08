@@ -151,19 +151,6 @@ pub(super) async fn fetch_stat_rows(
         .collect())
 }
 
-/// Whether the user has ever had a booking in scope, for the checklist.
-pub(super) async fn has_any_booking(pool: &SqlitePool, user_id: &str) -> bool {
-    let sql = format!("SELECT EXISTS (SELECT 1 {FROM_SCOPED} WHERE {HOST_SCOPE})");
-    sqlx::query_scalar::<_, bool>(&sql)
-        .bind(user_id)
-        .bind(user_id)
-        .bind(user_id)
-        .bind(user_id)
-        .fetch_one(pool)
-        .await
-        .unwrap_or(false)
-}
-
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(super) struct WeekBucket {
     pub start: Option<NaiveDate>,
@@ -1216,10 +1203,11 @@ pub(super) fn week_context(
 
 // --- Greeting ---
 
-/// The part of the day a wall-clock hour falls in: morning from 05:00,
-/// afternoon from 12:00, evening from 18:00 (and through the night).
+/// The part of the day a wall-clock hour falls in: night until 05:00,
+/// morning until 12:00, afternoon until 18:00, then evening.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Period {
+    Night,
     Morning,
     Afternoon,
     Evening,
@@ -1227,15 +1215,18 @@ enum Period {
 
 fn period(hour: u32) -> Period {
     match hour {
+        0..=4 => Period::Night,
         5..=11 => Period::Morning,
         12..=17 => Period::Afternoon,
         _ => Period::Evening,
     }
 }
 
-/// "Good evening, Olivier", by the hour of the user's own clock.
+/// "Good evening, Olivier", by the hour of the user's own clock; a plain
+/// "Hello" in the small hours.
 pub(super) fn greeting(lang: &str, hour: u32, name: &str) -> String {
     let key = match period(hour) {
+        Period::Night => "overview-greeting-night",
         Period::Morning => "overview-greeting-morning",
         Period::Afternoon => "overview-greeting-afternoon",
         Period::Evening => "overview-greeting-evening",
@@ -1331,61 +1322,61 @@ pub(super) fn masthead_context(
 }
 
 /// When the next meeting starts, in words: "in 25 minutes", "in 2 hours",
-/// "this afternoon", "tomorrow morning", "Tuesday evening", "in 9 days",
-/// or "Now, until 16:00" while it is going on. `now` and the times are the
-/// user's wall clock.
+/// "this afternoon", "tomorrow morning", "early tomorrow", "Tuesday
+/// evening", "in 9 days", or "Now, until 16:00" while it is going on.
+/// `minutes_until` is measured between UTC instants, so a clock change in
+/// between does not skew it; `start`, `end` and `now` are the user's wall
+/// clock, for the day and the part of it. Under four hours away the
+/// countdown is in minutes or hours, whatever the date: 00:20 seen at
+/// 23:50 is "in 30 minutes".
 pub(super) fn when_words(
     lang: &str,
     start: NaiveDateTime,
     end: NaiveDateTime,
     now: NaiveDateTime,
+    minutes_until: i64,
 ) -> String {
-    if start <= now {
+    if minutes_until <= 0 {
         let mut args = fluent_bundle::FluentArgs::new();
         args.set("time", time_label(end));
         return crate::i18n::translate(lang, "overview-when-now", Some(&args));
     }
-    let today = now.date();
-    let minutes = (start - now).num_minutes();
+    if minutes_until < 60 {
+        return tr1(lang, "overview-when-minutes", "count", minutes_until);
+    }
+    if minutes_until < 4 * 60 {
+        return tr1(
+            lang,
+            "overview-when-hours",
+            "count",
+            (minutes_until + 30) / 60,
+        );
+    }
+    let days = (start.date() - now.date()).num_days();
     let part = period(start.hour());
-    if start.date() == today {
-        if minutes < 60 {
-            return tr1(lang, "overview-when-minutes", "count", minutes.max(1));
+    let key = match (days, part) {
+        (0, Period::Night) => "overview-when-today-night",
+        (0, Period::Morning) => "overview-when-today-morning",
+        (0, Period::Afternoon) => "overview-when-today-afternoon",
+        (0, Period::Evening) => "overview-when-today-evening",
+        (1, Period::Night) => "overview-when-tomorrow-night",
+        (1, Period::Morning) => "overview-when-tomorrow-morning",
+        (1, Period::Afternoon) => "overview-when-tomorrow-afternoon",
+        (1, Period::Evening) => "overview-when-tomorrow-evening",
+        (2..=6, part) => {
+            let mut args = fluent_bundle::FluentArgs::new();
+            args.set("day", weekday_long(lang, start.weekday()));
+            let key = match part {
+                Period::Night => "overview-when-weekday-night",
+                Period::Morning => "overview-when-weekday-morning",
+                Period::Afternoon => "overview-when-weekday-afternoon",
+                Period::Evening => "overview-when-weekday-evening",
+            };
+            return crate::i18n::translate(lang, key, Some(&args));
         }
-        if minutes < 4 * 60 {
-            return tr1(lang, "overview-when-hours", "count", (minutes + 30) / 60);
-        }
-        return t(
-            lang,
-            match part {
-                Period::Morning => "overview-when-today-morning",
-                Period::Afternoon => "overview-when-today-afternoon",
-                Period::Evening => "overview-when-today-evening",
-            },
-        );
-    }
-    let days = (start.date() - today).num_days();
-    if days == 1 {
-        return t(
-            lang,
-            match part {
-                Period::Morning => "overview-when-tomorrow-morning",
-                Period::Afternoon => "overview-when-tomorrow-afternoon",
-                Period::Evening => "overview-when-tomorrow-evening",
-            },
-        );
-    }
-    if days < 7 {
-        let mut args = fluent_bundle::FluentArgs::new();
-        args.set("day", weekday_long(lang, start.weekday()));
-        let key = match part {
-            Period::Morning => "overview-when-weekday-morning",
-            Period::Afternoon => "overview-when-weekday-afternoon",
-            Period::Evening => "overview-when-weekday-evening",
-        };
-        return crate::i18n::translate(lang, key, Some(&args));
-    }
-    tr1(lang, "overview-when-days", "count", days)
+        _ => return tr1(lang, "overview-when-days", "count", days),
+    };
+    t(lang, key)
 }
 
 // --- Coming up ---
@@ -1485,14 +1476,19 @@ pub(super) async fn agenda(
                         title => title,
                         initials => initials(&guest),
                         hue => face_hue(&guest),
-                        when_words => capitalize(&when_words(lang, s, e, now_local)),
+                        when_words => capitalize(&when_words(
+                            lang,
+                            s,
+                            e,
+                            now_local,
+                            (s_utc - now.naive_utc()).num_minutes(),
+                        )),
                         guest_label => guest_label(lang, &guest, extra),
                         guest_name => guest,
                         guest_email => email,
                         extra_guests => extra,
                         day => day.to_string(),
                         day_label => day_label,
-                        day_short => relative_day(lang, day, today),
                         day_date => crate::i18n::format_short_date(day, lang),
                         is_today => day == today,
                         time => time_label(s),
@@ -1500,7 +1496,7 @@ pub(super) async fn agenda(
                         duration => duration_label(lang, (e - s).num_minutes()),
                         start_utc => s_utc.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
                         end_utc => e_utc.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
-                        ongoing => s <= now_local,
+                        ongoing => s_utc <= now.naive_utc(),
                         join_url => join,
                         place => place,
                         // Every host in scope may read the booking's host

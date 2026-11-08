@@ -341,9 +341,6 @@ async fn stats_count_only_the_meetings_the_user_hosts() {
     for g in ["Mine", "Assigned", "Collective", "Claimed"] {
         assert!(guests.contains(&g.to_string()), "{g} in {guests:?}");
     }
-    assert!(ov::has_any_booking(&pool, &me).await);
-    let lonely = insert_role_user(&pool, "lonely@example.com", "user").await;
-    assert!(!ov::has_any_booking(&pool, &lonely).await);
 }
 
 #[tokio::test]
@@ -710,7 +707,9 @@ fn greeting_follows_the_users_clock() {
     assert_eq!(ov::greeting("en", 7, "Olivier"), "Good morning, Olivier");
     assert_eq!(ov::greeting("en", 12, "Olivier"), "Good afternoon, Olivier");
     assert_eq!(ov::greeting("en", 18, "Olivier"), "Good evening, Olivier");
-    assert_eq!(ov::greeting("en", 2, "Olivier"), "Good evening, Olivier");
+    assert_eq!(ov::greeting("en", 23, "Olivier"), "Good evening, Olivier");
+    // No "Good evening" in the small hours.
+    assert_eq!(ov::greeting("en", 2, "Olivier"), "Hello, Olivier");
     assert_eq!(ov::greeting("fr", 20, "Olivier"), "Bonsoir, Olivier");
     let mast = ov::masthead_context("en", dt(2026, 11, 7, 9, 30), "Olivier", None, 0, 0);
     assert_eq!(
@@ -790,9 +789,19 @@ fn day_sentence_tells_the_next_meeting_and_the_requests() {
 fn when_words_count_down_in_words() {
     let now = dt(2026, 11, 4, 12, 0); // Wednesday noon
     let at = |d, h, m| dt(2026, 11, d, h, m);
-    let w = |start: NaiveDateTime| ov::when_words("en", start, start + Duration::minutes(30), now);
+    // Wall-clock difference stands in for the UTC one in a zone without
+    // a clock change.
+    let w = |start: NaiveDateTime| {
+        ov::when_words(
+            "en",
+            start,
+            start + Duration::minutes(30),
+            now,
+            (start - now).num_minutes(),
+        )
+    };
     assert_eq!(w(at(4, 12, 25)), "in 25 minutes");
-    assert_eq!(w(at(4, 12, 0) + Duration::seconds(20)), "in 1 minute");
+    assert_eq!(w(at(4, 12, 1)), "in 1 minute");
     assert_eq!(w(at(4, 13, 0)), "in 1 hour");
     assert_eq!(w(at(4, 14, 40)), "in 3 hours");
     assert_eq!(w(at(4, 18, 30)), "this evening");
@@ -800,14 +809,62 @@ fn when_words_count_down_in_words() {
     assert_eq!(w(at(5, 15, 30)), "tomorrow afternoon");
     assert_eq!(w(at(9, 15, 30)), "Monday afternoon");
     assert_eq!(w(at(14, 10, 0)), "in 10 days");
+    // 03:00 is night, not evening.
+    assert_eq!(w(at(5, 3, 0)), "early tomorrow");
+    assert_eq!(w(at(7, 3, 0)), "early Saturday morning");
     assert_eq!(
-        ov::when_words("en", at(4, 11, 45), at(4, 12, 15), now),
+        ov::when_words("en", at(4, 11, 45), at(4, 12, 15), now, -15),
         "Now, until 12:15"
     );
     assert_eq!(
-        ov::when_words("de", at(10, 9, 0), at(10, 10, 0), now),
+        ov::when_words("de", at(10, 9, 0), at(10, 10, 0), now, 6 * 1440),
         "Dienstagmorgen"
     );
+}
+
+#[test]
+fn when_words_count_across_midnight_by_the_clock_difference() {
+    // 23:50, a meeting at 00:20: half an hour, not "tomorrow evening".
+    let now = dt(2026, 11, 4, 23, 50);
+    let start = dt(2026, 11, 5, 0, 20);
+    let words = ov::when_words("en", start, start + Duration::minutes(30), now, 30);
+    assert_eq!(words, "in 30 minutes");
+    // 21:00, a meeting at 01:30: four and a half hours, at night.
+    let now = dt(2026, 11, 4, 21, 0);
+    let start = dt(2026, 11, 5, 1, 30);
+    let words = ov::when_words("en", start, start + Duration::minutes(30), now, 270);
+    assert_eq!(words, "early tomorrow");
+    // 00:10, a meeting at 04:30 the same night.
+    let now = dt(2026, 11, 5, 0, 10);
+    let start = dt(2026, 11, 5, 4, 30);
+    let words = ov::when_words("en", start, start + Duration::minutes(30), now, 260);
+    assert_eq!(words, "later tonight");
+}
+
+#[tokio::test]
+async fn the_countdown_is_measured_in_real_time_across_a_clock_change() {
+    // Paris leaves summer time on 2026-10-25 at 03:00 (back to 02:00).
+    // Seen at 01:30 summer time (23:30 UTC), a meeting at 03:30 winter time
+    // (02:30 UTC) is three hours away, though the wall clock says two.
+    let pool = setup_test_db().await;
+    let me = insert_role_user(&pool, "me@example.com", "user").await;
+    let et = insert_personal_et(&pool, &me, "call").await;
+    let start = chrono::NaiveDate::from_ymd_opt(2026, 10, 25)
+        .unwrap()
+        .and_hms_opt(2, 30, 0)
+        .unwrap()
+        .and_utc();
+    insert_stat_booking(&pool, &et, "Night Owl", start, "confirmed", None, None).await;
+    let now = start - Duration::hours(3);
+    let paris: Tz = "Europe/Paris".parse().unwrap();
+    let agenda = ov::agenda(&pool, &me, paris, now, "en").await;
+    assert_eq!(agenda.len(), 1);
+    assert_eq!(agenda[0].get_attr("time").unwrap().to_string(), "03:30");
+    assert_eq!(
+        agenda[0].get_attr("when_words").unwrap().to_string(),
+        "In 3 hours"
+    );
+    assert!(!agenda[0].get_attr("ongoing").unwrap().is_true());
 }
 
 #[test]
@@ -982,7 +1039,6 @@ async fn members_excluded_from_a_collective_type_see_neither_its_bookings_nor_it
         assert_eq!(day.len(), expected, "ruler bookings for {user}");
         let agenda = ov::agenda(&pool, user, Tz::UTC, Utc::now(), "en").await;
         assert_eq!(agenda.len(), expected, "agenda for {user}");
-        assert_eq!(ov::has_any_booking(&pool, user).await, expected == 1);
         let hours = ov::load_event_type_hours(&pool, user).await;
         assert_eq!(hours.len(), expected, "open hours for {user}");
     }

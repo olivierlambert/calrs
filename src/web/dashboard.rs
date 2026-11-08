@@ -199,7 +199,6 @@ pub(super) async fn dashboard(
     let stats = overview_stats::compute(&rows, now_local, week_start);
     let stats_ctx = overview_stats::stats_context(&stats, lang);
     let agenda = overview_stats::agenda(&state.pool, &user.id, host, now, lang).await;
-    let has_bookings = overview_stats::has_any_booking(&state.pool, &user.id).await;
 
     // This week in the week strip: one query for the bookings and one for
     // the calendar over the whole span, today included.
@@ -289,7 +288,6 @@ pub(super) async fn dashboard(
             own_links => links_ctx,
             stats => stats_ctx,
             agenda => agenda,
-            has_bookings => has_bookings,
             mast => masthead,
             week => week,
             impersonating => impersonating,

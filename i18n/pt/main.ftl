@@ -412,7 +412,6 @@ overview-avail-banner-cta = Revise sua disponibilidade
 overview-dismiss = Dispensar
 overview-step-connect-calendar = Conectar uma agenda
 overview-step-first-event-type = Criar seu primeiro tipo de evento
-overview-step-share-link = Compartilhar seu link de agendamento
 overview-pending-approval = Aguardando aprovação
 overview-confirm = Confirmar
 overview-decline = Recusar
@@ -459,6 +458,7 @@ overview-time-range = das { $from } às { $to }
 overview-until = até { $time }
 overview-expires = Expira { $when }
 overview-guest-and-more = { $name } e mais { $count }
+overview-greeting-night = Olá, { $name }
 overview-greeting-morning = Bom dia, { $name }
 overview-greeting-afternoon = Boa tarde, { $name }
 overview-greeting-evening = Boa noite, { $name }
@@ -490,12 +490,15 @@ overview-when-hours = { $count ->
     [one] em 1 hora
    *[other] em { $count } horas
 }
+overview-when-today-night = mais tarde esta noite
 overview-when-today-morning = hoje de manhã
 overview-when-today-afternoon = hoje à tarde
 overview-when-today-evening = hoje à noite
+overview-when-tomorrow-night = amanhã de madrugada
 overview-when-tomorrow-morning = amanhã de manhã
 overview-when-tomorrow-afternoon = amanhã à tarde
 overview-when-tomorrow-evening = amanhã à noite
+overview-when-weekday-night = { $day } de madrugada
 overview-when-weekday-morning = { $day } de manhã
 overview-when-weekday-afternoon = { $day } à tarde
 overview-when-weekday-evening = { $day } à noite

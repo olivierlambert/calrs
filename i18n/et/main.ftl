@@ -412,7 +412,6 @@ overview-avail-banner-cta = Vaata oma saadavus üle
 overview-dismiss = Peida
 overview-step-connect-calendar = Ühenda kalender
 overview-step-first-event-type = Loo oma esimene sündmuse tüüp
-overview-step-share-link = Jaga oma broneerimislinki
 overview-pending-approval = Ootab kinnitust
 overview-confirm = Kinnita
 overview-decline = Lükka tagasi
@@ -459,6 +458,7 @@ overview-time-range = { $from } kuni { $to }
 overview-until = kuni { $time }
 overview-expires = Aegub { $when }
 overview-guest-and-more = { $name } ja veel { $count }
+overview-greeting-night = Tere, { $name }
 overview-greeting-morning = Tere hommikust, { $name }
 overview-greeting-afternoon = Tere päevast, { $name }
 overview-greeting-evening = Tere õhtust, { $name }
@@ -490,12 +490,15 @@ overview-when-hours = { $count ->
     [one] 1 tunni pärast
    *[other] { $count } tunni pärast
 }
+overview-when-today-night = hiljem öösel
 overview-when-today-morning = täna hommikul
 overview-when-today-afternoon = täna pärastlõunal
 overview-when-today-evening = täna õhtul
+overview-when-tomorrow-night = homme vara hommikul
 overview-when-tomorrow-morning = homme hommikul
 overview-when-tomorrow-afternoon = homme pärastlõunal
 overview-when-tomorrow-evening = homme õhtul
+overview-when-weekday-night = { $day }, vara hommikul
 overview-when-weekday-morning = { $day }, hommikul
 overview-when-weekday-afternoon = { $day }, pärastlõunal
 overview-when-weekday-evening = { $day }, õhtul
