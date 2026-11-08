@@ -174,7 +174,7 @@ Call sites use `crate::email::name` whatever file `name` lives in.
   MCP has no session state or SSE tasks and adds no dependencies. A second
   resource, `<base>/api/v1`, has its own scopes (`oauth::API_SCOPES`) for the
   REST API (`src/web/api.rs`), which also accepts personal access tokens
-  (`api_tokens` table, migration `20261108064145_api_tokens`) under the same
+  (`api_tokens` table, migration `20261108093146_api_tokens`) under the same
   MFA policy and revocation. Tests: `src/web/tests/oauth.rs`,
   `src/web/tests/mcp.rs` and `src/web/tests/api.rs`.
 - **Auth extractors** (`src/auth.rs`). `AuthUser` redirects to login,
