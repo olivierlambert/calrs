@@ -1,3 +1,12 @@
+# OAuth connection consent
+oauth-title = Connect an application
+oauth-intro = Allow this application to access calrs as { $email }? The application name is supplied by its developer. Check the callback address before approving.
+oauth-events = Read event types you can access
+oauth-blocks = Read your calendar busy times
+oauth-invites = Create booking invite links with your permissions
+oauth-allow = Allow access
+oauth-deny = Deny
+
 # Booking confirmation page (templates/confirmed.html)
 
 confirmed-page-title-pending = Booking pending
@@ -1883,6 +1892,7 @@ mfa-restart = Back to login
 mfa-manage = Manage two-factor authentication
 mfa-recovery-help = Save these recovery codes somewhere safe. They are shown only once. Each code replaces an authenticator code for one use. New recovery codes replace all previous codes.
 mfa-continue = Continue to dashboard
+mfa-continue-consent = Continue to the approval page
 mfa-enabled = Two-factor authentication is enabled.
 mfa-disabled = Two-factor authentication is disabled.
 mfa-required-help = Your administrator requires two-factor authentication for local accounts. You cannot disable it.
@@ -1976,6 +1986,20 @@ pager-previous = Previous
 pager-next = Next
 admin-users-search = Search
 admin-figures-cached = Booking figures computed { $seconds } s ago.
+
+# Connected apps (templates/dashboard_apps.html, admin user menu)
+
+apps-page-title = Connected apps
+apps-heading = Connected apps
+apps-subtitle = Applications you allowed to act as you, such as AI assistants connected over MCP. Revoking one ends its access at once.
+apps-approved = Approved on { $date }
+apps-last-used = Last used on { $date }
+apps-never-used = Not used yet
+apps-revoke = Revoke
+apps-revoke-confirm = Revoke access for { $name }? The application has to be approved again to reconnect.
+apps-revoked = Access revoked.
+apps-empty = No application is connected. An MCP client asks for your approval the first time it connects.
+admin-revoke-apps = Revoke connected apps ({ $count })
 
 # Write destination per event type (#47)
 etf-write-destination = Write confirmed bookings to

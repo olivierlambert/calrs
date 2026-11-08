@@ -1,0 +1,55 @@
+-- Public OAuth clients register themselves; no operator-managed credentials.
+CREATE TABLE oauth_clients (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    redirect_uris TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    -- Last time a user approved it; NULL = never. Cleanup keeps clients that
+    -- were granted within 180 days, so a revoked or expired grant does not
+    -- strand the MCP client with an unknown client_id.
+    last_granted_at INTEGER,
+    -- Hash of the registering address (oauth::rate_key), for the
+    -- per-address cap on clients never granted.
+    registered_by TEXT
+);
+CREATE TABLE oauth_requests (
+    id TEXT PRIMARY KEY,
+    client_id TEXT NOT NULL REFERENCES oauth_clients(id) ON DELETE CASCADE,
+    parameters TEXT NOT NULL,
+    user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
+    expires_at INTEGER NOT NULL
+);
+CREATE TABLE oauth_grants (
+    id TEXT PRIMARY KEY,
+    client_id TEXT NOT NULL REFERENCES oauth_clients(id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    resource TEXT NOT NULL,
+    scope TEXT NOT NULL,
+    expires_at INTEGER NOT NULL,
+    revoked INTEGER NOT NULL DEFAULT 0,
+    -- The consenting session had passed local MFA (#213): the same policy as
+    -- validate_session applies to the grant's tokens.
+    mfa_verified INTEGER NOT NULL DEFAULT 0,
+    -- Shown on the user's Connected apps page.
+    created_at INTEGER NOT NULL,
+    last_used_at INTEGER
+);
+CREATE TABLE oauth_credentials (
+    hash TEXT PRIMARY KEY,
+    grant_id TEXT NOT NULL REFERENCES oauth_grants(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL CHECK(kind IN ('code', 'access', 'refresh')),
+    expires_at INTEGER NOT NULL,
+    used INTEGER NOT NULL DEFAULT 0,
+    redirect_uri TEXT,
+    challenge TEXT
+);
+CREATE INDEX idx_oauth_credentials_grant ON oauth_credentials(grant_id);
+CREATE INDEX idx_oauth_grants_expiry ON oauth_grants(expires_at);
+CREATE INDEX idx_oauth_requests_expiry ON oauth_requests(expires_at);
+-- Foreign keys scanned by revoke_access, Connected apps, the admin count and
+-- the cleanup of unused clients.
+CREATE INDEX idx_oauth_grants_user ON oauth_grants(user_id);
+CREATE INDEX idx_oauth_grants_client ON oauth_grants(client_id);
+CREATE INDEX idx_oauth_requests_client ON oauth_requests(client_id);
+CREATE INDEX idx_oauth_requests_user ON oauth_requests(user_id);
+CREATE INDEX idx_oauth_clients_registered_by ON oauth_clients(registered_by, created_at);
