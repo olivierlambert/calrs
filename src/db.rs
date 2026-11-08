@@ -1182,6 +1182,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn oauth_scope_migration_preserves_existing_credentials() {
+        let pool = memory_pool().await;
+        migrate(&pool).await.unwrap();
+        sqlx::raw_sql(
+            "ALTER TABLE oauth_credentials DROP COLUMN scope;
+             DELETE FROM _migrations WHERE name = '20261108044051_oauth_credential_scope';
+             INSERT INTO users (id, email, name) VALUES ('scope-user', 'scope@example.com', 'Scope');
+             INSERT INTO oauth_clients (id, name, redirect_uris, created_at) VALUES ('scope-client', 'Client', '[]', 0);
+             INSERT INTO oauth_grants (id, client_id, user_id, resource, scope, expires_at, created_at)
+                 VALUES ('scope-grant', 'scope-client', 'scope-user', 'https://cal.example/mcp', 'calendar:read', 9999999999, 0);
+             INSERT INTO oauth_credentials (hash, grant_id, kind, expires_at)
+                 VALUES ('existing-hash', 'scope-grant', 'access', 9999999999);",
+        ).execute(&pool).await.unwrap();
+        migrate(&pool).await.unwrap();
+        migrate(&pool).await.unwrap();
+        let scope: String = sqlx::query_scalar(
+            "SELECT COALESCE(c.scope, g.scope) FROM oauth_credentials c JOIN oauth_grants g ON g.id = c.grant_id WHERE c.hash = 'existing-hash'",
+        ).fetch_one(&pool).await.unwrap();
+        assert_eq!(scope, "calendar:read");
+    }
+
+    #[tokio::test]
     async fn migrate_migration_count_matches_files() {
         // build.rs embeds every .sql file, skipping dotfiles (editor locks).
         let migration_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations");

@@ -19,7 +19,7 @@ use crate::web::{csrf_cookie_value, generate_csrf_token, verify_csrf_token, AppS
 // `__Host-` prefix forces browsers to enforce: Secure flag, Path=/, no Domain
 // attribute. This prevents cookies from being overwritten by a sibling
 // subdomain or downgraded over plaintext HTTP.
-const SESSION_COOKIE: &str = "__Host-calrs_session";
+pub(crate) const SESSION_COOKIE: &str = "__Host-calrs_session";
 const IMPERSONATE_COOKIE: &str = "__Host-calrs_impersonate";
 const SESSION_DURATION_DAYS: i64 = 30;
 
@@ -797,7 +797,7 @@ async fn login_page(
     // If already authenticated, redirect to dashboard
     if let Some(token) = jar.get(SESSION_COOKIE).map(|c| c.value().to_string()) {
         if validate_session(&state.pool, &token).await.is_some() {
-            return Redirect::to("/dashboard").into_response();
+            return Redirect::to(crate::oauth::login_destination(&jar)).into_response();
         }
     }
 
@@ -833,6 +833,7 @@ async fn login_page(
 async fn login_handler(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
+    jar: CookieJar,
     Form(form): Form<LoginForm>,
 ) -> Response {
     if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
@@ -875,7 +876,7 @@ async fn login_handler(
             if matches!(&result, crate::mfa::LoginResult::Session(_)) {
                 tracing::info!(email = %form.email, ip = %client_ip, "user login");
             }
-            crate::mfa::login_response(result)
+            crate::mfa::login_response(result, crate::oauth::login_destination(&jar))
         }
         Err(e) => crate::web::internal_error_response("local login", &e),
     }
@@ -889,7 +890,7 @@ async fn register_page(
     // If already authenticated, redirect to dashboard
     if let Some(token) = jar.get(SESSION_COOKIE).map(|c| c.value().to_string()) {
         if validate_session(&state.pool, &token).await.is_some() {
-            return Redirect::to("/dashboard").into_response();
+            return Redirect::to(crate::oauth::login_destination(&jar)).into_response();
         }
     }
 
@@ -939,6 +940,7 @@ async fn register_page(
 async fn register_handler(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
+    jar: CookieJar,
     Form(form): Form<RegisterForm>,
 ) -> Response {
     if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
@@ -1052,7 +1054,7 @@ async fn register_handler(
     };
     tracing::info!(email = %email, "user registered");
     match crate::mfa::begin_login(&state.pool, &state.secret_key, &user, false).await {
-        Ok(result) => crate::mfa::login_response(result),
+        Ok(result) => crate::mfa::login_response(result, crate::oauth::login_destination(&jar)),
         Err(e) => crate::web::internal_error_response("registration login", &e),
     }
 }
@@ -1564,7 +1566,7 @@ async fn oidc_callback(
     headers.append(axum::http::header::SET_COOKIE, clear_nonce.parse().unwrap());
     headers.append(axum::http::header::SET_COOKIE, clear_pkce.parse().unwrap());
 
-    (headers, Redirect::to("/dashboard")).into_response()
+    (headers, Redirect::to(crate::oauth::login_destination(&jar))).into_response()
 }
 
 /// Find an existing user by OIDC subject or email, or create a new one.

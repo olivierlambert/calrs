@@ -1881,6 +1881,7 @@ mfa-restart = Zurück zur Anmeldung
 mfa-manage = Zwei-Faktor-Authentifizierung verwalten
 mfa-recovery-help = Bewahre diese Wiederherstellungscodes sicher auf. Sie werden nur einmal angezeigt. Jeder Code ersetzt einmalig einen Authenticator-Code. Neue Wiederherstellungscodes ersetzen alle bisherigen Codes.
 mfa-continue = Weiter zum Dashboard
+mfa-continue-consent = Weiter zur Freigabeseite
 mfa-enabled = Die Zwei-Faktor-Authentifizierung ist aktiviert.
 mfa-disabled = Die Zwei-Faktor-Authentifizierung ist deaktiviert.
 mfa-required-help = Dein Administrator verlangt Zwei-Faktor-Authentifizierung für lokale Konten. Du kannst sie nicht deaktivieren.
@@ -2045,6 +2046,29 @@ pager-previous = Zurück
 pager-next = Weiter
 admin-users-search = Suchen
 admin-figures-cached = Buchungszahlen vor { $seconds } s berechnet.
+
+# OAuth connection consent (templates/auth/consent.html)
+oauth-title = Eine Anwendung verbinden
+oauth-intro = Dieser Anwendung Zugriff auf calrs als { $email } erlauben? Der Name wird vom Entwickler angegeben. Prüfe die Rückrufadresse, bevor du zustimmst.
+oauth-events = Terminarten lesen, auf die du Zugriff hast
+oauth-blocks = Deine belegten Kalenderzeiten lesen
+oauth-invites = Einladungslinks mit deinen Berechtigungen erstellen
+oauth-allow = Zugriff erlauben
+oauth-deny = Ablehnen
+
+# Connected apps (templates/dashboard_apps.html, admin user menu)
+
+apps-page-title = Verbundene Anwendungen
+apps-heading = Verbundene Anwendungen
+apps-subtitle = Anwendungen, denen du erlaubt hast, in deinem Namen zu handeln, etwa KI-Assistenten, die über MCP verbunden sind. Ein Widerruf beendet ihren Zugriff sofort.
+apps-approved = Genehmigt am { $date }
+apps-last-used = Zuletzt verwendet am { $date }
+apps-never-used = Noch nicht verwendet
+apps-revoke = Widerrufen
+apps-revoke-confirm = Zugriff für { $name } widerrufen? Die Anwendung muss erneut genehmigt werden, um sich wieder zu verbinden.
+apps-revoked = Zugriff widerrufen.
+apps-empty = Keine Anwendung verbunden. Ein MCP-Client bittet beim ersten Verbinden um deine Zustimmung.
+admin-revoke-apps = Verbundene Anwendungen widerrufen ({ $count })
 
 # Write destination per event type (#47)
 etf-write-destination = Bestätigte Buchungen schreiben nach

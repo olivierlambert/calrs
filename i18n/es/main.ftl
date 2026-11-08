@@ -1881,6 +1881,7 @@ mfa-restart = Volver al inicio de sesión
 mfa-manage = Gestionar la autenticación de dos factores
 mfa-recovery-help = Guarda estos códigos de recuperación en un lugar seguro. Solo se muestran una vez. Cada código sustituye a un código de tu aplicación para un solo uso. Los nuevos códigos reemplazan a todos los anteriores.
 mfa-continue = Continuar al panel
+mfa-continue-consent = Continuar a la página de aprobación
 mfa-enabled = La autenticación de dos factores está activada.
 mfa-disabled = La autenticación de dos factores está desactivada.
 mfa-required-help = Tu administrador exige autenticación de dos factores para las cuentas locales. No puedes desactivarla.
@@ -2045,6 +2046,29 @@ pager-previous = Anterior
 pager-next = Siguiente
 admin-users-search = Buscar
 admin-figures-cached = Cifras de reservas calculadas hace { $seconds } s.
+
+# OAuth connection consent (templates/auth/consent.html)
+oauth-title = Conectar una aplicación
+oauth-intro = ¿Permitir que esta aplicación acceda a calrs como { $email }? El nombre lo proporciona su desarrollador. Comprueba la dirección de retorno antes de aprobar.
+oauth-events = Consultar los tipos de eventos a los que tienes acceso
+oauth-blocks = Consultar tus horarios ocupados
+oauth-invites = Crear enlaces de invitación con tus permisos
+oauth-allow = Permitir acceso
+oauth-deny = Denegar
+
+# Connected apps (templates/dashboard_apps.html, admin user menu)
+
+apps-page-title = Aplicaciones conectadas
+apps-heading = Aplicaciones conectadas
+apps-subtitle = Aplicaciones a las que permitiste actuar en tu nombre, como asistentes de IA conectados por MCP. Al revocar una, pierde el acceso al instante.
+apps-approved = Aprobada el { $date }
+apps-last-used = Último uso el { $date }
+apps-never-used = Sin usar todavía
+apps-revoke = Revocar
+apps-revoke-confirm = ¿Revocar el acceso de { $name }? La aplicación tendrá que aprobarse de nuevo para volver a conectarse.
+apps-revoked = Acceso revocado.
+apps-empty = No hay ninguna aplicación conectada. Un cliente MCP pide tu aprobación la primera vez que se conecta.
+admin-revoke-apps = Revocar aplicaciones conectadas ({ $count })
 
 # Write destination per event type (#47)
 etf-write-destination = Escribir las reservas confirmadas en

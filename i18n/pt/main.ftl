@@ -1881,6 +1881,7 @@ mfa-restart = Voltar ao login
 mfa-manage = Gerenciar autenticação de dois fatores
 mfa-recovery-help = Guarde estes códigos de recuperação em um lugar seguro. Eles são exibidos apenas uma vez. Cada código substitui um código do aplicativo para um único uso. Os novos códigos substituem todos os anteriores.
 mfa-continue = Continuar para o painel
+mfa-continue-consent = Continuar para a página de aprovação
 mfa-enabled = A autenticação de dois fatores está ativada.
 mfa-disabled = A autenticação de dois fatores está desativada.
 mfa-required-help = Seu administrador exige autenticação de dois fatores para contas locais. Você não pode desativá-la.
@@ -2045,6 +2046,29 @@ pager-previous = Anterior
 pager-next = Próxima
 admin-users-search = Buscar
 admin-figures-cached = Números de agendamentos calculados há { $seconds } s.
+
+# OAuth connection consent (templates/auth/consent.html)
+oauth-title = Conectar um aplicativo
+oauth-intro = Permitir que este aplicativo acesse o calrs como { $email }? O nome é fornecido pelo desenvolvedor. Confira o endereço de retorno antes de aprovar.
+oauth-events = Consultar os tipos de evento aos quais você tem acesso
+oauth-blocks = Consultar seus horários ocupados
+oauth-invites = Criar links de convite com suas permissões
+oauth-allow = Permitir acesso
+oauth-deny = Negar
+
+# Connected apps (templates/dashboard_apps.html, admin user menu)
+
+apps-page-title = Aplicativos conectados
+apps-heading = Aplicativos conectados
+apps-subtitle = Aplicativos que você autorizou a agir em seu nome, como assistentes de IA conectados por MCP. Revogar um corta o acesso dele na hora.
+apps-approved = Aprovado em { $date }
+apps-last-used = Último uso em { $date }
+apps-never-used = Ainda não usado
+apps-revoke = Revogar
+apps-revoke-confirm = Revogar o acesso de { $name }? O aplicativo precisará ser aprovado de novo para se reconectar.
+apps-revoked = Acesso revogado.
+apps-empty = Nenhum aplicativo conectado. Um cliente MCP pede sua aprovação na primeira vez que se conecta.
+admin-revoke-apps = Revogar aplicativos conectados ({ $count })
 
 # Write destination per event type (#47)
 etf-write-destination = Gravar os agendamentos confirmados em

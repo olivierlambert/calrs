@@ -243,14 +243,16 @@ pub async fn cancel_challenge(pool: &SqlitePool, jar: &CookieJar) -> Result<Stri
     Ok(challenge_cookie("", 0))
 }
 
-pub fn login_response(result: LoginResult) -> Response {
+/// `destination` is where a completed login lands: the dashboard, or the
+/// OAuth consent page when an authorization is waiting for this browser.
+pub fn login_response(result: LoginResult, destination: &str) -> Response {
     match result {
         LoginResult::Session(session) => (
             AppendHeaders([
                 ("Set-Cookie", session_cookie(&session)),
                 ("Set-Cookie", challenge_cookie("", 0)),
             ]),
-            Redirect::to("/dashboard"),
+            Redirect::to(destination),
         )
             .into_response(),
         LoginResult::Challenge(token) => (
@@ -363,6 +365,13 @@ pub(crate) async fn revoke_access(
         .execute(&mut *conn)
         .await?;
     sqlx::query("DELETE FROM mfa_challenges WHERE user_id = ?")
+        .bind(user_id)
+        .execute(&mut *conn)
+        .await?;
+    // OAuth grants (MCP clients) are sessions too: whatever ends the sessions
+    // ends them, so re-enabling an account does not bring old tokens back.
+    crate::oauth::delete_grants(&mut *conn, user_id, None).await?;
+    sqlx::query("DELETE FROM oauth_requests WHERE user_id = ?")
         .bind(user_id)
         .execute(conn)
         .await?;
@@ -556,7 +565,10 @@ async fn challenge_submit(
     let ip = web::client_ip_for_rate_limit(&headers);
     match finish_challenge_from(&state.pool, &state.secret_key, token, form.code.trim(), &ip).await
     {
-        Ok(Some((session, codes))) => completion(&state, lang, session, codes),
+        Ok(Some((session, codes))) => {
+            let destination = crate::oauth::login_destination(&jar);
+            completion(&state, lang, session, codes, destination)
+        }
         Ok(None) => match challenge_view(&state, lang, token, true).await {
             Ok(r) => r,
             Err(e) => web::internal_error_response("MFA challenge", &e),
@@ -565,14 +577,20 @@ async fn challenge_submit(
     }
 }
 
-fn completion(state: &AppState, lang: &str, session: Session, codes: Vec<String>) -> Response {
+fn completion(
+    state: &AppState,
+    lang: &str,
+    session: Session,
+    codes: Vec<String>,
+    destination: &str,
+) -> Response {
     if codes.is_empty() {
-        return login_response(LoginResult::Session(session));
+        return login_response(LoginResult::Session(session), destination);
     }
     let mut response = render(
         state,
         lang,
-        minijinja::context! { mode => "recovery", codes => codes },
+        minijinja::context! { mode => "recovery", codes => codes, continue_to => destination },
     );
     response
         .headers_mut()
@@ -701,10 +719,11 @@ async fn settings_action(
             }
             return Ok(login_response(
                 begin_login(&state.pool, &state.secret_key, &user.user, true).await?,
+                "/dashboard",
             ));
         }
         Ok(match manage(&state, &user.user, &form).await? {
-            Some((session, codes)) => completion(&state, user.lang, session, codes),
+            Some((session, codes)) => completion(&state, user.lang, session, codes, "/dashboard"),
             None => {
                 tracing::warn!(user_id = %user.user.id, ip = %ip, action = %form.action, "MFA settings refused: wrong code");
                 settings_error(&state, user.lang)
@@ -768,6 +787,9 @@ async fn policy_save(
         if mandatory {
             sqlx::query("DELETE FROM sessions WHERE mfa_verified = 0 AND user_id IN (SELECT id FROM users WHERE auth_provider = 'local')")
                 .execute(&mut *tx).await?;
+            // OAuth grants approved without MFA go the same way, so turning
+            // the requirement off again does not revive their refresh tokens.
+            crate::oauth::delete_unverified_local_grants(&mut tx).await?;
         }
         tx.commit().await?;
         tracing::info!(admin = %admin.user.id, required = mandatory, "MFA policy changed");

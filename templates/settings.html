@@ -7,11 +7,12 @@
     <h1 class="page-title">{{ t("settings-heading") }}</h1>
     <p class="page-subtitle">{{ t("settings-subtitle") }}</p>
   </div>
-  {% if local_auth and not impersonating %}
   <div class="page-actions">
+    <a href="/dashboard/settings/apps" class="ui-btn">{{ t("apps-heading") }}</a>
+    {% if local_auth and not impersonating %}
     <a href="/dashboard/settings/mfa" class="ui-btn">{{ t("mfa-manage") }}</a>
+    {% endif %}
   </div>
-  {% endif %}
 </header>
 
 {% if success %}

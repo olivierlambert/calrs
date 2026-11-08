@@ -950,3 +950,89 @@ async fn http_challenge_error_offers_only_the_login() {
     assert!(page.contains("href=\"/auth/login\""));
     assert!(!page.contains("href=\"/dashboard/settings/mfa\""));
 }
+
+async fn insert_grant(pool: &SqlitePool, user_id: &str, mfa_verified: bool) -> String {
+    let id = uuid::Uuid::new_v4().to_string();
+    sqlx::query("INSERT OR IGNORE INTO oauth_clients (id, name, redirect_uris, created_at) VALUES ('mfa-client', 'Client', '[]', 0)")
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO oauth_grants (id, client_id, user_id, resource, scope, expires_at, mfa_verified, created_at) VALUES (?, 'mfa-client', ?, 'https://cal.example/mcp', 'calendar:read', 9999999999, ?, 0)")
+        .bind(&id)
+        .bind(user_id)
+        .bind(mfa_verified)
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO oauth_credentials (hash, grant_id, kind, expires_at) VALUES (?, ?, 'refresh', 9999999999)")
+        .bind(format!("hash-{id}"))
+        .bind(&id)
+        .execute(pool)
+        .await
+        .unwrap();
+    id
+}
+
+async fn grants_of(pool: &SqlitePool, user_id: &str) -> i64 {
+    sqlx::query_scalar("SELECT COUNT(*) FROM oauth_grants WHERE user_id = ?")
+        .bind(user_id)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn requiring_mfa_deletes_unverified_oauth_grants_for_good() {
+    let pool = database().await;
+    let admin = user(&pool, "admin@example.com").await;
+    let member = user(&pool, "member@example.com").await;
+    let app = app(&pool).await;
+    let (_, session, codes) = enroll(&pool, &admin).await;
+    insert_grant(&pool, &member.id, false).await;
+    insert_grant(&pool, &admin.id, true).await;
+    sqlx::query("INSERT INTO oauth_requests (id, client_id, parameters, user_id, expires_at) VALUES ('pending', 'mfa-client', '{}', ?, 9999999999)")
+        .bind(&member.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let r = request(
+        &app,
+        "POST",
+        "/dashboard/admin/mfa",
+        &cookies(&session.id),
+        &format!(
+            "_csrf=test&policy=required&password={PASSWORD}&code={}",
+            codes[0]
+        ),
+    )
+    .await;
+    assert_eq!(r.status(), 303);
+    assert!(required(&pool).await.unwrap());
+    assert_eq!(grants_of(&pool, &member.id).await, 0);
+    assert_eq!(
+        grants_of(&pool, &admin.id).await,
+        1,
+        "an MFA-verified grant stays"
+    );
+    assert_eq!(count(&pool, "oauth_requests").await, 0);
+    assert_eq!(
+        count(&pool, "oauth_credentials").await,
+        1,
+        "the deleted grant's tokens went with it"
+    );
+    // Turning the requirement off again brings nothing back.
+    let r = request(
+        &app,
+        "POST",
+        "/dashboard/admin/mfa",
+        &cookies(&session.id),
+        &format!(
+            "_csrf=test&policy=optional&password={PASSWORD}&code={}",
+            codes[1]
+        ),
+    )
+    .await;
+    assert_eq!(r.status(), 303);
+    assert!(!required(&pool).await.unwrap());
+    assert_eq!(grants_of(&pool, &member.id).await, 0);
+}
