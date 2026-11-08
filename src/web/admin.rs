@@ -2024,15 +2024,20 @@ pub(super) async fn admin_update_general(
         let stored = match crate::trusted_proxies::TrustedProxies::parse(raw) {
             Ok(_) if raw.trim().is_empty() => None,
             Ok(list) => Some(list.describe()),
-            Err(entry) => {
+            Err(e) => {
+                let key = match e {
+                    crate::trusted_proxies::ListError::Invalid(_) => {
+                        "admin-trusted-proxies-invalid"
+                    }
+                    crate::trusted_proxies::ListError::TrustsEveryone(_) => {
+                        "admin-trusted-proxies-everyone"
+                    }
+                };
                 let mut args = fluent_bundle::FluentArgs::new();
-                args.set("entry", fluent_bundle::FluentValue::from(entry.as_str()));
-                let msg = urlencoding::encode(&crate::i18n::translate(
-                    _admin.lang,
-                    "admin-trusted-proxies-invalid",
-                    Some(&args),
-                ))
-                .into_owned();
+                args.set("entry", fluent_bundle::FluentValue::from(e.entry()));
+                let msg =
+                    urlencoding::encode(&crate::i18n::translate(_admin.lang, key, Some(&args)))
+                        .into_owned();
                 return Redirect::to(&format!("/dashboard/admin?error={}", msg)).into_response();
             }
         };

@@ -1223,6 +1223,7 @@ admin-private-hosts = Positivliste privater Hosts
 admin-private-hosts-help = Kommagetrennte Hostnamen, die für CalDAV-/EWS-Quellen auf private oder reservierte IP-Adressen zeigen dürfen (Ausnahme vom SSRF-Schutz). Trage nur Hosts ein, die du kontrollierst (etwa einen Kalenderserver im selben Docker-Netz). Leer lassen, um den Schutz für alle Hosts aktiv zu halten.
 admin-trusted-proxies = Vertrauenswürdige Proxys
 admin-trusted-proxies-help = Adressen oder CIDR-Bereiche der Reverse-Proxys, deren X-Forwarded-For-Header beim Unterscheiden der Clients für die Ratenbegrenzung geglaubt wird. Lass das Feld leer für die Vorgabe (Loopback-, private, Unique-Local- und Link-Local-Bereiche: ein Proxy auf demselben Host oder im selben Docker-Netz). Gib none ein, wenn calrs direkt erreichbar ist, damit ein Client keine andere Adresse vortäuschen kann.
+admin-trusted-proxies-everyone = Vertrauenswürdige Proxys: „{ $entry }“ würde jeder Adresse vertrauen, und jeder Client könnte sich als ein anderer ausgeben. Trag stattdessen die Adresse oder den Bereich deines Proxys ein.
 admin-trusted-proxies-invalid = Vertrauenswürdige Proxys: „{ $entry }“ ist weder eine IP-Adresse noch ein CIDR-Bereich.
 admin-german-formal = Anrede auf Deutsch
 admin-german-formal-du = Informell (du)

@@ -570,16 +570,31 @@ pub(crate) fn oidc_failure_response() -> Response {
 ///   every client behind it.
 ///
 /// The peer comes from [`peer_addr_middleware`] (axum `ConnectInfo`;
-/// `calrs serve` serves with `into_make_service_with_connect_info`). A
-/// router driven without a socket (tests) has no peer, and its header is
-/// read as if a trusted proxy had sent it. `X-Real-IP` is not honoured.
+/// `calrs serve` serves with `into_make_service_with_connect_info`). With
+/// no peer the header is ignored and the address is unknown (logged once).
+/// Neither `X-Real-IP` nor `Forwarded` (RFC 7239) is honoured.
 pub fn client_address(headers: &HeaderMap) -> crate::trusted_proxies::ClientAddress {
     let peer = headers
         .get(PEER_ADDR_HEADER)
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.parse::<std::net::IpAddr>().ok());
-    let forwarded_for = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok());
-    crate::trusted_proxies::client_address(peer, forwarded_for, &crate::trusted_proxies::current())
+    if peer.is_none() {
+        static WARNED: std::sync::Once = std::sync::Once::new();
+        WARNED.call_once(|| {
+            tracing::warn!(
+                "no peer address on a request: the router is not served with connection \
+                 info, so X-Forwarded-For is ignored and every client shares one rate limit"
+            );
+        });
+    }
+    // Every line, in order: HAProxy appends a line of its own rather than
+    // extending the one the client sent.
+    let lines: Vec<&[u8]> = headers
+        .get_all("x-forwarded-for")
+        .iter()
+        .map(|v| v.as_bytes())
+        .collect();
+    crate::trusted_proxies::client_address(peer, &lines, &crate::trusted_proxies::current())
 }
 
 /// The rate-limit identity of a request's client ([`client_address`]): the
@@ -602,10 +617,18 @@ async fn peer_addr_middleware(
     mut request: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> axum::response::Response {
+    // `MockConnectInfo` is how tests give a router without a socket a peer.
     let peer = request
         .extensions()
         .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
-        .map(|info| info.0.ip().to_string());
+        .map(|info| info.0)
+        .or_else(|| {
+            request
+                .extensions()
+                .get::<axum::extract::connect_info::MockConnectInfo<std::net::SocketAddr>>()
+                .map(|mock| mock.0)
+        })
+        .map(|addr| addr.ip().to_string());
     let headers = request.headers_mut();
     headers.remove(PEER_ADDR_HEADER);
     if let Some(value) = peer.and_then(|ip| axum::http::HeaderValue::from_str(&ip).ok()) {

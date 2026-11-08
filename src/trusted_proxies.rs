@@ -92,9 +92,10 @@ impl TrustedProxies {
     }
 
     /// Parses a comma or whitespace separated list of addresses and CIDR
-    /// ranges, or `none`. An empty value is the default list. `Err` names
-    /// the first entry that is neither.
-    pub fn parse(raw: &str) -> Result<Self, String> {
+    /// ranges, or `none`. An empty value is the default list. A `/0` range
+    /// (`0.0.0.0/0`, `::/0`) is refused: it would trust every peer, which is
+    /// the forged-address hole this list exists to close.
+    pub fn parse(raw: &str) -> Result<Self, ListError> {
         let raw = raw.trim();
         if raw.is_empty() {
             return Ok(Self::default_ranges());
@@ -104,7 +105,13 @@ impl TrustedProxies {
         }
         raw.split(|c: char| c == ',' || c.is_whitespace())
             .filter(|entry| !entry.is_empty())
-            .map(|entry| Cidr::parse(entry).ok_or_else(|| entry.to_string()))
+            .map(|entry| match Cidr::parse(entry) {
+                None => Err(ListError::Invalid(entry.to_string())),
+                Some(range) if range.prefix == 0 => {
+                    Err(ListError::TrustsEveryone(entry.to_string()))
+                }
+                Some(range) => Ok(range),
+            })
             .collect::<Result<Vec<_>, _>>()
             .map(TrustedProxies)
     }
@@ -126,6 +133,32 @@ impl TrustedProxies {
     }
 }
 
+/// Why a trusted proxy list was refused, naming the entry.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ListError {
+    /// Neither an address nor a CIDR range.
+    Invalid(String),
+    /// A `/0` range, which trusts every peer.
+    TrustsEveryone(String),
+}
+
+impl ListError {
+    pub fn entry(&self) -> &str {
+        match self {
+            ListError::Invalid(entry) | ListError::TrustsEveryone(entry) => entry,
+        }
+    }
+}
+
+impl std::fmt::Display for ListError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ListError::Invalid(entry) => write!(f, "{entry:?} is not an address or CIDR range"),
+            ListError::TrustsEveryone(entry) => write!(f, "{entry:?} would trust every peer"),
+        }
+    }
+}
+
 static FROM_ENV: OnceLock<Option<TrustedProxies>> = OnceLock::new();
 static FROM_DB: RwLock<Option<TrustedProxies>> = RwLock::new(None);
 
@@ -136,10 +169,10 @@ fn from_env() -> Option<&'static TrustedProxies> {
     FROM_ENV
         .get_or_init(|| {
             let raw = std::env::var("CALRS_TRUSTED_PROXIES").ok()?;
-            Some(TrustedProxies::parse(&raw).unwrap_or_else(|entry| {
+            Some(TrustedProxies::parse(&raw).unwrap_or_else(|e| {
                 tracing::error!(
-                    entry = %entry,
-                    "CALRS_TRUSTED_PROXIES: not an address or CIDR range; trusting no proxy"
+                    error = %e,
+                    "CALRS_TRUSTED_PROXIES refused; trusting no proxy"
                 );
                 TrustedProxies::none()
             }))
@@ -179,8 +212,8 @@ pub fn saved() -> String {
 /// bad environment value.
 pub fn set_from_db(raw: Option<&str>) {
     let list = raw.filter(|r| !r.trim().is_empty()).map(|r| {
-        TrustedProxies::parse(r).unwrap_or_else(|entry| {
-            tracing::error!(entry = %entry, "saved trusted proxies: not an address or CIDR range; trusting no proxy");
+        TrustedProxies::parse(r).unwrap_or_else(|e| {
+            tracing::error!(error = %e, "saved trusted proxies refused; trusting no proxy");
             TrustedProxies::none()
         })
     });
@@ -189,45 +222,76 @@ pub fn set_from_db(raw: Option<&str>) {
     }
 }
 
-/// The client address a request names, given the TCP peer (`None` when the
-/// router runs without a socket, as in tests, where the header is taken as
-/// coming from a trusted proxy) and the `X-Forwarded-For` value.
+/// The client address a request names, given the TCP peer and the
+/// `X-Forwarded-For` header lines in the order they arrived.
 ///
-/// An untrusted peer is the client, whatever the header says. A trusted
-/// peer's header is read right to left past every trusted hop; the first
-/// address that is not trusted is the client (all trusted: the leftmost).
-/// A trusted peer with no header is itself the address, shared by every
-/// client behind it.
+/// - No peer (a server not run with connection info): the header is ignored
+///   and the address is unknown. `calrs serve` always has one.
+/// - An untrusted peer is the client, whatever the header says.
+/// - A trusted peer's header is read as one list, every line joined in
+///   order (HAProxy appends a line of its own rather than extending the
+///   client's), right to left past every trusted hop. The first address
+///   that is not trusted is the client; all trusted, the leftmost.
+/// - A hop that is not an address (not UTF-8, `unknown`, a hostname) stops
+///   the walk: the client is then [`ClientAddress::Unparseable`], one bucket
+///   for every such request, never the proxy's own address, so garbage
+///   cannot be used to fill the bucket everyone behind the proxy shares.
+/// - A trusted peer with no header is itself the address, shared by every
+///   client behind it.
 pub fn client_address(
     peer: Option<IpAddr>,
-    forwarded_for: Option<&str>,
+    forwarded_for: &[&[u8]],
     trusted: &TrustedProxies,
 ) -> ClientAddress {
-    let peer = peer.map(|p| p.to_canonical());
-    if let Some(p) = peer {
-        if !trusted.contains(p) {
-            return ClientAddress::Direct(p.to_string());
-        }
+    let Some(peer) = peer.map(|p| p.to_canonical()) else {
+        return ClientAddress::Unknown;
+    };
+    if !trusted.contains(peer) {
+        return ClientAddress::Direct(peer.to_string());
     }
-    let hops: Vec<&str> = forwarded_for
-        .unwrap_or("")
-        .split(',')
-        .map(str::trim)
+    let hops: Vec<&[u8]> = forwarded_for
+        .iter()
+        .flat_map(|line| line.split(|b| *b == b','))
+        .map(|hop| hop.trim_ascii())
         .filter(|hop| !hop.is_empty())
         .collect();
-    let mut client = None;
+    let mut leftmost_trusted = None;
     for hop in hops.iter().rev() {
-        match hop.parse::<IpAddr>() {
-            Ok(ip) if trusted.contains(ip) => client = Some(ip.to_canonical().to_string()),
-            Ok(ip) => return ClientAddress::Forwarded(ip.to_canonical().to_string()),
-            Err(_) => return ClientAddress::Forwarded(hop.to_string()),
+        match parse_hop(hop) {
+            Some(ip) if trusted.contains(ip) => leftmost_trusted = Some(ip),
+            Some(ip) => return ClientAddress::Forwarded(ip.to_string()),
+            None => return ClientAddress::Unparseable,
         }
     }
-    match (client, peer) {
-        (Some(leftmost), _) => ClientAddress::Forwarded(leftmost),
-        (None, Some(p)) => ClientAddress::Proxy(p.to_string()),
-        (None, None) => ClientAddress::Unknown,
+    match leftmost_trusted {
+        Some(ip) => ClientAddress::Forwarded(ip.to_string()),
+        None => ClientAddress::Proxy(peer.to_string()),
     }
+}
+
+/// One `X-Forwarded-For` hop as an address: a bare IPv4 or IPv6 address,
+/// with an optional port (`1.2.3.4:5678`, `[2001:db8::1]:443`, as Azure
+/// Application Gateway and IIS ARR write them) or brackets dropped, so a
+/// port cannot make a new key. Anything else is `None`.
+fn parse_hop(hop: &[u8]) -> Option<IpAddr> {
+    let hop = std::str::from_utf8(hop).ok()?;
+    if let Ok(ip) = hop.parse::<IpAddr>() {
+        return Some(ip.to_canonical());
+    }
+    if let Some(rest) = hop.strip_prefix('[') {
+        let (inner, after) = rest.split_once(']')?;
+        let port_ok = after.is_empty()
+            || after
+                .strip_prefix(':')
+                .is_some_and(|p| p.parse::<u16>().is_ok());
+        return port_ok
+            .then(|| inner.parse::<std::net::Ipv6Addr>().ok())
+            .flatten()
+            .map(|ip| IpAddr::V6(ip).to_canonical());
+    }
+    let (addr, port) = hop.rsplit_once(':')?;
+    port.parse::<u16>().ok()?;
+    addr.parse::<std::net::Ipv4Addr>().ok().map(IpAddr::V4)
 }
 
 /// Where a request's client address came from.
@@ -240,23 +304,27 @@ pub enum ClientAddress {
     /// A trusted proxy that named no client: every client behind it shares
     /// this address.
     Proxy(String),
-    /// No socket and no header.
+    /// A trusted proxy forwarded a hop that is not an address: one shared
+    /// bucket for all such requests.
+    Unparseable,
+    /// No peer address.
     Unknown,
 }
 
 impl ClientAddress {
-    /// The address, `"unknown"` when there is none.
+    /// The address, `"unparseable"` or `"unknown"` when there is none.
     pub fn ip(&self) -> &str {
         match self {
             ClientAddress::Direct(ip) | ClientAddress::Forwarded(ip) | ClientAddress::Proxy(ip) => {
                 ip
             }
+            ClientAddress::Unparseable => "unparseable",
             ClientAddress::Unknown => "unknown",
         }
     }
 
     /// Whether the address is one client's rather than one shared by every
-    /// client behind a proxy (or unknown).
+    /// client behind a proxy (or unparseable, or unknown).
     pub fn is_individual(&self) -> bool {
         matches!(self, ClientAddress::Direct(_) | ClientAddress::Forwarded(_))
     }
@@ -324,7 +392,7 @@ mod tests {
         );
         assert_eq!(
             TrustedProxies::parse("10.0.0.1, nope"),
-            Err("nope".to_string())
+            Err(ListError::Invalid("nope".to_string()))
         );
         let default = TrustedProxies::default_ranges();
         for addr in [
@@ -340,46 +408,131 @@ mod tests {
         assert!(!default.contains(ip("203.0.113.9")));
     }
 
+    fn walk(peer: Option<&str>, lines: &[&str], trusted: &TrustedProxies) -> ClientAddress {
+        let lines: Vec<&[u8]> = lines.iter().map(|l| l.as_bytes()).collect();
+        client_address(peer.map(ip), &lines, trusted)
+    }
+
     #[test]
     fn untrusted_peer_is_the_client_whatever_the_header_says() {
         let trusted = TrustedProxies::default_ranges();
         assert_eq!(
-            client_address(Some(ip("203.0.113.9")), Some("1.2.3.4"), &trusted),
+            walk(Some("203.0.113.9"), &["1.2.3.4"], &trusted),
             ClientAddress::Direct("203.0.113.9".into())
         );
         let none = TrustedProxies::none();
         assert_eq!(
-            client_address(Some(ip("127.0.0.1")), Some("1.2.3.4"), &none),
+            walk(Some("127.0.0.1"), &["1.2.3.4"], &none),
             ClientAddress::Direct("127.0.0.1".into())
         );
     }
 
     #[test]
+    fn no_peer_ignores_the_header() {
+        let trusted = TrustedProxies::default_ranges();
+        assert_eq!(
+            walk(None, &["198.51.100.7"], &trusted),
+            ClientAddress::Unknown
+        );
+        assert_eq!(walk(None, &[], &trusted), ClientAddress::Unknown);
+    }
+
+    #[test]
     fn trusted_peer_header_is_walked_past_trusted_hops() {
         let trusted = TrustedProxies::default_ranges();
-        let peer = Some(ip("127.0.0.1"));
+        let peer = Some("127.0.0.1");
         // The client forged the leftmost value; the proxy appended the
         // address it saw.
         assert_eq!(
-            client_address(peer, Some("6.6.6.6, 198.51.100.7"), &trusted),
+            walk(peer, &["6.6.6.6, 198.51.100.7"], &trusted),
             ClientAddress::Forwarded("198.51.100.7".into())
         );
         // Two proxies: a CDN edge on a private address in front.
         assert_eq!(
-            client_address(peer, Some("6.6.6.6, 198.51.100.7, 10.0.0.2"), &trusted),
+            walk(peer, &["6.6.6.6, 198.51.100.7, 10.0.0.2"], &trusted),
             ClientAddress::Forwarded("198.51.100.7".into())
         );
         assert_eq!(
-            client_address(peer, Some("192.168.1.20"), &trusted),
+            walk(peer, &["192.168.1.20"], &trusted),
             ClientAddress::Forwarded("192.168.1.20".into())
         );
         assert_eq!(
-            client_address(peer, None, &trusted),
+            walk(peer, &[], &trusted),
             ClientAddress::Proxy("127.0.0.1".into())
         );
-        assert_eq!(client_address(None, None, &trusted), ClientAddress::Unknown);
         assert!(!ClientAddress::Proxy("127.0.0.1".into()).is_individual());
         assert!(ClientAddress::Direct("203.0.113.9".into()).is_individual());
+    }
+
+    #[test]
+    fn every_header_line_is_read_in_order() {
+        // HAProxy (`option forwardfor`) adds its own line after the one the
+        // client sent: the last line is the proxy's, not the first.
+        let trusted = TrustedProxies::default_ranges();
+        assert_eq!(
+            walk(Some("127.0.0.1"), &["6.6.6.6", "198.51.100.7"], &trusted),
+            ClientAddress::Forwarded("198.51.100.7".into())
+        );
+    }
+
+    #[test]
+    fn ports_and_brackets_do_not_make_new_keys() {
+        let trusted = TrustedProxies::default_ranges();
+        let peer = Some("127.0.0.1");
+        for hop in ["198.51.100.7:5678", "198.51.100.7:1"] {
+            assert_eq!(
+                walk(peer, &[hop], &trusted),
+                ClientAddress::Forwarded("198.51.100.7".into()),
+                "{hop}"
+            );
+        }
+        for hop in ["[2001:db8::1]:443", "[2001:db8::1]", "2001:db8::1"] {
+            assert_eq!(
+                walk(peer, &[hop], &trusted),
+                ClientAddress::Forwarded("2001:db8::1".into()),
+                "{hop}"
+            );
+        }
+    }
+
+    #[test]
+    fn garbage_stops_the_walk_in_a_bucket_of_its_own() {
+        // Not the proxy's address: garbage must not fill the bucket every
+        // client behind the proxy would then share.
+        let trusted = TrustedProxies::default_ranges();
+        let peer = Some(ip("127.0.0.1"));
+        for line in [
+            b"unknown".as_slice(),
+            b"proxy.local",
+            b"1.2.3.4:99999",
+            b"[2001:db8::1]:x",
+            b"\xff\xfe",
+            b"6.6.6.6, \xc3",
+        ] {
+            let got = client_address(peer, &[line], &trusted);
+            assert_eq!(got, ClientAddress::Unparseable, "{line:?}");
+            assert_eq!(got.ip(), "unparseable");
+            assert!(!got.is_individual());
+        }
+        // Garbage left of the client the proxy named is never reached.
+        assert_eq!(
+            walk(Some("127.0.0.1"), &["garbage, 198.51.100.7"], &trusted),
+            ClientAddress::Forwarded("198.51.100.7".into())
+        );
+    }
+
+    #[test]
+    fn a_range_trusting_everyone_is_refused() {
+        for raw in ["0.0.0.0/0", "::/0", "127.0.0.1, ::/0"] {
+            assert!(
+                matches!(
+                    TrustedProxies::parse(raw),
+                    Err(ListError::TrustsEveryone(_))
+                ),
+                "{raw}"
+            );
+        }
+        assert!(TrustedProxies::parse("0.0.0.0/1").is_ok());
     }
 
     #[test]

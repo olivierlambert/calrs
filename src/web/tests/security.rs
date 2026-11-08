@@ -230,6 +230,7 @@ async fn persistent_limiter_prune_drops_only_closed_windows() {
 fn client_ip_groups_ipv6_by_64() {
     let key = |xff: &str| {
         let mut headers = HeaderMap::new();
+        headers.insert(PEER_ADDR_HEADER, "127.0.0.1".parse().unwrap());
         headers.insert("x-forwarded-for", xff.parse().unwrap());
         client_ip_for_rate_limit(&headers)
     };
@@ -269,7 +270,9 @@ async fn booking_rate_limit_is_kept_across_a_restart() {
         let body = body_string(response).await;
         assert!(!body.contains("Too many booking attempts"), "request {i}");
     }
-    let restarted = create_router(pool.clone(), std::env::temp_dir(), [0u8; 32]).await;
+    let restarted = create_router(pool.clone(), std::env::temp_dir(), [0u8; 32])
+        .await
+        .layer(local_proxy_peer());
     let response = restarted
         .clone()
         .oneshot(post("198.51.100.1, 203.0.113.7"))
@@ -552,6 +555,7 @@ fn client_ip_takes_rightmost_xff() {
     // The leftmost value is whatever the original client put in the
     // header; the rightmost is the trusted proxy's view of its peer.
     let mut headers = HeaderMap::new();
+    headers.insert(PEER_ADDR_HEADER, "127.0.0.1".parse().unwrap());
     headers.insert(
         "x-forwarded-for",
         "attacker-spoofed, 198.51.100.7".parse().unwrap(),
@@ -562,6 +566,7 @@ fn client_ip_takes_rightmost_xff() {
 #[test]
 fn client_ip_xff_single_value() {
     let mut headers = HeaderMap::new();
+    headers.insert(PEER_ADDR_HEADER, "127.0.0.1".parse().unwrap());
     headers.insert("x-forwarded-for", "203.0.113.10".parse().unwrap());
     assert_eq!(client_ip_for_rate_limit(&headers), "203.0.113.10");
 }
@@ -569,11 +574,44 @@ fn client_ip_xff_single_value() {
 #[test]
 fn client_ip_xff_trims_whitespace() {
     let mut headers = HeaderMap::new();
+    headers.insert(PEER_ADDR_HEADER, "127.0.0.1".parse().unwrap());
     headers.insert(
         "x-forwarded-for",
         "1.2.3.4 ,    198.51.100.7   ".parse().unwrap(),
     );
     assert_eq!(client_ip_for_rate_limit(&headers), "198.51.100.7");
+}
+
+#[test]
+fn client_ip_ignores_xff_without_a_peer() {
+    // Served without connection info: fail closed, the header is not
+    // believed from an unknown sender.
+    let mut headers = HeaderMap::new();
+    headers.insert("x-forwarded-for", "198.51.100.7".parse().unwrap());
+    assert_eq!(client_ip_for_rate_limit(&headers), "unknown");
+}
+
+#[test]
+fn client_ip_reads_every_xff_line_in_order() {
+    // HAProxy appends its own line: the client's first line must not win.
+    let mut headers = HeaderMap::new();
+    headers.insert(PEER_ADDR_HEADER, "127.0.0.1".parse().unwrap());
+    headers.append("x-forwarded-for", "6.6.6.6".parse().unwrap());
+    headers.append("x-forwarded-for", "198.51.100.7".parse().unwrap());
+    assert_eq!(client_ip_for_rate_limit(&headers), "198.51.100.7");
+}
+
+#[test]
+fn client_ip_with_non_ascii_xff_is_its_own_bucket() {
+    // Not the proxy's address: one client sending bytes `to_str` refuses
+    // must not be able to fill the bucket everyone behind the proxy shares.
+    let mut headers = HeaderMap::new();
+    headers.insert(PEER_ADDR_HEADER, "127.0.0.1".parse().unwrap());
+    headers.insert(
+        "x-forwarded-for",
+        axum::http::HeaderValue::from_bytes(b"1.2.3.4, \xff").unwrap(),
+    );
+    assert_eq!(client_ip_for_rate_limit(&headers), "unparseable");
 }
 
 #[test]

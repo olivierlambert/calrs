@@ -1223,6 +1223,7 @@ admin-private-hosts = Lista de hosts privados permitidos
 admin-private-hosts-help = Nombres de host, separados por comas, que pueden resolverse a IP privadas o reservadas en las fuentes CalDAV/EWS (excepción a la protección SSRF). Añade solo hosts que controles (por ejemplo, un servidor de calendario en la misma red Docker). Déjalo vacío para mantener la protección activa en todos los hosts.
 admin-trusted-proxies = Proxies de confianza
 admin-trusted-proxies-help = Direcciones o rangos CIDR de los proxies inversos cuya cabecera X-Forwarded-For se cree al distinguir a los clientes para los límites de frecuencia. Déjalo vacío para el valor por defecto (rangos de loopback, privados, locales únicos y de enlace local: un proxy en el mismo host o la misma red de Docker). Escribe none si se accede a calrs directamente, para que un cliente no pueda hacerse pasar por otra dirección.
+admin-trusted-proxies-everyone = Proxies de confianza: «{ $entry }» confiaría en todas las direcciones, y cualquier cliente podría hacerse pasar por otro. Indica en su lugar la dirección o el rango de tu proxy.
 admin-trusted-proxies-invalid = Proxies de confianza: «{ $entry }» no es una dirección IP ni un rango CIDR.
 admin-german-formal = Tratamiento en alemán
 admin-german-formal-du = Informal (du)

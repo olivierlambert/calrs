@@ -10,7 +10,9 @@ async fn production_pool_app() -> (Router, SqlitePool, String, TestDataDir) {
     let pool = crate::db::connect(&dir).await.unwrap();
     crate::db::migrate(&pool).await.unwrap();
     let (_, _, et_id) = seed_test_data(&pool).await;
-    let router = create_router(pool.clone(), dir.to_path_buf(), [0u8; 32]).await;
+    let router = create_router(pool.clone(), dir.to_path_buf(), [0u8; 32])
+        .await
+        .layer(local_proxy_peer());
     (router, pool, et_id, dir)
 }
 

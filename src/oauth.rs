@@ -354,6 +354,7 @@ fn loopback_redirect_matching_only_relaxes_the_port() {
 fn rate_keys_group_ipv6_by_64_and_keep_ipv4_whole() {
     let key = |ip: &str| {
         let mut headers = HeaderMap::new();
+        headers.insert(crate::web::PEER_ADDR_HEADER, "127.0.0.1".parse().unwrap());
         headers.insert("x-forwarded-for", ip.parse().unwrap());
         rate_key(&headers)
     };

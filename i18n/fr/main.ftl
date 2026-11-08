@@ -1223,6 +1223,7 @@ admin-private-hosts = Liste d'hôtes privés autorisés
 admin-private-hosts-help = Noms d'hôtes, séparés par des virgules, autorisés à résoudre vers des IP privées ou réservées pour les sources CalDAV/EWS (dérogation à la protection SSRF). N'ajoutez que des hôtes que vous contrôlez (par exemple un serveur d'agenda sur le même réseau Docker). Laissez vide pour conserver la protection sur tous les hôtes.
 admin-trusted-proxies = Proxys de confiance
 admin-trusted-proxies-help = Adresses ou plages CIDR des proxys inverses dont l'en-tête X-Forwarded-For est pris en compte pour distinguer les clients dans les limites de débit. Laissez vide pour la valeur par défaut (plages de bouclage, privées, locales uniques et lien-local : un proxy sur le même hôte ou le même réseau Docker). Saisissez none si calrs est joint directement, pour qu'un client ne puisse pas se faire passer pour une autre adresse.
+admin-trusted-proxies-everyone = Proxys de confiance : « { $entry } » ferait confiance à toutes les adresses, et n’importe quel client pourrait se faire passer pour un autre. Indiquez plutôt l’adresse ou la plage de votre proxy.
 admin-trusted-proxies-invalid = Proxys de confiance : « { $entry } » n'est ni une adresse IP ni une plage CIDR.
 admin-german-formal = Forme d'adresse en allemand
 admin-german-formal-du = Informelle (du)
