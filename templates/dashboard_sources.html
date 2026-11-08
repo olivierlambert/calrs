@@ -46,6 +46,7 @@
   </div>
 </header>
 <section class="sec">
+  {% if error %}<div class="notice notice--error" role="alert" style="margin-bottom: 1rem;">{{ ic.icon("alert", 14) }}<span>{{ error }}</span></div>{% endif %}
   {% if sources %}
     {% for s in sources %}
     <div class="source-item">
@@ -93,6 +94,7 @@
         </div>
       </div>
       {% if s.sync_error %}<div class="source-sync-error">{{ t("sources-sync-failing", since=s.sync_failing_since, error=s.sync_error) }}</div>{% endif %}
+      {% if s.not_ready %}<div class="notice notice--warning" style="font-size: 13px; padding: 0.45rem 0.7rem; margin-top: 0.5rem;">{{ ic.icon("alert", 14) }}<span>{{ t("sources-microsoft-not-ready") }}</span></div>{% endif %}
       {% if s.calendars %}
       <div style="margin-top: 0.5rem;">
         {% if not s.write_calendar_href %}

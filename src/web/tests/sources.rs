@@ -419,7 +419,8 @@ async fn unknown_write_destinations_are_refused() {
         ("not-a-calendar", Some("own")),
         ("", None),
     ] {
-        app.clone()
+        let response = app
+            .clone()
             .oneshot(post_form(
                 &format!("/dashboard/sources/{sid}/write-calendar"),
                 &session,
@@ -429,7 +430,27 @@ async fn unknown_write_destinations_are_refused() {
             .await
             .unwrap();
         assert_eq!(target().await.as_deref(), expected, "{href}");
+        // A refusal says so instead of redirecting silently.
+        let location = response.headers().get("location").unwrap();
+        assert_eq!(
+            location == "/dashboard/sources?error=write-calendar",
+            href == "not-a-calendar",
+            "{href}"
+        );
     }
+    let body = body_string(
+        app.oneshot(get_authed(
+            "/dashboard/sources?error=write-calendar",
+            &session,
+        ))
+        .await
+        .unwrap(),
+    )
+    .await;
+    assert!(body.contains(
+        &crate::i18n::translate("en", "sources-write-calendar-refused", None)
+            .replace('\'', "&#x27;")
+    ));
 }
 
 // --- Calendars synced by a source (#324) ---

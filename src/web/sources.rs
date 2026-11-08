@@ -7,8 +7,15 @@ use super::*;
 pub(super) async fn dashboard_sources(
     State(state): State<Arc<AppState>>,
     auth_user: crate::auth::AuthUser,
+    Query(query): Query<std::collections::HashMap<String, String>>,
 ) -> impl IntoResponse {
     let user = &auth_user.user;
+    let error_message = match query.get("error").map(String::as_str) {
+        Some("write-calendar") => {
+            crate::i18n::translate(auth_user.lang, "sources-write-calendar-refused", None)
+        }
+        _ => String::new(),
+    };
 
     let sources: Vec<(
         String,
@@ -22,8 +29,9 @@ pub(super) async fn dashboard_sources(
         String,
         Option<String>,
         Option<String>,
+        Option<String>,
     )> = sqlx::query_as(
-        "SELECT cs.id, cs.name, cs.url, cs.username, cs.last_synced, cs.enabled, cs.write_calendar_href, cs.auth_type, cs.provider_type, cs.last_sync_error, cs.sync_failing_since
+        "SELECT cs.id, cs.name, cs.url, cs.username, cs.last_synced, cs.enabled, cs.write_calendar_href, cs.auth_type, cs.provider_type, cs.last_sync_error, cs.sync_failing_since, cs.last_full_sync
          FROM caldav_sources cs
          JOIN accounts a ON a.id = cs.account_id
          WHERE a.user_id = ?
@@ -64,8 +72,14 @@ pub(super) async fn dashboard_sources(
                 provider_type,
                 last_sync_error,
                 sync_failing_since,
+                last_full_sync,
             )| {
                 let source_calendars = || all_calendars.iter().filter(|c| &c.0 == id);
+                // A Microsoft source with no complete snapshot yet makes its
+                // owner busy everywhere (`microsoft_coverage_gap`).
+                let not_ready = *enabled
+                    && provider_type == crate::providers::factory::kinds::MICROSOFT
+                    && last_full_sync.is_none();
                 // Write-back choices: every calendar can receive bookings,
                 // synced or not (#324), except one the account cannot write
                 // to, unless it is already the one configured.
@@ -107,6 +121,7 @@ pub(super) async fn dashboard_sources(
                     enabled => enabled,
                     write_calendar_href => write_cal.as_deref().unwrap_or(""),
                     write_calendar_read_only => write_calendar_read_only,
+                    not_ready => not_ready,
                     auth_type => auth_type,
                     provider_type => provider_type,
                     provider_label => crate::providers::factory::label(provider_type),
@@ -128,6 +143,7 @@ pub(super) async fn dashboard_sources(
             sidebar => sidebar_context(&auth_user, "sources"),
             lang => auth_user.lang,
             sources => sources_ctx,
+            error => error_message,
             impersonating => impersonating,
             impersonating_name => impersonating_name,
         })
@@ -1289,7 +1305,7 @@ pub(super) async fn set_write_calendar(
         Some(form.calendar_href)
     };
     // A destination must be one of this source's calendars that the account
-    // can write to; an empty one turns write-back off.
+    // can write to; an empty one turns write-back off. A refusal says so.
     if href.is_some() {
         let writable: bool = sqlx::query_scalar(
             "SELECT EXISTS(SELECT 1 FROM calendars WHERE source_id = ? AND href = ? AND read_only = 0)",
@@ -1300,7 +1316,8 @@ pub(super) async fn set_write_calendar(
         .await
         .unwrap_or(false);
         if !writable {
-            return Redirect::to("/dashboard/sources").into_response();
+            tracing::info!(source_id = %source_id, "write calendar refused: not a writable calendar of the source");
+            return Redirect::to("/dashboard/sources?error=write-calendar").into_response();
         }
     }
 

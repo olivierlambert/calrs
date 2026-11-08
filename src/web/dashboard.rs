@@ -564,6 +564,9 @@ pub(super) async fn dashboard_bookings(
             crate::i18n::translate(auth_user.lang, "bae-body-resource-gone", None)
         }
         Some("host-busy") => crate::i18n::translate(auth_user.lang, "bae-body-host-busy", None),
+        Some("host-not-synced") => {
+            crate::i18n::translate(auth_user.lang, "bae-body-host-not-synced", None)
+        }
         Some("no-bookable-dates") => {
             crate::i18n::translate(auth_user.lang, "bookings-error-no-bookable-dates", None)
         }
@@ -1706,6 +1709,9 @@ pub(super) async fn confirm_booking(
     .await
     {
         tracing::warn!(booking_id = %bid, "approval refused: host no longer free");
+        if approval_hosts_awaiting_first_sync(&state.pool, &approval_hosts).await {
+            return Redirect::to("/dashboard/bookings?error=host-not-synced").into_response();
+        }
         return Redirect::to("/dashboard/bookings?error=host-busy").into_response();
     }
 

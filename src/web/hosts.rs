@@ -406,6 +406,23 @@ pub(super) async fn prepare_approval_hosts(
     hosts
 }
 
+/// Whether a host an approval needs has a Microsoft calendar that has not
+/// finished its first sync: [`approval_hosts_free`] then refuses, and the
+/// refusal should say why rather than call the host busy.
+pub(super) async fn approval_hosts_awaiting_first_sync(
+    pool: &SqlitePool,
+    hosts: &RescheduleHosts,
+) -> bool {
+    for user_id in hosts.user_ids.iter().chain(hosts.participants.iter()) {
+        if crate::commands::sync::microsoft_coverage_gap(pool, user_id, chrono::Utc::now()).await
+            == Some(crate::commands::sync::CoverageGap::NotYetSynced)
+        {
+            return true;
+        }
+    }
+    false
+}
+
 /// Whether everyone a pending booking needs is still free for it, checked
 /// under the booking lock right before an approval flips it to confirmed.
 ///

@@ -306,6 +306,16 @@ pub(super) async fn caldav_push_booking_for_user(
         match written {
             Ok(()) => {
                 tracing::info!(uid = %booking_uid, calendar_href = %calendar_href, "calendar write-back succeeded (verified)");
+                // Only a host copy read back counts: the Graph orphan sweep
+                // trusts a snapshot taken after this instant to hold it.
+                if owner == CopyOwner::Host {
+                    let _ = sqlx::query(
+                        "UPDATE bookings SET writeback_verified_at = datetime('now') WHERE uid = ?",
+                    )
+                    .bind(booking_uid)
+                    .execute(pool)
+                    .await;
+                }
             }
             Err(e) => {
                 tracing::error!(uid = %booking_uid, calendar_href = %calendar_href, error = %e, "calendar write-back failed");

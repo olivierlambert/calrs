@@ -736,24 +736,20 @@ pub(super) async fn fetch_busy_times_for_user_opts(
     }
 
     // A Microsoft source that has not delivered its first snapshot, or a
-    // time past the Graph sync window, says nothing about the host's
+    // time past what its last one covered, says nothing about the host's
     // Outlook calendar: busy, rather than free.
-    let window_end_utc = chrono::TimeZone::from_local_datetime(&host_tz, &window_end)
-        .latest()
-        .map(|end| end.with_timezone(&chrono::Utc))
-        .unwrap_or_else(|| window_end.and_utc());
-    match crate::commands::sync::microsoft_coverage_gap(pool, user_id, window_end_utc).await {
-        Some(crate::commands::sync::CoverageGap::NotYetSynced) => {
-            busy.push((window_start, window_end));
-        }
-        Some(crate::commands::sync::CoverageGap::BeyondWindow) => {
-            let horizon = crate::commands::sync::microsoft_horizon()
-                .with_timezone(&host_tz)
-                .naive_local();
-            busy.push((horizon.max(window_start), window_end));
-        }
-        None => {}
-    }
+    busy.extend(
+        crate::commands::sync::microsoft_gap_intervals(
+            pool,
+            user_id,
+            window_start,
+            window_end,
+            host_tz,
+        )
+        .await
+        .into_iter()
+        .map(|(start, end, _)| (start, end)),
+    );
 
     // Time off (#46): the user takes no bookings then, whatever the event
     // type, so every caller of this function (slot pages, submit-time
@@ -3005,6 +3001,12 @@ pub(super) async fn troubleshoot(
         .to_string();
     // Troubleshoot is a dashboard page; keep English until dashboard is translated.
     let date_label = crate::i18n::format_long_date(target_date, "en");
+    // Every time reads as busy until the user's Microsoft calendar has
+    // delivered its first complete snapshot: say so rather than leave the
+    // timeline unexplained.
+    let calendar_not_ready =
+        crate::commands::sync::microsoft_coverage_gap(&state.pool, &user.id, Utc::now()).await
+            == Some(crate::commands::sync::CoverageGap::NotYetSynced);
 
     let tmpl = match state.templates.get_template("troubleshoot.html") {
         Ok(t) => t,
@@ -3025,6 +3027,7 @@ pub(super) async fn troubleshoot(
             has_rules => !rules.is_empty(),
             date_is_blocked => date_is_blocked,
             has_custom_hours => !day_overrides.is_empty() && !date_is_blocked,
+            calendar_not_ready => calendar_not_ready,
             blocks => blocks_ctx,
             hour_markers => hour_markers,
             breakdown => breakdown_ctx,

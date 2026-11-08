@@ -123,6 +123,8 @@ invite-links-empty-link-label = Legen Sie eine Terminart an
 
 sources-no-write-calendar = Kein Schreibkalender ausgewählt. Bestätigte Buchungen bleiben in calrs und werden nicht in diesen Kalender übertragen. Wählen Sie unten einen aus, um das Rückschreiben zu aktivieren.
 sources-write-calendar-read-only = Der Kalender, in den Buchungen geschrieben werden, ist jetzt schreibgeschützt, sie kommen dort nicht mehr an. Wählen Sie unten einen beschreibbaren aus.
+sources-write-calendar-refused = Dieser Kalender kann keine Buchungen aufnehmen: Er gehört nicht zu dieser Quelle oder das Konto darf nicht hineinschreiben. Wählen Sie einen anderen.
+sources-microsoft-not-ready = calrs hat diesen Kalender noch nicht fertig gelesen. Bis dahin zeigen Ihre Buchungsseiten keine freie Zeit. Das dauert nach dem Verbinden bis zu etwa einer Minute; dauert es länger, nennt der Synchronisierungsfehler oben den Grund.
 sources-empty-link-label = Fügen Sie eine hinzu
 source-calendars-help = Wählen Sie, welche Kalender von { $name } calrs synchronisiert. Nicht ausgewählte Kalender werden nie abgerufen und blockieren Ihre Verfügbarkeit nicht.
 source-calendars-saved = Gespeichert. Neu ausgewählte Kalender werden bei der nächsten Synchronisierung abgerufen; mit „Synchronisieren“ auf der Seite der Quellen holen Sie sie sofort.
@@ -448,3 +450,6 @@ time-off-error-too-many = Sie haben bereits 100 Zeiträume geplant. Löschen Sie
 time-off-hint = Um Daten für alle Terminarten auf einmal zu sperren, nutzen Sie { $link }.
 time-off-pending-notice = Anfragen, die in einem Zeitraum auf Ihre Bestätigung warten, lassen sich nicht mehr annehmen: Lehnen Sie sie ab oder löschen Sie zuerst die Abwesenheit.
 time-off-impersonating = Sie sehen diese Seite als { $name }. Die Abwesenheiten sind für Sie hier nur lesbar, die Notizen sind ausgeblendet.
+
+bae-body-host-not-synced = Der Microsoft-Kalender eines Gastgebers ist noch nicht zum ersten Mal synchronisiert, calrs weiß also nicht, ob diese Zeit frei ist. Versuchen Sie es in einer Minute erneut oder sehen Sie sich den Synchronisierungsfehler der Quelle unter Kalenderquellen an.
+troubleshoot-microsoft-not-ready = Ihr Microsoft-Kalender ist noch nicht zum ersten Mal synchronisiert: Bis dahin ist jede Zeit belegt. Siehe Kalenderquellen.

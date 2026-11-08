@@ -59,6 +59,10 @@
 <section class="sec" id="troubleshoot-content">
   <p class="ts-date">{{ date_label }}</p>
 
+  {% if calendar_not_ready %}
+  <p class="notice notice--error">{{ t("troubleshoot-microsoft-not-ready") }}</p>
+  {% endif %}
+
   {% if date_is_blocked is defined and date_is_blocked %}
   <p class="notice notice--error">{{ t("troubleshoot-blocked-override") }}</p>
   {% elif has_custom_hours is defined and has_custom_hours %}

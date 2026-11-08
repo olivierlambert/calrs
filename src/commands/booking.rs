@@ -232,28 +232,28 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
                 }
             }
 
-            // The host's Microsoft calendars must have been read for this
-            // time: not before their first snapshot, nor past the Graph sync
-            // window (the web path treats both as busy).
-            let host_user: String = sqlx::query_scalar(
-                "SELECT a.user_id FROM event_types et JOIN accounts a ON a.id = et.account_id WHERE et.id = ?",
+            // The hosts' Microsoft calendars must have been read for this
+            // time: not before their first snapshot, nor past what the last
+            // one covered (the web path and `event-type slots` treat both as
+            // busy). Every host the event type needs, as on the web.
+            let gaps = crate::commands::event_type::host_microsoft_gaps(
+                pool, &et_id, buf_start, buf_end, host_tz,
             )
-            .bind(&et_id)
-            .fetch_one(pool)
             .await?;
-            let end_utc = chrono::DateTime::parse_from_rfc3339(&end_at)?.with_timezone(&Utc)
-                + Duration::minutes(buffer_after as i64);
-            match crate::commands::sync::microsoft_coverage_gap(pool, &host_user, end_utc).await {
-                Some(crate::commands::sync::CoverageGap::NotYetSynced) => bail!(
-                    "The host's Microsoft calendar has not finished its first sync; \
-                     its busy times are unknown. Run `calrs sync` and try again"
-                ),
-                Some(crate::commands::sync::CoverageGap::BeyondWindow) => bail!(
-                    "This time is past {}, the end of the window the host's Microsoft calendar is synced for, \
-                     so its conflicts cannot be checked",
-                    crate::commands::sync::microsoft_horizon().format("%Y-%m-%d")
-                ),
-                None => {}
+            for (s, e, gap) in gaps {
+                if s < buf_end && e > buf_start {
+                    match gap {
+                        crate::commands::sync::CoverageGap::NotYetSynced => bail!(
+                            "A host's Microsoft calendar has not finished its first sync; \
+                             its busy times are unknown. Run `calrs sync` and try again"
+                        ),
+                        crate::commands::sync::CoverageGap::BeyondWindow(horizon) => bail!(
+                            "This time is past {}, the end of what a host's Microsoft calendar \
+                             was last synced for, so its conflicts cannot be checked",
+                            horizon.format("%Y-%m-%d")
+                        ),
+                    }
+                }
             }
 
             // Validate: no conflicts with existing bookings
