@@ -503,8 +503,21 @@ async fn sync_caldav_calendars(
 /// source. A source that failed within the last `STALE_SECS` is not retried
 /// on demand, so a dead server costs a guest page one timeout every five
 /// minutes rather than one per page load.
-/// A source another task is syncing right now is skipped, not waited for.
+/// A source another task is syncing right now is skipped, not waited for:
+/// its cache is about to be refreshed, and a guest page never waits on
+/// someone else's sync (#388).
 pub async fn sync_if_stale(pool: &SqlitePool, key: &[u8; 32], user_id: &str) {
+    sync_stale_sources(pool, key, user_id, false).await;
+}
+
+/// [`sync_if_stale`] that waits for a sync of the same source already
+/// running, then finds it fresh, so the caller reads what that sync fetched.
+/// For an approval's re-check, whose caller bounds the whole refresh.
+pub async fn sync_if_stale_waiting(pool: &SqlitePool, key: &[u8; 32], user_id: &str) {
+    sync_stale_sources(pool, key, user_id, true).await;
+}
+
+async fn sync_stale_sources(pool: &SqlitePool, key: &[u8; 32], user_id: &str, wait: bool) {
     let cutoff = Utc::now() - chrono::Duration::seconds(STALE_SECS);
     // Must match SQLite datetime('now') format: "YYYY-MM-DD HH:MM:SS" (space, not T)
     let cutoff_str = cutoff.format("%Y-%m-%d %H:%M:%S").to_string();
@@ -547,12 +560,17 @@ pub async fn sync_if_stale(pool: &SqlitePool, key: &[u8; 32], user_id: &str) {
         // source, skip it and serve the cache, which that sync is about to
         // refresh: a guest page never waits for someone else's sync (#388).
         let lock = source_lock(source_id).await;
-        let Ok(_guard) = lock.try_lock() else {
-            tracing::debug!(
-                source_id = %source_id,
-                "skipping on-demand sync, the source is being synced"
-            );
-            continue;
+        let _guard = if wait {
+            lock.lock().await
+        } else {
+            let Ok(guard) = lock.try_lock() else {
+                tracing::debug!(
+                    source_id = %source_id,
+                    "skipping on-demand sync, the source is being synced"
+                );
+                continue;
+            };
+            guard
         };
 
         // MAX() of the two: whichever of the last success and the last
@@ -649,6 +667,7 @@ pub async fn due_background_sources(
                 CASE WHEN cs.managed = 1
                      THEN (SELECT ac.ews_global_url FROM auth_config ac WHERE ac.id = 'singleton')
                      ELSE cs.url END AS sync_url,
+                cs.provider_type, cs.auth_type,
                 cs.last_synced, cs.last_sync_error_at, cs.last_full_sync, cs.last_full_attempt_at
          FROM caldav_sources cs
          WHERE cs.enabled = 1 AND {} AND {NOT_SUSPENDED_MICROSOFT}",
@@ -669,6 +688,8 @@ pub async fn due_background_sources(
 pub struct SourceSyncState {
     pub id: String,
     pub sync_url: Option<String>,
+    pub provider_type: String,
+    pub auth_type: String,
     pub last_synced: Option<String>,
     pub last_sync_error_at: Option<String>,
     pub last_full_sync: Option<String>,
@@ -676,6 +697,18 @@ pub struct SourceSyncState {
 }
 
 impl SourceSyncState {
+    /// The key under which the background sync allows one sync at a time
+    /// ([`DueSource::origin`]). Cloud calendars reached through OAuth
+    /// (Microsoft Graph, Google) throttle per user and serve every user from
+    /// the same host, so each such source is a line of its own; a
+    /// self-hosted CalDAV or EWS server is one line for all its sources.
+    pub fn sync_key(&self) -> String {
+        if self.provider_type == kinds::MICROSOFT || self.auth_type == "oauth2" {
+            return format!("source:{}", self.id);
+        }
+        sync_origin(self.sync_url.as_deref().unwrap_or_default())
+    }
+
     /// The later of the last success and the last failure.
     pub fn last_attempt(&self) -> String {
         last_attempt_of(
@@ -740,7 +773,7 @@ pub fn pick_due_sources(
     due.into_iter()
         .map(|(_, last_attempt, row)| DueSource {
             id: row.id.clone(),
-            origin: sync_origin(row.sync_url.as_deref().unwrap_or_default()),
+            origin: row.sync_key(),
             last_attempt,
         })
         .collect()
@@ -5189,6 +5222,62 @@ mod tests {
                 .await
                 .unwrap();
         assert!(error.is_some());
+    }
+
+    #[tokio::test]
+    async fn sync_if_stale_waiting_waits_for_a_running_sync() {
+        // The approval path's variant: while another task holds the
+        // per-source lock, it waits. After the winner bumps last_synced and
+        // releases, it re-checks, sees a fresh timestamp, and skips without
+        // attempting to hit CalDAV.
+        let pool = setup_test_db().await;
+        let (source_id, _et_id) = seed_fixtures(&pool).await;
+        sqlx::query(
+            "UPDATE caldav_sources SET last_synced = '2000-01-01 00:00:00', password_enc = 'deadbeef' WHERE id = ?",
+        )
+        .bind(&source_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let user_id: String = sqlx::query_scalar(
+            "SELECT a.user_id FROM caldav_sources cs JOIN accounts a ON a.id = cs.account_id WHERE cs.id = ?",
+        )
+        .bind(&source_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        let lock = source_lock(&source_id).await;
+        let guard = lock.lock().await;
+        let waiter = {
+            let (pool, user_id) = (pool.clone(), user_id.clone());
+            tokio::spawn(async move { sync_if_stale_waiting(&pool, &[0u8; 32], &user_id).await })
+        };
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        assert!(
+            !waiter.is_finished(),
+            "waits while the source is being synced"
+        );
+        sqlx::query("UPDATE caldav_sources SET last_synced = datetime('now') WHERE id = ?")
+            .bind(&source_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        drop(guard);
+        tokio::time::timeout(std::time::Duration::from_secs(2), waiter)
+            .await
+            .expect("returned once the lock was released")
+            .unwrap();
+        let error: Option<String> =
+            sqlx::query_scalar("SELECT last_sync_error_at FROM caldav_sources WHERE id = ?")
+                .bind(&source_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            error, None,
+            "found the source fresh and did not sync it again"
+        );
     }
 
     // --- #324: calendars the owner does not sync ---

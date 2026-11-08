@@ -242,10 +242,11 @@ synced one after the other (with any user's own source on that server), while
 sources on other servers run alongside them, up to `CALRS_SYNC_CONCURRENCY` at
 once (default 4). How many mailboxes one endpoint gets through depends on how long
 a sync takes (EWS sources fetch their calendars in full each time): at two
-seconds a mailbox, about 1,500 an hour (no new sync starts in the last 10
-seconds of each minute). Past what fits, each source comes round less often
-than hourly, and the daily full resync still comes first, so it keeps running
-daily up to about 36,000 mailboxes at that pace. `CALRS_SYNC_MIN_AGE` makes
+seconds a mailbox, about 1,800 an hour. Past what fits, each source comes
+round less often than hourly, and the daily full resync still comes first, so
+it keeps running daily up to about 43,000 mailboxes at that pace. A sync still
+running after 10 minutes is stopped and counts as a failure of the source.
+`CALRS_SYNC_MIN_AGE` makes
 the background sync leave each source alone for longer, to lighten the load on
 the server. See
 [Deployment](./deployment.md#environment-variables).

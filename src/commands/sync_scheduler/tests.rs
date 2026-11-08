@@ -53,7 +53,7 @@ fn config(concurrency: usize) -> SchedulerConfig {
     SchedulerConfig {
         min_age_secs: 0,
         concurrency,
-        budget: Duration::from_secs(30),
+        source_timeout: Duration::from_secs(30),
     }
 }
 
@@ -103,6 +103,7 @@ fn settings_fall_back_and_are_capped() {
     assert_eq!(resolve_concurrency(Ok(Some(1))), 1);
     assert_eq!(resolve_concurrency(Ok(Some(8))), 8);
     assert_eq!(resolve_concurrency(Ok(Some(500))), MAX_CONCURRENCY);
+    assert_eq!(MAX_CONCURRENCY, 8);
     assert_eq!(
         resolve_concurrency(Err("0".to_string())),
         DEFAULT_CONCURRENCY
@@ -367,7 +368,7 @@ async fn sources_in_the_database_each_sync_hourly_and_fully_on_time() {
             Box::pin(async move {
                 let now = Utc.timestamp_opt(clock.load(Ordering::SeqCst), 0).unwrap();
                 let mut state: sync::SourceSyncState = sqlx::query_as(
-                    "SELECT id, url AS sync_url, last_synced, last_sync_error_at, last_full_sync, \
+                    "SELECT id, url AS sync_url, provider_type, auth_type, last_synced, last_sync_error_at, last_full_sync, \
                      last_full_attempt_at FROM caldav_sources WHERE id = ?",
                 )
                 .bind(&id)
@@ -528,7 +529,14 @@ async fn a_source_already_being_synced_is_not_synced_twice() {
         last_attempt: "2000-01-01".to_string(),
     };
     assert_eq!(
-        attempt(pool.clone(), picked.clone(), sync_fn.clone()).await,
+        attempt(
+            pool.clone(),
+            [0u8; 32],
+            picked.clone(),
+            sync_fn.clone(),
+            Duration::from_secs(5)
+        )
+        .await,
         Attempt::AlreadyDone
     );
     // Or removed.
@@ -538,7 +546,14 @@ async fn a_source_already_being_synced_is_not_synced_twice() {
         .await
         .unwrap();
     assert_eq!(
-        attempt(pool.clone(), picked, sync_fn).await,
+        attempt(
+            pool.clone(),
+            [0u8; 32],
+            picked,
+            sync_fn,
+            Duration::from_secs(5)
+        )
+        .await,
         Attempt::AlreadyDone
     );
     assert_eq!(*calls.lock().unwrap(), vec![free, held]);
@@ -594,30 +609,188 @@ async fn an_on_demand_sync_skips_a_source_the_background_is_syncing() {
     assert_eq!(error, None, "the on-demand sync did not run a second sync");
 }
 
-/// No sync starts once the tick's budget is spent; the rest wait for the
-/// next tick.
-#[tokio::test]
-async fn no_sync_starts_once_the_budget_is_spent() {
+/// A slow server holds one slot and its own line, never the others: while
+/// its first source drags, the sources on other servers are synced, a new
+/// tick starts without waiting for it, and it is never started twice.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_slow_server_holds_only_its_own_slot() {
     let pool = setup_pool().await;
     let (_, account) = seed_account(&pool).await;
-    for _ in 0..5 {
-        add_source(&pool, &account, "https://dav.example.com/").await;
+    let mut slow = Vec::new();
+    for _ in 0..3 {
+        slow.push(add_source(&pool, &account, "https://slow.example.com/").await);
     }
+    let mut fast = Vec::new();
+    for server in ["a", "a", "b", "b", "c"] {
+        let url = format!("https://{server}.example.com/");
+        fast.push(add_source(&pool, &account, &url).await);
+    }
+    // The slow server's sources are the stalest, so they come first.
+    sqlx::query("UPDATE caldav_sources SET last_synced = datetime('now', '-2 hours') WHERE url LIKE '%slow%'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE caldav_sources SET last_synced = datetime('now', '-1 hours') WHERE url NOT LIKE '%slow%'")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let running: Arc<StdMutex<HashMap<String, usize>>> = Arc::default();
+    let twice = Arc::new(AtomicUsize::new(0));
+    let slow_ids: Arc<HashSet<String>> = Arc::new(slow.iter().cloned().collect());
+    let sync_fn: SyncFn = {
+        let (pool, running, twice, slow_ids) = (
+            pool.clone(),
+            running.clone(),
+            twice.clone(),
+            slow_ids.clone(),
+        );
+        Arc::new(move |id: String| {
+            let (pool, running, twice, slow_ids) = (
+                pool.clone(),
+                running.clone(),
+                twice.clone(),
+                slow_ids.clone(),
+            );
+            Box::pin(async move {
+                {
+                    let mut now_running = running.lock().unwrap();
+                    let count = now_running.entry(id.clone()).or_default();
+                    *count += 1;
+                    if *count > 1 {
+                        twice.fetch_add(1, Ordering::SeqCst);
+                    }
+                }
+                if slow_ids.contains(&id) {
+                    tokio::time::sleep(Duration::from_millis(600)).await;
+                }
+                sqlx::query("UPDATE caldav_sources SET last_synced = datetime('now') WHERE id = ?")
+                    .bind(&id)
+                    .execute(&pool)
+                    .await
+                    .unwrap();
+                *running.lock().unwrap().get_mut(&id).unwrap() -= 1;
+            })
+        })
+    };
+    let mut scheduler = Scheduler::new(pool.clone(), [0u8; 32], config(2), sync_fn);
+    scheduler.begin_tick(Utc::now(), 8).await;
+    let fast_done = tokio::time::timeout(Duration::from_secs(5), async {
+        while !fast.iter().all(|id| scheduler.report.synced.contains(id)) {
+            scheduler.next_done().await;
+        }
+    })
+    .await;
+    assert!(fast_done.is_ok(), "the other servers' sources were synced");
+    assert!(
+        scheduler
+            .report
+            .synced
+            .iter()
+            .all(|id| !slow_ids.contains(id)),
+        "while the slow server's first source was still running"
+    );
+    assert_eq!(scheduler.running(), 1);
+
+    // The next tick does not wait for it, and does not start it again.
+    scheduler.begin_tick(Utc::now(), 8).await;
+    assert!(scheduler.running() >= 1);
+    tokio::time::timeout(Duration::from_secs(10), scheduler.settle())
+        .await
+        .unwrap();
+    assert_eq!(
+        twice.load(Ordering::SeqCst),
+        0,
+        "no source ran twice at once"
+    );
+}
+
+/// A sync that runs past the source timeout is stopped and recorded as a
+/// failure of the source, and its lock is released.
+#[tokio::test]
+async fn a_sync_past_the_timeout_is_stopped_and_recorded() {
+    let pool = setup_pool().await;
+    let (_, account) = seed_account(&pool).await;
+    let source = add_source(&pool, &account, "https://dav.example.com/").await;
     let sync_fn: SyncFn = Arc::new(|_id: String| {
-        Box::pin(async move { tokio::time::sleep(Duration::from_millis(100)).await })
+        Box::pin(async move { tokio::time::sleep(Duration::from_secs(30)).await })
     });
     let cfg = SchedulerConfig {
-        min_age_secs: 0,
-        concurrency: 4,
-        budget: Duration::from_millis(150),
+        source_timeout: Duration::from_millis(100),
+        ..config(1)
     };
-    let report = run_tick(&pool, &cfg, Utc::now(), 5, sync_fn).await;
-    assert!(
-        (1..=2).contains(&report.synced.len()),
-        "{} started",
-        report.synced.len()
-    );
-    assert_eq!(report.synced.len() + report.not_reached, 5);
+    let report = tokio::time::timeout(
+        Duration::from_secs(5),
+        run_tick(&pool, &cfg, Utc::now(), 1, sync_fn),
+    )
+    .await
+    .expect("the tick waited for the slow sync");
+    assert_eq!(report.timed_out, 1);
+    assert!(report.synced.is_empty());
+    let (error, failures): (Option<String>, i64) = sqlx::query_as(
+        "SELECT last_sync_error, sync_failure_count FROM caldav_sources WHERE id = ?",
+    )
+    .bind(&source)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(error.unwrap().contains("took longer"));
+    assert_eq!(failures, 1);
+    assert!(sync::source_lock(&source).await.try_lock().is_ok());
+}
+
+/// Cloud calendars reached through OAuth throttle per user: each source is
+/// a line of its own, while self-hosted servers keep one line each.
+#[test]
+fn oauth_cloud_sources_are_keyed_per_source() {
+    let row = |id: &str, url: &str, provider: &str, auth: &str| sync::SourceSyncState {
+        id: id.to_string(),
+        sync_url: Some(url.to_string()),
+        provider_type: provider.to_string(),
+        auth_type: auth.to_string(),
+        ..Default::default()
+    };
+    let graph = "https://graph.microsoft.com/v1.0";
+    let google = "https://apidata.googleusercontent.com/caldav/v2/";
+    let ms1 = row("m1", graph, "microsoft", "oauth2").sync_key();
+    let ms2 = row("m2", graph, "microsoft", "oauth2").sync_key();
+    let g1 = row("g1", google, "caldav", "oauth2").sync_key();
+    let g2 = row("g2", google, "caldav", "oauth2").sync_key();
+    assert_ne!(ms1, ms2);
+    assert_ne!(g1, g2);
+    assert_ne!(ms1, g1);
+    let dav1 = row("d1", "https://dav.example.com/a", "caldav", "basic").sync_key();
+    let dav2 = row("d2", "https://dav.example.com/b", "caldav", "basic").sync_key();
+    assert_eq!(dav1, dav2);
+    let ews = row(
+        "e1",
+        "https://mail.example.com/EWS/Exchange.asmx",
+        "ews",
+        "basic",
+    )
+    .sync_key();
+    assert_eq!(ews, "https://mail.example.com");
+}
+
+/// The background sync is started again after a panic.
+#[tokio::test]
+async fn the_background_sync_is_restarted_after_a_panic() {
+    let starts = Arc::new(AtomicUsize::new(0));
+    let counter = starts.clone();
+    tokio::time::timeout(
+        Duration::from_secs(5),
+        supervise(Duration::from_millis(10), move || {
+            let run = counter.fetch_add(1, Ordering::SeqCst);
+            async move {
+                if run == 0 {
+                    panic!("first run fails");
+                }
+            }
+        }),
+    )
+    .await
+    .expect("the second run ended normally");
+    assert_eq!(starts.load(Ordering::SeqCst), 2);
 }
 
 /// The production sync runs through the per-source lock too: a sync of a

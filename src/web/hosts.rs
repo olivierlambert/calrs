@@ -353,10 +353,17 @@ pub(super) async fn reschedule_hosts(
 }
 
 /// Refresh the calendars of every user a reschedule depends on. `sync_if_stale`
-/// takes a per-source mutex (skipping a source another task is syncing) and
-/// re-checks staleness inside it, so even with this fan-out at most one
-/// CalDAV fetch per source is in flight.
+/// takes a per-source mutex (skipping a source another task is syncing, whose
+/// cache is about to be refreshed) and re-checks staleness inside it, so even
+/// with this fan-out at most one CalDAV fetch per source is in flight.
 pub(super) async fn sync_reschedule_hosts(state: &Arc<AppState>, hosts: &RescheduleHosts) {
+    sync_hosts(state, hosts, false).await;
+}
+
+/// The calendar refresh of every user `hosts` names. With `wait`, a source
+/// another task is syncing is waited for rather than skipped, so the caller
+/// reads what that sync fetched; the caller bounds the wait.
+pub(super) async fn sync_hosts(state: &Arc<AppState>, hosts: &RescheduleHosts, wait: bool) {
     let mut sync_tasks = tokio::task::JoinSet::new();
     for user_id in hosts
         .user_ids
@@ -368,7 +375,11 @@ pub(super) async fn sync_reschedule_hosts(state: &Arc<AppState>, hosts: &Resched
         let key = state.secret_key;
         let user_id = user_id.clone();
         sync_tasks.spawn(async move {
-            crate::commands::sync::sync_if_stale(&pool, &key, &user_id).await;
+            if wait {
+                crate::commands::sync::sync_if_stale_waiting(&pool, &key, &user_id).await;
+            } else {
+                crate::commands::sync::sync_if_stale(&pool, &key, &user_id).await;
+            }
         });
     }
     while sync_tasks.join_next().await.is_some() {}
@@ -523,7 +534,9 @@ pub(super) async fn prepare_approval_hosts(
     owner_user_id: &str,
 ) -> Result<RescheduleHosts, sqlx::Error> {
     let hosts = reschedule_hosts(&state.pool, booking_uid, owner_user_id).await?;
-    if tokio::time::timeout(APPROVAL_SYNC_TIMEOUT, sync_reschedule_hosts(state, &hosts))
+    // Waits for a sync of a host's source already running (the background
+    // sync, a booking page), within the timeout, so the re-check reads it.
+    if tokio::time::timeout(APPROVAL_SYNC_TIMEOUT, sync_hosts(state, &hosts, true))
         .await
         .is_err()
     {
