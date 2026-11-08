@@ -2022,6 +2022,7 @@ time-off-time-optional = Heure (facultative)
 time-off-times-help = Laissez les heures vides pour bloquer des journées entières, les deux dates comprises. Les heures sont dans votre fuseau horaire, { $timezone }.
 time-off-label = Note (facultative)
 time-off-label-help = Elle n'est visible que par vous, ici et dans Diagnostic. Les invités et les membres de vos équipes ne la voient jamais.
+time-off-team-admins-notice = Les administrateurs de vos équipes voient les dates et heures de vos absences, jamais la note.
 time-off-add-submit = Ajouter l'absence
 time-off-added = Absence ajoutée.
 time-off-deleted = Absence supprimée.

@@ -882,3 +882,20 @@ async fn team_admins_see_the_members_time_off_without_labels() {
         "nothing planned, no section"
     );
 }
+
+/// The Time off page tells its user that their team admins see their
+/// periods, without the note.
+#[tokio::test]
+async fn the_page_says_team_admins_see_the_dates() {
+    let (app, _pool, session, _) = setup_test_app().await;
+    let body = body_string(
+        app.oneshot(get_authed("/dashboard/time-off", &session))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(
+        body.contains("The admins of your teams see the dates and times of your time off"),
+        "{body}"
+    );
+}

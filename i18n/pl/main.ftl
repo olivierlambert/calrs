@@ -2093,6 +2093,7 @@ time-off-time-optional = Godzina (opcjonalnie)
 time-off-times-help = Zostaw godziny puste, aby zablokować całe dni, łącznie z obiema datami. Godziny są w twojej strefie czasowej, { $timezone }.
 time-off-label = Notatka (opcjonalnie)
 time-off-label-help = Widzisz ją tylko ty, tutaj i w Diagnostyce. Goście i członkowie zespołu nigdy jej nie widzą.
+time-off-team-admins-notice = Administratorzy twoich zespołów widzą daty i godziny twoich nieobecności, nigdy notatkę.
 time-off-add-submit = Dodaj nieobecność
 time-off-added = Nieobecność dodana.
 time-off-deleted = Nieobecność usunięta.

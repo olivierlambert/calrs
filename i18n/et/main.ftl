@@ -2022,6 +2022,7 @@ time-off-time-optional = Kellaaeg (valikuline)
 time-off-times-help = Jäta kellaajad tühjaks, et blokeerida terved päevad, mõlemad kuupäevad kaasa arvatud. Kellaajad on sinu ajavööndis, { $timezone }.
 time-off-label = Märkus (valikuline)
 time-off-label-help = Seda näed ainult sina, siin ja jaotises Tõrkeotsing. Külalised ja meeskonnakaaslased ei näe seda kunagi.
+time-off-team-admins-notice = Sinu meeskondade haldajad näevad sinu eemalolekute kuupäevi ja kellaaegu, kuid mitte kunagi märget.
 time-off-add-submit = Lisa eemalolek
 time-off-added = Eemalolek lisatud.
 time-off-deleted = Eemalolek kustutatud.
