@@ -398,7 +398,7 @@ pub(super) async fn handle_group_booking(
     let buf_start = check_start - Duration::minutes(buffer_before as i64);
     let buf_end = check_end + Duration::minutes(buffer_after as i64);
     let (assigned_user_id, host_name, host_email, member_contacts) = if is_collective {
-        let members: Vec<(String, String, String, Option<String>)> = sqlx::query_as(
+        let members: Vec<(String, String, String, Option<String>)> = match sqlx::query_as(
             "SELECT u.id, u.name, COALESCE(u.booking_email, u.email), u.language FROM users u
              JOIN team_members tm ON tm.user_id = u.id
              LEFT JOIN event_type_member_weights etw
@@ -410,7 +410,10 @@ pub(super) async fn handle_group_booking(
         .bind(&team_id)
         .fetch_all(&state.pool)
         .await
-        .unwrap_or_default();
+        {
+            Ok(members) => members,
+            Err(e) => return internal_error_response("booking availability check", &e),
+        };
         if members.is_empty() {
             let _ = tx.rollback().await;
             return Html(crate::i18n::translate(
