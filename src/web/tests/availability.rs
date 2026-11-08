@@ -2820,6 +2820,7 @@ fn horizon_last_date_survives_an_absurdly_large_horizon() {
         "a horizon past the representable calendar is effectively unlimited"
     );
 }
+
 #[tokio::test]
 async fn google_out_of_office_blocks_in_host_timezone_and_respects_calendar_selection() {
     let pool = setup_test_db().await;
@@ -2906,6 +2907,60 @@ async fn google_out_of_office_timed_interval_blocks_across_utc_date_boundary() {
     )
     .await
     .is_empty());
+}
+
+/// The troubleshoot view lists an absence on the days it covers, not on
+/// the day it ends at midnight, where it covers nothing.
+#[tokio::test]
+async fn troubleshoot_skips_an_absence_ending_at_midnight() {
+    let (app, pool, session, et_id) = setup_test_app().await;
+    let account_id: String =
+        sqlx::query_scalar("SELECT id FROM accounts WHERE email = 'test@example.com'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let day = far_future_monday();
+    let date = NaiveDate::parse_from_str(&day, "%Y-%m-%d").unwrap();
+    let compact = |d: NaiveDate, hm: &str| format!("{}T{hm}00Z", d.format("%Y%m%d"));
+    // Rules from midnight, so the timeline starts at 00:00.
+    sqlx::query("UPDATE availability_rules SET start_time = '00:00', end_time = '02:00' WHERE event_type_id = ?")
+        .bind(&et_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    seed_synced_event(
+        &pool,
+        &account_id,
+        &compact(date - Duration::days(1), "2000"),
+        &compact(date, "0000"),
+        "UTC",
+        "OPAQUE",
+    )
+    .await;
+    sqlx::query("UPDATE events SET summary = 'Ends-At-Midnight', google_out_of_office = 1")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO events (id, calendar_id, uid, summary, start_at, end_at, all_day, timezone, status, transp, google_out_of_office) \
+         SELECT 'early', calendar_id, 'early', 'Early-Absence', ?, ?, 0, 'UTC', 'CONFIRMED', 'OPAQUE', 1 FROM events LIMIT 1",
+    )
+    .bind(compact(date, "0030"))
+    .bind(compact(date, "0100"))
+    .execute(&pool)
+    .await
+    .unwrap();
+    let response = app
+        .oneshot(get_authed(
+            &format!("/dashboard/troubleshoot?date={day}&event_type=test-meeting"),
+            &session,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = body_string(response).await;
+    assert!(body.contains("Early-Absence"), "{body}");
+    assert!(!body.contains("Ends-At-Midnight"), "{body}");
 }
 
 // --- Timezone pickers (#265) ---

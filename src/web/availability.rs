@@ -2410,6 +2410,14 @@ pub(super) async fn troubleshoot(
             if start.date() > target_date || end.date() < target_date {
                 return None;
             }
+            // An event that only touches the day at a midnight (an absence
+            // ending at 00:00) takes none of it, buffers included.
+            let day_start = target_date.and_time(NaiveTime::MIN);
+            if end + Duration::minutes(buf_after as i64) <= day_start
+                || start - Duration::minutes(buf_before as i64) >= day_start + Duration::days(1)
+            {
+                return None;
+            }
             Some((
                 start.format("%Y-%m-%dT%H:%M:%S").to_string(),
                 end.format("%Y-%m-%dT%H:%M:%S").to_string(),
