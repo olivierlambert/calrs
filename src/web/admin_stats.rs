@@ -34,7 +34,7 @@ pub(super) struct UserStats {
     pub active_30d: i64,
 }
 
-#[derive(Debug, Default, Serialize)]
+#[derive(Debug, Default, Clone, Serialize)]
 pub(super) struct BookingStats {
     pub total: i64,
     pub confirmed: i64,
@@ -51,7 +51,7 @@ pub(super) struct BookingStats {
     pub pending_expiring_24h: i64,
 }
 
-#[derive(Debug, Default, Serialize)]
+#[derive(Debug, Default, Clone, Serialize)]
 pub(super) struct WeekBucket {
     /// First day of the week, YYYY-MM-DD.
     pub start: String,
@@ -79,7 +79,7 @@ pub(super) struct WeekBucket {
     pub height_pct: f64,
 }
 
-#[derive(Debug, Default, Serialize)]
+#[derive(Debug, Default, Clone, Serialize)]
 pub(super) struct RankRow {
     pub name: String,
     /// Team name for a team meeting type, owner for a personal one, email
@@ -91,7 +91,7 @@ pub(super) struct RankRow {
     pub pct: f64,
 }
 
-#[derive(Debug, Default, Serialize)]
+#[derive(Debug, Default, Clone, Serialize)]
 pub(super) struct StatusSegment {
     pub key: &'static str,
     pub count: i64,
@@ -176,6 +176,88 @@ pub(super) struct AdminStats {
     pub event_types_enabled: i64,
     pub event_types_team: i64,
     pub sms: SmsStats,
+}
+
+/// The booking-wide part of `AdminStats`, the one `FiguresCache` keeps.
+#[derive(Debug, Default, Clone)]
+pub(super) struct BookingFigures {
+    bookings: BookingStats,
+    weekly: Vec<WeekBucket>,
+    weekly_scale: i64,
+    weekly_mid: i64,
+    weekly_total: i64,
+    status_segments: Vec<StatusSegment>,
+    top_event_types: Vec<RankRow>,
+    top_hosts: Vec<RankRow>,
+}
+
+/// How long `FiguresCache` serves the booking-wide figures.
+pub(super) const FIGURES_TTL: std::time::Duration = std::time::Duration::from_secs(60);
+/// Figures are only cached on instances with more bookings than this, so a
+/// small instance always shows live numbers, exactly as before the cache
+/// existed. Decided from the count the figures already carry, not from how
+/// long they took, so the same instance always behaves the same way.
+pub(super) const FIGURES_CACHE_MIN_BOOKINGS: i64 = 20_000;
+
+struct CachedFigures {
+    week_start: WeekStart,
+    lang: String,
+    computed_at: std::time::Instant,
+    figures: BookingFigures,
+}
+
+/// The booking-wide admin figures of the last minute, shared by every
+/// admin. Keyed by the reader's week start and language, which shape the
+/// chart's weeks and labels; another key simply recomputes. Expires rather
+/// than being invalidated: a booking made meanwhile shows up within a
+/// minute, and the page says how old the figures are while it is cached.
+pub(crate) struct FiguresCache {
+    ttl: std::time::Duration,
+    min_bookings: i64,
+    slot: std::sync::Mutex<Option<CachedFigures>>,
+}
+
+impl Default for FiguresCache {
+    fn default() -> Self {
+        Self::new(FIGURES_TTL, FIGURES_CACHE_MIN_BOOKINGS)
+    }
+}
+
+impl FiguresCache {
+    pub(super) fn new(ttl: std::time::Duration, min_bookings: i64) -> Self {
+        Self {
+            ttl,
+            min_bookings,
+            slot: std::sync::Mutex::new(None),
+        }
+    }
+
+    /// The cached figures and their age in seconds, if fresh for this key.
+    fn get(&self, week_start: WeekStart, lang: &str) -> Option<(BookingFigures, u64)> {
+        let slot = self.slot.lock().unwrap_or_else(|e| e.into_inner());
+        let cached = slot.as_ref()?;
+        let age = cached.computed_at.elapsed();
+        (cached.week_start == week_start && cached.lang == lang && age < self.ttl)
+            .then(|| (cached.figures.clone(), age.as_secs()))
+    }
+
+    /// Keep `figures`, computed from `started` on, if the instance has more
+    /// than `min_bookings` bookings. Their age counts from `started`.
+    fn store(
+        &self,
+        week_start: WeekStart,
+        lang: &str,
+        figures: &BookingFigures,
+        started: std::time::Instant,
+    ) {
+        let mut slot = self.slot.lock().unwrap_or_else(|e| e.into_inner());
+        *slot = (figures.bookings.total > self.min_bookings).then(|| CachedFigures {
+            week_start,
+            lang: lang.to_string(),
+            computed_at: started,
+            figures: figures.clone(),
+        });
+    }
 }
 
 fn sql_time(t: DateTime<Utc>) -> String {
@@ -300,56 +382,21 @@ pub(super) fn week_axis_labels(starts: &[NaiveDate], lang: &str) -> Vec<(String,
         .collect()
 }
 
-pub(super) async fn load(
+/// The figures that read every booking of a window: totals, the weekly
+/// chart and the 90-day rankings. On a large instance they are most of the
+/// page's cost, so `load_cached` keeps them for a minute.
+async fn booking_figures(
     pool: &SqlitePool,
     now: DateTime<Utc>,
     week_start: WeekStart,
     lang: &str,
-) -> AdminStats {
+) -> BookingFigures {
     let t_now = sql_time(now);
     let t_30 = sql_time(now - Duration::days(30));
     let t_60 = sql_time(now - Duration::days(60));
     let t_7d_ahead = sql_time(now + Duration::days(7));
-    let t_24h_ahead = sql_time(now + Duration::hours(24));
     let t_rank = sql_time(now - Duration::days(RANKING_DAYS));
-    let t_stale = sql_time(now - Duration::hours(STALE_HOURS));
-
-    let mut stats = AdminStats::default();
-
-    // --- Users ---
-    let row: (i64, i64, i64, i64, i64, i64, i64, i64, i64) = sqlx::query_as(
-        "SELECT COUNT(*),
-                COALESCE(SUM(enabled = 1), 0),
-                COALESCE(SUM(role = 'admin'), 0),
-                COALESCE(SUM(auth_provider = 'local'), 0),
-                COALESCE(SUM(auth_provider = 'oidc'), 0),
-                COALESCE(SUM(auth_provider = 'local'
-                    AND EXISTS (SELECT 1 FROM user_mfa m WHERE m.user_id = users.id)), 0),
-                COALESCE(SUM(datetime(created_at) >= datetime(?)), 0),
-                COALESCE(SUM(datetime(created_at) >= datetime(?) AND datetime(created_at) < datetime(?)), 0),
-                COALESCE(SUM(enabled = 1 AND last_login_at IS NOT NULL
-                    AND datetime(last_login_at) >= datetime(?)), 0)
-         FROM users",
-    )
-    .bind(&t_30)
-    .bind(&t_60)
-    .bind(&t_30)
-    .bind(&t_30)
-    .fetch_one(pool)
-    .await
-    .unwrap_or_default();
-    stats.users = UserStats {
-        total: row.0,
-        enabled: row.1,
-        disabled: row.0 - row.1,
-        admins: row.2,
-        local: row.3,
-        oidc: row.4,
-        mfa_enrolled: row.5,
-        new_30d: row.6,
-        new_prev_30d: row.7,
-        active_30d: row.8,
-    };
+    let mut stats = BookingFigures::default();
 
     // --- Bookings ---
     // `start_at` is compared as UTC. Legacy rows (`time_version = 0`) store
@@ -395,15 +442,6 @@ pub(super) async fn load(
     .fetch_one(pool)
     .await
     .unwrap_or_default();
-    let pending_expiring_24h: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM bookings
-         WHERE status = 'pending' AND pending_expires_at IS NOT NULL
-           AND datetime(pending_expires_at) <= datetime(?)",
-    )
-    .bind(&t_24h_ahead)
-    .fetch_one(pool)
-    .await
-    .unwrap_or(0);
     stats.bookings = BookingStats {
         total,
         confirmed,
@@ -414,7 +452,8 @@ pub(super) async fn load(
         created_prev_30d,
         upcoming,
         upcoming_7d,
-        pending_expiring_24h,
+        // Read live by `live_stats`: the attention list relies on it.
+        pending_expiring_24h: 0,
     };
     let b = &stats.bookings;
     stats.status_segments = [
@@ -554,6 +593,106 @@ pub(super) async fn load(
             pct: pct(count, top),
         })
         .collect();
+
+    stats
+}
+
+pub(super) async fn load(
+    pool: &SqlitePool,
+    now: DateTime<Utc>,
+    week_start: WeekStart,
+    lang: &str,
+) -> AdminStats {
+    let figures = booking_figures(pool, now, week_start, lang).await;
+    live_stats(pool, now, figures).await
+}
+
+/// The figures with the booking-wide figures taken from `cache` when it
+/// holds fresh ones, and the age in seconds of those it served.
+pub(super) async fn load_cached(
+    pool: &SqlitePool,
+    cache: &FiguresCache,
+    now: DateTime<Utc>,
+    week_start: WeekStart,
+    lang: &str,
+) -> (AdminStats, Option<u64>) {
+    let (figures, age) = match cache.get(week_start, lang) {
+        Some((figures, age)) => (figures, Some(age)),
+        None => {
+            let started = std::time::Instant::now();
+            let figures = booking_figures(pool, now, week_start, lang).await;
+            cache.store(week_start, lang, &figures, started);
+            (figures, None)
+        }
+    };
+    (live_stats(pool, now, figures).await, age)
+}
+
+/// Everything except the booking-wide figures: cheap, and what the
+/// attention list and the Users tab counts read, so always live.
+async fn live_stats(pool: &SqlitePool, now: DateTime<Utc>, figures: BookingFigures) -> AdminStats {
+    let t_now = sql_time(now);
+    let t_30 = sql_time(now - Duration::days(30));
+    let t_60 = sql_time(now - Duration::days(60));
+    let t_stale = sql_time(now - Duration::hours(STALE_HOURS));
+
+    let mut stats = AdminStats {
+        bookings: figures.bookings,
+        weekly: figures.weekly,
+        weekly_scale: figures.weekly_scale,
+        weekly_mid: figures.weekly_mid,
+        weekly_total: figures.weekly_total,
+        status_segments: figures.status_segments,
+        top_event_types: figures.top_event_types,
+        top_hosts: figures.top_hosts,
+        ..AdminStats::default()
+    };
+
+    // --- Pending requests about to expire: an attention item, so live ---
+    stats.bookings.pending_expiring_24h = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM bookings
+         WHERE status = 'pending' AND pending_expires_at IS NOT NULL
+           AND datetime(pending_expires_at) <= datetime(?)",
+    )
+    .bind(sql_time(now + Duration::hours(24)))
+    .fetch_one(pool)
+    .await
+    .unwrap_or(0);
+
+    // --- Users ---
+    let row: (i64, i64, i64, i64, i64, i64, i64, i64, i64) = sqlx::query_as(
+        "SELECT COUNT(*),
+                COALESCE(SUM(enabled = 1), 0),
+                COALESCE(SUM(role = 'admin'), 0),
+                COALESCE(SUM(auth_provider = 'local'), 0),
+                COALESCE(SUM(auth_provider = 'oidc'), 0),
+                COALESCE(SUM(auth_provider = 'local'
+                    AND EXISTS (SELECT 1 FROM user_mfa m WHERE m.user_id = users.id)), 0),
+                COALESCE(SUM(datetime(created_at) >= datetime(?)), 0),
+                COALESCE(SUM(datetime(created_at) >= datetime(?) AND datetime(created_at) < datetime(?)), 0),
+                COALESCE(SUM(enabled = 1 AND last_login_at IS NOT NULL
+                    AND datetime(last_login_at) >= datetime(?)), 0)
+         FROM users",
+    )
+    .bind(&t_30)
+    .bind(&t_60)
+    .bind(&t_30)
+    .bind(&t_30)
+    .fetch_one(pool)
+    .await
+    .unwrap_or_default();
+    stats.users = UserStats {
+        total: row.0,
+        enabled: row.1,
+        disabled: row.0 - row.1,
+        admins: row.2,
+        local: row.3,
+        oidc: row.4,
+        mfa_enrolled: row.5,
+        new_30d: row.6,
+        new_prev_30d: row.7,
+        active_30d: row.8,
+    };
 
     // --- Calendar sources ---
     let row: (i64, i64, i64, i64) = sqlx::query_as(
