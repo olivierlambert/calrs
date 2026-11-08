@@ -864,7 +864,7 @@ pub(crate) async fn read_body(mut resp: reqwest::Response, cap: usize) -> Result
 /// Run a parse on the blocking pool: a large document takes real CPU, and
 /// the same runtime serves the booking pages. The text comes back with the
 /// result, for the callers that log it.
-async fn parse_blocking<T, F>(text: String, parse: F) -> (Result<T>, String)
+pub(crate) async fn parse_blocking<T, F>(text: String, parse: F) -> (Result<T>, String)
 where
     T: Send + 'static,
     F: FnOnce(&str) -> Result<T> + Send + 'static,
@@ -876,7 +876,7 @@ where
     match task.await {
         Ok(done) => done,
         Err(e) => (
-            Err(anyhow::anyhow!("CalDAV response parser failed: {e}")),
+            Err(anyhow::anyhow!("response parser failed: {e}")),
             String::new(),
         ),
     }

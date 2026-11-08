@@ -15,6 +15,9 @@ use std::time::Duration;
 
 const TIMEOUT: Duration = Duration::from_secs(10);
 
+/// Largest Autodiscover answer read, as it arrives.
+const MAX_REPLY_BYTES: usize = 1024 * 1024;
+
 /// Try a sequence of Autodiscover URLs derived from `email_domain` and return
 /// the EWS endpoint discovered, if any. The candidate order matches Microsoft
 /// guidance: HTTPS root, then `autodiscover` subdomain, then unauthenticated
@@ -114,7 +117,8 @@ async fn try_one(
         return Ok(None);
     }
 
-    let text = resp.text().await.unwrap_or_default();
+    // An Autodiscover answer is a few kilobytes: read no more than this.
+    let text = crate::caldav::read_body(resp, MAX_REPLY_BYTES).await?;
     Ok(parse_pox_response(&text))
 }
 

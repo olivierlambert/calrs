@@ -18,7 +18,7 @@ use super::parse::{
     parse_find_folder_page, parse_get_folder_response, parse_get_item_response,
     parse_sync_folder_items_response, EwsCalendarFolder, EwsCalendarItem, EwsSyncDelta,
 };
-use super::soap::{escape, post_soap};
+use super::soap::{escape, post_soap, post_soap_skipping};
 
 /// Issue a `GetFolder` against `inbox` to confirm that the credentials are
 /// valid and the endpoint speaks EWS. The folder is purely a convenience pick
@@ -392,8 +392,9 @@ fn calendar_view_complete(
 }
 
 /// Fetch the MIME (RFC 5322 + iCalendar) representation of one or more items.
-/// Returns the items in the same order, dropping any that the server failed
-/// to retrieve.
+/// Returns the items in the same order, dropping any the server reports gone
+/// (`ErrorItemNotFound`: deleted since it was listed). Any other per-message
+/// error fails the call.
 pub async fn get_items_mime(
     endpoint: &str,
     username: &str,
@@ -426,7 +427,16 @@ pub async fn get_items_mime(
     </m:GetItem>
 "#,
     );
-    let resp = post_soap(endpoint, username, password, &body, true, impersonate_email).await?;
+    let resp = post_soap_skipping(
+        endpoint,
+        username,
+        password,
+        &body,
+        true,
+        impersonate_email,
+        &[super::parse::ITEM_GONE],
+    )
+    .await?;
     parse_get_item_response(&resp)
 }
 

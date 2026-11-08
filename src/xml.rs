@@ -340,14 +340,23 @@ fn decode_reference(name: &str) -> Option<char> {
     }
 }
 
-/// Longest reference name [`decode_text`] looks at, so a value full of `&`
+/// Longest reference name [`decode_attribute`] looks at, so a value full of `&`
 /// and no `;` stays linear. Every reference it decodes is far shorter.
 const MAX_REFERENCE: usize = 32;
 
-/// `raw` with its references decoded the way [`parse`] decodes them in
-/// text: the predefined entities and character references, anything else
-/// kept as written.
-fn decode_text(raw: &str) -> String {
+/// An attribute value as XML 1.0 reads it (3.3.3): each literal tab, line
+/// feed, carriage return or CRLF becomes a space, then references are
+/// decoded the way [`parse`] decodes them in text (the predefined entities
+/// and character references, anything else kept as written). A character
+/// reference to a tab or line feed stays that character.
+fn decode_attribute(raw: &str) -> String {
+    let normalized;
+    let raw = if raw.contains(['\t', '\n', '\r']) {
+        normalized = raw.replace("\r\n", " ").replace(['\t', '\n', '\r'], " ");
+        normalized.as_str()
+    } else {
+        raw
+    };
     let mut out = String::with_capacity(raw.len());
     let mut rest = raw;
     while let Some(amp) = rest.find('&') {
@@ -453,7 +462,7 @@ impl<'l> Builder<'l> {
                 }
                 let value = std::str::from_utf8(&attr.value)
                     .map_err(|e| anyhow!("XML attribute is not UTF-8: {e}"))?;
-                attrs.push((self.intern(utf8(key)?), decode_text(value)));
+                attrs.push((self.intern(utf8(key)?), decode_attribute(value)));
             }
         }
         self.bindings += declarations;
@@ -627,6 +636,13 @@ mod tests {
         assert_eq!(doc.attr("xmlns:t"), None);
         assert_eq!(doc.attr("Missing"), None);
         assert_eq!(root("<a/>").attr("Id"), None);
+    }
+
+    #[test]
+    fn attribute_whitespace_is_normalised() {
+        let doc = root("<a v=\"x\ty\nz\r\nw\rq\" r=\"&#x9;&#xA;&#13;\"/>");
+        assert_eq!(doc.attr("v"), Some("x y z w q"));
+        assert_eq!(doc.attr("r"), Some("\t\n\r"));
     }
 
     #[test]

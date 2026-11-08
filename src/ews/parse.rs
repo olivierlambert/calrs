@@ -10,7 +10,7 @@
 use anyhow::{anyhow, bail, Result};
 use base64::Engine;
 
-use super::soap::{ews_child, ews_text, is_ews};
+use super::soap::{ews_child, ews_text, is_ews, message_code, message_failure};
 use crate::xml::{quoted, Element};
 
 /// One calendar folder discovered via `FindFolder`.
@@ -78,10 +78,19 @@ fn success_message<'a>(doc: &'a Element, name: &str, op: &str) -> Result<&'a Ele
     Ok(message)
 }
 
+/// A message succeeded when its `ResponseClass` is `Success`, or `Warning`
+/// with nothing failed (`NoError`: processed, with a note), the same test
+/// [`super::soap::post_soap`] applies.
 fn check_success(message: &Element, op: &str) -> Result<()> {
     match message.attr("ResponseClass") {
-        Some("Success") => Ok(()),
-        Some(class) => bail!("EWS {op} did not succeed (ResponseClass {})", quoted(class)),
+        Some("Success") | Some("Warning") => match message_failure(message) {
+            None => Ok(()),
+            Some(failure) => bail!("EWS {op} did not succeed: {}", quoted(&failure)),
+        },
+        Some(class) => match message_failure(message) {
+            Some(failure) => bail!("EWS {op} did not succeed: {}", quoted(&failure)),
+            None => bail!("EWS {op} did not succeed (ResponseClass {})", quoted(class)),
+        },
         None => bail!("EWS {op} did not succeed (no ResponseClass)"),
     }
 }
@@ -212,19 +221,66 @@ fn parse_calendar_item(item: &Element) -> Result<EwsCalendarItem> {
         calendar_item_type.as_deref(),
         Some(t) if t.eq_ignore_ascii_case("Occurrence") || t.eq_ignore_ascii_case("Exception")
     );
+    let uid = ews_text(item, "UID");
+    if uid.as_deref().is_some_and(has_control) {
+        tracing::warn!(item_id = %item_id, "EWS item with control characters in its UID, refusing the answer");
+        bail!(
+            "EWS item {} has control characters in its UID",
+            quoted(&item_id)
+        );
+    }
+    let start = ews_text(item, "Start")
+        .map(|v| checked_datetime(v, "Start", &item_id))
+        .transpose()?;
+    let end = ews_text(item, "End")
+        .map(|v| checked_datetime(v, "End", &item_id))
+        .transpose()?;
     Ok(EwsCalendarItem {
         item_id,
         change_key,
-        uid: ews_text(item, "UID"),
+        uid,
         subject: ews_text(item, "Subject"),
-        start: ews_text(item, "Start"),
-        end: ews_text(item, "End"),
+        start,
+        end,
         location: ews_text(item, "Location"),
         is_all_day: bool_child(item, "IsAllDayEvent")?,
         is_cancelled: bool_child(item, "IsCancelled")?,
         free_busy_status: ews_text(item, "LegacyFreeBusyStatus"),
         has_recurrence,
     })
+}
+
+/// Whether `value` holds a control character (CR, LF, NUL, ...). Such a
+/// value would break the lines of the VCALENDAR made up from the item
+/// (`ical::synth_vcalendar`): a UID carrying CRLF could add properties, or a
+/// second VEVENT reusing a real UID marked TRANSPARENT, turning busy time
+/// into free.
+pub fn has_control(value: &str) -> bool {
+    value.chars().any(char::is_control)
+}
+
+/// Whether `value` reads as an `xs:dateTime` as EWS writes it
+/// (`2026-05-06T09:00:00Z`, possibly with fractions or an offset): digits
+/// and `-:T.Z+` only.
+pub fn is_ews_datetime(value: &str) -> bool {
+    !value.is_empty()
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_digit() || matches!(b, b'-' | b':' | b'T' | b'.' | b'Z' | b'+'))
+}
+
+/// An item's `Start` or `End`, refused when it is not a date-time: it is
+/// written as is into the VCALENDAR made up from the item.
+fn checked_datetime(value: String, what: &str, item_id: &str) -> Result<String> {
+    if !is_ews_datetime(&value) {
+        tracing::warn!(item_id = %item_id, "EWS item with an unreadable {what}, refusing the answer");
+        bail!(
+            "EWS item {} has an unreadable {what}: {}",
+            quoted(item_id),
+            quoted(&value)
+        );
+    }
+    Ok(value)
 }
 
 /// The item kinds whose MIME content `parse_get_item_response` reads.
@@ -235,15 +291,28 @@ const MIME_ITEM_KINDS: [&str; 4] = [
     "MeetingCancellation",
 ];
 
+/// The per-message code of an item deleted since it was listed: a GetItem
+/// batch drops that item rather than failing (see
+/// [`super::operations::get_items_mime`]).
+pub const ITEM_GONE: &str = "ErrorItemNotFound";
+
 /// Parse a `GetItemResponse`. Returns one (item_id, ical) pair per item
-/// retrieved, across every response message of the batch. An item without
-/// MIME content is skipped (the server occasionally returns a placeholder
-/// for unsupported types), as is MIME content that holds no calendar.
+/// retrieved, across every response message of the batch. A message failing
+/// with [`ITEM_GONE`] is dropped; any other failed message is an error. An
+/// item without MIME content is skipped (the server occasionally returns a
+/// placeholder for unsupported types), as is MIME content that holds no
+/// calendar.
 pub fn parse_get_item_response(doc: &Element) -> Result<Vec<(String, String)>> {
     let mut out = Vec::new();
     let mut messages = 0;
     for message in self_and_descendants(doc).filter(|el| is_ews(el, "GetItemResponseMessage")) {
         messages += 1;
+        if message.attr("ResponseClass") == Some("Error")
+            && message_code(message).as_deref() == Some(ITEM_GONE)
+        {
+            tracing::debug!("EWS GetItem: an item of the batch is gone, dropping it");
+            continue;
+        }
         check_success(message, "GetItem")?;
         let items = ews_child(message, "Items")
             .ok_or_else(|| anyhow!("EWS GetItem reply holds no Items"))?;
@@ -365,6 +434,11 @@ mod tests {
     /// The tree of `xml`, a whole reply or a bare fragment.
     fn doc(xml: &str) -> Element {
         crate::xml::parse(xml).unwrap().unwrap()
+    }
+
+    /// A whole reply, parsed without the fault check.
+    fn doc_of(xml: &str) -> Element {
+        crate::ews::soap::parse_envelope(xml).unwrap()
     }
 
     /// A whole reply, read the way `post_soap` reads it.
@@ -653,6 +727,97 @@ mod tests {
         ] {
             assert!(parse_calendar_items_response(&doc(&xml)).is_err(), "{xml}");
         }
+    }
+
+    /// Values written as is into the made-up VCALENDAR are refused when
+    /// they could break its lines: a UID with control characters (decoded
+    /// from character references, or literal), a Start or End that is not a
+    /// date-time.
+    #[test]
+    fn find_item_refuses_values_that_would_break_the_ical() {
+        let item = |fields: &str| {
+            doc(&format!(
+                r#"<m:FindItemResponseMessage ResponseClass="Success"><m:RootFolder><t:Items><t:CalendarItem><t:ItemId Id="A"/>{fields}</t:CalendarItem></t:Items></m:RootFolder></m:FindItemResponseMessage>"#
+            ))
+        };
+        for fields in [
+            "<t:UID>real-uid&#xD;&#xA;TRANSP:TRANSPARENT</t:UID>",
+            "<t:UID>a&#xA;b</t:UID>",
+            "<t:UID>a\nb</t:UID>",
+            "<t:UID>a&#9;b</t:UID>",
+            "<t:Start>2026-05-06T09:00:00Z&#xD;&#xA;END:VEVENT</t:Start>",
+            "<t:End>2026-05-06T09:30:00Z;X=1</t:End>",
+            "<t:Start>tomorrow</t:Start>",
+        ] {
+            let err = parse_calendar_items_response(&item(fields)).unwrap_err();
+            assert!(err.to_string().contains("EWS item"), "{fields}: {err}");
+        }
+        // Ordinary values read as before, offsets and fractions included.
+        let page = parse_calendar_items_response(&item(
+            "<t:UID>a b@corp</t:UID><t:Start>2026-05-06T09:00:00.000+02:00</t:Start><t:End>2026-05-06T09:30:00Z</t:End>",
+        ))
+        .unwrap();
+        assert_eq!(page.items[0].uid.as_deref(), Some("a b@corp"));
+    }
+
+    /// A GetItem batch drops an item the server reports gone and fails on
+    /// any other per-message error.
+    #[test]
+    fn get_item_batch_drops_gone_items_only() {
+        let skipping = |xml: &str| {
+            crate::ews::soap::read_reply_skipping(reqwest::StatusCode::OK, xml, "e", &[ITEM_GONE])
+        };
+        let doc = skipping(fixtures::GET_ITEM_SECOND_MESSAGE_FAILS).unwrap();
+        assert!(parse_get_item_response(&doc).unwrap().is_empty());
+        // The gone item next to a readable one keeps the readable one.
+        let mixed = fixtures::GET_ITEM_MIME.replacen(
+            r#"<m:GetItemResponseMessage ResponseClass="Success">
+          <m:ResponseCode>NoError</m:ResponseCode>
+          <m:Items>
+            <t:MeetingRequest>"#,
+            r#"<m:GetItemResponseMessage ResponseClass="Error"><m:MessageText>gone</m:MessageText><m:ResponseCode>ErrorItemNotFound</m:ResponseCode><m:Items/></m:GetItemResponseMessage>
+        <m:GetItemResponseMessage ResponseClass="Success">
+          <m:ResponseCode>NoError</m:ResponseCode>
+          <m:Items>
+            <t:MeetingRequest>"#,
+            1,
+        );
+        assert_ne!(mixed, fixtures::GET_ITEM_MIME);
+        let items = parse_get_item_response(&skipping(&mixed).unwrap()).unwrap();
+        assert_eq!(items.len(), 2);
+        // Another error is not dropped, by post_soap or by the parser.
+        let denied = fixtures::GET_ITEM_SECOND_MESSAGE_FAILS
+            .replace("ErrorItemNotFound", "ErrorAccessDenied");
+        let err = skipping(&denied).unwrap_err().to_string();
+        assert!(err.contains("ErrorAccessDenied"), "{err}");
+        let err = parse_get_item_response(&doc_of(&denied))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("ErrorAccessDenied"), "{err}");
+        // Without the skip list, a gone item is a fault like any other.
+        assert!(crate::ews::soap::read_reply(
+            reqwest::StatusCode::OK,
+            fixtures::GET_ITEM_SECOND_MESSAGE_FAILS,
+            "e"
+        )
+        .is_err());
+    }
+
+    /// Warning with NoError is a success with a note, for the parsers as for
+    /// `post_soap`; Warning with an error code is a failure for both.
+    #[test]
+    fn warning_with_no_error_is_a_success_everywhere() {
+        let warning = fixtures::CREATE_ITEM.replace("\"Success\"", "\"Warning\"");
+        assert_eq!(
+            parse_create_item_response(&reply(&warning)).unwrap(),
+            "AAMkADUwNjA3YTQ5AEYAAAAAAD+/b8xNEW="
+        );
+        let failed = warning.replace(">NoError<", ">ErrorBatchProcessingStopped<");
+        assert!(crate::ews::soap::read_reply(reqwest::StatusCode::OK, &failed, "e").is_err());
+        let err = parse_create_item_response(&doc_of(&failed))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("ErrorBatchProcessingStopped"), "{err}");
     }
 
     /// Every entry counts towards the cap and the paging offset, but only

@@ -106,6 +106,30 @@ pub async fn post_soap(
     fetch: bool,
     impersonate_email: Option<&str>,
 ) -> Result<Element> {
+    post_soap_skipping(
+        endpoint,
+        username,
+        password,
+        body,
+        fetch,
+        impersonate_email,
+        &[],
+    )
+    .await
+}
+
+/// [`post_soap`] for a batch: a response message failing with one of the
+/// `skip` codes is not raised, and is left for the parser to drop. Any
+/// other failure still is.
+pub async fn post_soap_skipping(
+    endpoint: &str,
+    username: &str,
+    password: &str,
+    body: &str,
+    fetch: bool,
+    impersonate_email: Option<&str>,
+    skip: &'static [&'static str],
+) -> Result<Element> {
     let timeout = if fetch {
         FETCH_TIMEOUT
     } else {
@@ -150,7 +174,14 @@ pub async fn post_soap(
         .await
         .with_context(|| format!("EWS request to {endpoint} failed"))?;
     tracing::debug!(endpoint = %endpoint, status = %status, body_len = text.len(), "EWS SOAP response");
-    read_reply(status, &text, endpoint)
+    // A reply can be large (64 MB at most): parse it off the threads that
+    // serve pages, as the CalDAV client does.
+    let at = endpoint.to_string();
+    let (reply, _) = crate::caldav::parse_blocking(text, move |text| {
+        read_reply_skipping(status, text, &at, skip)
+    })
+    .await;
+    reply
 }
 
 /// The `Envelope` of a reply that `post_soap` received with `status` (a
@@ -164,6 +195,17 @@ pub async fn post_soap(
 /// short): read as an empty answer, either would look like a mailbox with
 /// nothing in it.
 pub fn read_reply(status: StatusCode, text: &str, endpoint: &str) -> Result<Element> {
+    read_reply_skipping(status, text, endpoint, &[])
+}
+
+/// [`read_reply`], leaving response messages that failed with one of the
+/// `skip` codes to the caller.
+pub fn read_reply_skipping(
+    status: StatusCode,
+    text: &str,
+    endpoint: &str,
+    skip: &[&str],
+) -> Result<Element> {
     let doc = match parse_envelope(text) {
         Ok(doc) => doc,
         Err(_) if !status.is_success() => bail!("EWS request returned {status} for {endpoint}"),
@@ -171,7 +213,7 @@ pub fn read_reply(status: StatusCode, text: &str, endpoint: &str) -> Result<Elem
             bail!("EWS request to {endpoint} returned a reply that is not a SOAP envelope: {e:#}")
         }
     };
-    if let Some(fault) = soap_fault(&doc) {
+    if let Some(fault) = soap_fault_skipping(&doc, skip) {
         bail!("{SOAP_FAULT_PREFIX}{fault}");
     }
     if !status.is_success() {
@@ -239,6 +281,12 @@ pub fn ews_text(el: &Element, name: &str) -> Option<String> {
 /// so callers can match on the code without depending on the server's display
 /// language.
 pub fn soap_fault(envelope: &Element) -> Option<String> {
+    soap_fault_skipping(envelope, &[])
+}
+
+/// [`soap_fault`], not counting a response message that failed with one of
+/// the `skip` codes. A SOAP `Fault` is always counted.
+fn soap_fault_skipping(envelope: &Element, skip: &[&str]) -> Option<String> {
     let body = soap_body(envelope)?;
     if let Some(fault) = body.elements().find(|el| is_soap(el, "Fault")) {
         return Some(describe_fault(fault));
@@ -250,7 +298,13 @@ pub fn soap_fault(envelope: &Element) -> Option<String> {
                 .filter(|el| is_ews(el, "ResponseMessages"))
         })
         .flat_map(Element::elements)
-        .find_map(failed_message)
+        .filter(|message| !message_code(message).is_some_and(|code| skip.contains(&code.as_str())))
+        .find_map(message_failure)
+}
+
+/// The `ResponseCode` of a response message.
+pub fn message_code(message: &Element) -> Option<String> {
+    ews_text(message, "ResponseCode")
 }
 
 /// `<Code>: <reason>` for a SOAP fault. The code is the language-independent
@@ -297,9 +351,11 @@ fn describe_fault(fault: &Element) -> String {
 }
 
 /// `<ResponseCode>: <MessageText>` for a response message that did not
-/// succeed: a `ResponseCode` other than `NoError`, or `ResponseClass="Error"`.
-fn failed_message(message: &Element) -> Option<String> {
-    let code = ews_text(message, "ResponseCode");
+/// succeed: a `ResponseCode` other than `NoError`, or `ResponseClass="Error"`
+/// without a code. `None` for a success, including a `Warning` carrying
+/// `NoError` (processed, with a note).
+pub fn message_failure(message: &Element) -> Option<String> {
+    let code = message_code(message);
     let failed = match code.as_deref() {
         Some(code) => code != "NoError",
         None => message.attr("ResponseClass") == Some("Error"),
