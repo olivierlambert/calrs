@@ -424,6 +424,23 @@ pub(super) async fn admin_dashboard(
             .unwrap_or(None)
             .unwrap_or(false);
 
+    let guest_footer_default: String = sqlx::query_scalar::<_, Option<String>>(
+        "SELECT guest_email_footer FROM auth_config WHERE id = 'singleton'",
+    )
+    .fetch_optional(&state.pool)
+    .await
+    .ok()
+    .flatten()
+    .flatten()
+    .unwrap_or_default();
+    let guest_footer_allow_all_users: bool = sqlx::query_scalar(
+        "SELECT guest_footer_allow_all_users FROM auth_config WHERE id = 'singleton'",
+    )
+    .fetch_optional(&state.pool)
+    .await
+    .unwrap_or(None)
+    .unwrap_or(false);
+
     // Flash banner after a test round-trip (?sms_test=sent|checked|error).
     let sms_test_result = query.get("sms_test").cloned().unwrap_or_default();
     let sms_test_detail = query.get("sms_test_detail").cloned().unwrap_or_default();
@@ -565,6 +582,8 @@ pub(super) async fn admin_dashboard(
             sms_cost_today => format!("{:.2}", sms_cost_today),
             sms_cost_currency => sms_cost_currency,
             sms_allow_all_users => sms_allow_all_users,
+            guest_footer_default => guest_footer_default,
+            guest_footer_allow_all_users => guest_footer_allow_all_users,
             sms_enabled => sms_enabled,
             sms_from_env => sms_from_env,
             sms_error => sms_error,
@@ -2304,6 +2323,59 @@ pub(super) async fn admin_update_sms_policy(
     }
 
     tracing::info!(admin = %_admin.user.email, allow_all, "admin: sms event-type policy updated");
+    Redirect::to("/dashboard/admin").into_response()
+}
+
+#[derive(Deserialize)]
+pub(super) struct AdminGuestFooterForm {
+    _csrf: Option<String>,
+    guest_email_footer: Option<String>,
+    /// HTML checkbox: present when every user may write footers on their own
+    /// event types, absent for admins only.
+    allow_all_users: Option<String>,
+}
+
+/// The instance default for the footer added to guest emails (#223), and who
+/// may write footers of their own. An event type's own footer replaces the
+/// default.
+pub(super) async fn admin_update_guest_footer(
+    State(state): State<Arc<AppState>>,
+    _admin: crate::auth::AdminUser,
+    headers: HeaderMap,
+    Form(form): Form<AdminGuestFooterForm>,
+) -> impl IntoResponse {
+    if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
+        return resp;
+    }
+
+    let footer = match crate::email::normalize_guest_footer(
+        form.guest_email_footer.as_deref().unwrap_or(""),
+    ) {
+        Ok(footer) => footer,
+        Err(e) => {
+            let msg = crate::i18n::translate(_admin.lang, e.message_key(), None);
+            let encoded = urlencoding::encode(&msg).into_owned();
+            return Redirect::to(&format!("/dashboard/admin?error={}", encoded)).into_response();
+        }
+    };
+    let allow_all = form.allow_all_users.is_some();
+    if let Err(e) = sqlx::query(
+        "UPDATE auth_config SET guest_email_footer = ?, guest_footer_allow_all_users = ? WHERE id = 'singleton'",
+    )
+    .bind(&footer)
+    .bind(allow_all)
+    .execute(&state.pool)
+    .await
+    {
+        return internal_error_response("save guest footer", &e);
+    }
+
+    tracing::info!(
+        admin = %_admin.user.email,
+        allow_all,
+        set = footer.is_some(),
+        "admin: guest email footer updated"
+    );
     Redirect::to("/dashboard/admin").into_response()
 }
 

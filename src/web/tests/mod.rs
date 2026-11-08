@@ -21,6 +21,7 @@ mod event_types;
 mod ews_global;
 mod format;
 mod guards;
+mod guest_footer;
 mod hosts;
 mod invites;
 mod organizer;

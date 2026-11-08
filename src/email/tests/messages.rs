@@ -1890,6 +1890,7 @@ fn invite_email_is_written_in_the_inviter_language() {
         Some("Bis bald"),
         "https://cal.example.com/u/alice/demo?invite=t",
         Some("2026-04-17"),
+        None,
     );
     assert_eq!(
         mail.subject,
@@ -1909,7 +1910,7 @@ fn invite_email_is_written_in_the_inviter_language() {
         &["invited you", "Invited by", "Choose a time", "Hi "],
     );
 
-    let mail = compose_invite_email("en", "Gina", "Demo", "Alice", None, "https://x", None);
+    let mail = compose_invite_email("en", "Gina", "Demo", "Alice", None, "https://x", None, None);
     assert_eq!(mail.subject, "Alice invited you to book: Demo");
 }
 
@@ -2093,6 +2094,7 @@ fn invite_expiry_is_written_out_with_its_zone() {
         None,
         "https://cal.example.com/i/tok",
         Some("2026-04-09 16:00:00"),
+        None,
     );
     assert!(
         mail.plain.contains("jeudi 9 avril 2026 à 16:00 (UTC)"),
@@ -2101,7 +2103,7 @@ fn invite_expiry_is_written_out_with_its_zone() {
     );
     assert!(!mail.plain.contains("2026-04-09"));
     // Anything else is shown as it came rather than dropped.
-    let mail = compose_invite_email("en", "Jane", "T", "Alice", None, "u", Some("soon"));
+    let mail = compose_invite_email("en", "Jane", "T", "Alice", None, "u", Some("soon"), None);
     assert!(mail.plain.contains("soon"));
 }
 

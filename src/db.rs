@@ -860,9 +860,9 @@ mod tests {
         assert_eq!(total as usize, LEGACY_MIGRATIONS.len() + 2);
     }
 
-    /// 20261107205610_managed_ews_unique builds its unique index even on a
+    /// 20261108014503_managed_ews_unique builds its unique index even on a
     /// development database holding duplicate managed Exchange sources: they
-    /// go first (20261107211215_ews_email_trust removes managed rows anyway),
+    /// go first (20261108014504_ews_email_trust removes managed rows anyway),
     /// and an ordinary source is left alone.
     #[tokio::test]
     async fn managed_ews_unique_index_builds_over_duplicates() {
@@ -871,7 +871,7 @@ mod tests {
         sqlx::raw_sql(
             "DROP INDEX idx_caldav_sources_managed_ews_unique;
              DROP INDEX idx_caldav_sources_managed_ews_mailbox;
-             DELETE FROM _migrations WHERE name = '20261107205610_managed_ews_unique';
+             DELETE FROM _migrations WHERE name = '20261108014503_managed_ews_unique';
              INSERT INTO users (id, email, name, role, auth_provider, username, enabled)
                  VALUES ('u1', 'h@example.com', 'Host', 'admin', 'local', 'host', 1);
              INSERT INTO accounts (id, name, email, timezone, user_id)

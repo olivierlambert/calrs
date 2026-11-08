@@ -59,6 +59,33 @@ pub(super) fn render_html_email_in(
     footer_note: Option<&str>,
     actions: &[EmailAction],
 ) -> String {
+    render_html_email_full(
+        lang,
+        greeting,
+        message,
+        accent,
+        rows,
+        footer_note,
+        actions,
+        None,
+    )
+}
+
+/// `render_html_email_in` plus the guest footer (#223, markdown): a separated
+/// block after the content and the note, above the "sent by calrs" bar.
+/// Only emails to a guest pass one.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn render_html_email_full(
+    lang: &str,
+    greeting: &str,
+    message: &str,
+    accent: &str,
+    rows: &[EmailRow],
+    footer_note: Option<&str>,
+    actions: &[EmailAction],
+    guest_footer: Option<&str>,
+) -> String {
+    let guest_footer_html = guest_footer_block(guest_footer);
     let sent_by = h(&t(lang, "email-footer-sent-by"));
     let lang = h(crate::i18n::html_lang(lang));
     let mut detail_rows = String::new();
@@ -117,6 +144,7 @@ pub(super) fn render_html_email_in(
       </table>
       {actions_html}
       {footer_html}
+      {guest_footer_html}
     </td></tr>
     <!-- Footer -->
     <tr><td style="padding:16px 28px;border-top:1px solid #f0f0f3;text-align:center;">
@@ -714,6 +742,8 @@ pub(super) struct EmailParts<'a> {
     pub(super) footer_plain: Option<String>,
     pub(super) footer_html: Option<String>,
     pub(super) actions: Vec<EmailAction>,
+    /// The guest footer (#223, markdown), set only on emails to a guest.
+    pub(super) guest_footer: Option<&'a str>,
 }
 
 impl EmailParts<'_> {
@@ -731,8 +761,12 @@ impl EmailParts<'_> {
             plain.push_str(note);
             plain.push_str("\n\n");
         }
-        plain.push_str(&t(self.lang, "email-signature"));
-        let html = render_html_email_in(
+        let plain = plain_with_guest_footer(
+            plain + &t(self.lang, "email-signature"),
+            &t(self.lang, "email-signature"),
+            self.guest_footer,
+        );
+        let html = render_html_email_full(
             self.lang,
             &h(&self.heading),
             &h(&self.message),
@@ -740,6 +774,7 @@ impl EmailParts<'_> {
             &self.rows,
             self.footer_html.as_deref(),
             &self.actions,
+            self.guest_footer,
         );
         ComposedEmail {
             subject: self.subject,
