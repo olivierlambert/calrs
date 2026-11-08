@@ -183,6 +183,12 @@ async fn main() -> Result<()> {
             let reminder_pool = pool.clone();
             let reminder_key = secret_key;
             tokio::spawn(web::run_reminder_loop(reminder_pool, reminder_key));
+            // Background calendar sync, in a task of its own so a slow
+            // calendar server never delays reminders (#388).
+            tokio::spawn(commands::sync_scheduler::run_background_sync_loop(
+                pool.clone(),
+                secret_key,
+            ));
             // Outgoing booking webhooks (#168): delivered off the request path.
             tokio::spawn(web::run_webhook_loop(pool.clone(), secret_key));
 
