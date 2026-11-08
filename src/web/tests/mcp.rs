@@ -783,3 +783,41 @@ async fn mcp_requests_are_rate_limited_per_user() {
         .status();
     assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
 }
+
+#[tokio::test]
+async fn mcp_blocks_include_time_off_without_its_label() {
+    let _lock = crate::test_support::ENV_LOCK.lock().await;
+    let _env = oauth::environment();
+    let (app, pool, session, _) = setup_test_app().await;
+    let user: String = sqlx::query_scalar("SELECT user_id FROM sessions WHERE id = ?")
+        .bind(&session)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO user_time_off (id, user_id, start_at, end_at, timezone, label)
+         VALUES ('off-1', ?, '2030-03-04T10:00:00Z', '2030-03-04T12:00:00Z', 'UTC', 'Secret trip')",
+    )
+    .bind(&user)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let (_, tokens) = oauth::issue_tokens(&app, &session).await;
+    let token = tokens["access_token"].as_str().unwrap();
+    let result = call(
+        &app,
+        token,
+        "get_calendar_blocks",
+        json!({"start": "2030-03-04T00:00:00Z", "end": "2030-03-05T00:00:00Z"}),
+    )
+    .await;
+    assert_eq!(result["isError"], false, "{result}");
+    let blocks = &result["structuredContent"]["blocks"];
+    assert!(
+        blocks.as_array().unwrap().iter().any(|b| {
+            b["start"] == "2030-03-04T10:00:00+00:00" && b["end"] == "2030-03-04T12:00:00+00:00"
+        }),
+        "{blocks}"
+    );
+    assert!(!result.to_string().contains("Secret trip"));
+}

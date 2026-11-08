@@ -171,7 +171,7 @@
         <h3 style="font-size: 0.95rem; margin-bottom: 0;">{{ t("settings-default-availability") }}</h3>
         <button type="button" id="copy-to-all-btn" style="padding: 0.25rem 0.625rem; border: 1px solid var(--border); border-radius: var(--radius); background: transparent; color: var(--text-muted); cursor: pointer; font-size: 0.75rem; transition: all 0.15s ease;" title="{{ t('settings-copy-to-all-title') }}">{{ t("settings-copy-to-all") }}</button>
       </div>
-      <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-bottom: 0.75rem;">{{ t("settings-default-availability-help") }}</span>
+      <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-bottom: 0.75rem;">{{ t("settings-default-availability-help") }} {{ t("time-off-hint", link='<a href="/dashboard/time-off">' ~ (t("nav-time-off") | escape) ~ '</a>') | safe }}</span>
       {% set week_start_inherit = "site" %}
       {% include "week_start_select.html" %}
       <div id="schedule-container" style="display: flex; flex-direction: column; gap: 0.25rem;"></div>

@@ -422,6 +422,18 @@ sources-subtitle = Kalender, die calrs liest, um zu wissen, wann Sie beschäftig
 event-types-subtitle = Die Termine, die andere bei Ihnen buchen können. Kopieren Sie einen Link oder betten Sie ihn auf Ihrer Website ein.
 settings-subtitle = Ihr öffentliches Profil, Sprache, Zeitzone und Standard-Arbeitszeiten.
 
+# Time off (templates/time_off.html)
+
+time-off-subtitle = Zeiträume, in denen Sie keine Buchungen annehmen. Alle Terminarten, die Sie anbieten, persönliche wie die Ihrer Teams, richten sich danach. Gäste sehen nur, dass diese Zeiten nicht verfügbar sind.
+time-off-kept-notice = Termine, die in einem Zeitraum bereits gebucht sind, bleiben bestehen: Eine Abwesenheit sagt nichts ab. Sagen Sie sie bei Bedarf unter Buchungen ab oder verschieben Sie sie.
+time-off-times-help = Lassen Sie die Uhrzeiten leer, um ganze Tage zu sperren, beide Daten eingeschlossen. Die Uhrzeiten gelten in Ihrer Zeitzone, { $timezone }.
+time-off-label-help = Nur Sie sehen sie, hier und unter Diagnose. Gäste und Teammitglieder sehen sie nie.
+time-off-error-date = Geben Sie die Daten als JJJJ-MM-TT und die Uhrzeiten als HH:MM ein.
+time-off-error-too-many = Sie haben bereits 100 Zeiträume geplant. Löschen Sie einige, bevor Sie weitere hinzufügen.
+time-off-hint = Um Daten für alle Terminarten auf einmal zu sperren, nutzen Sie { $link }.
+time-off-pending-notice = Anfragen, die in einem Zeitraum auf Ihre Bestätigung warten, lassen sich nicht mehr annehmen: Lehnen Sie sie ab oder löschen Sie zuerst die Abwesenheit.
+time-off-impersonating = Sie sehen diese Seite als { $name }. Die Abwesenheiten sind für Sie hier nur lesbar, die Notizen sind ausgeblendet.
+
 # OAuth connection consent (templates/auth/consent.html)
 
 oauth-intro = Dieser Anwendung Zugriff auf calrs als { $email } erlauben? Der Name wird vom Entwickler angegeben. Prüfen Sie die Rückrufadresse, bevor Sie zustimmen.

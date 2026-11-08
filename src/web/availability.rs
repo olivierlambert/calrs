@@ -547,7 +547,8 @@ pub(crate) fn expand_recurring_into_busy(
     result
 }
 
-/// Fetch busy times for a specific user (events from their calendars + their bookings).
+/// Fetch busy times for a specific user (events from their calendars, their
+/// bookings, and their time off).
 /// Event times are converted from their stored timezone to `host_tz`.
 pub(super) async fn fetch_busy_times_for_user(
     pool: &SqlitePool,
@@ -748,6 +749,7 @@ pub(super) async fn try_fetch_busy_times_for_user_opts(
     .bind(user_id)
     .bind(user_id)
     .bind(user_id)
+    .bind(user_id)
     .bind(&end_iso)
     .bind(&start_iso)
     .bind(exclude_id)
@@ -766,6 +768,16 @@ pub(super) async fn try_fetch_busy_times_for_user_opts(
             busy.push((start, end));
         }
     }
+
+    // Time off (#46): the user takes no bookings then, whatever the event
+    // type, so every caller of this function (slot pages, submit-time
+    // re-checks, round robin, collective, reschedule, approval, MCP's
+    // get_calendar_blocks) sees it, as an anonymous interval. An unreadable
+    // time-off table counts the whole window as busy (fails closed), here
+    // too: MCP then reports busy rather than free.
+    busy.extend(
+        crate::time_off::busy_intervals(pool, user_id, window_start, window_end, host_tz).await,
+    );
 
     Ok(busy)
 }
@@ -2519,6 +2531,7 @@ pub(super) async fn troubleshoot(
     .bind(&user.id)
     .bind(&user.id)
     .bind(&user.id)
+    .bind(&user.id)
     .bind(&day_end_iso)
     .bind(&day_start_iso)
     .fetch_all(&state.pool)
@@ -2636,10 +2649,38 @@ pub(super) async fn troubleshoot(
         &resource_names.join(", "),
     );
 
+    // Time off (#46) with the user's own note: this view only ever shows the
+    // signed-in user's own event types, so the note is theirs to read (not an
+    // impersonating admin's).
+    let time_off: Vec<(NaiveDateTime, NaiveDateTime, String)> = crate::time_off::overlapping(
+        &state.pool,
+        &user.id,
+        ts_window_start.and_utc() - Duration::days(2),
+        ts_window_end.and_utc() + Duration::days(2),
+    )
+    .await
+    .unwrap_or_default()
+    .into_iter()
+    .map(|p| {
+        let (start, end) = crate::time_off::local_range(p.start, p.end, host_tz);
+        (
+            start,
+            end,
+            // An admin viewing as the user does not read their notes.
+            if auth_user.impersonation.is_some() {
+                String::new()
+            } else {
+                p.label.unwrap_or_default()
+            },
+        )
+    })
+    .collect();
+    let time_off_label = crate::i18n::translate(lang, "troubleshoot-label-time-off", None);
+
     // Scan in 15-min increments and classify each tick
     struct Tick {
         time: NaiveTime,
-        status: String, // "available", "outside", "busy_event", "booking", "buffer", "min_notice", "beyond_horizon", "outside_date_range"
+        status: String, // "available", "outside", "busy_event", "booking", "buffer", "min_notice", "beyond_horizon", "outside_date_range", "time_off", "resource_busy"
         label: String,
         detail: String,
     }
@@ -2801,6 +2842,44 @@ pub(super) async fn troubleshoot(
             continue;
         }
 
+        // 4b. Check time off (with buffers, like a calendar event). After
+        // events and bookings: a booking kept inside a period is the more
+        // specific reason for its own slot.
+        let off_conflict = time_off.iter().find(|(s, e, _)| {
+            let buf_s = *s - Duration::minutes(buf_before as i64);
+            let buf_e = *e + Duration::minutes(buf_after as i64);
+            tick_dt < buf_e && tick_end > buf_s
+        });
+        if let Some((off_s, off_e, note)) = off_conflict {
+            if tick_dt < *off_e && tick_end > *off_s {
+                ticks.push(Tick {
+                    time: cursor,
+                    status: "time_off".to_string(),
+                    label: time_off_label.clone(),
+                    detail: note.clone(),
+                });
+            } else {
+                ticks.push(Tick {
+                    time: cursor,
+                    status: "buffer".to_string(),
+                    label: tr1(
+                        lang,
+                        "troubleshoot-label-buffer",
+                        "minutes",
+                        &if tick_dt < *off_s {
+                            buf_before
+                        } else {
+                            buf_after
+                        }
+                        .to_string(),
+                    ),
+                    detail: tr1(lang, "troubleshoot-detail-around", "label", &time_off_label),
+                });
+            }
+            cursor = (tick_dt + tick_size).time();
+            continue;
+        }
+
         // 5. Check shared resources (no buffers: a resource needs none)
         if resource_blocked
             .iter()
@@ -2841,7 +2920,10 @@ pub(super) async fn troubleshoot(
     for tick in &ticks {
         let tick_end_time = (target_date.and_time(tick.time) + tick_size).time();
         if let Some(last) = blocks.last_mut() {
-            if last.status == tick.status && last.label == tick.label {
+            // Same detail too: two adjacent time off periods with
+            // different notes stay two blocks, each with its own note.
+            if last.status == tick.status && last.label == tick.label && last.detail == tick.detail
+            {
                 last.end = tick_end_time;
                 let start_min = (last.start - display_start).num_minutes() as f64;
                 let dur_min = (last.end - last.start).num_minutes() as f64;
@@ -2908,7 +2990,7 @@ pub(super) async fn troubleshoot(
                 "buffer" => b.label.clone(),
                 "min_notice" => b.label.clone(),
                 "beyond_horizon" | "outside_date_range" => b.label.clone(),
-                "resource_busy" => b.label.clone(),
+                "resource_busy" | "time_off" => b.label.clone(),
                 _ => b.status.clone(),
             };
             context! {

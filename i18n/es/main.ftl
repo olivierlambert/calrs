@@ -507,6 +507,29 @@ bookings-back = Volver
 bookings-empty = Aún no hay reservas próximas.<br>Comparte tus { $link } para que puedan reservar contigo.
 bookings-empty-link-label = enlaces de tipos de evento
 bookings-search-placeholder = Buscar invitados, correos o reuniones
+bookings-recent = Últimos 30 días
+
+# Host notes on a booking (templates/booking_notes.html, bookings page, overview, host emails)
+
+host-notes-title = Notas de los organizadores
+host-notes-hint = Las ven los organizadores de esta reserva, un miembro del equipo que la haya reclamado y un administrador mientras actúa como uno de sus organizadores. Nunca se muestran al invitado ni se añaden a la invitación o al evento del calendario.
+host-notes-placeholder = Por ejemplo: lo que se dijo en una llamada, lo que hay que preparar.
+host-notes-save = Guardar notas
+host-notes-saved = Notas guardadas.
+host-notes-too-long = Las notas de los organizadores pueden tener como máximo { $max } caracteres.
+host-notes-conflict = Estas notas cambiaron después de abrir esta página. La versión guardada aparece abajo; al guardar de nuevo se reemplaza por el texto del campo.
+host-notes-current = Versión guardada:
+host-notes-last-edit = Última edición de { $name }, { $when }
+host-notes-last-edit-anon = Última edición: { $when }
+host-notes-edit = Editar la nota
+host-notes-marker = Nota de los organizadores
+host-notes-cleared = (borradas)
+host-notes-last-edit-as = Última edición de { $name } (administrador, como { $host }), { $when }
+dash-not-found-title = No encontrado
+dash-not-found-body = Esta página no existe o esta cuenta no tiene acceso a ella.
+host-notes-from-guest = Del invitado:
+bookings-host-notes = Notas de los organizadores:
+email-detail-host-notes = Notas de los organizadores:
 
 # Dashboard teams listing (templates/dashboard_teams.html)
 
@@ -1903,6 +1926,47 @@ directory-manual-copy = Copia este enlace manualmente:
 directory-empty = No se encontraron reuniones. Prueba otra búsqueda.
 directory-favorites-empty = No se encontraron favoritos. Añade reuniones a favoritos desde el directorio para verlas aquí.
 directory-with-hosts = Con { $names }
+
+# Time off (templates/time_off.html, src/web/time_off.rs, troubleshoot view)
+
+nav-time-off = Ausencias
+time-off-page-title = Ausencias
+time-off-heading = Ausencias
+time-off-subtitle = Periodos en los que no aceptas reservas. Todos los tipos de evento que ofreces los respetan, personales y de equipo. Los invitados solo ven que esas horas no están disponibles.
+time-off-upcoming = Previstas
+time-off-empty = No hay ausencias previstas.
+time-off-kept-notice = Las reservas ya hechas dentro de un periodo se mantienen: añadir una ausencia no cancela nada. Cancélalas o cámbialas de fecha desde Reservas si lo necesitas.
+time-off-pending-notice = Las solicitudes que esperan tu aprobación dentro de un periodo ya no se pueden aprobar: recházalas o elimina antes la ausencia.
+time-off-in-progress = En curso
+time-off-entered-in = Introducida en { $timezone }
+time-off-delete = Eliminar
+time-off-delete-confirm = ¿Eliminar esta ausencia? Sus horas vuelven a estar disponibles para reservar.
+time-off-add-heading = Añadir ausencia
+time-off-from = Desde
+time-off-to = Hasta
+time-off-time-optional = Hora (opcional)
+time-off-times-help = Deja las horas vacías para bloquear días completos, ambas fechas incluidas. Las horas están en tu zona horaria, { $timezone }.
+time-off-label = Nota (opcional)
+time-off-label-help = Solo tú la ves, aquí y en Diagnóstico. Los invitados y tus compañeros de equipo nunca la ven.
+time-off-add-submit = Añadir ausencia
+time-off-added = Ausencia añadida.
+time-off-deleted = Ausencia eliminada.
+time-off-range = Del { $start } al { $end }
+time-off-at = { $date }, { $time }
+time-off-same-day = { $date }, de { $start } a { $end }
+time-off-from-time = { $date }, desde las { $time }
+time-off-until-time = { $date }, hasta las { $time }
+time-off-impersonating = Estás viendo esta página como { $name }. Aquí las ausencias son de solo lectura para ti y las notas están ocultas.
+time-off-error-date = Introduce las fechas como AAAA-MM-DD y las horas como HH:MM.
+time-off-error-order = El final debe ser posterior al inicio.
+time-off-error-too-long = Un periodo puede durar como máximo un año.
+time-off-error-past = Este periodo ya ha terminado.
+time-off-error-label = La nota puede tener como máximo 200 caracteres.
+time-off-error-too-many = Ya tienes 100 periodos previstos. Elimina algunos antes de añadir más.
+time-off-hint = Para bloquear fechas en todos los tipos de evento a la vez, usa { $link }.
+troubleshoot-label-time-off = Ausencia
+troubleshoot-legend-time-off = Ausencia
+
 directory-all-favorites = Todos los favoritos
 pager-label = Páginas
 pager-range = { $from } a { $to } de { $total }

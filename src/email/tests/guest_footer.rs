@@ -209,17 +209,20 @@ fn host_emails_never_carry_the_guest_footer() {
     let r = reschedule();
     let hosts = [
         ("notification", compose_host_notification(&d)),
-        ("booking_confirmed", compose_host_booking_confirmed(&d)),
-        ("reminder", compose_host_reminder(&d)),
-        ("cancellation", compose_host_cancellation(&c)),
+        (
+            "booking_confirmed",
+            compose_host_booking_confirmed(&d, None),
+        ),
+        ("reminder", compose_host_reminder(&d, None)),
+        ("cancellation", compose_host_cancellation(&c, None)),
         ("pending_expired", compose_host_pending_expired(&c)),
         (
             "reschedule_request",
-            compose_host_reschedule_request(&r, None, None),
+            compose_host_reschedule_request(&r, None, None, None),
         ),
         (
             "approval",
-            compose_host_approval_email(&d, Some("tok"), Some("https://x"), None),
+            compose_host_approval_email(&d, Some("tok"), Some("https://x"), None, None),
         ),
     ];
     for (name, mail) in hosts {

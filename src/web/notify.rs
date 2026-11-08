@@ -18,13 +18,16 @@ pub(super) type DueReminder = (
     Option<String>,
     Option<String>,
     Option<String>,
+    // The host the reminder goes to, who must still be allowed to read the
+    // booking's host notes for them to be included (#173).
+    String,
 );
 
 pub(super) async fn due_reminders(
     pool: &SqlitePool,
     now: chrono::DateTime<Utc>,
 ) -> Vec<DueReminder> {
-    sqlx::query_as("SELECT b.id, b.guest_name, b.guest_email, b.guest_timezone, CASE b.time_version WHEN 1 THEN b.start_at ELSE rtrim(b.start_at, 'Z') END AS start_at, CASE b.time_version WHEN 1 THEN b.end_at ELSE rtrim(b.end_at, 'Z') END AS end_at, et.title, u.name, COALESCE(u.booking_email, u.email), COALESCE(NULLIF(b.meeting_url, ''), et.location_value), b.cancel_token, b.uid, b.language, u.language, COALESCE(NULLIF(et.timezone, ''), u.timezone)
+    sqlx::query_as("SELECT b.id, b.guest_name, b.guest_email, b.guest_timezone, CASE b.time_version WHEN 1 THEN b.start_at ELSE rtrim(b.start_at, 'Z') END AS start_at, CASE b.time_version WHEN 1 THEN b.end_at ELSE rtrim(b.end_at, 'Z') END AS end_at, et.title, u.name, COALESCE(u.booking_email, u.email), COALESCE(NULLIF(b.meeting_url, ''), et.location_value), b.cancel_token, b.uid, b.language, u.language, COALESCE(NULLIF(et.timezone, ''), u.timezone), u.id
              FROM bookings b
              JOIN event_types et ON et.id = b.event_type_id
              JOIN accounts a ON a.id = et.account_id
@@ -330,7 +333,7 @@ pub async fn run_reminder_loop(pool: SqlitePool, secret_key: [u8; 32]) {
     loop {
         tokio::time::sleep(std::time::Duration::from_secs(60)).await;
 
-        // Hourly: prune sessions whose `expires_at` has passed.
+        // Hourly: prune sessions whose `expires_at` has passed, and old time off.
         if last_session_cleanup.elapsed() >= std::time::Duration::from_secs(3600) {
             match crate::auth::cleanup_expired_sessions(&pool).await {
                 Ok(removed) if removed > 0 => {
@@ -338,6 +341,14 @@ pub async fn run_reminder_loop(pool: SqlitePool, secret_key: [u8; 32]) {
                 }
                 Ok(_) => {}
                 Err(e) => tracing::warn!(error = %e, "session cleanup failed"),
+            }
+            // Time off that ended long ago blocks nothing any more (#46).
+            match crate::time_off::prune(&pool, Utc::now()).await {
+                Ok(removed) if removed > 0 => {
+                    tracing::info!(removed, "ended time off pruned");
+                }
+                Ok(_) => {}
+                Err(e) => tracing::warn!(error = %e, "time off cleanup failed"),
             }
             last_session_cleanup = std::time::Instant::now();
             if let Err(e) = crate::oauth::cleanup(&pool).await {
@@ -371,7 +382,7 @@ pub async fn run_reminder_loop(pool: SqlitePool, secret_key: [u8; 32]) {
 
 /// One pass of the reminder batch: email and SMS reminders for confirmed
 /// bookings whose reminder time has come.
-async fn send_due_reminders(pool: SqlitePool, secret_key: [u8; 32]) {
+pub(super) async fn send_due_reminders(pool: SqlitePool, secret_key: [u8; 32]) {
     // Find bookings that need a reminder:
     // - status is confirmed
     // - reminder not yet sent
@@ -421,6 +432,7 @@ async fn send_due_reminders(pool: SqlitePool, secret_key: [u8; 32]) {
         guest_language,
         host_language,
         host_timezone,
+        host_user_id,
     ) in &due
     {
         // Legacy times use the event timezone; version 1 timestamps are UTC. Convert
@@ -500,8 +512,11 @@ async fn send_due_reminders(pool: SqlitePool, secret_key: [u8; 32]) {
                 "guest_reminder",
                 uid,
             );
+            // Only the host's copy reads the host notes (#173).
+            let host_notes = host_notes_for_reader(&pool, uid, Some(host_user_id)).await;
             log_email_result(
-                crate::email::send_host_reminder(smtp_config, &details).await,
+                crate::email::send_host_reminder(smtp_config, &details, host_notes.as_deref())
+                    .await,
                 "host_reminder",
                 uid,
             );
