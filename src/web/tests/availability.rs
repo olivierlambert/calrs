@@ -3867,3 +3867,41 @@ async fn troubleshoot_names_an_unsupported_recurrence() {
         "{body}"
     );
 }
+
+/// A series of extra dates (RDATE) without an RRULE blocks its start and
+/// each of its dates, on both readers (#376).
+#[tokio::test]
+async fn a_series_of_extra_dates_blocks_each_of_them() {
+    let pool = setup_test_db().await;
+    let (user_id, account_id, _) = seed_test_data(&pool).await;
+    seed_synced_event(
+        &pool,
+        &account_id,
+        "20261109T140000",
+        "20261109T150000",
+        "UTC",
+        "OPAQUE",
+    )
+    .await;
+    sqlx::query("UPDATE events SET rdate = 1, raw_ical = ?")
+        .bind("BEGIN:VEVENT\r\nDTSTART:20261109T140000\r\nRDATE:20261112T090000\r\nEND:VEVENT\r\n")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (from, to) = (dt(2026, 11, 9, 0, 0), dt(2026, 11, 15, 23, 59));
+    let lenient = fetch_busy_times_for_user(&pool, &user_id, from, to, Tz::UTC, None).await;
+    let strict = try_fetch_busy_times_for_user(&pool, &user_id, from, to, Tz::UTC, None)
+        .await
+        .unwrap();
+    for busy in [&lenient, &strict] {
+        assert!(
+            has_conflict(busy, dt(2026, 11, 9, 14, 0), dt(2026, 11, 9, 14, 30)),
+            "{busy:?}"
+        );
+        assert!(
+            has_conflict(busy, dt(2026, 11, 12, 9, 0), dt(2026, 11, 12, 9, 30)),
+            "{busy:?}"
+        );
+        assert_eq!(busy.len(), 2, "the start is not counted twice: {busy:?}");
+    }
+}

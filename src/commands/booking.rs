@@ -206,8 +206,9 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
                 Option<String>,
                 Option<String>,
                 Option<String>,
+                bool,
             )> = sqlx::query_as(
-                "SELECT e.start_at, e.end_at, e.summary, e.timezone, e.rrule, e.raw_ical FROM events e
+                "SELECT e.start_at, e.end_at, e.summary, e.timezone, e.rrule, e.raw_ical, e.rdate = 1 FROM events e
                  JOIN calendars c ON c.id = e.calendar_id
                  JOIN caldav_sources cs ON cs.id = c.source_id
                  JOIN accounts a ON a.id = cs.account_id
@@ -223,11 +224,13 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
             .fetch_all(pool)
             .await?;
 
-            for (bs, be, summary, event_tz, rrule, raw_ical) in &conflicts {
+            for (bs, be, summary, event_tz, rrule, raw_ical, rdate) in &conflicts {
                 // A recurring event blocks through its occurrences, as on
                 // the web path (#376), not only through its first one.
-                let busy: Vec<(NaiveDateTime, NaiveDateTime)> = match rrule.as_deref() {
-                    Some(rule) if !rule.trim().is_empty() => crate::rrule::occurrences_in(
+                let rule = rrule.as_deref().unwrap_or_default();
+                let busy: Vec<(NaiveDateTime, NaiveDateTime)> = if *rdate || !rule.trim().is_empty()
+                {
+                    crate::rrule::occurrences_in(
                         bs,
                         be,
                         rule,
@@ -236,8 +239,9 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
                         buf_start,
                         buf_end,
                         host_tz,
-                    ),
-                    _ => parse_ical_datetime(bs)
+                    )
+                } else {
+                    parse_ical_datetime(bs)
                         .zip(parse_ical_datetime(be))
                         .map(|(s, e)| {
                             (
@@ -246,7 +250,7 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
                             )
                         })
                         .into_iter()
-                        .collect(),
+                        .collect()
                 };
                 for (s, e) in busy {
                     if s < buf_end && e > buf_start {

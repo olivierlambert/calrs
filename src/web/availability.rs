@@ -744,7 +744,7 @@ async fn busy_times(
          WHERE a.user_id = ? AND c.sync_enabled = 1
            AND ((c.is_busy = 1 AND NOT EXISTS (SELECT 1 FROM event_type_calendars etc JOIN calendars sc ON sc.id = etc.calendar_id WHERE etc.event_type_id = ? AND sc.sync_enabled = 1))
                 OR c.id IN (SELECT calendar_id FROM event_type_calendars WHERE event_type_id = ?))
-           AND (e.rrule IS NULL OR e.rrule = '')
+           AND (e.rrule IS NULL OR e.rrule = '') AND e.rdate = 0
            AND (e.status IS NULL OR e.status != 'CANCELLED')
            AND (e.transp IS NULL OR e.transp != 'TRANSPARENT')
            AND (? = '' OR e.uid != ?)
@@ -777,7 +777,7 @@ async fn busy_times(
 
     let end_compact_rrule = window_end.format("%Y%m%dT235959").to_string();
     let recurring: Result<Vec<(String, String, String, Option<String>, Option<String>)>, _> = sqlx::query_as(
-        "SELECT e.start_at, e.end_at, e.rrule, e.raw_ical, e.timezone FROM events e
+        "SELECT e.start_at, e.end_at, COALESCE(e.rrule, ''), e.raw_ical, e.timezone FROM events e
          JOIN calendars c ON c.id = e.calendar_id
          JOIN caldav_sources cs ON cs.id = c.source_id
          JOIN accounts a ON a.id = cs.account_id
@@ -787,7 +787,7 @@ async fn busy_times(
            AND (e.status IS NULL OR e.status != 'CANCELLED')
            AND (e.transp IS NULL OR e.transp != 'TRANSPARENT')
            AND (? = '' OR e.uid != ?)
-           AND e.rrule IS NOT NULL AND e.rrule != '' AND (e.start_at <= ? OR e.start_at <= ?)",
+           AND ((e.rrule IS NOT NULL AND e.rrule != '') OR e.rdate = 1) AND (e.start_at <= ? OR e.start_at <= ?)",
     )
     .bind(user_id)
     .bind(et_id_for_filter)
@@ -2768,7 +2768,7 @@ pub(super) async fn troubleshoot(
          WHERE a.user_id = ? AND c.sync_enabled = 1
            AND ((c.is_busy = 1 AND NOT EXISTS (SELECT 1 FROM event_type_calendars etc JOIN calendars sc ON sc.id = etc.calendar_id WHERE etc.event_type_id = ? AND sc.sync_enabled = 1))
                 OR c.id IN (SELECT calendar_id FROM event_type_calendars WHERE event_type_id = ?))
-           AND (e.rrule IS NULL OR e.rrule = '')
+           AND (e.rrule IS NULL OR e.rrule = '') AND e.rdate = 0
            AND (e.status IS NULL OR e.status != 'CANCELLED')
            AND (e.transp IS NULL OR e.transp != 'TRANSPARENT')
            AND ((e.start_at < ? AND e.end_at > ?) OR (e.start_at < ? AND e.end_at > ?)
@@ -2825,7 +2825,7 @@ pub(super) async fn troubleshoot(
         Option<String>,
         Option<String>,
     )> = sqlx::query_as(
-        "SELECT e.start_at, e.end_at, e.rrule, e.raw_ical, e.summary, c.display_name, e.timezone
+        "SELECT e.start_at, e.end_at, COALESCE(e.rrule, ''), e.raw_ical, e.summary, c.display_name, e.timezone
          FROM events e
          JOIN calendars c ON c.id = e.calendar_id
          JOIN caldav_sources cs ON cs.id = c.source_id
@@ -2835,7 +2835,7 @@ pub(super) async fn troubleshoot(
                 OR c.id IN (SELECT calendar_id FROM event_type_calendars WHERE event_type_id = ?))
            AND (e.status IS NULL OR e.status != 'CANCELLED')
            AND (e.transp IS NULL OR e.transp != 'TRANSPARENT')
-           AND e.rrule IS NOT NULL AND e.rrule != ''
+           AND ((e.rrule IS NOT NULL AND e.rrule != '') OR e.rdate = 1)
            AND (e.start_at <= ? OR e.start_at <= ?)",
     )
     .bind(&user.id)
