@@ -122,7 +122,7 @@ The client is intentionally minimal — enough to be useful, not a full RFC 4791
 
 **Multi-VEVENT sync:** CalDAV resources may contain multiple VEVENTs (parent with RRULE + modified instances with RECURRENCE-ID). The sync splits them and stores each as a separate row with a composite unique key `(uid, COALESCE(recurrence_id, ''))`.
 
-**Recurrence expansion (#376):** `rrule::occurrences_in()` is the one expansion every busy reader uses (slot engine lenient and strict, resources, troubleshoot, CLI, overview): it expands in the event's zone over the window widened by two days, converts, then clips in the host's zone. `expand_rrule` starts at the window rather than DTSTART (daily/weekly skip ahead arithmetically and count what they skip for `COUNT`; monthly skips unless it has a `COUNT`), capped at `MAX_PERIODS` periods per window.
+**Recurrence expansion (#376):** `rrule::occurrences_in()` is the one expansion every busy reader uses (slot engine lenient and strict, resources, troubleshoot, CLI slots and booking create, overview): it expands in the event's zone (a `Z` UNTIL read into it) over the window widened by two days, converts, then clips in the host's zone. `expand_rrule` starts at the window rather than DTSTART (it skips ahead, counting skipped occurrences arithmetically for `COUNT` when no `BY*` part thins them, else counting from DTSTART up to `MAX_COUNTED_PERIODS`), capped at `MAX_PERIODS` per window. DAILY to YEARLY with BYDAY, BYMONTH, BYMONTHDAY and WKST are expanded; anything else (`rrule::is_supported` false) fails closed, as does a walk that hits its cap: busy from DTSTART to the window end (bounded by UNTIL, or COUNT on a plain sub-daily rule), labelled in troubleshoot, warned once per sync by `warn_if_unsupported`.
 
 ---
 

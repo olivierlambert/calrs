@@ -3825,3 +3825,45 @@ async fn long_running_series_block_the_window_on_both_readers() {
     strict.sort();
     assert_eq!(lenient, strict, "both readers expand the same way");
 }
+
+/// A recurring event whose rule calrs cannot expand blocks from its start,
+/// and the troubleshoot view says why rather than showing a closed day.
+#[tokio::test]
+async fn troubleshoot_names_an_unsupported_recurrence() {
+    let (app, pool, session, _et_id) = setup_test_app().await;
+    let account_id: String =
+        sqlx::query_scalar("SELECT id FROM accounts WHERE email = 'test@example.com'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let day = far_future_monday();
+    let date = NaiveDate::parse_from_str(&day, "%Y-%m-%d").unwrap();
+    let before = (date - Duration::days(3)).format("%Y%m%d").to_string();
+    seed_synced_event(
+        &pool,
+        &account_id,
+        &format!("{before}T090000"),
+        &format!("{before}T091500"),
+        "UTC",
+        "OPAQUE",
+    )
+    .await;
+    sqlx::query("UPDATE events SET summary = 'Odd-Rule', rrule = 'FREQ=HOURLY;INTERVAL=4'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let response = app
+        .oneshot(get_authed(
+            &format!("/dashboard/troubleshoot?date={day}&event_type=test-meeting"),
+            &session,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = body_string(response).await;
+    assert!(body.contains("Odd-Rule"), "{body}");
+    assert!(
+        body.contains("a repeat rule calrs cannot read, counted as busy from its start"),
+        "{body}"
+    );
+}

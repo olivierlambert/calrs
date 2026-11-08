@@ -1909,6 +1909,9 @@ async fn upsert_provider_events(
             let description = extract_vevent_field(&fields, "DESCRIPTION");
             let status = extract_vevent_field(&fields, "STATUS");
             let rrule = extract_vevent_field(&fields, "RRULE");
+            if let Some(rule) = rrule.as_deref() {
+                crate::rrule::warn_if_unsupported(rule, &uid, cal_id);
+            }
             let recurrence_id = extract_vevent_field(&fields, "RECURRENCE-ID");
             let transp = extract_vevent_field(&fields, "TRANSP");
             let timezone = zones.event_timezone(&fields);
@@ -2042,6 +2045,9 @@ async fn upsert_raw_events(pool: &SqlitePool, cal_id: &str, raw_events: &[RawEve
             let description = extract_vevent_field(&fields, "DESCRIPTION");
             let status = extract_vevent_field(&fields, "STATUS");
             let rrule = extract_vevent_field(&fields, "RRULE");
+            if let Some(rule) = rrule.as_deref() {
+                crate::rrule::warn_if_unsupported(rule, &uid, cal_id);
+            }
             let recurrence_id = extract_vevent_field(&fields, "RECURRENCE-ID");
             let transp = extract_vevent_field(&fields, "TRANSP");
             let timezone = zones.event_timezone(&fields);

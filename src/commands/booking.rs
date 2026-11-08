@@ -1,5 +1,5 @@
 use anyhow::{bail, Result};
-use chrono::{Datelike, Duration, NaiveDate, NaiveTime, Utc};
+use chrono::{Datelike, Duration, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 use chrono_tz::Tz;
 use clap::Subcommand;
 use colored::Colorize;
@@ -198,8 +198,16 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
             let buf_start = check_start - Duration::minutes(buffer_before as i64);
             let buf_end = check_end + Duration::minutes(buffer_after as i64);
 
-            let conflicts: Vec<(String, String, Option<String>, Option<String>)> = sqlx::query_as(
-                "SELECT e.start_at, e.end_at, e.summary, e.timezone FROM events e
+            #[allow(clippy::type_complexity)]
+            let conflicts: Vec<(
+                String,
+                String,
+                Option<String>,
+                Option<String>,
+                Option<String>,
+                Option<String>,
+            )> = sqlx::query_as(
+                "SELECT e.start_at, e.end_at, e.summary, e.timezone, e.rrule, e.raw_ical FROM events e
                  JOIN calendars c ON c.id = e.calendar_id
                  JOIN caldav_sources cs ON cs.id = c.source_id
                  JOIN accounts a ON a.id = cs.account_id
@@ -215,12 +223,32 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
             .fetch_all(pool)
             .await?;
 
-            for (bs, be, summary, event_tz) in &conflicts {
-                let ev_start = parse_ical_datetime(bs)
-                    .map(|dt| convert_event_to_tz(dt, event_tz.as_deref(), host_tz));
-                let ev_end = parse_ical_datetime(be)
-                    .map(|dt| convert_event_to_tz(dt, event_tz.as_deref(), host_tz));
-                if let (Some(s), Some(e)) = (ev_start, ev_end) {
+            for (bs, be, summary, event_tz, rrule, raw_ical) in &conflicts {
+                // A recurring event blocks through its occurrences, as on
+                // the web path (#376), not only through its first one.
+                let busy: Vec<(NaiveDateTime, NaiveDateTime)> = match rrule.as_deref() {
+                    Some(rule) if !rule.trim().is_empty() => crate::rrule::occurrences_in(
+                        bs,
+                        be,
+                        rule,
+                        raw_ical.as_deref(),
+                        event_tz.as_deref(),
+                        buf_start,
+                        buf_end,
+                        host_tz,
+                    ),
+                    _ => parse_ical_datetime(bs)
+                        .zip(parse_ical_datetime(be))
+                        .map(|(s, e)| {
+                            (
+                                convert_event_to_tz(s, event_tz.as_deref(), host_tz),
+                                convert_event_to_tz(e, event_tz.as_deref(), host_tz),
+                            )
+                        })
+                        .into_iter()
+                        .collect(),
+                };
+                for (s, e) in busy {
                     if s < buf_end && e > buf_start {
                         bail!(
                             "Conflict with '{}' ({} – {})",
@@ -1185,6 +1213,27 @@ mod tests {
             .await
             .expect_err("the host's own event still blocks");
         assert!(err.to_string().contains("Conflict"), "{err}");
+    }
+
+    /// A recurring event blocks a CLI booking through its occurrences, as
+    /// on the web (#376), not only through its first one.
+    #[tokio::test]
+    async fn create_refuses_an_occurrence_of_a_recurring_event() {
+        let pool = setup_db().await;
+        let (_user_id, host_account, _et_id) = seed_event_type(&pool).await;
+        // Mondays at 10:00 since Monday 1 January 2024.
+        seed_busy_event(&pool, &host_account, "20240101T100000", "20240101T103000").await;
+        sqlx::query("UPDATE events SET rrule = 'FREQ=WEEKLY'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let err = run(&pool, &[0u8; 32], create_at("10:00", "busy@test.com"))
+            .await
+            .expect_err("Monday 18 March 2030 at 10:00 is an occurrence");
+        assert!(err.to_string().contains("Conflict"), "{err}");
+        run(&pool, &[0u8; 32], create_at("11:00", "free@test.com"))
+            .await
+            .expect("11:00 is free");
     }
 
     /// A host's Microsoft calendar is only read up to the Graph sync window,

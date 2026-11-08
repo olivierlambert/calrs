@@ -1692,6 +1692,7 @@ bookings-resend-reschedule = Reenviar solicitud
 bookings-resend-reschedule-hint = Enviar de nuevo el mismo enlace al invitado (como mucho una vez por hora)
 troubleshoot-detail-pending-request = { $title } (solicitud pendiente)
 troubleshoot-detail-claimed-booking = { $title } (reserva tomada)
+troubleshoot-detail-unsupported-recurrence = { $calendar } (regla de repetición que calrs no puede leer, contada como ocupada desde su inicio)
 etf-pending-blocks-slot = Las solicitudes pendientes bloquean el hueco
 etf-pending-blocks-slot-help = Mientras una solicitud espera tu respuesta, nadie más puede reservar esa hora, ni en este tipo de evento ni en los demás.
 etf-pending-expiry = Caducidad de las solicitudes

@@ -206,6 +206,9 @@ pub async fn sync_resource(
         let start_at = extract_vevent_field(&fields, "DTSTART").unwrap_or_default();
         let status = extract_vevent_field(&fields, "STATUS");
         let rrule = extract_vevent_field(&fields, "RRULE");
+        if let Some(rule) = rrule.as_deref() {
+            crate::rrule::warn_if_unsupported(rule, &uid, resource_id);
+        }
         let recurrence_id = extract_vevent_field(&fields, "RECURRENCE-ID");
         let transp = extract_vevent_field(&fields, "TRANSP");
         let timezone = zones.event_timezone(&fields);

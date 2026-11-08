@@ -1692,6 +1692,7 @@ bookings-resend-reschedule = Renvoyer la demande
 bookings-resend-reschedule-hint = Renvoyer le même lien à l'invité par e-mail (une fois par heure au plus)
 troubleshoot-detail-pending-request = { $title } (demande en attente)
 troubleshoot-detail-claimed-booking = { $title } (réservation prise en charge)
+troubleshoot-detail-unsupported-recurrence = { $calendar } (règle de répétition que calrs ne sait pas lire, comptée comme occupée dès son début)
 etf-pending-blocks-slot = Les demandes en attente bloquent le créneau
 etf-pending-blocks-slot-help = Tant qu'une demande attend votre réponse, personne d'autre ne peut réserver ce créneau, sur ce type d'événement comme sur les autres.
 etf-pending-expiry = Expiration des demandes

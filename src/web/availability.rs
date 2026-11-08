@@ -2854,6 +2854,18 @@ pub(super) async fn troubleshoot(
         .and_hms_opt(23, 59, 59)
         .unwrap_or(target_date.and_time(NaiveTime::MIN));
     for (s, e, rrule_str, raw_ical, summary, cal_name, event_tz) in &recurring_events {
+        // A rule calrs cannot expand is blocked as busy from its start: say
+        // so, or the host has no way to tell why the day is closed.
+        let detail = if crate::rrule::is_supported(rrule_str) {
+            cal_name.clone()
+        } else {
+            Some(tr1(
+                auth_user.lang,
+                "troubleshoot-detail-unsupported-recurrence",
+                "calendar",
+                cal_name.as_deref().unwrap_or_default(),
+            ))
+        };
         for (cs, ce) in crate::rrule::occurrences_in(
             s,
             e,
@@ -2868,7 +2880,7 @@ pub(super) async fn troubleshoot(
                 cs.format("%Y-%m-%dT%H:%M:%S").to_string(),
                 ce.format("%Y-%m-%dT%H:%M:%S").to_string(),
                 summary.clone(),
-                cal_name.clone(),
+                detail.clone(),
             ));
         }
     }

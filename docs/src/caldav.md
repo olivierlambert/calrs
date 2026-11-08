@@ -94,7 +94,7 @@ Some CalDAV servers (notably BlueMind) bundle recurring events and their modifie
 - **Modified instances** have a RECURRENCE-ID and are stored alongside the parent with a composite unique key `(uid, recurrence_id)`
 - This ensures modified occurrences correctly block (or free) availability
 
-Recurring events are expanded over the window asked for, however long ago the series started: a daily stand-up created years ago still blocks today. Supported rules are `DAILY`, `WEEKLY` and `MONTHLY`, with `INTERVAL`, `UNTIL`, `COUNT`, `BYDAY` and `EXDATE`; cancelled occurrences count toward `COUNT`, as RFC 5545 says.
+Recurring events are expanded over the window asked for, however long ago the series started: a daily stand-up created years ago still blocks today. Supported rules are `DAILY`, `WEEKLY`, `MONTHLY` and `YEARLY`, with `INTERVAL`, `UNTIL`, `COUNT`, `BYDAY`, `BYMONTH`, `BYMONTHDAY`, `WKST` and `EXDATE`; cancelled occurrences count toward `COUNT`, as RFC 5545 says. A rule calrs cannot expand (an hourly one, `BYHOUR`, `BYWEEKNO`) is never read as free: the event blocks every slot from its start (up to its `UNTIL`), the troubleshoot view shows it as a repeat rule calrs cannot read, and each sync logs a warning.
 
 ## CalDAV write-back
 

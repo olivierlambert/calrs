@@ -1,19 +1,28 @@
-use chrono::{Datelike, Duration, NaiveDate, NaiveDateTime, NaiveTime, Weekday};
+use chrono::{Datelike, Duration, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Weekday};
 use chrono_tz::Tz;
 
 /// A parsed RRULE.
 struct RRule {
     freq: Freq,
     interval: u32,
+    /// In the event's own wall-clock time: [`parse_rrule_in`] reads a UTC
+    /// `UNTIL` into it.
     until: Option<NaiveDateTime>,
     count: Option<u32>,
     by_day: Vec<ByDay>,
+    /// 1 to 12.
+    by_month: Vec<u32>,
+    /// 1 to 31, or -1 (the last day) to -31.
+    by_month_day: Vec<i32>,
+    week_start: Weekday,
 }
 
+#[derive(Clone, Copy)]
 enum Freq {
     Daily,
     Weekly,
     Monthly,
+    Yearly,
 }
 
 #[derive(Clone)]
@@ -22,20 +31,58 @@ struct ByDay {
     nth: Option<i32>, // e.g. 2 for "2nd Monday", -1 for "last Friday"
 }
 
-/// Most recurrence periods (days, weeks or months) walked for one window,
-/// counted from the first period that can reach it, not from DTSTART
-/// (#376). A year of a daily series is 367 of them.
+/// A rule calrs cannot expand (a sub-daily `FREQ`, `BYHOUR`, `BYWEEKNO`,
+/// no `FREQ` at all): what is known of where it ends, so the series can be
+/// blocked as busy from DTSTART to there rather than read as free.
+struct Unreadable {
+    until: Option<NaiveDateTime>,
+    /// The latest an occurrence can start after DTSTART, when the rule has
+    /// a `COUNT` and nothing that could thin its occurrences out.
+    last_start: Option<Duration>,
+}
+
+/// Most recurrence periods (days, weeks, months or years) walked for one
+/// window, counted from the first period that can reach it, not from
+/// DTSTART (#376). A year of a daily series is 367 of them.
 const MAX_PERIODS: i64 = 20_000;
+
+/// Most periods walked from DTSTART to count a `COUNT` toward the window,
+/// for the rules whose skipped occurrences cannot be counted arithmetically
+/// (a daily series filtered by `BYDAY`, a monthly or yearly one with a
+/// `COUNT`). 547 years of a daily series.
+const MAX_COUNTED_PERIODS: i64 = 200_000;
+
+/// Whether calrs can expand this RRULE. One it cannot is blocked as busy
+/// over each window asked for (see [`expand_rrule`]).
+pub fn is_supported(rrule_str: &str) -> bool {
+    rrule_str.trim().is_empty() || parse_rrule(rrule_str).is_ok()
+}
+
+/// Log, once per event per sync, a recurring event whose rule calrs cannot
+/// expand and therefore blocks as busy over every window. `container` is
+/// the id of the calendar or shared resource it was synced into.
+pub fn warn_if_unsupported(rrule_str: &str, uid: &str, container: &str) {
+    if !is_supported(rrule_str) {
+        tracing::warn!(
+            %uid,
+            rrule = %rrule_str,
+            %container,
+            "recurrence rule calrs cannot expand: the event blocks every slot from its start"
+        );
+    }
+}
 
 /// Expand a recurring event into occurrences within [window_start, window_end).
 /// Returns (start, end) pairs for each occurrence.
 ///
-/// The walk starts at the window, however long ago the series began: daily
-/// and weekly series skip ahead arithmetically, counting the occurrences
-/// they skip so `COUNT` still ends the series where it should, and monthly
-/// ones skip ahead too unless they carry a `COUNT` (months hold a varying
-/// number of occurrences, so those are counted month by month). Excluded
-/// occurrences count toward `COUNT`, as RFC 5545 says.
+/// The walk starts at the window, however long ago the series began. When
+/// the occurrences skipped can be counted arithmetically (no `COUNT`, or a
+/// daily or weekly series no `BY*` part thins out), the walk skips straight
+/// to the window; otherwise it counts from DTSTART, up to
+/// [`MAX_COUNTED_PERIODS`]. Excluded occurrences count toward `COUNT`, as
+/// RFC 5545 says. A rule calrs cannot expand, or a walk that runs out of
+/// periods before the window ends, blocks what it could not read as one
+/// busy interval: it never reads as free.
 pub fn expand_rrule(
     event_start: NaiveDateTime,
     event_end: NaiveDateTime,
@@ -44,28 +91,61 @@ pub fn expand_rrule(
     window_start: NaiveDateTime,
     window_end: NaiveDateTime,
 ) -> Vec<(NaiveDateTime, NaiveDateTime)> {
-    let rrule = match parse_rrule(rrule_str) {
-        Some(r) => r,
-        None => return vec![],
-    };
+    expand_rrule_in(
+        event_start,
+        event_end,
+        rrule_str,
+        exdates,
+        window_start,
+        window_end,
+        None,
+    )
+}
+
+/// [`expand_rrule`] for an event whose wall-clock times are in `event_tz`
+/// (None: floating), which a UTC `UNTIL` (`...Z`) is read into before it
+/// is compared with the occurrences.
+pub fn expand_rrule_in(
+    event_start: NaiveDateTime,
+    event_end: NaiveDateTime,
+    rrule_str: &str,
+    exdates: &[NaiveDateTime],
+    window_start: NaiveDateTime,
+    window_end: NaiveDateTime,
+    event_tz: Option<Tz>,
+) -> Vec<(NaiveDateTime, NaiveDateTime)> {
+    if rrule_str.trim().is_empty() {
+        return vec![];
+    }
     let duration = (event_end - event_start).max(Duration::zero());
+    let rrule = match parse_rrule_in(rrule_str, event_tz) {
+        Ok(r) => r,
+        Err(unreadable) => {
+            return unreadable_block(event_start, duration, &unreadable, window_start, window_end)
+        }
+    };
     // The earliest start an occurrence still reaching the window can have.
     let reach = window_start
         .checked_sub_signed(duration)
         .unwrap_or(window_start);
-    let (first_period, skipped) = skip_to(&rrule, event_start, reach);
+    let (first_period, skipped, cap) = match skip_to(&rrule, event_start, reach) {
+        Some((first, skipped)) => (first, skipped, MAX_PERIODS),
+        None => (0, 0, MAX_COUNTED_PERIODS),
+    };
 
     let mut results = Vec::new();
     let mut seen = skipped;
-    'periods: for period in first_period..first_period.saturating_add(MAX_PERIODS) {
+    let mut period = first_period;
+    let last = first_period.saturating_add(cap);
+    'periods: while period < last {
         let Some((first_day, days)) = period_dates(&rrule, event_start, period) else {
-            break;
+            return results;
         };
         // Past the window or the series' end: so is every later period,
         // even when this one holds no occurrence (a 5th Monday, a 31st).
         let first = first_day.and_time(NaiveTime::MIN);
         if first >= window_end || rrule.until.is_some_and(|until| first > until) {
-            break;
+            return results;
         }
         for day in days {
             let occ_start = day.and_time(event_start.time());
@@ -86,28 +166,103 @@ pub fn expand_rrule(
                 results.push((occ_start, occ_end));
             }
         }
+        period += 1;
+    }
+    if period >= last {
+        // Out of periods before the window or the series ended: what was
+        // not walked is busy, not free.
+        tracing::warn!(
+            rrule = %rrule_str,
+            %window_start,
+            %window_end,
+            "recurrence walk hit its cap; the rest of the window is blocked as busy"
+        );
+        let from = period_dates(&rrule, event_start, period)
+            .map(|(first_day, _)| first_day.and_time(NaiveTime::MIN).max(window_start))
+            .unwrap_or(window_start);
+        let mut until = window_end;
+        if let Some(series_until) = rrule.until {
+            until = until.min(
+                series_until
+                    .checked_add_signed(duration)
+                    .unwrap_or(series_until),
+            );
+        }
+        if from < until {
+            results.push((from, until));
+        }
     }
     results
 }
 
-/// The first period worth walking for occurrences starting at `reach` or
-/// later, and how many occurrences the periods before it hold. Every
-/// occurrence of a skipped period starts before `reach`, so it cannot reach
-/// the window: one period of margin is kept for the time of day.
-fn skip_to(rrule: &RRule, event_start: NaiveDateTime, reach: NaiveDateTime) -> (i64, i64) {
-    let interval = i64::from(rrule.interval);
-    let periods_before = |units: i64| (units.div_euclid(interval) - 1).max(0);
+/// The busy interval of a series whose rule calrs cannot expand: from
+/// DTSTART, or the window's start, to the window's end, the rule's `UNTIL`
+/// or the last start its `COUNT` allows, whichever comes first.
+fn unreadable_block(
+    event_start: NaiveDateTime,
+    duration: Duration,
+    unreadable: &Unreadable,
+    window_start: NaiveDateTime,
+    window_end: NaiveDateTime,
+) -> Vec<(NaiveDateTime, NaiveDateTime)> {
+    let from = event_start.max(window_start);
+    let mut to = window_end;
+    let last_start = [
+        unreadable.until,
+        unreadable
+            .last_start
+            .and_then(|span| event_start.checked_add_signed(span)),
+    ];
+    for last in last_start.into_iter().flatten() {
+        to = to.min(last.checked_add_signed(duration).unwrap_or(last));
+    }
+    if from < to {
+        vec![(from, to)]
+    } else {
+        vec![]
+    }
+}
+
+/// Whether a rule's `BY*` parts can drop some of its periods' candidates,
+/// so the occurrences before the window cannot be counted arithmetically.
+fn thins_out(rrule: &RRule) -> bool {
     match rrule.freq {
         Freq::Daily => {
-            let skip = periods_before((reach.date() - event_start.date()).num_days());
-            (skip, skip)
+            !rrule.by_day.is_empty() || !rrule.by_month.is_empty() || !rrule.by_month_day.is_empty()
         }
+        Freq::Weekly => !rrule.by_month.is_empty(),
+        Freq::Monthly | Freq::Yearly => true,
+    }
+}
+
+/// The first period worth walking for occurrences starting at `reach` or
+/// later, and how many occurrences the periods before it hold; None when
+/// those cannot be counted without walking them (a `COUNT` on a rule that
+/// [`thins_out`]). Every occurrence of a skipped period starts before
+/// `reach`, so it cannot reach the window: one period of margin is kept for
+/// the time of day.
+fn skip_to(rrule: &RRule, event_start: NaiveDateTime, reach: NaiveDateTime) -> Option<(i64, i64)> {
+    let interval = i64::from(rrule.interval);
+    let periods_before = |units: i64| (units.div_euclid(interval) - 1).max(0);
+    let start = event_start.date();
+    let skip = periods_before(match rrule.freq {
+        Freq::Daily => (reach.date() - start).num_days(),
         Freq::Weekly => {
-            let weeks = (week_start(reach.date()) - week_start(event_start.date())).num_days() / 7;
-            let skip = periods_before(weeks);
-            if skip == 0 {
-                return (0, 0);
-            }
+            let wkst = rrule.week_start;
+            (week_start_on(reach.date(), wkst) - week_start_on(start, wkst)).num_days() / 7
+        }
+        Freq::Monthly => month_index(reach.date()) - month_index(start),
+        Freq::Yearly => i64::from(reach.year()) - i64::from(start.year()),
+    });
+    if rrule.count.is_none() || skip == 0 {
+        return Some((skip, 0));
+    }
+    if thins_out(rrule) {
+        return None;
+    }
+    match rrule.freq {
+        Freq::Daily => Some((skip, skip)),
+        Freq::Weekly => {
             // The first week holds the days on or after DTSTART, every
             // later week all of them.
             let first = period_dates(rrule, event_start, 0)
@@ -117,18 +272,14 @@ fn skip_to(rrule: &RRule, event_start: NaiveDateTime, reach: NaiveDateTime) -> (
                 .filter(|d| d.and_time(event_start.time()) >= event_start)
                 .count() as i64;
             let per_week = weekly_offsets(rrule, event_start).len() as i64;
-            (skip, first + (skip - 1) * per_week)
+            Some((skip, first + (skip - 1) * per_week))
         }
-        Freq::Monthly if rrule.count.is_some() => (0, 0),
-        Freq::Monthly => (
-            periods_before(month_index(reach.date()) - month_index(event_start.date())),
-            0,
-        ),
+        Freq::Monthly | Freq::Yearly => None,
     }
 }
 
 /// The first day of one period of the series and its dates, in order:
-/// period 0 is the day, week or month of DTSTART, period n the one
+/// period 0 is the day, week, month or year of DTSTART, period n the one
 /// `n * INTERVAL` units later. None once the calendar runs out, which ends
 /// the walk.
 fn period_dates(
@@ -141,14 +292,23 @@ fn period_dates(
     match rrule.freq {
         Freq::Daily => {
             let day = start.checked_add_signed(Duration::try_days(units)?)?;
-            Some((day, vec![day]))
+            let keep = in_months(rrule, day)
+                && (rrule.by_month_day.is_empty()
+                    || rrule
+                        .by_month_day
+                        .iter()
+                        .any(|&md| month_day(day.year(), day.month(), md) == Some(day)))
+                && (rrule.by_day.is_empty() || on_listed_weekday(rrule, day));
+            Some((day, if keep { vec![day] } else { vec![] }))
         }
         Freq::Weekly => {
-            let week = week_start(start).checked_add_signed(Duration::try_weeks(units)?)?;
+            let week = week_start_on(start, rrule.week_start)
+                .checked_add_signed(Duration::try_weeks(units)?)?;
             let days = weekly_offsets(rrule, event_start)
                 .into_iter()
                 .map(|offset| week.checked_add_signed(Duration::days(offset)))
                 .collect::<Option<Vec<_>>>()?;
+            let days = days.into_iter().filter(|&d| in_months(rrule, d)).collect();
             Some((week, days))
         }
         Freq::Monthly => {
@@ -156,24 +316,32 @@ fn period_dates(
             let year = i32::try_from(index.div_euclid(12)).ok()?;
             let month = index.rem_euclid(12) as u32 + 1;
             let first_day = NaiveDate::from_ymd_opt(year, month, 1)?;
-            let mut days: Vec<NaiveDate> = if rrule.by_day.is_empty() {
-                // Same day of month; none in a month too short for it.
-                NaiveDate::from_ymd_opt(year, month, start.day())
-                    .into_iter()
-                    .collect()
+            let days = if rrule.by_month.is_empty() || rrule.by_month.contains(&month) {
+                month_dates(rrule, start, year, month)
             } else {
+                vec![]
+            };
+            Some((first_day, days))
+        }
+        Freq::Yearly => {
+            let year = i32::try_from(i64::from(start.year()).checked_add(units)?).ok()?;
+            let first_day = NaiveDate::from_ymd_opt(year, 1, 1)?;
+            let mut days: Vec<NaiveDate> = if !rrule.by_month.is_empty() {
                 rrule
-                    .by_day
+                    .by_month
                     .iter()
-                    .flat_map(|bd| match bd.nth {
-                        Some(nth) => nth_weekday_of_month(year, month, bd.weekday, nth)
-                            .into_iter()
-                            .collect(),
-                        // A bare weekday is every one of them in the month.
-                        None => (1..=5)
-                            .filter_map(|nth| nth_weekday_of_month(year, month, bd.weekday, nth))
-                            .collect::<Vec<_>>(),
-                    })
+                    .flat_map(|&month| month_dates(rrule, start, year, month))
+                    .collect()
+            } else if !rrule.by_month_day.is_empty() {
+                (1..=12)
+                    .flat_map(|month| month_dates(rrule, start, year, month))
+                    .collect()
+            } else if !rrule.by_day.is_empty() {
+                year_weekdays(rrule, year)
+            } else {
+                // DTSTART's day; none in a year without it (29 February).
+                NaiveDate::from_ymd_opt(year, start.month(), start.day())
+                    .into_iter()
                     .collect()
             };
             days.sort();
@@ -183,17 +351,104 @@ fn period_dates(
     }
 }
 
-/// The days of the week a weekly series falls on, as offsets from Monday,
-/// in order: `BYDAY`, else DTSTART's weekday.
-fn weekly_offsets(rrule: &RRule, event_start: NaiveDateTime) -> Vec<i64> {
-    let mut offsets: Vec<i64> = if rrule.by_day.is_empty() {
-        vec![weekday_offset(event_start.weekday())]
-    } else {
+/// The dates of one month of a monthly series, or of a yearly one in a
+/// month it covers, in order: `BYMONTHDAY` (only those on a `BYDAY`
+/// weekday, when both are given), else `BYDAY`, else DTSTART's day of the
+/// month (none in a month too short for it).
+fn month_dates(rrule: &RRule, start: NaiveDate, year: i32, month: u32) -> Vec<NaiveDate> {
+    let mut days: Vec<NaiveDate> = if !rrule.by_month_day.is_empty() {
+        rrule
+            .by_month_day
+            .iter()
+            .filter_map(|&md| month_day(year, month, md))
+            .filter(|&d| rrule.by_day.is_empty() || on_listed_weekday(rrule, d))
+            .collect()
+    } else if !rrule.by_day.is_empty() {
         rrule
             .by_day
             .iter()
-            .map(|bd| weekday_offset(bd.weekday))
+            .flat_map(|bd| match bd.nth {
+                Some(nth) => nth_weekday_of_month(year, month, bd.weekday, nth)
+                    .into_iter()
+                    .collect(),
+                // A bare weekday is every one of them in the month.
+                None => (1..=5)
+                    .filter_map(|nth| nth_weekday_of_month(year, month, bd.weekday, nth))
+                    .collect::<Vec<_>>(),
+            })
             .collect()
+    } else {
+        NaiveDate::from_ymd_opt(year, month, start.day())
+            .into_iter()
+            .collect()
+    };
+    days.sort();
+    days.dedup();
+    days
+}
+
+/// `BYDAY` across a whole year (a yearly rule without `BYMONTH`): a bare
+/// weekday is every one of them, `20MO` the 20th Monday, `-1FR` the last
+/// Friday of the year.
+fn year_weekdays(rrule: &RRule, year: i32) -> Vec<NaiveDate> {
+    let (Some(jan1), Some(next)) = (
+        NaiveDate::from_ymd_opt(year, 1, 1),
+        NaiveDate::from_ymd_opt(year + 1, 1, 1),
+    ) else {
+        return vec![];
+    };
+    let mut days = Vec::new();
+    for bd in &rrule.by_day {
+        let all: Vec<NaiveDate> = jan1
+            .iter_days()
+            .take_while(|&d| d < next)
+            .filter(|d| d.weekday() == bd.weekday)
+            .collect();
+        match bd.nth {
+            None => days.extend(all),
+            Some(nth) if nth > 0 => days.extend(all.get(nth as usize - 1)),
+            Some(nth) => days.extend(
+                all.len()
+                    .checked_sub(nth.unsigned_abs() as usize)
+                    .and_then(|i| all.get(i)),
+            ),
+        }
+    }
+    days
+}
+
+/// A `BYMONTHDAY` value in one month: 1 is the first, -1 the last day.
+fn month_day(year: i32, month: u32, md: i32) -> Option<NaiveDate> {
+    if md > 0 {
+        return NaiveDate::from_ymd_opt(year, month, md as u32);
+    }
+    let first = NaiveDate::from_ymd_opt(year, month, 1)?;
+    let next = if month == 12 {
+        NaiveDate::from_ymd_opt(year + 1, 1, 1)?
+    } else {
+        NaiveDate::from_ymd_opt(year, month + 1, 1)?
+    };
+    let day = next.checked_add_signed(Duration::days(md.into()))?;
+    (day >= first).then_some(day)
+}
+
+fn in_months(rrule: &RRule, day: NaiveDate) -> bool {
+    rrule.by_month.is_empty() || rrule.by_month.contains(&day.month())
+}
+
+fn on_listed_weekday(rrule: &RRule, day: NaiveDate) -> bool {
+    rrule.by_day.iter().any(|bd| bd.weekday == day.weekday())
+}
+
+/// The days of the week a weekly series falls on, as offsets from its week
+/// start (`WKST`, Monday by default), in order: `BYDAY`, else DTSTART's
+/// weekday.
+fn weekly_offsets(rrule: &RRule, event_start: NaiveDateTime) -> Vec<i64> {
+    let offset = |wd: Weekday| days_from(wd, rrule.week_start);
+    let mut offsets: Vec<i64> = if rrule.by_day.is_empty() {
+        vec![offset(event_start.weekday())]
+    } else {
+        rrule.by_day.iter().map(|bd| offset(bd.weekday)).collect()
     };
     offsets.sort();
     offsets.dedup();
@@ -233,7 +488,7 @@ pub fn occurrences_in(
         .map(|raw| extract_exdates(raw, event_tz))
         .unwrap_or_default();
     let slack = Duration::days(2);
-    expand_rrule(
+    expand_rrule_in(
         ev_start,
         ev_end,
         rrule,
@@ -242,6 +497,7 @@ pub fn occurrences_in(
             .checked_sub_signed(slack)
             .unwrap_or(window_start),
         window_end.checked_add_signed(slack).unwrap_or(window_end),
+        event_tz.and_then(crate::tzid::resolve_or_offset),
     )
     .into_iter()
     .map(|(s, e)| {
@@ -329,63 +585,160 @@ fn parse_exdate(s: &str, value_tz: Option<&str>, event_tz: Option<Tz>) -> Option
     }
 }
 
-fn parse_rrule(s: &str) -> Option<RRule> {
+/// Parse an RRULE, or say what is known of a rule calrs cannot expand: a
+/// `FREQ` other than daily to yearly (or none), a part that adds
+/// occurrences calrs would not generate (`BYHOUR`, `BYMINUTE`, `BYSECOND`,
+/// `BYYEARDAY`, `BYWEEKNO`), or a `BY*` value it cannot read. Parts that
+/// only remove occurrences (`BYSETPOS`) are ignored, which over-blocks
+/// rather than under-blocks.
+fn parse_rrule(s: &str) -> Result<RRule, Unreadable> {
+    parse_rrule_in(s, None)
+}
+
+/// [`parse_rrule`], reading a UTC `UNTIL` into `event_tz` (RFC 5545: an
+/// `UNTIL` with a `Z` is an instant, one without is in DTSTART's own
+/// time). A floating event keeps the value as written.
+fn parse_rrule_in(s: &str, event_tz: Option<Tz>) -> Result<RRule, Unreadable> {
+    let s = s.trim().to_ascii_uppercase();
     let mut freq = None;
+    let mut sub_daily = None;
+    let mut readable = true;
+    let mut thinned = false;
     let mut interval = 1u32;
     let mut until = None;
     let mut count = None;
     let mut by_day = Vec::new();
+    let mut by_month = Vec::new();
+    let mut by_month_day = Vec::new();
+    let mut week_start = Weekday::Mon;
 
     for part in s.split(';') {
-        if let Some(val) = part.strip_prefix("FREQ=") {
-            freq = match val {
-                "DAILY" => Some(Freq::Daily),
-                "WEEKLY" => Some(Freq::Weekly),
-                "MONTHLY" => Some(Freq::Monthly),
-                _ => None,
-            };
-        } else if let Some(val) = part.strip_prefix("INTERVAL=") {
-            interval = val.parse().ok().filter(|&i| i > 0).unwrap_or(1);
-        } else if let Some(val) = part.strip_prefix("UNTIL=") {
-            let v = val.strip_suffix('Z').unwrap_or(val);
-            until = NaiveDateTime::parse_from_str(v, "%Y%m%dT%H%M%S")
-                .ok()
-                .or_else(|| {
-                    NaiveDate::parse_from_str(v, "%Y%m%d")
-                        .ok()
-                        .and_then(|d| d.and_hms_opt(23, 59, 59))
-                });
-        } else if let Some(val) = part.strip_prefix("COUNT=") {
-            count = val.parse().ok();
-        } else if let Some(val) = part.strip_prefix("BYDAY=") {
-            for day_str in val.split(',') {
-                if let Some(bd) = parse_byday(day_str.trim()) {
-                    by_day.push(bd);
+        let Some((name, val)) = part.split_once('=') else {
+            continue;
+        };
+        match name.trim() {
+            "FREQ" => {
+                freq = match val {
+                    "DAILY" => Some(Freq::Daily),
+                    "WEEKLY" => Some(Freq::Weekly),
+                    "MONTHLY" => Some(Freq::Monthly),
+                    "YEARLY" => Some(Freq::Yearly),
+                    _ => None,
+                };
+                sub_daily = match val {
+                    "HOURLY" => Some(Duration::hours(1)),
+                    "MINUTELY" => Some(Duration::minutes(1)),
+                    "SECONDLY" => Some(Duration::seconds(1)),
+                    _ => None,
+                };
+            }
+            "INTERVAL" => interval = val.parse().ok().filter(|&i| i > 0).unwrap_or(1),
+            "UNTIL" => {
+                let v = val.strip_suffix('Z').unwrap_or(val);
+                until = NaiveDateTime::parse_from_str(v, "%Y%m%dT%H%M%S")
+                    .ok()
+                    .map(|t| match event_tz {
+                        Some(tz) if val.ends_with('Z') => tz.from_utc_datetime(&t).naive_local(),
+                        _ => t,
+                    })
+                    .or_else(|| {
+                        NaiveDate::parse_from_str(v, "%Y%m%d")
+                            .ok()
+                            .and_then(|d| d.and_hms_opt(23, 59, 59))
+                    });
+            }
+            "COUNT" => count = val.parse().ok(),
+            "BYDAY" => {
+                thinned = true;
+                for day_str in val.split(',') {
+                    match parse_byday(day_str.trim()) {
+                        Some(bd) => by_day.push(bd),
+                        None => readable = false,
+                    }
                 }
             }
+            "BYMONTH" => {
+                thinned = true;
+                for m in val.split(',') {
+                    match m.trim().parse::<u32>() {
+                        Ok(m) if (1..=12).contains(&m) => by_month.push(m),
+                        _ => readable = false,
+                    }
+                }
+            }
+            "BYMONTHDAY" => {
+                thinned = true;
+                for md in val.split(',') {
+                    match md.trim().parse::<i32>() {
+                        Ok(md) if md != 0 && (-31..=31).contains(&md) => by_month_day.push(md),
+                        _ => readable = false,
+                    }
+                }
+            }
+            "WKST" => match parse_weekday(val.trim()) {
+                Some(wd) => week_start = wd,
+                None => readable = false,
+            },
+            "BYHOUR" | "BYMINUTE" | "BYSECOND" | "BYYEARDAY" | "BYWEEKNO" => {
+                thinned = true;
+                readable = false;
+            }
+            "BYSETPOS" => thinned = true,
+            _ => {}
         }
     }
 
-    Some(RRule {
-        freq: freq?,
-        interval,
-        until,
-        count,
-        by_day,
-    })
+    match freq {
+        Some(freq) if readable => Ok(RRule {
+            freq,
+            interval,
+            until,
+            count,
+            by_day,
+            by_month,
+            by_month_day,
+            week_start,
+        }),
+        _ => Err(Unreadable {
+            until,
+            // Without `BY*` parts, a sub-daily series' last start is
+            // (COUNT - 1) * INTERVAL units after DTSTART.
+            last_start: match (sub_daily, count, thinned) {
+                (Some(unit), Some(count), false) => {
+                    i32::try_from(i64::from(count.saturating_sub(1)) * i64::from(interval))
+                        .ok()
+                        .and_then(|n| unit.checked_mul(n))
+                }
+                _ => None,
+            },
+        }),
+    }
 }
 
 fn parse_byday(s: &str) -> Option<ByDay> {
-    // "MO", "TU", "2MO", "-1FR", etc.
-    let (nth, day_part) = if s.len() > 2 {
-        let day_part = &s[s.len() - 2..];
-        let nth_part = &s[..s.len() - 2];
-        (nth_part.parse::<i32>().ok(), day_part)
+    // "MO", "TU", "2MO", "-1FR", "+3TH", etc.
+    if !s.is_ascii() {
+        return None;
+    }
+    let (nth_part, day_part) = s.split_at(s.len().checked_sub(2)?);
+    let nth = if nth_part.is_empty() {
+        None
     } else {
-        (None, s)
+        let n: i32 = nth_part.trim_start_matches('+').parse().ok()?;
+        // A month holds at most five of a weekday, a year 53.
+        if n == 0 || !(-53..=53).contains(&n) {
+            return None;
+        }
+        Some(n)
     };
+    Some(ByDay {
+        weekday: parse_weekday(day_part)?,
+        nth,
+    })
+}
 
-    let weekday = match day_part {
+fn parse_weekday(s: &str) -> Option<Weekday> {
+    Some(match s {
         "MO" => Weekday::Mon,
         "TU" => Weekday::Tue,
         "WE" => Weekday::Wed,
@@ -394,9 +747,7 @@ fn parse_byday(s: &str) -> Option<ByDay> {
         "SA" => Weekday::Sat,
         "SU" => Weekday::Sun,
         _ => return None,
-    };
-
-    Some(ByDay { weekday, nth })
+    })
 }
 
 fn is_excluded(dt: NaiveDateTime, exdates: &[NaiveDateTime]) -> bool {
@@ -407,14 +758,19 @@ fn is_excluded(dt: NaiveDateTime, exdates: &[NaiveDateTime]) -> bool {
 }
 
 /// Monday-based week start for a given date.
+#[cfg(test)]
 fn week_start(d: NaiveDate) -> NaiveDate {
-    let days_since_monday = d.weekday().num_days_from_monday() as i64;
-    d - Duration::days(days_since_monday)
+    week_start_on(d, Weekday::Mon)
 }
 
-/// Offset from Monday (0=Mon, 1=Tue, ..., 6=Sun).
-fn weekday_offset(wd: Weekday) -> i64 {
-    wd.num_days_from_monday() as i64
+/// The start of the week holding `d`, weeks starting on `wkst`.
+fn week_start_on(d: NaiveDate, wkst: Weekday) -> NaiveDate {
+    d - Duration::days(days_from(d.weekday(), wkst))
+}
+
+/// Days from `from` forward to `wd` (0 to 6).
+fn days_from(wd: Weekday, from: Weekday) -> i64 {
+    (i64::from(wd.num_days_from_monday()) - i64::from(from.num_days_from_monday())).rem_euclid(7)
 }
 
 /// Find the Nth weekday of a month (e.g., 2nd Monday, 3rd Wednesday).
@@ -825,11 +1181,11 @@ mod tests {
     }
 
     #[test]
-    fn test_invalid_rrule() {
+    fn test_yearly_rrule_starts_on_dtstart() {
         let start = dt(2026, 3, 1, 9, 0);
         let end = dt(2026, 3, 1, 10, 0);
         let results = expand_rrule(start, end, "FREQ=YEARLY", &[], start, end);
-        assert!(results.is_empty()); // YEARLY not supported
+        assert_eq!(results, vec![(start, end)]);
     }
 
     #[test]
@@ -995,7 +1351,7 @@ mod tests {
         window_start: NaiveDateTime,
         window_end: NaiveDateTime,
     ) -> Vec<(NaiveDateTime, NaiveDateTime)> {
-        let rrule = parse_rrule(rrule_str).unwrap();
+        let rrule = parse_rrule(rrule_str).ok().unwrap();
         let duration = event_end - event_start;
         let mut results = Vec::new();
         let mut seen = 0i64;
@@ -1207,6 +1563,18 @@ mod tests {
             "FREQ=MONTHLY;BYDAY=-1FR,1MO;COUNT=166",
             "FREQ=MONTHLY;INTERVAL=2;BYDAY=WE",
             "FREQ=MONTHLY;BYDAY=5TH",
+            "FREQ=MONTHLY;BYMONTHDAY=1,15,-1;COUNT=150",
+            "FREQ=MONTHLY;BYDAY=FR;BYMONTHDAY=13",
+            "FREQ=DAILY;BYDAY=MO,TU,WE,TH,FR",
+            "FREQ=DAILY;INTERVAL=2;BYDAY=SA,SU;COUNT=300",
+            "FREQ=DAILY;BYMONTH=12,1;COUNT=700",
+            "FREQ=WEEKLY;INTERVAL=2;BYDAY=SU,TU;WKST=SU;COUNT=400",
+            "FREQ=WEEKLY;BYDAY=MO;BYMONTH=11;COUNT=20",
+            "FREQ=YEARLY",
+            "FREQ=YEARLY;COUNT=7",
+            "FREQ=YEARLY;BYMONTH=3,10;BYDAY=-1SU",
+            "FREQ=YEARLY;BYMONTHDAY=-1;COUNT=40",
+            "FREQ=YEARLY;BYDAY=20MO",
         ];
         let windows = [
             (dt(2026, 11, 9, 0, 0), dt(2026, 11, 16, 0, 0)),
@@ -1255,7 +1623,11 @@ mod tests {
             dt(2026, 1, 1, 0, 0),
             dt(2526, 1, 1, 0, 0),
         );
-        assert_eq!(results.len() as i64, MAX_PERIODS);
+        // What the cap left unread is one busy block to the window's end.
+        assert_eq!(results.len() as i64, MAX_PERIODS + 1);
+        let block = results.last().unwrap();
+        assert_eq!(block.0, dt(2026, 1, 1, 0, 0) + Duration::days(MAX_PERIODS));
+        assert_eq!(block.1, dt(2526, 1, 1, 0, 0));
         // Absurd values end the walk instead of overflowing.
         assert!(
             expand_rrule(
@@ -1269,15 +1641,19 @@ mod tests {
             .len()
                 == 1
         );
-        assert!(expand_rrule(
-            dt(2026, 1, 1, 9, 0),
-            dt(2026, 1, 1, 10, 0),
-            "FREQ=MONTHLY;BYDAY=2147483647MO",
-            &[],
-            dt(2026, 1, 1, 0, 0),
-            dt(2027, 1, 1, 0, 0),
-        )
-        .is_empty());
+        // A position no month has is unreadable: busy, not free, and no
+        // overflow.
+        assert_eq!(
+            expand_rrule(
+                dt(2026, 1, 1, 9, 0),
+                dt(2026, 1, 1, 10, 0),
+                "FREQ=MONTHLY;BYDAY=2147483647MO",
+                &[],
+                dt(2026, 1, 1, 0, 0),
+                dt(2027, 1, 1, 0, 0),
+            ),
+            vec![(dt(2026, 1, 1, 9, 0), dt(2027, 1, 1, 0, 0))]
+        );
     }
 
     #[test]
@@ -1360,5 +1736,353 @@ mod tests {
             paris,
         );
         assert!(busy.is_empty(), "{busy:?}");
+    }
+
+    #[test]
+    fn an_excluded_occurrence_still_counts_toward_count() {
+        // RFC 5545: COUNT applies to the generated instances, EXDATE is
+        // removed afterwards, so the last occurrence stays on day 5.
+        let start = dt(2026, 11, 1, 9, 0);
+        let results = expand_rrule(
+            start,
+            start + Duration::hours(1),
+            "FREQ=DAILY;COUNT=5",
+            &[dt(2026, 11, 3, 9, 0)],
+            dt(2026, 10, 1, 0, 0),
+            dt(2027, 1, 1, 0, 0),
+        );
+        assert_eq!(
+            dates(&results),
+            vec![
+                day(2026, 11, 1),
+                day(2026, 11, 2),
+                day(2026, 11, 4),
+                day(2026, 11, 5)
+            ]
+        );
+    }
+
+    #[test]
+    fn yearly_series_are_expanded() {
+        let window = (dt(2026, 1, 1, 0, 0), dt(2029, 1, 1, 0, 0));
+        // A birthday since 1980.
+        let results = expand_rrule(
+            dt(1980, 6, 12, 0, 0),
+            dt(1980, 6, 13, 0, 0),
+            "FREQ=YEARLY",
+            &[],
+            window.0,
+            window.1,
+        );
+        assert_eq!(
+            dates(&results),
+            vec![day(2026, 6, 12), day(2027, 6, 12), day(2028, 6, 12)]
+        );
+        // 29 February only in leap years.
+        let results = expand_rrule(
+            dt(2000, 2, 29, 10, 0),
+            dt(2000, 2, 29, 11, 0),
+            "FREQ=YEARLY",
+            &[],
+            window.0,
+            window.1,
+        );
+        assert_eq!(dates(&results), vec![day(2028, 2, 29)]);
+        // The last Sunday of March since 1990, with one year cancelled.
+        let results = expand_rrule(
+            dt(1990, 3, 25, 9, 0),
+            dt(1990, 3, 25, 10, 0),
+            "FREQ=YEARLY;BYMONTH=3;BYDAY=-1SU",
+            &[dt(2027, 3, 28, 9, 0)],
+            window.0,
+            window.1,
+        );
+        assert_eq!(dates(&results), vec![day(2026, 3, 29), day(2028, 3, 26)]);
+        // COUNT is counted from DTSTART: eight years from 2020 end in 2027.
+        let results = expand_rrule(
+            dt(2020, 5, 1, 9, 0),
+            dt(2020, 5, 1, 10, 0),
+            "FREQ=YEARLY;COUNT=8",
+            &[],
+            window.0,
+            window.1,
+        );
+        assert_eq!(dates(&results), vec![day(2026, 5, 1), day(2027, 5, 1)]);
+    }
+
+    #[test]
+    fn daily_byday_keeps_only_its_days() {
+        let results = expand_rrule(
+            dt(2019, 1, 7, 9, 0),
+            dt(2019, 1, 7, 9, 15),
+            "FREQ=DAILY;BYDAY=MO,TU,WE,TH,FR",
+            &[],
+            dt(2026, 11, 13, 0, 0),
+            dt(2026, 11, 17, 0, 0),
+        );
+        assert_eq!(dates(&results), vec![day(2026, 11, 13), day(2026, 11, 16)]);
+        // With a COUNT, the days before the window are counted one by one:
+        // weekdays from Monday 2 November 2026, the 7th is 10 November.
+        let results = expand_rrule(
+            dt(2026, 11, 2, 9, 0),
+            dt(2026, 11, 2, 9, 15),
+            "FREQ=DAILY;BYDAY=MO,TU,WE,TH,FR;COUNT=7",
+            &[],
+            dt(2026, 11, 6, 0, 0),
+            dt(2026, 12, 1, 0, 0),
+        );
+        assert_eq!(
+            dates(&results),
+            vec![day(2026, 11, 6), day(2026, 11, 9), day(2026, 11, 10)]
+        );
+    }
+
+    #[test]
+    fn monthly_month_days() {
+        let results = expand_rrule(
+            dt(2001, 1, 1, 9, 0),
+            dt(2001, 1, 1, 10, 0),
+            "FREQ=MONTHLY;BYMONTHDAY=1,15,-1",
+            &[],
+            dt(2026, 2, 1, 0, 0),
+            dt(2026, 3, 1, 0, 0),
+        );
+        assert_eq!(
+            dates(&results),
+            vec![day(2026, 2, 1), day(2026, 2, 15), day(2026, 2, 28)]
+        );
+        // Friday the 13th.
+        let results = expand_rrule(
+            dt(2001, 4, 13, 9, 0),
+            dt(2001, 4, 13, 10, 0),
+            "FREQ=MONTHLY;BYDAY=FR;BYMONTHDAY=13",
+            &[],
+            dt(2026, 1, 1, 0, 0),
+            dt(2027, 1, 1, 0, 0),
+        );
+        assert_eq!(
+            dates(&results),
+            vec![day(2026, 2, 13), day(2026, 3, 13), day(2026, 11, 13)]
+        );
+    }
+
+    #[test]
+    fn week_start_changes_which_weeks_an_interval_keeps() {
+        // RFC 5545's own example: the two lists differ only by WKST.
+        let start = dt(1997, 8, 5, 9, 0);
+        let window = (dt(1997, 8, 1, 0, 0), dt(1997, 10, 1, 0, 0));
+        let expand = |rule| {
+            dates(&expand_rrule(
+                start,
+                start + Duration::hours(1),
+                rule,
+                &[],
+                window.0,
+                window.1,
+            ))
+        };
+        assert_eq!(
+            expand("FREQ=WEEKLY;INTERVAL=2;COUNT=4;BYDAY=TU,SU;WKST=MO"),
+            vec![
+                day(1997, 8, 5),
+                day(1997, 8, 10),
+                day(1997, 8, 19),
+                day(1997, 8, 24)
+            ]
+        );
+        assert_eq!(
+            expand("FREQ=WEEKLY;INTERVAL=2;COUNT=4;BYDAY=TU,SU;WKST=SU"),
+            vec![
+                day(1997, 8, 5),
+                day(1997, 8, 17),
+                day(1997, 8, 19),
+                day(1997, 8, 31)
+            ]
+        );
+    }
+
+    #[test]
+    fn a_rule_calrs_cannot_expand_blocks_from_dtstart_within_the_window() {
+        let start = dt(2026, 11, 10, 9, 0);
+        let end = dt(2026, 11, 10, 9, 30);
+        let window = (dt(2026, 11, 9, 0, 0), dt(2026, 11, 12, 0, 0));
+        for rule in [
+            "FREQ=HOURLY",
+            "FREQ=MINUTELY;INTERVAL=15",
+            "FREQ=DAILY;BYHOUR=9,14",
+            "FREQ=YEARLY;BYWEEKNO=20",
+            "FREQ=FORTNIGHTLY",
+            "INTERVAL=2",
+            "FREQ=WEEKLY;BYDAY=XX",
+        ] {
+            assert!(!is_supported(rule), "{rule}");
+            assert_eq!(
+                expand_rrule(start, end, rule, &[], window.0, window.1),
+                vec![(start, window.1)],
+                "{rule}: busy from DTSTART, not before it"
+            );
+        }
+        // UNTIL bounds it: the last start plus the event's length.
+        assert_eq!(
+            expand_rrule(
+                start,
+                end,
+                "FREQ=HOURLY;UNTIL=20261110T170000",
+                &[],
+                window.0,
+                window.1
+            ),
+            vec![(start, dt(2026, 11, 10, 17, 30))]
+        );
+        // So does a COUNT on a plain sub-daily rule: three starts, two
+        // hours apart, the last at 13:00.
+        assert_eq!(
+            expand_rrule(
+                start,
+                end,
+                "FREQ=HOURLY;INTERVAL=2;COUNT=3",
+                &[],
+                window.0,
+                window.1
+            ),
+            vec![(start, dt(2026, 11, 10, 13, 30))]
+        );
+        // Nothing before DTSTART, nothing after the series' end.
+        assert!(expand_rrule(
+            start,
+            end,
+            "FREQ=HOURLY",
+            &[],
+            dt(2026, 11, 1, 0, 0),
+            dt(2026, 11, 2, 0, 0)
+        )
+        .is_empty());
+        assert!(expand_rrule(
+            start,
+            end,
+            "FREQ=HOURLY;UNTIL=20261110T170000",
+            &[],
+            dt(2026, 11, 11, 0, 0),
+            dt(2026, 11, 12, 0, 0)
+        )
+        .is_empty());
+        for rule in [
+            "",
+            "FREQ=DAILY",
+            "freq=weekly;byday=mo",
+            "FREQ=YEARLY;BYSETPOS=-1;BYDAY=MO",
+        ] {
+            assert!(is_supported(rule), "{rule}");
+        }
+    }
+
+    #[test]
+    fn rule_names_and_values_are_read_whatever_their_case() {
+        let start = dt(2026, 11, 9, 9, 0);
+        let results = expand_rrule(
+            start,
+            start + Duration::hours(1),
+            "freq=daily;Count=2",
+            &[],
+            dt(2026, 11, 1, 0, 0),
+            dt(2026, 12, 1, 0, 0),
+        );
+        assert_eq!(dates(&results), vec![day(2026, 11, 9), day(2026, 11, 10)]);
+    }
+
+    #[test]
+    fn a_utc_until_is_read_in_the_events_zone() {
+        // 00:00Z on 10 November is 09:00 in Tokyo: that day's 09:00
+        // occurrence is the last, not one past the end.
+        let tokyo: Tz = "Asia/Tokyo".parse().unwrap();
+        let busy = occurrences_in(
+            "20261101T090000",
+            "20261101T093000",
+            "FREQ=DAILY;UNTIL=20261110T000000Z",
+            None,
+            Some("Asia/Tokyo"),
+            dt(2026, 11, 9, 0, 0),
+            dt(2026, 11, 13, 0, 0),
+            tokyo,
+        );
+        assert_eq!(
+            busy,
+            vec![
+                (dt(2026, 11, 9, 9, 0), dt(2026, 11, 9, 9, 30)),
+                (dt(2026, 11, 10, 9, 0), dt(2026, 11, 10, 9, 30)),
+            ]
+        );
+        // West of UTC the same instant is the evening before: the 10th is
+        // past the end.
+        let ny: Tz = "America/New_York".parse().unwrap();
+        let busy = occurrences_in(
+            "20261101T090000",
+            "20261101T093000",
+            "FREQ=DAILY;UNTIL=20261110T000000Z",
+            None,
+            Some("America/New_York"),
+            dt(2026, 11, 9, 0, 0),
+            dt(2026, 11, 13, 0, 0),
+            ny,
+        );
+        assert_eq!(busy, vec![(dt(2026, 11, 9, 9, 0), dt(2026, 11, 9, 9, 30))]);
+        // An UNTIL without Z is in the event's own time.
+        let busy = occurrences_in(
+            "20261101T090000",
+            "20261101T093000",
+            "FREQ=DAILY;UNTIL=20261110T090000",
+            None,
+            Some("America/New_York"),
+            dt(2026, 11, 9, 0, 0),
+            dt(2026, 11, 13, 0, 0),
+            ny,
+        );
+        assert_eq!(busy.len(), 2);
+    }
+
+    #[test]
+    fn week_start_groups_sunday_with_the_following_days() {
+        // Sunday 1 November 2026, every other week, weeks starting Sunday.
+        let start = dt(2026, 11, 1, 10, 0);
+        let rule = "FREQ=WEEKLY;INTERVAL=2;WKST=SU;BYDAY=SU,TU";
+        let results = expand_rrule(
+            start,
+            start + Duration::hours(1),
+            rule,
+            &[],
+            dt(2026, 11, 1, 0, 0),
+            dt(2026, 11, 20, 0, 0),
+        );
+        assert_eq!(
+            dates(&results),
+            vec![
+                day(2026, 11, 1),
+                day(2026, 11, 3),
+                day(2026, 11, 15),
+                day(2026, 11, 17)
+            ]
+        );
+        // The same series six years on, skipped ahead to the window.
+        let start = dt(2020, 11, 1, 10, 0);
+        let results = expand_rrule(
+            start,
+            start + Duration::hours(1),
+            rule,
+            &[],
+            dt(2026, 11, 1, 0, 0),
+            dt(2026, 11, 20, 0, 0),
+        );
+        assert_eq!(
+            results,
+            walk_from_dtstart(
+                start,
+                start + Duration::hours(1),
+                rule,
+                &[],
+                dt(2026, 11, 1, 0, 0),
+                dt(2026, 11, 20, 0, 0)
+            )
+        );
+        assert!(!results.is_empty());
     }
 }
