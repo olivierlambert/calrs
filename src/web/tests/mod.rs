@@ -20,6 +20,7 @@ mod emails;
 mod event_types;
 mod format;
 mod guards;
+mod guest_footer;
 mod hosts;
 mod invites;
 mod organizer;

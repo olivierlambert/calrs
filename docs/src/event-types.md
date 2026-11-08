@@ -84,6 +84,16 @@ Each event type decides whether the booking form asks the guest for a phone numb
 
 The setting only appears when an SMS gateway is configured for the instance and you are permitted to change it: by default that means global admins only. See [SMS Notifications](./sms.md).
 
+## Guest email footer
+
+An event type can add a short footer to every email its guests receive: confirmation, reminder, cancellation, a request awaiting approval, a decline, an expired request, "pick a new time", a reschedule, and the copies sent to additional attendees. Invite emails for the event type carry it too. Emails to you, the host, never do, and neither do the copies sent to a team member who claimed the booking.
+
+Write it in **Access & notifications**, in the **Email footer** field. It takes the same minimal editor as the description (bold, italic, links) and at most 500 characters. Anything else you type, including HTML, is shown as plain text, and a link must start with `http://`, `https://`, `mailto:` or `tel:`; any other link is shown as text. The same text is used whatever language the guest booked in. In the plain-text part of the email, bold and italic markers are dropped and a link is written as `label (url)`.
+
+An event type with no footer uses the instance default set by an admin in the [admin panel](./admin.md#guest-email-footer). A footer on the event type replaces that default rather than adding to it.
+
+By default only admins see the field. An admin can let every user write footers on their own event types. Until then a member's save leaves an admin's footer untouched, and a copy a member makes with **Duplicate** starts without one.
+
 ## Availability schedule
 
 Each event type has its own availability rules. By default: Monday–Friday, 09:00–17:00.
@@ -264,12 +274,16 @@ searching `Andy` also finds the round-robin demo Andy hosts; the result then
 says "With Andy". Members set to weight 0 for a meeting, and suspended
 accounts, do not count. Members of a private team are only searchable by other
 members of that team. The directory includes enabled public and internal
-meeting types that have not expired.
+meeting types that have not expired. Results are listed 50 to a page, by
+owner and then title, with **Previous** and **Next** links once there are
+more; the search and the **Favorites only** filter carry over between pages.
 
 Click the star beside a meeting to add it to your personal favorites. Each
 meeting type is saved separately, so you can favorite someone's consulting
 meeting independently of their TAM meeting. Favorites appear on your dashboard
 and in the directory's **Favorites only** view, across browsers and devices.
+The dashboard shows the first 12; past that its card links to **All
+favorites** in the directory.
 
 - **Copy link** copies a public meeting's reusable booking URL.
 - **Generate invite link** creates a fresh single-use invite for an internal

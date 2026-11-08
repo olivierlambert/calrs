@@ -3,8 +3,8 @@
 use super::*;
 
 /// Columns a copy is expected to differ on; every other column must match.
-/// `created_by_user_id` and `sms_phone_mode` have tests of their own.
-const OWN_COLUMNS: [&str; 7] = [
+/// `created_by_user_id`, `sms_phone_mode` and `guest_email_footer` have tests of their own.
+const OWN_COLUMNS: [&str; 8] = [
     "id",
     "slug",
     "title",
@@ -12,6 +12,7 @@ const OWN_COLUMNS: [&str; 7] = [
     "created_at",
     "created_by_user_id",
     "sms_phone_mode",
+    "guest_email_footer",
 ];
 
 const DISABLED_BANNER: &str = "This event type is disabled, so nobody can book it yet.";

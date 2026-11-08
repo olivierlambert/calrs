@@ -19,7 +19,7 @@
     <label for="directory-search" class="sr-only">{{ t("directory-search") }}</label>
     <div class="ui-search">
       {{ ic.icon("search", 15) }}
-      <input type="search" id="directory-search" name="q" value="{{ search }}" placeholder="{{ t('directory-search') }}" data-search>
+      <input type="search" id="directory-search" name="q" value="{{ search }}" maxlength="{{ search_max }}" placeholder="{{ t('directory-search') }}" data-search>
       <span class="kbd">/</span>
     </div>
     <button type="submit" class="ui-btn">{{ t("directory-find") }}</button>
@@ -29,5 +29,6 @@
     </label>
   </form>
   {% include "partials/directory_entries.html" %}
+  {% include "partials/pager.html" %}
 </section>
 {% endblock %}

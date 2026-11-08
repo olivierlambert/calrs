@@ -442,6 +442,11 @@
   /* Armed by a first click on a destructive action: the second click acts. */
   .ui-btn.is-armed, .slot-btn.is-armed { background: var(--error-text); border-color: var(--error-text); color: var(--paper); }
   .ui-btn.is-copied { color: var(--success); }
+  /* ---- Page links under a long list ---- */
+  .ui-pager { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem 1rem; flex-wrap: wrap; margin-top: 0.75rem; }
+  .ui-pager-range { color: var(--text-muted); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+  .ui-pager-links { display: flex; gap: 0.4rem; }
+  .ui-pager .is-off { opacity: 0.45; cursor: default; pointer-events: none; }
 
   kbd, .kbd {
     display: inline-flex;
@@ -749,22 +754,54 @@
 // Shared markdown preview renderer. Mirrors render_inline_markdown in
 // src/utils.rs: only http, https, mailto and relative links stay links (#346),
 // so previewing someone else's text cannot run a javascript: link.
-function mdSafeHref(dest) {
+// A textarea with data-md-links="email" (the guest email footer, #223)
+// previews by the email footer's rule instead (src/email/footer.rs): bold,
+// italic, and links only for http, https, mailto and tel, with relative
+// links, strikethrough, inline code and images shown as typed.
+function mdSafeHref(dest, links) {
+  if (links === 'email') return /^(https?:\/\/|mailto:|tel:)/i.test(dest.trim());
   var scheme = dest.replace(/[\s\x00-\x1f\x7f]/g, '').match(/^([^:\/?#]*):/);
   return !scheme || /^(https?|mailto)$/i.test(scheme[1]);
 }
-function renderMdPreview(md) {
-  return md
+function mdEscape(text) {
+  return text
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;').replace(/'/g, '&#39;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+function renderMdPreview(md, links) {
+  var email = links === 'email';
+  // The email footer shows inline code and images as typed, markers
+  // included: set them aside before any formatting, so a link or an
+  // emphasis inside one stays text, and put them back escaped at the end.
+  var kept = [];
+  var src = md;
+  if (email) {
+    src = md.replace(/\u0000/g, '').replace(/(`+)[\s\S]*?[^`]\1(?!`)|!\[[^\]]*\]\([^)]*\)/g, function(match) {
+      kept.push(match);
+      return '\u0000' + (kept.length - 1) + '\u0000';
+    });
+  }
+  var html = mdEscape(src)
     .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-    .replace(/\*(.+?)\*/g, '<em>$1</em>')
-    .replace(/~~(.+?)~~/g, '<del>$1</del>')
-    .replace(/`(.+?)`/g, '<code style="background:rgba(127,127,127,0.15);padding:0.1em 0.3em;border-radius:3px;font-size:0.85em;">$1</code>')
-    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, function(_, text, href) {
-      return mdSafeHref(href) ? '<a href="' + href + '" style="color:var(--accent);text-decoration:underline;">' + text + '</a>' : text;
+    .replace(/\*(.+?)\*/g, '<em>$1</em>');
+  if (!email) {
+    html = html
+      .replace(/~~(.+?)~~/g, '<del>$1</del>')
+      .replace(/`(.+?)`/g, '<code style="background:rgba(127,127,127,0.15);padding:0.1em 0.3em;border-radius:3px;font-size:0.85em;">$1</code>');
+  }
+  html = html
+    .replace(/(!?)\[([^\]]+)\]\(([^)]+)\)/g, function(match, bang, text, href) {
+      return bang + (mdSafeHref(href, links) ? '<a href="' + (email ? href.trim() : href) + '" style="color:var(--accent);text-decoration:underline;">' + text + '</a>' : text);
     })
-    .replace(/\n/g, '<br>')
+    .replace(/\n/g, '<br>');
+  // Only the email footer set text aside; anywhere else a NUL-delimited
+  // number is the author's text and stays as is.
+  if (email) {
+    html = html.replace(/\u0000(\d+)\u0000/g, function(match, i) {
+      return kept[+i] === undefined ? match : mdEscape(kept[+i]).replace(/\n/g, '<br>');
+    });
+  }
+  return html
   || '<span style="color:var(--text-muted);">' + {{ t('editor-nothing-to-preview') | tojson }} + '</span>';
 }
 
@@ -821,7 +858,7 @@ document.querySelectorAll('.md-toolbar').forEach(function(toolbar) {
     previewBtn.addEventListener('click', function() {
       showing = !showing;
       if (showing) {
-        previewDiv.innerHTML = renderMdPreview(ta.value);
+        previewDiv.innerHTML = renderMdPreview(ta.value, ta.dataset.mdLinks);
         previewDiv.style.display = '';
         ta.style.display = 'none';
         previewBtn.style.color = 'var(--accent)';
