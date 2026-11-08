@@ -278,31 +278,79 @@ fn all_day_with_different_start_and_end_zones_keeps_its_dates() {
     assert!(raw.ical.contains("DTEND;VALUE=DATE:20260330"));
 }
 
-/// The orphan sweep's existence check searches the whole mailbox, so an
-/// event the host moved to another calendar is found; copies count as found.
+/// The orphan sweep's existence check looks in the booking's calendar, then
+/// in every other calendar the account lists, shared ones included; a
+/// calendar it cannot read, or several matches, is an error (inconclusive),
+/// never "gone".
 #[tokio::test]
-async fn existence_anywhere_searches_the_whole_mailbox() {
-    let mock = mock(vec![
-        ok(found("booking@calrs", "moved")),
+async fn existence_anywhere_checks_each_listed_calendar_and_fails_closed() {
+    let listing = json!({"value": [
+        {"id": "write", "isDefaultCalendar": true},
+        {"id": "shared", "canEdit": true},
+    ]});
+    // Moved to the shared calendar: found there.
+    let moved = mock(vec![
         ok(json!({"value": []})),
+        ok(listing.clone()),
+        ok(found("booking@calrs", "moved")),
+    ])
+    .await;
+    assert!(moved
+        .provider
+        .event_exists_anywhere("write", "booking@calrs")
+        .await
+        .unwrap());
+    let uris: Vec<String> = moved
+        .state
+        .requests
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|(_, uri, _, _)| uri.clone())
+        .collect();
+    assert!(
+        uris[0].starts_with("/v1.0/me/calendars/write/events?"),
+        "{uris:?}"
+    );
+    assert!(uris[1].starts_with("/v1.0/me/calendars?"), "{uris:?}");
+    assert!(
+        uris[2].starts_with("/v1.0/me/calendars/shared/events?"),
+        "{uris:?}"
+    );
+    assert!(uris.iter().all(|u| !u.starts_with("/v1.0/me/events")));
+
+    // Nowhere: gone.
+    let gone = mock_gone(&listing).await;
+    assert!(!gone
+        .provider
+        .event_exists_anywhere("write", "booking@calrs")
+        .await
+        .unwrap());
+
+    // A calendar that cannot be read, or two matches: inconclusive.
+    for reply in [
+        (403, json!({"error": {"code": "ErrorAccessDenied"}}), None),
         ok(json!({"value": [
             found("booking@calrs", "one")["value"][0].clone(),
             found("booking@calrs", "two")["value"][0].clone(),
         ]})),
+    ] {
+        let doubtful = mock(vec![ok(json!({"value": []})), ok(listing.clone()), reply]).await;
+        assert!(doubtful
+            .provider
+            .event_exists_anywhere("write", "booking@calrs")
+            .await
+            .is_err());
+    }
+}
+
+async fn mock_gone(listing: &Value) -> Mock {
+    mock(vec![
+        ok(json!({"value": []})),
+        ok(listing.clone()),
+        ok(json!({"value": []})),
     ])
-    .await;
-    for expected in [true, false, true] {
-        assert_eq!(
-            mock.provider
-                .event_exists_anywhere("write", "booking@calrs")
-                .await
-                .unwrap(),
-            expected
-        );
-    }
-    for (_, uri, _, _) in mock.state.requests.lock().unwrap().iter() {
-        assert!(uri.starts_with("/v1.0/me/events?"), "{uri}");
-    }
+    .await
 }
 
 #[test]

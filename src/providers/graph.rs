@@ -304,17 +304,10 @@ impl GraphProvider {
     }
 
     async fn find_uid(&self, calendar_id: &str, uid: &str) -> Result<Option<String>> {
-        self.find_uid_in(&["me", "calendars", calendar_id, "events"], uid)
-            .await
-    }
-
-    /// [`Self::find_uid`] over `segments`: one calendar's events, or
-    /// `me/events` for every calendar of the mailbox.
-    async fn find_uid_in(&self, segments: &[&str], uid: &str) -> Result<Option<String>> {
         if uid.is_empty() {
             return Err(GraphError::InvalidIcalendar.into());
         }
-        let mut url = self.endpoint(segments)?;
+        let mut url = self.endpoint(&["me", "calendars", calendar_id, "events"])?;
         let filter = format!(
             "singleValueExtendedProperties/Any(ep: ep/id eq '{}' and ep/value eq '{}')",
             UID_PROPERTY,
@@ -509,21 +502,25 @@ impl CalendarProvider for GraphProvider {
         Ok(self.find_uid(calendar_id, uid).await?.is_some())
     }
 
-    /// The whole mailbox (`me/events`), by the same calrs identity: a host
-    /// who moved the booking's event to another calendar kept it. Copies
-    /// count too, since any of them means the meeting was not deleted.
-    async fn event_exists_anywhere(&self, _calendar_id: &str, uid: &str) -> Result<bool> {
-        match self.find_uid_in(&["me", "events"], uid).await {
-            Ok(found) => Ok(found.is_some()),
-            Err(error) if error.downcast_ref::<GraphError>() == Some(&GraphError::DuplicateUid) => {
-                Ok(true)
-            }
-            Err(error) => Err(error),
+    /// The booking's own calendar first, then every other calendar this
+    /// account lists (its own and the ones shared with it, which `me/events`
+    /// would not cover), by the same calrs identity: a host who moved the
+    /// event to another calendar kept it. Any error (a calendar that cannot
+    /// be read, throttling, a page that fails, several matches) is `Err`, so
+    /// the caller treats it as inconclusive and never cancels on it.
+    async fn event_exists_anywhere(&self, calendar_id: &str, uid: &str) -> Result<bool> {
+        if self.find_uid(calendar_id, uid).await?.is_some() {
+            return Ok(true);
         }
+        for calendar in self.list_calendars().await? {
+            if calendar.id != calendar_id && self.find_uid(&calendar.id, uid).await?.is_some() {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 }
 
-/// `Retry-After` in seconds; the HTTP-date form falls back to the default.
 /// Reads a response body chunk by chunk, failing once it passes `limit`
 /// bytes, whatever Content-Length says.
 pub(crate) async fn read_capped(mut response: reqwest::Response, limit: usize) -> Result<Vec<u8>> {
@@ -543,6 +540,7 @@ pub(crate) async fn read_capped(mut response: reqwest::Response, limit: usize) -
     Ok(body)
 }
 
+/// `Retry-After` in seconds; the HTTP-date form falls back to the default.
 fn retry_after(response: &reqwest::Response) -> Option<StdDuration> {
     response
         .headers()

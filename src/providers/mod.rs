@@ -143,8 +143,9 @@ pub trait CalendarProvider: Send + Sync {
     /// Whether an event with this UID is anywhere the account can find it,
     /// not only in `calendar_id`: what the orphan sweep asks before it
     /// cancels a booking whose event left the calendar. The default looks in
-    /// `calendar_id` only; Graph searches every calendar of the mailbox, so
-    /// an event the host moved to another calendar is not taken for deleted.
+    /// `calendar_id` only; Graph also looks in every other calendar the
+    /// account lists, so an event the host moved to another calendar is not
+    /// taken for deleted. Any doubt is an `Err`, never `Ok(false)`.
     async fn event_exists_anywhere(&self, calendar_id: &str, uid: &str) -> Result<bool> {
         self.event_exists(calendar_id, uid).await
     }
