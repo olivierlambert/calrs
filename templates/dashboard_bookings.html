@@ -120,7 +120,7 @@
   {% if bookings %}
   <ol class="ledger" data-filter-list>
     {% for b in bookings %}
-    {% if b.when and loop.changed(b.when.date) %}<li class="tt-day{% if b.when.is_today %} is-today{% endif %}" data-filter-day><span>{{ b.when.day_label }}</span><span class="num">{{ b.when.day_date }}</span></li>{% endif %}
+    {% if b.when and loop.changed(b.when.date) %}<li class="tt-day{% if b.when.is_today %} is-today{% endif %}" id="d-{{ b.when.date }}" data-filter-day><span>{{ b.when.day_label }}</span><span class="num">{{ b.when.day_date }}</span></li>{% endif %}
     <li class="tt-row" id="b-{{ b.id }}" data-filter-text="{{ b.event_title }} {{ b.guest_name }} {{ b.guest_email }}">
       {% if b.when %}<time class="tt-time" datetime="{{ b.when.iso }}" title="{{ b.when.long_date }}, {{ b.when.time_range }} {{ b.when.tz_label }}">{{ b.when.start }}<small>{{ b.when.duration }}</small></time>{% else %}<span class="tt-time">{{ b.start_at }}</span>{% endif %}
       <i class="g c" role="img" aria-label="{{ t('overview-ruler-booked') }}"></i>

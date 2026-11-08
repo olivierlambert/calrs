@@ -520,3 +520,12 @@ validate-questions-invalid = Die Buchungsfragen konnten nicht gelesen werden. La
 validate-question-kind-change = Bei Frage { $position }: Eine gespeicherte Frage behält ihre Art. Entfernen Sie sie und fügen Sie eine neue hinzu.
 etf-booking-form-help = Gäste geben immer ihren Namen und ihre E-Mail-Adresse an. Fügen Sie die Fragen hinzu, die dieser Termintyp braucht: Gäste beantworten sie beim Buchen, und die Antworten kommen mit der Buchung bei Ihnen an.
 etf-q-in-calendar-help = Bei sensiblen Antworten ausschalten: Wer Ihren Kalender lesen kann, würde sie sehen.
+overview-sum-now = Gerade läuft Ihr Termin mit { $guest }, bis { $time }.
+overview-sum-today = Heute treffen Sie { $guest } um { $time }.
+overview-sum-tomorrow = Morgen treffen Sie { $guest } um { $time }.
+overview-sum-later = Ihr nächster Termin ist mit { $guest } am { $day } um { $time }.
+overview-sum-pending = { $count ->
+    [one] Eine Anfrage wartet auf Ihre Antwort.
+   *[other] { $count } Anfragen warten auf Ihre Antwort.
+}
+overview-links-page = Ihre Seite

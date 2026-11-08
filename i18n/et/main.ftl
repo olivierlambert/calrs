@@ -410,10 +410,8 @@ overview-page-title = Töölaud
 overview-avail-banner-body = Sinu vaikimisi tööajaks määrati E–R kell 9.00–17.00. Seda kasutatakse siis, kui teised kaasavad sind dünaamilistesse rühmakohtumistesse.
 overview-avail-banner-cta = Vaata oma saadavus üle
 overview-dismiss = Peida
-overview-getting-started = Alustamine
 overview-step-connect-calendar = Ühenda kalender
 overview-step-first-event-type = Loo oma esimene sündmuse tüüp
-overview-step-share-link = Jaga oma broneerimislinki
 overview-pending-approval = Ootab kinnitust
 overview-confirm = Kinnita
 overview-decline = Lükka tagasi
@@ -421,7 +419,6 @@ overview-copy-link = Kopeeri broneerimislink
 overview-duration-h = { $hours } h
 overview-duration-m = { $minutes } min
 overview-duration-hm = { $hours } h { $minutes } min
-overview-percent = { $value }%
 overview-chart-title = Kohtumised nädalas
 overview-chart-this-week = See nädal
 overview-chart-week-of = Nädal alates { $date }
@@ -435,7 +432,6 @@ overview-types-other = Muud tüübid
 overview-agenda-title = Järgmisena
 overview-agenda-today = Täna
 overview-agenda-tomorrow = Homme
-overview-agenda-now = Käimas
 overview-agenda-join = Liitu
 overview-agenda-empty = Järgmise 14 päeva jooksul kohtumisi pole. Jaga oma broneerimislinki, et neid saada.
 overview-agenda-all = Kõik broneeringud
@@ -457,33 +453,86 @@ overview-open-calendar = Ava oma kalender
 overview-week-title = See nädal
 overview-week-closed = suletud
 overview-week-total = broneeritud { $booked }
-overview-week-number = Nädal { $week }
 overview-week-short = N{ $week }
 overview-time-range = { $from } kuni { $to }
 overview-until = kuni { $time }
 overview-expires = Aegub { $when }
 overview-guest-and-more = { $name } ja veel { $count }
-overview-mast-now = Praegu: { $title }, külaline { $guest }, kuni { $time }
-overview-mast-next = Järgmine: { $title }, külaline { $guest }, kell { $time }
-overview-mast-next-day = Järgmine: { $title }, külaline { $guest }, { $day } kell { $time }
+overview-greeting-night = Tere, { $name }
+overview-greeting-morning = Tere hommikust, { $name }
+overview-greeting-afternoon = Tere päevast, { $name }
+overview-greeting-evening = Tere õhtust, { $name }
+overview-mast-date = { $date }, nädal { $week }
+overview-sum-now = Sinu kohtumine külalisega { $guest } kestab kuni { $time }.
+overview-sum-today = Täna kohtud külalisega { $guest } kell { $time }.
+overview-sum-tomorrow = Homme kohtud külalisega { $guest } kell { $time }.
+overview-sum-later = Sinu järgmine kohtumine on külalisega { $guest }, { $day } kell { $time }.
+overview-sum-more-today = { $count ->
+    [one] Täna on pärast seda veel üks kohtumine.
+   *[other] Täna on pärast seda veel { $count } kohtumist.
+}
+overview-sum-none = Järgmise 14 päeva jooksul pole midagi broneeritud.
+overview-sum-pending = { $count ->
+    [one] Üks taotlus ootab sinu vastust.
+   *[other] { $count } taotlust ootavad sinu vastust.
+}
+overview-sum-guests = { $count ->
+    [one] { $name } ja veel üks
+   *[other] { $name } ja veel { $count }
+}
+overview-hero-title = Järgmisena
+overview-when-now = Praegu, kuni { $time }
+overview-when-minutes = { $count ->
+    [one] 1 minuti pärast
+   *[other] { $count } minuti pärast
+}
+overview-when-hours = { $count ->
+    [one] 1 tunni pärast
+   *[other] { $count } tunni pärast
+}
+overview-when-today-night = hiljem öösel
+overview-when-today-morning = täna hommikul
+overview-when-today-afternoon = täna pärastlõunal
+overview-when-today-evening = täna õhtul
+overview-when-tomorrow-night = homme vara hommikul
+overview-when-tomorrow-morning = homme hommikul
+overview-when-tomorrow-afternoon = homme pärastlõunal
+overview-when-tomorrow-evening = homme õhtul
+overview-when-weekday-night = { $day }, vara hommikul
+overview-when-weekday-morning = { $day }, hommikul
+overview-when-weekday-afternoon = { $day }, pärastlõunal
+overview-when-weekday-evening = { $day }, õhtul
+overview-when-days = { $count ->
+    [one] 1 päeva pärast
+   *[other] { $count } päeva pärast
+}
+overview-pulse-held = { $count ->
+    [one] Üks kohtumine viimase 30 päeva jooksul, { $time } külalistega.
+   *[other] { $count } kohtumist viimase 30 päeva jooksul, { $time } külalistega.
+}
+overview-pulse-held-vs = { $count ->
+    [one] Üks kohtumine viimase 30 päeva jooksul, { $time } külalistega; eelneval 30 päeval { $prev }.
+   *[other] { $count } kohtumist viimase 30 päeva jooksul, { $time } külalistega; eelneval 30 päeval { $prev }.
+}
+overview-pulse-booked = { $count ->
+    [one] Samal ajal saabus üks uus broneering.
+   *[other] Samal ajal saabus { $count } uut broneeringut.
+}
+overview-pulse-booked-only = { $count ->
+    [one] Viimase 30 päeva jooksul saabus üks uus broneering.
+   *[other] Viimase 30 päeva jooksul saabus { $count } uut broneeringut.
+}
+overview-links-page = Sinu leht
+overview-agenda-nothing-else = Järgmise 14 päeva jooksul rohkem midagi pole.
+overview-setup-count = { $count ->
+    [one] 1 asi seadistada
+   *[other] { $count } asja seadistada
+}
 overview-ruler-booked = Broneeritud
 overview-ruler-pending = Ootab otsust
 overview-ruler-unavailable = Pole saadaval (sinu kalender)
 overview-key-open = Broneerimiseks avatud
-overview-ruler-aria = Täna, { $from } kuni { $to }
-overview-chart-now = praegu
 overview-figures-title = Viimased 30 päeva
-overview-fig-booked = Broneeritud kohtumised
-overview-fig-time = Aeg kohtumistel
-overview-fig-cancelled = Tühistatud
-overview-fig-notice = Keskmine etteteatamine
-overview-fig-before = eelneva 30 päeva jooksul { $value }
-overview-fig-prev-key = Eelnevad 30 päeva
-overview-fig-days =
-    { $count ->
-        [one] 1 päev
-       *[other] { $count } päeva
-    }
 
 # Dashboard bookings (templates/dashboard_bookings.html)
 
