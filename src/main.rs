@@ -32,6 +32,7 @@ mod tzid;
 mod utils;
 mod web;
 mod windows_zones;
+mod xml;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
