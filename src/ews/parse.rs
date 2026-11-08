@@ -221,14 +221,7 @@ fn parse_calendar_item(item: &Element) -> Result<EwsCalendarItem> {
         calendar_item_type.as_deref(),
         Some(t) if t.eq_ignore_ascii_case("Occurrence") || t.eq_ignore_ascii_case("Exception")
     );
-    let uid = ews_text(item, "UID");
-    if uid.as_deref().is_some_and(has_control) {
-        tracing::warn!(item_id = %item_id, "EWS item with control characters in its UID, refusing the answer");
-        bail!(
-            "EWS item {} has control characters in its UID",
-            quoted(&item_id)
-        );
-    }
+    let uid = ews_text(item, "UID").map(|uid| safe_uid(uid, &item_id));
     let start = ews_text(item, "Start")
         .map(|v| checked_datetime(v, "Start", &item_id))
         .transpose()?;
@@ -257,6 +250,25 @@ fn parse_calendar_item(item: &Element) -> Result<EwsCalendarItem> {
 /// into free.
 pub fn has_control(value: &str) -> bool {
     value.chars().any(char::is_control)
+}
+
+/// The UID calrs stores for an item: the one Exchange sent, or, when it
+/// holds control characters, `ews-` and the hex SHA-256 of its bytes.
+///
+/// A UID is the organizer's to choose, so anyone who can invite the host
+/// can put a CRLF in one. Refusing the answer would let them freeze the
+/// host's sync; writing it as is would break the made-up VCALENDAR's lines.
+/// The item is kept (it is still busy time) under a UID derived the same
+/// way on every read, so the orphan sweep and later lookups see one stable
+/// value. calrs's own UIDs never hold control characters, so a derived UID
+/// never matches a booking.
+pub fn safe_uid(uid: String, item_id: &str) -> String {
+    if !has_control(&uid) {
+        return uid;
+    }
+    use sha2::{Digest, Sha256};
+    tracing::warn!(item_id = %item_id, "EWS item with control characters in its UID, storing it under a derived UID");
+    format!("ews-{}", hex::encode(Sha256::digest(uid.as_bytes())))
 }
 
 /// Whether `value` reads as an `xs:dateTime` as EWS writes it
@@ -415,7 +427,9 @@ pub fn parse_sync_folder_items_response(doc: &Element) -> Result<EwsSyncDelta> {
                 .next()
                 .ok_or_else(|| anyhow!("EWS SyncFolderItems change without an item"))?;
             let (id, _) = required_id(item, "ItemId")?;
-            let uid = ews_text(item, "UID").unwrap_or_default();
+            let uid = ews_text(item, "UID")
+                .map(|uid| safe_uid(uid, &id))
+                .unwrap_or_default();
             delta.added_or_changed.push((id, uid));
         } else if is_ews(change, "Delete") {
             delta
@@ -729,10 +743,8 @@ mod tests {
         }
     }
 
-    /// Values written as is into the made-up VCALENDAR are refused when
-    /// they could break its lines: a UID with control characters (decoded
-    /// from character references, or literal), a Start or End that is not a
-    /// date-time.
+    /// A Start or End that is not a date-time is a server problem and is
+    /// refused: both are written as is into the made-up VCALENDAR.
     #[test]
     fn find_item_refuses_values_that_would_break_the_ical() {
         let item = |fields: &str| {
@@ -741,10 +753,6 @@ mod tests {
             ))
         };
         for fields in [
-            "<t:UID>real-uid&#xD;&#xA;TRANSP:TRANSPARENT</t:UID>",
-            "<t:UID>a&#xA;b</t:UID>",
-            "<t:UID>a\nb</t:UID>",
-            "<t:UID>a&#9;b</t:UID>",
             "<t:Start>2026-05-06T09:00:00Z&#xD;&#xA;END:VEVENT</t:Start>",
             "<t:End>2026-05-06T09:30:00Z;X=1</t:End>",
             "<t:Start>tomorrow</t:Start>",
@@ -758,6 +766,59 @@ mod tests {
         ))
         .unwrap();
         assert_eq!(page.items[0].uid.as_deref(), Some("a b@corp"));
+    }
+
+    /// An organizer-chosen UID with control characters does not stop the
+    /// sync: the item is kept, busy, under a derived UID that is the same on
+    /// every read, and nothing it carried reaches the made-up VCALENDAR.
+    #[test]
+    fn hostile_uid_is_kept_under_a_derived_uid() {
+        let xml = fixtures::FIND_ITEM_CALENDAR_VIEW.replace(
+            "<t:UID>uid-2@corp.example</t:UID>",
+            "<t:UID>040000008200E00074C5B7101A82E00800000000A1B2C3D4E1DC0100000000000000001000000011&#xD;&#xA;TRANSP:TRANSPARENT&#xD;&#xA;END:VEVENT&#xD;&#xA;BEGIN:VEVENT&#xD;&#xA;UID:victim\nX-INJECTED:1</t:UID>",
+        );
+        assert_ne!(xml, fixtures::FIND_ITEM_CALENDAR_VIEW);
+        let page = parse_calendar_items_response(&reply(&xml)).unwrap();
+        assert_eq!(page.items.len(), 3, "every item is kept");
+        let hostile = &page.items[1];
+        let uid = hostile.uid.clone().unwrap();
+        assert!(uid.starts_with("ews-") && uid.len() == 4 + 64, "{uid}");
+        // Derived the same way on every read.
+        let again = parse_calendar_items_response(&reply(&xml)).unwrap();
+        assert_eq!(again.items[1].uid.as_deref(), Some(uid.as_str()));
+        // The normal item next to it is untouched.
+        assert_eq!(
+            page.items[0].uid.as_deref(),
+            Some(
+                "040000008200E00074C5B7101A82E00800000000A1B2C3D4E1DC0100000000000000001000000011"
+            )
+        );
+
+        // Both items make a VCALENDAR; the hostile one stays busy and adds
+        // nothing.
+        for item in &page.items[..2] {
+            let ics = crate::ews::ical::synth_vcalendar(item).expect("written");
+            assert_eq!(ics.matches("BEGIN:VEVENT").count(), 1, "{ics}");
+            assert_eq!(ics.matches("UID:").count(), 1, "{ics}");
+            assert!(
+                !ics.contains("X-INJECTED") && !ics.contains("victim"),
+                "{ics}"
+            );
+            assert!(ics.contains("TRANSP:OPAQUE\r\n"), "{ics}");
+            assert_eq!(ics.matches("TRANSP:").count(), 1, "{ics}");
+        }
+        let ics = crate::ews::ical::synth_vcalendar(hostile).unwrap();
+        assert!(ics.contains(&format!("UID:{uid}\r\n")), "{ics}");
+        assert!(ics.contains("DTSTART:20260508T000000Z\r\n"), "{ics}");
+
+        // SyncFolderItems derives the same UID.
+        let sync = fixtures::SYNC_FOLDER_ITEMS.replace(
+            "<t:UID>uid-new@corp.example</t:UID>",
+            "<t:UID>a&#xA;b</t:UID>",
+        );
+        let d = parse_sync_folder_items_response(&reply(&sync)).unwrap();
+        assert_eq!(d.added_or_changed[0].1, safe_uid("a\nb".to_string(), "x"));
+        assert_eq!(safe_uid("plain@corp".to_string(), "x"), "plain@corp");
     }
 
     /// A GetItem batch drops an item the server reports gone and fails on

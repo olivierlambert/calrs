@@ -20,9 +20,10 @@ pub fn synth_vcalendar(item: &EwsCalendarItem) -> Option<String> {
         .filter(|s| !s.is_empty())?;
     let start = item.start.clone()?;
     let end = item.end.clone()?;
-    // The parser refuses these already (`parse::has_control`,
-    // `parse::is_ews_datetime`); checked again since they are written into
-    // the VCALENDAR as is, where a line break would add properties.
+    // The parser already derives a safe UID (`parse::safe_uid`) and refuses
+    // a date that is not one (`parse::is_ews_datetime`); checked again since
+    // they are written into the VCALENDAR as is, where a line break would
+    // add properties.
     if super::parse::has_control(&uid)
         || !super::parse::is_ews_datetime(&start)
         || !super::parse::is_ews_datetime(&end)
