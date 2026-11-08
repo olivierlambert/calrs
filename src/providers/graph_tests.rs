@@ -251,7 +251,7 @@ fn all_day_rejects_non_midnight_or_invalid_exclusive_boundaries() {
         (
             "2026-03-29T00:00:00.0000000",
             "2026-03-30T00:00:00.0000000",
-            "Pacific Standard Time",
+            "",
         ),
     ] {
         let mut value = event();
@@ -260,6 +260,48 @@ fn all_day_rejects_non_midnight_or_invalid_exclusive_boundaries() {
         value["end"]["dateTime"] = json!(end);
         value["end"]["timeZone"] = json!(end_zone);
         assert!(event_to_ical(serde_json::from_value(value).unwrap()).is_err());
+    }
+}
+
+/// An all-day event whose start and end carry different zones (created
+/// before a move, say) is still read as its calendar dates, rather than
+/// being unreadable and, on a first sync, holding the source back.
+#[test]
+fn all_day_with_different_start_and_end_zones_keeps_its_dates() {
+    let mut value = event();
+    value["isAllDay"] = json!(true);
+    value["start"] = json!({"dateTime": "2026-03-29T00:00:00.0000000", "timeZone": "UTC"});
+    value["end"] =
+        json!({"dateTime": "2026-03-30T00:00:00.0000000", "timeZone": "Pacific Standard Time"});
+    let raw = convert(value);
+    assert!(raw.ical.contains("DTSTART;VALUE=DATE:20260329"));
+    assert!(raw.ical.contains("DTEND;VALUE=DATE:20260330"));
+}
+
+/// The orphan sweep's existence check searches the whole mailbox, so an
+/// event the host moved to another calendar is found; copies count as found.
+#[tokio::test]
+async fn existence_anywhere_searches_the_whole_mailbox() {
+    let mock = mock(vec![
+        ok(found("booking@calrs", "moved")),
+        ok(json!({"value": []})),
+        ok(json!({"value": [
+            found("booking@calrs", "one")["value"][0].clone(),
+            found("booking@calrs", "two")["value"][0].clone(),
+        ]})),
+    ])
+    .await;
+    for expected in [true, false, true] {
+        assert_eq!(
+            mock.provider
+                .event_exists_anywhere("write", "booking@calrs")
+                .await
+                .unwrap(),
+            expected
+        );
+    }
+    for (_, uri, _, _) in mock.state.requests.lock().unwrap().iter() {
+        assert!(uri.starts_with("/v1.0/me/events?"), "{uri}");
     }
 }
 

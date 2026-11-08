@@ -139,6 +139,15 @@ pub trait CalendarProvider: Send + Sync {
     /// 5xx, auth failure). Used to verify a write-back (#162): a 2xx on the
     /// write alone is not proof the host will see the event.
     async fn event_exists(&self, calendar_id: &str, uid: &str) -> Result<bool>;
+
+    /// Whether an event with this UID is anywhere the account can find it,
+    /// not only in `calendar_id`: what the orphan sweep asks before it
+    /// cancels a booking whose event left the calendar. The default looks in
+    /// `calendar_id` only; Graph searches every calendar of the mailbox, so
+    /// an event the host moved to another calendar is not taken for deleted.
+    async fn event_exists_anywhere(&self, calendar_id: &str, uid: &str) -> Result<bool> {
+        self.event_exists(calendar_id, uid).await
+    }
 }
 
 /// Why a calendar write-back did not land (#162).

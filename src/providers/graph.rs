@@ -304,10 +304,17 @@ impl GraphProvider {
     }
 
     async fn find_uid(&self, calendar_id: &str, uid: &str) -> Result<Option<String>> {
+        self.find_uid_in(&["me", "calendars", calendar_id, "events"], uid)
+            .await
+    }
+
+    /// [`Self::find_uid`] over `segments`: one calendar's events, or
+    /// `me/events` for every calendar of the mailbox.
+    async fn find_uid_in(&self, segments: &[&str], uid: &str) -> Result<Option<String>> {
         if uid.is_empty() {
             return Err(GraphError::InvalidIcalendar.into());
         }
-        let mut url = self.endpoint(&["me", "calendars", calendar_id, "events"])?;
+        let mut url = self.endpoint(segments)?;
         let filter = format!(
             "singleValueExtendedProperties/Any(ep: ep/id eq '{}' and ep/value eq '{}')",
             UID_PROPERTY,
@@ -501,6 +508,19 @@ impl CalendarProvider for GraphProvider {
     async fn event_exists(&self, calendar_id: &str, uid: &str) -> Result<bool> {
         Ok(self.find_uid(calendar_id, uid).await?.is_some())
     }
+
+    /// The whole mailbox (`me/events`), by the same calrs identity: a host
+    /// who moved the booking's event to another calendar kept it. Copies
+    /// count too, since any of them means the meeting was not deleted.
+    async fn event_exists_anywhere(&self, _calendar_id: &str, uid: &str) -> Result<bool> {
+        match self.find_uid_in(&["me", "events"], uid).await {
+            Ok(found) => Ok(found.is_some()),
+            Err(error) if error.downcast_ref::<GraphError>() == Some(&GraphError::DuplicateUid) => {
+                Ok(true)
+            }
+            Err(error) => Err(error),
+        }
+    }
 }
 
 /// `Retry-After` in seconds; the HTTP-date form falls back to the default.
@@ -614,7 +634,9 @@ fn event_to_ical(event: Event) -> Result<RawEvent> {
         return Err(GraphError::InvalidResponse.into());
     }
     let (start_line, end_line) = if event.is_all_day {
-        if event.start.time_zone.is_empty() || event.start.time_zone != event.end.time_zone {
+        // Start and end may carry different zones (an event created across
+        // a move): the dates are wall-clock dates either way.
+        if event.start.time_zone.is_empty() || event.end.time_zone.is_empty() {
             return Err(GraphError::InvalidDateTime.into());
         }
         let start = graph_date(&event.start)?;

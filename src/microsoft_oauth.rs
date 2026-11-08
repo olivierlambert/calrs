@@ -646,6 +646,10 @@ impl crate::providers::CalendarProvider for SourceGraph {
         self.call(|graph| async move { graph.event_exists(calendar_id, uid).await })
             .await
     }
+    async fn event_exists_anywhere(&self, calendar_id: &str, uid: &str) -> Result<bool> {
+        self.call(|graph| async move { graph.event_exists_anywhere(calendar_id, uid).await })
+            .await
+    }
 }
 
 #[cfg(test)]
