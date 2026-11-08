@@ -1976,3 +1976,15 @@ pager-previous = Previous
 pager-next = Next
 admin-users-search = Search
 admin-figures-cached = Booking figures computed { $seconds } s ago.
+
+# Write destination per event type (#47)
+etf-write-destination = Write confirmed bookings to
+etf-write-destination-default = Default (source setting)
+etf-write-destination-help = For this event type only. The default writes them to the write calendar of each of your sources. On a team event type, this covers only the bookings you host.
+etf-write-destination-team = Each member chooses where the bookings they host are written, under { $link }.
+sources-destinations-heading = Bookings by event type
+sources-destinations-help = Choose the calendar each event type's confirmed bookings are written to. On a team event type this covers the bookings you host; the other members choose their own. Bookings already written move at their next write: a reschedule, an approval, a retry or a claim.
+sources-destinations-saved = Saved. New bookings go to the calendars chosen here.
+write-destination-not-yours = Nothing was saved: choose one of your own calendars, for an event type you host.
+write-destination-unavailable = { $name } (unavailable)
+write-destination-refused = This calendar refused the last booking ({ $error }), which went to the source setting instead. The next booking tries it again.

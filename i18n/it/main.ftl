@@ -1974,3 +1974,15 @@ pager-previous = Precedente
 pager-next = Successiva
 admin-users-search = Cerca
 admin-figures-cached = Dati delle prenotazioni calcolati { $seconds } s fa.
+
+# Write destination per event type (#47)
+etf-write-destination = Scrivi le prenotazioni confermate in
+etf-write-destination-default = Predefinito (impostazione dell'origine)
+etf-write-destination-help = Solo per questo tipo di evento. Per impostazione predefinita vengono scritte nel calendario di scrittura di ciascuna delle tue origini. Su un tipo di evento del team, vale solo per le prenotazioni che gestisci tu.
+etf-write-destination-team = Ogni membro sceglie dove vengono scritte le prenotazioni che gestisce, in { $link }.
+sources-destinations-heading = Prenotazioni per tipo di evento
+sources-destinations-help = Scegli il calendario in cui vengono scritte le prenotazioni confermate di ogni tipo di evento. Su un tipo di evento del team vale per le prenotazioni che gestisci tu; gli altri membri scelgono il proprio. Le prenotazioni già scritte si spostano alla scrittura successiva: una riprogrammazione, un'approvazione, un nuovo tentativo o una presa in carico.
+sources-destinations-saved = Salvato. Le nuove prenotazioni vanno nei calendari scelti qui.
+write-destination-not-yours = Non è stato salvato nulla: scegli uno dei tuoi calendari, per un tipo di evento che gestisci.
+write-destination-unavailable = { $name } (non disponibile)
+write-destination-refused = Questo calendario ha rifiutato l'ultima prenotazione ({ $error }), che è stata scritta secondo l'impostazione dell'origine. La prossima prenotazione riproverà.

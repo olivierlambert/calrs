@@ -1974,3 +1974,15 @@ pager-previous = Eelmine
 pager-next = Järgmine
 admin-users-search = Otsi
 admin-figures-cached = Broneeringute arvud arvutati { $seconds } s tagasi.
+
+# Write destination per event type (#47)
+etf-write-destination = Kirjuta kinnitatud broneeringud kalendrisse
+etf-write-destination-default = Vaikimisi (allika seadistus)
+etf-write-destination-help = Ainult selle sündmuse tüübi jaoks. Vaikimisi kirjutatakse need iga sinu allika kirjutuskalendrisse. Meeskonna sündmuse tüübi puhul kehtib see ainult broneeringutele, mida sina juhid.
+etf-write-destination-team = Iga liige valib ise lehel { $link }, kuhu tema juhitavad broneeringud kirjutatakse.
+sources-destinations-heading = Broneeringud sündmuse tüübi kaupa
+sources-destinations-help = Vali iga sündmuse tüübi jaoks kalender, kuhu selle kinnitatud broneeringud kirjutatakse. Meeskonna sündmuse tüübi puhul kehtib see broneeringutele, mida sina juhid; teised liikmed valivad oma. Juba kirjutatud broneeringud liiguvad järgmisel kirjutamisel: ümberajastamisel, kinnitamisel, uuel katsel või ülevõtmisel.
+sources-destinations-saved = Salvestatud. Uued broneeringud lähevad siin valitud kalendritesse.
+write-destination-not-yours = Midagi ei salvestatud: vali üks oma kalendritest sündmuse tüübi jaoks, mida sa juhid.
+write-destination-unavailable = { $name } (pole saadaval)
+write-destination-refused = See kalender lükkas viimase broneeringu tagasi ({ $error }), mistõttu kirjutati see allika seadistuse järgi. Järgmine broneering proovib uuesti.

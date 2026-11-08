@@ -125,7 +125,39 @@ impl WriteBackError {
     pub fn event_may_exist(&self) -> bool {
         !matches!(self, WriteBackError::Put(_))
     }
+
+    /// When the write itself was refused for good (the calendar is gone, or
+    /// does not accept writes from this account), a short description of
+    /// the refusal: the HTTP status line or the server's error code. `None`
+    /// for anything that may pass on a retry, and for a write that was
+    /// accepted but not verified.
+    pub fn permanent_refusal(&self) -> Option<&str> {
+        match self {
+            WriteBackError::Put(e) => e
+                .downcast_ref::<PermanentRefusal>()
+                .map(|r| r.summary.as_str()),
+            _ => None,
+        }
+    }
 }
+
+/// A write a calendar server refused in a way a retry will not change
+/// (#47): CalDAV 403, 404 or 405 (other than a rate limit), EWS
+/// `ErrorAccessDenied` or `ErrorFolderNotFound`. Displays as the full error;
+/// `summary` is the short form shown to the host.
+#[derive(Debug)]
+pub struct PermanentRefusal {
+    pub summary: String,
+    pub message: String,
+}
+
+impl std::fmt::Display for PermanentRefusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for PermanentRefusal {}
 
 impl std::fmt::Display for WriteBackError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
