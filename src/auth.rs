@@ -509,10 +509,10 @@ pub(crate) async fn create_local_user<'e, E: sqlx::SqliteExecutor<'e>>(
 /// that inserted the user.
 ///
 /// `accounts.email` is unique and only informative: nothing reads it besides
-/// the startup migration of orphaned accounts and `calrs config export`. An
+/// the startup migration of orphaned accounts and `calrs config dump`. An
 /// owned account still holding the new user's address has a stale copy (its
 /// owner's address changed since); it gets its owner's current address, or
-/// the placeholder [`placeholder_account_email`] when another account holds
+/// a placeholder (see [`unused_placeholder`]) when another account holds
 /// that one. An unowned account keeps its address, which is how the operator
 /// recognises it, and the new account gets the placeholder instead.
 pub(crate) async fn create_user_account(
@@ -532,7 +532,7 @@ pub(crate) async fn create_user_account(
     let mut own_email = email.to_string();
     for (holder_id, owner_email) in holders {
         let Some(owner_email) = owner_email else {
-            own_email = placeholder_account_email(&account_id);
+            own_email = unused_placeholder(&mut *conn, &account_id).await?;
             continue;
         };
         let taken: bool =
@@ -542,7 +542,7 @@ pub(crate) async fn create_user_account(
                 .fetch_one(&mut *conn)
                 .await?;
         let replacement = if taken {
-            placeholder_account_email(&holder_id)
+            unused_placeholder(&mut *conn, &holder_id).await?
         } else {
             owner_email
         };
@@ -569,6 +569,28 @@ pub(crate) async fn create_user_account(
 /// is reserved (RFC 2606), so it can never be anyone's address.
 pub(crate) fn placeholder_account_email(account_id: &str) -> String {
     format!("account-{account_id}@invalid")
+}
+
+/// The first of `account-<id>@invalid`, `account-<id>-1@invalid`, ... that no
+/// account holds. Only an address someone typed by hand can take the first
+/// one, so a few tries are plenty; past them the caller's transaction fails.
+async fn unused_placeholder(conn: &mut sqlx::SqliteConnection, account_id: &str) -> Result<String> {
+    for attempt in 0..16 {
+        let candidate = if attempt == 0 {
+            placeholder_account_email(account_id)
+        } else {
+            format!("account-{account_id}-{attempt}@invalid")
+        };
+        let taken: bool =
+            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM accounts WHERE email = ?)")
+                .bind(&candidate)
+                .fetch_one(&mut *conn)
+                .await?;
+        if !taken {
+            return Ok(candidate);
+        }
+    }
+    anyhow::bail!("no free placeholder address for account {account_id}")
 }
 
 /// Follow a change of `users.email` on the user's account, unless another
@@ -3614,6 +3636,44 @@ mod tests {
             placeholder_account_email(&p_account)
         );
         assert_eq!(account_email(&pool, &o_account).await, "p@co.com");
+        assert_eq!(account_of(&pool, &p_user).await, p_account);
+    }
+
+    #[tokio::test]
+    async fn stale_account_address_skips_a_placeholder_already_taken() {
+        let pool = setup_db().await;
+        let (o_user, _) = insert_user_with_account(&pool, "p@co.com", "O", "user").await;
+        sqlx::query("UPDATE users SET email = 'o@co.com' WHERE id = ?")
+            .bind(&o_user)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let (p_user, p_account) = insert_user_with_account(&pool, "y@co.com", "P", "user").await;
+        sqlx::query("UPDATE users SET email = 'p@co.com' WHERE id = ?")
+            .bind(&p_user)
+            .execute(&pool)
+            .await
+            .unwrap();
+        // Someone's account already carries P's first placeholder.
+        let (_, q_account) = insert_user_with_account(&pool, "q@co.com", "Q", "user").await;
+        sqlx::query("UPDATE accounts SET email = ? WHERE id = ?")
+            .bind(placeholder_account_email(&p_account))
+            .bind(&q_account)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let x = insert_user(&pool, "y@co.com", "X", "user").await;
+        let mut conn = pool.acquire().await.unwrap();
+        let x_account = create_user_account(&mut conn, &x, "X", "y@co.com")
+            .await
+            .expect("a taken placeholder must not fail the registration");
+        drop(conn);
+        assert_eq!(account_email(&pool, &x_account).await, "y@co.com");
+        assert_eq!(
+            account_email(&pool, &p_account).await,
+            format!("account-{p_account}-1@invalid")
+        );
         assert_eq!(account_of(&pool, &p_user).await, p_account);
     }
 

@@ -380,7 +380,8 @@ pub async fn migrate(pool: &SqlitePool) -> Result<()> {
 /// the user has no account yet (a user created before its account). A user who
 /// already has one did not create this account: it was orphaned by a user
 /// removed outside calrs, and its address may since have gone to someone else,
-/// so it stays unlinked and is reported for the operator.
+/// so it stays unlinked and is reported for the operator. So does an orphan
+/// whose address matches a user's only up to case or surrounding spaces.
 async fn migrate_orphaned_accounts(pool: &SqlitePool) -> Result<()> {
     let orphans: Vec<(String, String, String, String)> =
         sqlx::query_as("SELECT id, name, email, timezone FROM accounts WHERE user_id IS NULL")
@@ -409,6 +410,23 @@ async fn migrate_orphaned_accounts(pool: &SqlitePool) -> Result<()> {
             }
             uid
         } else {
+            // A user whose address differs only in case or spacing is most
+            // likely the same person, or the one who now holds it: a new
+            // passwordless user under the orphan's spelling would let a
+            // sign-in with that spelling reach the account. Leave it.
+            let near_match: bool = sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM users WHERE lower(trim(email)) = lower(trim(?)))",
+            )
+            .bind(&email)
+            .fetch_one(pool)
+            .await?;
+            if near_match {
+                tracing::warn!(
+                    account_id = %account_id,
+                    "account has no user and its address matches a user's only up to case or spaces; left unlinked, review it"
+                );
+                continue;
+            }
             let uid = uuid::Uuid::new_v4().to_string();
             // First user (or only pre-existing account) gets admin
             let has_users: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users")
@@ -1351,6 +1369,21 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(accounts, 1);
+    }
+
+    #[tokio::test]
+    async fn orphaned_account_is_not_given_a_user_when_a_spelling_variant_exists() {
+        let pool = memory_pool().await;
+        migrate(&pool).await.unwrap();
+        insert_plain_user(&pool, "case@test.com").await;
+        let orphan = insert_orphan(&pool, " Case@Test.com").await;
+        migrate(&pool).await.unwrap();
+        assert_eq!(owner_of(&pool, &orphan).await, None);
+        let users: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(users, 1, "no passwordless user under the orphan's spelling");
     }
 
     #[tokio::test]
