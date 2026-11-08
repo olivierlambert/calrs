@@ -947,13 +947,13 @@ pub(super) async fn resource_write_candidates(
     service_username: Option<&str>,
     service_password_enc: Option<&str>,
     preferred_user_id: Option<&str>,
-) -> Vec<(String, String)> {
-    let mut out: Vec<(String, String)> = Vec::new();
+) -> Vec<(String, zeroize::Zeroizing<String>)> {
+    let mut out: Vec<(String, zeroize::Zeroizing<String>)> = Vec::new();
 
     if let (Some(u), Some(enc)) = (service_username, service_password_enc) {
         if !u.is_empty() {
             if let Ok(p) = crate::crypto::decrypt_password(key, enc) {
-                out.push((u.to_string(), p.to_string()));
+                out.push((u.to_string(), p));
             }
         }
     }
@@ -982,7 +982,7 @@ pub(super) async fn resource_write_candidates(
         }
         if let Some(enc) = password_enc.as_deref() {
             if let Ok(p) = crate::crypto::decrypt_password(key, enc) {
-                out.push((username, p.to_string()));
+                out.push((username, p));
             }
         }
     }

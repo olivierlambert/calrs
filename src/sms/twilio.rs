@@ -45,7 +45,7 @@ pub fn trial_mode_enabled() -> bool {
 
 pub struct TwilioProvider {
     account_sid: String,
-    auth_token: String,
+    auth_token: zeroize::Zeroizing<String>,
     from: String,
     base_url: String,
     trial: bool,
@@ -186,7 +186,7 @@ impl SmsProvider for TwilioProvider {
 
         let response = super::http_client()
             .post(&url)
-            .basic_auth(&self.account_sid, Some(&self.auth_token))
+            .basic_auth(&self.account_sid, Some(self.auth_token.as_str()))
             .form(&params)
             .send()
             .await
@@ -226,7 +226,7 @@ impl SmsProvider for TwilioProvider {
         );
         let response = super::http_client()
             .get(&url)
-            .basic_auth(&self.account_sid, Some(&self.auth_token))
+            .basic_auth(&self.account_sid, Some(self.auth_token.as_str()))
             .send()
             .await
             .map_err(|e| SmsError::Transport(e.to_string()))?;

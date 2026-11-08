@@ -112,10 +112,28 @@ fn long_lived_secrets_are_wiped_on_drop(
 
 // --- Persistent (SQLite) rate limiter, booking POSTs (#85, FINDING-10) ---
 
+async fn limiter(
+    pool: &SqlitePool,
+    bucket: &'static str,
+    max: u32,
+    now: i64,
+) -> PersistentRateLimiter {
+    PersistentRateLimiter::load_at(pool.clone(), bucket, max, 300, now).await
+}
+
+async fn stored_count(pool: &SqlitePool, bucket: &str, key: &str) -> Option<i64> {
+    sqlx::query_scalar("SELECT count FROM rate_limit_counters WHERE bucket = ? AND key = ?")
+        .bind(bucket)
+        .bind(key)
+        .fetch_optional(pool)
+        .await
+        .unwrap()
+}
+
 #[tokio::test]
 async fn persistent_limiter_counts_per_key_and_resets_after_the_window() {
     let pool = setup_test_db().await;
-    let limiter = PersistentRateLimiter::new(pool.clone(), "test", 3, 300);
+    let limiter = limiter(&pool, "test", 3, 1_000).await;
     for _ in 0..3 {
         assert!(!limiter.check_limited_at("ip1", 1_000).await);
     }
@@ -131,25 +149,73 @@ async fn persistent_limiter_counts_per_key_and_resets_after_the_window() {
 }
 
 #[tokio::test]
-async fn persistent_limiter_survives_a_restart() {
-    // A new limiter on the same database is what a restart builds: it must
-    // see the counts the previous one wrote.
+async fn persistent_limiter_resets_when_the_clock_goes_back() {
     let pool = setup_test_db().await;
-    let before = PersistentRateLimiter::new(pool.clone(), "booking", 2, 300);
+    let limiter = limiter(&pool, "test", 1, 5_000).await;
+    assert!(!limiter.check_limited_at("ip1", 5_000).await);
+    assert!(limiter.check_limited_at("ip1", 5_010).await);
+    // Clock stepped back before the window's start: a new window, not one
+    // that stays shut until the clock catches up.
+    assert!(!limiter.check_limited_at("ip1", 4_000).await);
+}
+
+#[tokio::test]
+async fn persistent_limiter_survives_a_restart() {
+    // A limiter loaded from the same database is what a restart builds: it
+    // must see the counts the previous one wrote.
+    let pool = setup_test_db().await;
+    let before = limiter(&pool, "booking", 2, 1_000).await;
     assert!(!before.check_limited_at("ip1", 1_000).await);
     assert!(!before.check_limited_at("ip1", 1_000).await);
     drop(before);
-    let after = PersistentRateLimiter::new(pool.clone(), "booking", 2, 300);
+    let after = limiter(&pool, "booking", 2, 1_010).await;
     assert!(after.check_limited_at("ip1", 1_010).await);
-    // Buckets do not share counts.
-    let other = PersistentRateLimiter::new(pool, "other", 2, 300);
+    // Buckets do not share counts (the MCP invite limit has its own).
+    let other = limiter(&pool, "mcp-invite", 2, 1_010).await;
     assert!(!other.check_limited_at("ip1", 1_010).await);
+    // A window that closed while the server was down is not reloaded.
+    let later = limiter(&pool, "booking", 2, 1_400).await;
+    assert!(!later.check_limited_at("ip1", 1_400).await);
+}
+
+#[tokio::test]
+async fn persistent_limiter_refused_requests_never_write() {
+    let pool = setup_test_db().await;
+    let limiter = limiter(&pool, "test", 3, 1_000).await;
+    for _ in 0..3 {
+        limiter.check_limited_at("ip1", 1_000).await;
+    }
+    assert_eq!(stored_count(&pool, "test", "ip1").await, Some(3));
+    // Swap the row for a marker: a refused request that wrote would
+    // overwrite it.
+    sqlx::query("UPDATE rate_limit_counters SET count = 99")
+        .execute(&pool)
+        .await
+        .unwrap();
+    for _ in 0..20 {
+        assert!(limiter.check_limited_at("ip1", 1_010).await);
+    }
+    assert_eq!(stored_count(&pool, "test", "ip1").await, Some(99));
+}
+
+#[tokio::test]
+async fn persistent_limiter_keeps_its_decision_when_the_database_fails() {
+    // No fail-open: with the table gone, the in-memory count still refuses.
+    let pool = setup_test_db().await;
+    let limiter = limiter(&pool, "test", 2, 1_000).await;
+    sqlx::query("DROP TABLE rate_limit_counters")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert!(!limiter.check_limited_at("ip1", 1_000).await);
+    assert!(!limiter.check_limited_at("ip1", 1_000).await);
+    assert!(limiter.check_limited_at("ip1", 1_000).await);
 }
 
 #[tokio::test]
 async fn persistent_limiter_prune_drops_only_closed_windows() {
     let pool = setup_test_db().await;
-    let limiter = PersistentRateLimiter::new(pool.clone(), "test", 3, 300);
+    let limiter = limiter(&pool, "test", 3, 1_000).await;
     limiter.check_limited_at("old", 1_000).await;
     limiter.check_limited_at("live", 1_200).await;
     assert_eq!(prune_rate_limit_counters(&pool, 1_301).await.unwrap(), 1);
@@ -158,6 +224,21 @@ async fn persistent_limiter_prune_drops_only_closed_windows() {
         .await
         .unwrap();
     assert_eq!(keys, vec!["live".to_string()]);
+}
+
+#[test]
+fn client_ip_groups_ipv6_by_64() {
+    let key = |xff: &str| {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-forwarded-for", xff.parse().unwrap());
+        client_ip_for_rate_limit(&headers)
+    };
+    assert_eq!(key("2001:db8:1:2::1"), "2001:db8:1:2::/64");
+    assert_eq!(
+        key("2001:db8:1:2::1"),
+        key("2001:db8:1:2:aaaa:bbbb:cccc:dddd")
+    );
+    assert_ne!(key("2001:db8:1:2::1"), key("2001:db8:1:3::1"));
 }
 
 #[tokio::test]
@@ -496,6 +577,28 @@ fn client_ip_xff_trims_whitespace() {
 }
 
 #[test]
+fn client_ip_ignores_xff_from_an_untrusted_peer() {
+    // Directly exposed: the peer is a public address, so whatever it puts
+    // in X-Forwarded-For is ignored and it cannot pick a fresh bucket.
+    let mut headers = HeaderMap::new();
+    headers.insert(PEER_ADDR_HEADER, "203.0.113.50".parse().unwrap());
+    headers.insert("x-forwarded-for", "198.51.100.1".parse().unwrap());
+    assert_eq!(client_ip_for_rate_limit(&headers), "203.0.113.50");
+    assert!(client_address(&headers).is_individual());
+}
+
+#[test]
+fn client_ip_from_a_trusted_peer_without_xff_is_shared() {
+    let mut headers = HeaderMap::new();
+    headers.insert(PEER_ADDR_HEADER, "127.0.0.1".parse().unwrap());
+    assert_eq!(client_ip_for_rate_limit(&headers), "127.0.0.1");
+    assert!(
+        !client_address(&headers).is_individual(),
+        "a proxy that names no client is not one client (OAuth cap)"
+    );
+}
+
+#[test]
 fn client_ip_falls_back_to_the_peer_address_without_xff() {
     let mut headers = HeaderMap::new();
     headers.insert(PEER_ADDR_HEADER, "192.0.2.44".parse().unwrap());
@@ -549,6 +652,24 @@ async fn is_rate_limited(app: &axum::Router, request: axum::http::Request<Body>)
     body_string(response)
         .await
         .contains("Too many login attempts")
+}
+
+/// Directly exposed (public peer), a client forging a new X-Forwarded-For
+/// on every attempt still exhausts its own sign-in budget.
+#[tokio::test]
+async fn sign_in_limit_ignores_xff_forged_by_an_untrusted_peer() {
+    let (app, _, _, _) = setup_test_app().await;
+    for i in 0..10 {
+        let forged = format!("198.51.100.{i}");
+        assert!(!is_rate_limited(&app, login_from("203.0.113.60", Some(&forged), None)).await);
+    }
+    assert!(
+        is_rate_limited(
+            &app,
+            login_from("203.0.113.60", Some("198.51.100.99"), None)
+        )
+        .await
+    );
 }
 
 /// Without a reverse proxy, each TCP peer gets its own sign-in budget: one

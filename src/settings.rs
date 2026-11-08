@@ -120,8 +120,8 @@ fn set_cache(base_url: Option<String>, allow_private_hosts: Option<Vec<String>>)
 /// to call multiple times (startup, after admin save, before CLI validation).
 /// Silently leaves the cache untouched on error — the env fallback still works.
 pub async fn load_from_db(pool: &SqlitePool) {
-    let row: Option<(Option<String>, Option<String>)> = match sqlx::query_as(
-        "SELECT base_url, allow_private_hosts FROM auth_config WHERE id = 'singleton'",
+    let row: Option<(Option<String>, Option<String>, Option<String>)> = match sqlx::query_as(
+        "SELECT base_url, allow_private_hosts, trusted_proxies FROM auth_config WHERE id = 'singleton'",
     )
     .fetch_optional(pool)
     .await
@@ -136,7 +136,8 @@ pub async fn load_from_db(pool: &SqlitePool) {
     };
 
     // Ok(None) genuinely means no singleton row → reset to defaults.
-    let (base_url, allow_raw) = row.unwrap_or((None, None));
+    let (base_url, allow_raw, trusted_proxies) = row.unwrap_or((None, None, None));
+    crate::trusted_proxies::set_from_db(trusted_proxies.as_deref());
 
     let base_url = base_url
         .map(|v| v.trim().to_string())

@@ -329,6 +329,7 @@ fn resolve_sync_min_age(parsed: Result<u64, String>) -> u64 {
 /// doesn't accumulate dead rows indefinitely.
 pub async fn run_reminder_loop(pool: SqlitePool, secret_key: crate::crypto::SecretKey) {
     let mut last_session_cleanup = std::time::Instant::now();
+    let mut last_rate_prune = std::time::Instant::now();
     let sync_min_age = background_sync_min_age();
     loop {
         tokio::time::sleep(std::time::Duration::from_secs(60)).await;
@@ -354,9 +355,15 @@ pub async fn run_reminder_loop(pool: SqlitePool, secret_key: crate::crypto::Secr
             if let Err(e) = crate::oauth::cleanup(&pool).await {
                 tracing::warn!(error = %e, "OAuth cleanup failed");
             }
+        }
+
+        // Every five minutes, like the in-memory limiters' sweep: closed
+        // rate limit windows (#85).
+        if last_rate_prune.elapsed() >= std::time::Duration::from_secs(300) {
             if let Err(e) = super::prune_rate_limit_counters(&pool, Utc::now().timestamp()).await {
                 tracing::warn!(error = %e, "rate limit counter cleanup failed");
             }
+            last_rate_prune = std::time::Instant::now();
         }
 
         // Pending requests: decline the ones past their deadline and nudge

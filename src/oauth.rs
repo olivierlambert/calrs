@@ -45,9 +45,9 @@ const UNUSED_CLIENT_LIFETIME: i64 = 30 * 86400;
 const GRANTED_CLIENT_LIFETIME: i64 = 180 * 86400;
 /// Clients never granted, registered from one address (`rate_key`) within
 /// UNUSED_CLIENT_LIFETIME, beyond which that address cannot register more.
-/// Applied only to an address from X-Forwarded-For: without the header the
-/// address is the TCP peer, which behind a proxy that does not set it is the
-/// proxy itself, shared by every registrant (as "unknown" was before).
+/// Applied only to one client's address (`ClientAddress::is_individual`):
+/// not to a trusted proxy that named no client, nor to "unknown", which every
+/// registrant behind it would share.
 const PENDING_CLIENTS_PER_ADDRESS: i64 = 50;
 /// The clients cleanup and the cap may remove, as a condition on `c`, binding
 /// now, now - UNUSED_CLIENT_LIFETIME and now - GRANTED_CLIENT_LIFETIME: no
@@ -214,21 +214,10 @@ async fn real_user(pool: &SqlitePool, jar: &CookieJar) -> Option<User> {
     auth::validate_session(pool, jar.get(auth::SESSION_COOKIE)?.value()).await
 }
 
-/// The rate-limit identity of a client address: an IPv6 address counts by its
-/// /64, which one subscriber usually holds whole, so rotating addresses inside
-/// it buys nothing. IPv4 (and IPv4-mapped IPv6) counts per address.
+/// The rate-limit identity of a client address (IPv6 grouped by /64), as
+/// for every other per-address limit.
 fn rate_key(headers: &HeaderMap) -> String {
-    let ip = crate::web::client_ip_for_rate_limit(headers);
-    match ip.parse::<std::net::IpAddr>() {
-        Ok(std::net::IpAddr::V6(v6)) => match v6.to_ipv4_mapped() {
-            Some(v4) => v4.to_string(),
-            None => {
-                let s = v6.segments();
-                format!("{:x}:{:x}:{:x}:{:x}::/64", s[0], s[1], s[2], s[3])
-            }
-        },
-        _ => ip,
-    }
+    crate::web::client_ip_for_rate_limit(headers)
 }
 
 /// Per client address (`rate_key`). Registration gets 30 per 15 minutes
@@ -504,7 +493,8 @@ async fn register(
         .bind(now - UNUSED_CLIENT_LIFETIME)
         .fetch_one(&mut *tx)
         .await?;
-    if pending >= PENDING_CLIENTS_PER_ADDRESS && crate::web::forwarded_client_ip(&headers).is_some()
+    if pending >= PENDING_CLIENTS_PER_ADDRESS
+        && crate::web::client_address(&headers).is_individual()
     {
         return Err(Error(
             StatusCode::TOO_MANY_REQUESTS,

@@ -109,7 +109,7 @@ pub async fn refresh_access_token(
     pool: &SqlitePool,
     key: &[u8; 32],
     source_id: &str,
-) -> Result<String> {
+) -> Result<zeroize::Zeroizing<String>> {
     // Load source credentials
     let row: (String, String) = sqlx::query_as(
         "SELECT refresh_token_enc, oauth2_provider FROM caldav_sources WHERE id = ?",
@@ -173,7 +173,7 @@ pub async fn refresh_access_token(
     }
 
     tracing::info!(source_id = %source_id, "refreshed OAuth2 access token");
-    Ok(token.access_token)
+    Ok(zeroize::Zeroizing::new(token.access_token))
 }
 
 /// Get a valid access token for an OAuth2 source.
@@ -184,7 +184,7 @@ pub async fn get_valid_access_token(
     source_id: &str,
     access_token_enc: &str,
     token_expires_at: Option<&str>,
-) -> Result<String> {
+) -> Result<zeroize::Zeroizing<String>> {
     let needs_refresh = match token_expires_at {
         Some(exp) => {
             let expires = chrono::DateTime::parse_from_rfc3339(exp)
@@ -198,7 +198,7 @@ pub async fn get_valid_access_token(
     if needs_refresh {
         refresh_access_token(pool, key, source_id).await
     } else {
-        crate::crypto::decrypt_password(key, access_token_enc).map(|t| t.to_string())
+        crate::crypto::decrypt_password(key, access_token_enc)
     }
 }
 

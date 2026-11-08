@@ -660,7 +660,7 @@ fn smtp_config(port: u16) -> crate::email::SmtpConfig {
         host: "127.0.0.1".to_string(),
         port,
         username: String::new(),
-        password: String::new(),
+        password: Default::default(),
         from_email: "noreply@test.com".to_string(),
         from_name: None,
         tls_mode: crate::email::SmtpTlsMode::Plaintext,

@@ -14,7 +14,7 @@ use async_trait::async_trait;
 use super::{factory, phone, SendReceipt, SmsConfig, SmsError, SmsProvider};
 
 pub struct SevenIoProvider {
-    api_key: String,
+    api_key: zeroize::Zeroizing<String>,
     sender: String,
     base_url: String,
 }
@@ -107,7 +107,7 @@ impl SmsProvider for SevenIoProvider {
 
         let response = super::http_client()
             .post(&url)
-            .header("X-Api-Key", &self.api_key)
+            .header("X-Api-Key", self.api_key.as_str())
             .header("Accept", "application/json")
             .form(&params)
             .send()
@@ -135,7 +135,7 @@ impl SmsProvider for SevenIoProvider {
         let url = format!("{}/api/balance", self.base_url);
         let response = super::http_client()
             .get(&url)
-            .header("X-Api-Key", &self.api_key)
+            .header("X-Api-Key", self.api_key.as_str())
             .header("Accept", "application/json")
             .send()
             .await

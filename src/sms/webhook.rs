@@ -24,7 +24,7 @@ use super::{factory, SendReceipt, SmsConfig, SmsError, SmsProvider};
 pub struct WebhookProvider {
     url: String,
     sender: String,
-    secret: String,
+    secret: zeroize::Zeroizing<String>,
 }
 
 impl WebhookProvider {

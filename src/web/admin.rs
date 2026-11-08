@@ -973,6 +973,9 @@ pub(super) async fn admin_dashboard(
             allow_private_hosts => crate::settings::private_host_allowlist().join(", "),
             allow_private_hosts_db => crate::settings::private_host_allowlist_db().join(", "),
             allow_private_hosts_from_env => crate::settings::allow_private_hosts_from_env(),
+            trusted_proxies => crate::trusted_proxies::current().describe(),
+            trusted_proxies_db => crate::trusted_proxies::saved(),
+            trusted_proxies_from_env => crate::trusted_proxies::set_by_env(),
             german_formal => state.german_formal.load(std::sync::atomic::Ordering::Relaxed),
             week_start_setting => context! { value => week_start::site(&state.pool).await },
             smtp_configured => smtp_configured,
@@ -1933,6 +1936,8 @@ pub(super) struct AdminGeneralForm {
     _csrf: Option<String>,
     base_url: Option<String>,
     allow_private_hosts: Option<String>,
+    /// Absent leaves the stored value alone.
+    trusted_proxies: Option<String>,
     /// "sie" or "du"; absent leaves the stored value alone.
     german_formal: Option<String>,
     week_start: Option<WeekStart>,
@@ -2008,6 +2013,37 @@ pub(super) async fn admin_update_general(
         .await
         {
             return internal_error_response("save allow_private_hosts", &e);
+        }
+    }
+
+    if let (Some(raw), false) = (
+        form.trusted_proxies.as_deref(),
+        crate::trusted_proxies::set_by_env(),
+    ) {
+        // Stored in its canonical form; empty is NULL, the default list.
+        let stored = match crate::trusted_proxies::TrustedProxies::parse(raw) {
+            Ok(_) if raw.trim().is_empty() => None,
+            Ok(list) => Some(list.describe()),
+            Err(entry) => {
+                let mut args = fluent_bundle::FluentArgs::new();
+                args.set("entry", fluent_bundle::FluentValue::from(entry.as_str()));
+                let msg = urlencoding::encode(&crate::i18n::translate(
+                    _admin.lang,
+                    "admin-trusted-proxies-invalid",
+                    Some(&args),
+                ))
+                .into_owned();
+                return Redirect::to(&format!("/dashboard/admin?error={}", msg)).into_response();
+            }
+        };
+        if let Err(e) = sqlx::query(
+            "UPDATE auth_config SET trusted_proxies = ?, updated_at = datetime('now') WHERE id = 'singleton'",
+        )
+        .bind(&stored)
+        .execute(&state.pool)
+        .await
+        {
+            return internal_error_response("save trusted_proxies", &e);
         }
     }
 
@@ -2493,15 +2529,15 @@ pub(super) async fn admin_update_sms(
     // Validate the configuration as it will actually be stored, secret
     // included, so a keep-current save of an incomplete row still fails loudly.
     let effective_secret = if secret_provided {
-        api_secret.trim().to_string()
+        zeroize::Zeroizing::new(api_secret.trim().to_string())
     } else if switching_provider {
-        String::new()
+        zeroize::Zeroizing::default()
     } else {
         match existing.as_ref().and_then(|(_, enc)| enc.as_deref()) {
-            Some(enc) if !enc.is_empty() => crate::crypto::decrypt_password(&state.secret_key, enc)
-                .map(|s| s.to_string())
-                .unwrap_or_default(),
-            _ => String::new(),
+            Some(enc) if !enc.is_empty() => {
+                crate::crypto::decrypt_password(&state.secret_key, enc).unwrap_or_default()
+            }
+            _ => zeroize::Zeroizing::default(),
         }
     };
 

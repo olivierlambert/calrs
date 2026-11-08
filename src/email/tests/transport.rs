@@ -14,7 +14,7 @@ fn smtp_config_mailbox_from() {
         host: "host".to_string(),
         port: 587,
         username: "user".to_string(),
-        password: "password".to_string(),
+        password: "password".to_string().into(),
         from_name: None,
         from_email: "username@example.com".to_string(),
         tls_mode: SmtpTlsMode::StartTls,
@@ -29,7 +29,7 @@ fn smtp_config_mailbox_from() {
         host: "host".to_string(),
         port: 587,
         username: "username".to_string(),
-        password: "password".to_string(),
+        password: "password".to_string().into(),
         from_name: Some("Name, With Comma".to_string()),
         from_email: "username@example.com".to_string(),
         tls_mode: SmtpTlsMode::StartTls,
@@ -100,7 +100,7 @@ fn header_test_config(from_name: Option<&str>) -> SmtpConfig {
         host: "host".to_string(),
         port: 587,
         username: String::new(),
-        password: String::new(),
+        password: Default::default(),
         from_name: from_name.map(str::to_string),
         from_email: "noreply@example.com".to_string(),
         tls_mode: SmtpTlsMode::StartTls,
@@ -535,7 +535,8 @@ fn plaintext_config(port: u16, username: &str) -> SmtpConfig {
             String::new()
         } else {
             "secret".to_string()
-        },
+        }
+        .into(),
         from_name: None,
         from_email: "noreply@example.com".to_string(),
         tls_mode: SmtpTlsMode::Plaintext,
@@ -659,7 +660,7 @@ fn smtp_config_without_username_skips_auth() {
         host: "localhost".to_string(),
         port: 25,
         username: String::new(),
-        password: String::new(),
+        password: Default::default(),
         from_name: None,
         from_email: "noreply@example.com".to_string(),
         tls_mode: SmtpTlsMode::StartTls,

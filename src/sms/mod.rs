@@ -82,7 +82,8 @@ pub fn requires_phone(mode: &str) -> bool {
 pub struct SmsConfig {
     pub provider: String,
     pub api_key: String,
-    pub api_secret: String,
+    /// Wiped from memory when dropped (#85).
+    pub api_secret: zeroize::Zeroizing<String>,
     pub sender: String,
     pub base_url: String,
     pub default_country_code: String,
@@ -260,7 +261,9 @@ fn load_config_from_env() -> Option<SmsConfig> {
     let config = SmsConfig {
         provider: optional_env("CALRS_SMS_PROVIDER").unwrap_or_default(),
         api_key: optional_env("CALRS_SMS_API_KEY").unwrap_or_default(),
-        api_secret: optional_env("CALRS_SMS_API_SECRET").unwrap_or_default(),
+        api_secret: optional_env("CALRS_SMS_API_SECRET")
+            .unwrap_or_default()
+            .into(),
         sender: optional_env("CALRS_SMS_SENDER").unwrap_or_default(),
         base_url: optional_env("CALRS_SMS_BASE_URL").unwrap_or_default(),
         default_country_code: optional_env("CALRS_SMS_DEFAULT_COUNTRY_CODE")
@@ -324,8 +327,8 @@ pub async fn load_config(pool: &SqlitePool, key: &[u8; 32]) -> Result<Option<Sms
     };
 
     let api_secret = match api_secret_enc.as_deref().filter(|s| !s.is_empty()) {
-        Some(enc) => crate::crypto::decrypt_password(key, enc)?.to_string(),
-        None => String::new(),
+        Some(enc) => crate::crypto::decrypt_password(key, enc)?,
+        None => zeroize::Zeroizing::default(),
     };
 
     let config = SmsConfig {

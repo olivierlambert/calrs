@@ -31,6 +31,7 @@ mod sms;
 #[cfg(test)]
 mod test_support;
 mod time_off;
+mod trusted_proxies;
 mod tzid;
 mod utils;
 mod web;

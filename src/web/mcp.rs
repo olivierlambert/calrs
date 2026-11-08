@@ -183,10 +183,7 @@ async fn handle(State(state): State<Arc<AppState>>, headers: HeaderMap, body: By
             }
             // Bound write amplification independently of the IP login limiter.
             if name == "create_invite_link"
-                && state
-                    .booking_limiter
-                    .check_limited(&format!("mcp-invite:{}", user.id))
-                    .await
+                && state.mcp_invite_limiter.check_limited(&user.id).await
             {
                 return StatusCode::TOO_MANY_REQUESTS.into_response();
             }

@@ -7,7 +7,8 @@ pub struct SmtpConfig {
     pub host: String,
     pub port: u16,
     pub username: String,
-    pub password: String,
+    /// Wiped from memory when dropped (#85).
+    pub password: zeroize::Zeroizing<String>,
     pub from_email: String,
     pub from_name: Option<String>,
     pub tls_mode: SmtpTlsMode,
@@ -318,7 +319,7 @@ pub(super) fn load_smtp_config_from_env() -> Result<Option<SmtpConfig>> {
         host,
         port,
         username,
-        password,
+        password: password.into(),
         from_email,
         from_name,
         tls_mode,
@@ -414,7 +415,7 @@ pub async fn load_smtp_config(pool: &SqlitePool, key: &[u8; 32]) -> Result<Optio
 
     match row {
         Some((host, port, username, password_enc, from_email, from_name, tls_mode)) => {
-            let password = crate::crypto::decrypt_password(key, &password_enc)?.to_string();
+            let password = crate::crypto::decrypt_password(key, &password_enc)?;
             let tls_mode = SmtpTlsMode::parse(&tls_mode).unwrap_or(SmtpTlsMode::StartTls);
             let config = SmtpConfig {
                 host,
@@ -561,7 +562,7 @@ pub(super) async fn send_email_with_timeouts(
         builder
             .credentials(Credentials::new(
                 config.username.clone(),
-                config.password.clone(),
+                config.password.to_string(),
             ))
             .build()
     };

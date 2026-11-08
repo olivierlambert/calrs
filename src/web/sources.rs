@@ -690,10 +690,10 @@ pub(super) async fn update_source(
     // sync will use afterwards.
     let password_changed = !form.password.is_empty();
     let plaintext_password = if password_changed {
-        form.password.clone()
+        zeroize::Zeroizing::new(form.password.clone())
     } else {
         match crate::crypto::decrypt_password(&state.secret_key, &existing_password_enc) {
-            Ok(p) => p.to_string(),
+            Ok(p) => p,
             Err(_) => {
                 return Html(crate::i18n::translate(
                     auth_user.lang,

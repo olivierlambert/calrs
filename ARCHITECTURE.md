@@ -55,6 +55,7 @@ Every user-facing string goes through Fluent (`i18n/`).
 | `src/oauth.rs` | First-party OAuth server: discovery, public client registration, PKCE/consent, token rotation/revocation, bearer validation and cleanup |
 | `src/crypto.rs` | AES-256-GCM for stored credentials, secret key management |
 | `src/settings.rs` | Runtime settings (base URL, private-host policy): env overrides DB |
+| `src/trusted_proxies.rs` | Which TCP peers' `X-Forwarded-For` is believed (#85): `CALRS_TRUSTED_PROXIES`, else `auth_config.trusted_proxies`, else loopback/private/ULA/link-local; `client_address()` walks the header right to left past trusted hops, `rate_key()` groups IPv6 by /64. Used by `web::client_address`/`client_ip_for_rate_limit` |
 | `src/i18n.rs` | Fluent loader, language detection, the `t()` template global, i18n guard tests |
 | `src/booking_time.rs` | How booking times are stored (legacy wall clock vs UTC instant) |
 | `src/rrule.rs` | RRULE expansion for recurring events |

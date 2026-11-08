@@ -256,6 +256,7 @@ admin-theme-help = Wählen Sie ein Farbdesign für alle Seiten. Die Umschaltung 
 admin-theme-custom-desc = Ihre Farben
 admin-no-groups = Noch keine Gruppen synchronisiert. Gruppen werden automatisch von Ihrem OIDC-Anbieter übernommen.
 admin-private-hosts-help = Kommagetrennte Hostnamen, die für CalDAV-/EWS-Quellen auf private oder reservierte IP-Adressen zeigen dürfen (Ausnahme vom SSRF-Schutz). Tragen Sie nur Hosts ein, die Sie kontrollieren (etwa einen Kalenderserver im selben Docker-Netz). Leer lassen, um den Schutz für alle Hosts aktiv zu halten.
+admin-trusted-proxies-help = Adressen oder CIDR-Bereiche der Reverse-Proxys, deren X-Forwarded-For-Header beim Unterscheiden der Clients für die Ratenbegrenzung geglaubt wird. Lassen Sie das Feld leer für die Vorgabe (Loopback-, private, Unique-Local- und Link-Local-Bereiche: ein Proxy auf demselben Host oder im selben Docker-Netz). Geben Sie none ein, wenn calrs direkt erreichbar ist, damit ein Client keine andere Adresse vortäuschen kann.
 admin-unset-env = Entfernen Sie die Umgebungsvariable, um dies hier zu bearbeiten.
 admin-wasm-url-help = Von dort lädt das Widget seinen Löser. Tragen Sie die WASM-Datei Ihres Cap-Servers ein, damit Buchungsseiten cdn.jsdelivr.net nicht mehr kontaktieren. Leer lassen für den Standardwert.
 admin-captcha-disable-help = Lassen Sie Instanz-URL, Site-Key und Secret leer, um das Captcha auf Buchungsseiten zu deaktivieren.

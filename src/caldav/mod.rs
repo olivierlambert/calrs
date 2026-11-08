@@ -16,8 +16,13 @@ use multistatus::{
 const GOOGLE_CALDAV_HOST: &str = "apidata.googleusercontent.com";
 
 pub enum CaldavAuth {
-    Basic { username: String, password: String },
-    Bearer { access_token: String },
+    Basic {
+        username: String,
+        password: zeroize::Zeroizing<String>,
+    },
+    Bearer {
+        access_token: zeroize::Zeroizing<String>,
+    },
 }
 
 pub struct CaldavClient {
@@ -238,7 +243,7 @@ impl CaldavClient {
             base_url,
             CaldavAuth::Basic {
                 username: username.to_string(),
-                password: password.to_string(),
+                password: zeroize::Zeroizing::new(password.to_string()),
             },
         )
     }
@@ -247,7 +252,7 @@ impl CaldavClient {
         Self::build(
             base_url,
             CaldavAuth::Bearer {
-                access_token: access_token.to_string(),
+                access_token: zeroize::Zeroizing::new(access_token.to_string()),
             },
         )
     }
@@ -279,9 +284,9 @@ impl CaldavClient {
     fn apply_auth(&self, builder: RequestBuilder) -> RequestBuilder {
         match &self.auth {
             CaldavAuth::Basic { username, password } => {
-                builder.basic_auth(username, Some(password))
+                builder.basic_auth(username, Some(password.as_str()))
             }
-            CaldavAuth::Bearer { access_token } => builder.bearer_auth(access_token),
+            CaldavAuth::Bearer { access_token } => builder.bearer_auth(access_token.as_str()),
         }
     }
 

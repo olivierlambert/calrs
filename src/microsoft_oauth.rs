@@ -426,7 +426,10 @@ struct StoredTokens {
     token_expires_at: Option<String>,
 }
 const TOKEN_QUERY: &str = "SELECT access_token_enc,refresh_token_enc,token_expires_at FROM caldav_sources WHERE id = ? AND provider_type = 'microsoft' AND auth_type = 'oauth2' AND oauth2_provider = 'microsoft'";
-fn fresh_access(tokens: &StoredTokens, key: &[u8; 32]) -> Result<Option<String>> {
+fn fresh_access(
+    tokens: &StoredTokens,
+    key: &[u8; 32],
+) -> Result<Option<zeroize::Zeroizing<String>>> {
     let fresh = tokens
         .token_expires_at
         .as_deref()
@@ -439,11 +442,9 @@ fn fresh_access(tokens: &StoredTokens, key: &[u8; 32]) -> Result<Option<String>>
         .access_token_enc
         .as_deref()
         .ok_or_else(|| anyhow!("Microsoft access token is missing; reconnect"))?;
-    Ok(Some(
-        crate::crypto::decrypt_value(key, encrypted)
-            .map_err(|_| anyhow!("Unable to decrypt Microsoft access token"))?
-            .to_string(),
-    ))
+    Ok(Some(crate::crypto::decrypt_value(key, encrypted).map_err(
+        |_| anyhow!("Unable to decrypt Microsoft access token"),
+    )?))
 }
 
 /// Stores refreshed tokens only while the row still carries
@@ -490,7 +491,7 @@ async fn access_token(
     key: &[u8; 32],
     source_id: &str,
     force: bool,
-) -> Result<String> {
+) -> Result<zeroize::Zeroizing<String>> {
     let stored: StoredTokens = sqlx::query_as(TOKEN_QUERY)
         .bind(source_id)
         .fetch_optional(pool)
@@ -556,7 +557,7 @@ async fn access_token(
     .await?;
     if stored_now {
         tx.commit().await?;
-        return Ok(tokens.access_token);
+        return Ok(zeroize::Zeroizing::new(tokens.access_token));
     }
     tx.rollback().await?;
     let winner: StoredTokens = sqlx::query_as(TOKEN_QUERY)
@@ -564,7 +565,7 @@ async fn access_token(
         .fetch_optional(pool)
         .await?
         .ok_or_else(|| anyhow!("Microsoft source not found"))?;
-    Ok(fresh_access(&winner, key)?.unwrap_or(tokens.access_token))
+    Ok(fresh_access(&winner, key)?.unwrap_or_else(|| zeroize::Zeroizing::new(tokens.access_token)))
 }
 
 /// Drops a refresh token the endpoint refused for good, unless a reconnect
@@ -1014,7 +1015,7 @@ mod tests {
             "rotated"
         );
         assert_eq!(
-            fresh_access(&stored, &[1; 32]).unwrap().unwrap(),
+            *fresh_access(&stored, &[1; 32]).unwrap().unwrap(),
             "new-access"
         );
         // A second task that refreshed against the pre-rotation row must not
@@ -1211,7 +1212,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            access_token(&pool, &[1; 32], &id, false).await.unwrap(),
+            *access_token(&pool, &[1; 32], &id, false).await.unwrap(),
             "new-access"
         );
         sqlx::query(
