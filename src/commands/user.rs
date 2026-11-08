@@ -60,6 +60,14 @@ pub enum UserCommands {
         #[arg(long)]
         password_stdin: bool,
     },
+    /// Confirm that a user owns their email address, so calrs may give them a
+    /// managed Exchange mailbox (global EWS impersonation). Accounts an admin
+    /// creates are trusted already; self-registered ones never are until an
+    /// admin runs this.
+    TrustEmail {
+        /// User email (any letter case)
+        email: String,
+    },
     /// Manage a user's time off: periods they take no bookings, on every
     /// event type they host
     TimeOff {
@@ -76,7 +84,41 @@ pub enum UserCommands {
     },
 }
 
-pub async fn run(pool: &SqlitePool, data_dir: &Path, cmd: UserCommands) -> Result<()> {
+/// Provision a user's managed Exchange source and say what happened.
+async fn provision_and_report(
+    pool: &SqlitePool,
+    cfg: &crate::ews::global::EwsGlobalConfig,
+    user_id: &str,
+) {
+    use crate::ews::global::Provisioned;
+    match crate::ews::global::provision_managed_ews_source_for_user(pool, cfg, user_id).await {
+        Ok(Provisioned::Created) => println!(
+            "  {} Auto-provisioned managed Exchange source.",
+            "✓".green()
+        ),
+        Ok(Provisioned::Conflict) => println!(
+            "  {} No managed Exchange source: another user's source already reads this mailbox.",
+            "⚠".yellow()
+        ),
+        Ok(Provisioned::InvalidAddress) => println!(
+            "  {} No managed Exchange source: the address names no mailbox.",
+            "⚠".yellow()
+        ),
+        Ok(_) => {}
+        Err(e) => println!(
+            "  {} Failed to provision managed Exchange source: {}",
+            "⚠".yellow(),
+            e
+        ),
+    }
+}
+
+pub async fn run(
+    pool: &SqlitePool,
+    data_dir: &Path,
+    secret_key: &[u8; 32],
+    cmd: UserCommands,
+) -> Result<()> {
     match cmd {
         UserCommands::TimeOff { command } => {
             crate::commands::time_off::run(pool, command).await?;
@@ -120,6 +162,13 @@ pub async fn run(pool: &SqlitePool, data_dir: &Path, cmd: UserCommands) -> Resul
             )
             .await?;
             auth::create_user_account(&mut tx, &user_id, &name, &email).await?;
+            // An admin typed this address, so it is trusted: global EWS
+            // impersonation may open the mailbox it names. Set with the row,
+            // so the account never exists untrusted.
+            sqlx::query("UPDATE users SET email_trusted = 1 WHERE id = ?")
+                .bind(&user_id)
+                .execute(&mut *tx)
+                .await?;
             tx.commit().await?;
 
             println!(
@@ -135,6 +184,41 @@ pub async fn run(pool: &SqlitePool, data_dir: &Path, cmd: UserCommands) -> Resul
                     "{}",
                     "  First user, automatically granted admin role.".dimmed()
                 );
+            }
+
+            // If the admin has enabled global EWS impersonation with
+            // auto-provision, give the new user a managed Exchange source.
+            if let Some(cfg) = crate::ews::global::load_ews_global_config(pool, secret_key).await {
+                if cfg.auto_provision {
+                    provision_and_report(pool, &cfg, &user_id).await;
+                }
+            }
+        }
+        UserCommands::TrustEmail { email } => {
+            let matches: Vec<(String, String)> =
+                sqlx::query_as("SELECT id, email FROM users WHERE lower(email) = lower(?)")
+                    .bind(email.trim())
+                    .fetch_all(pool)
+                    .await?;
+            let (user_id, stored) = match matches.as_slice() {
+                [] => anyhow::bail!("No user found with email '{}'", email),
+                [one] => one.clone(),
+                _ => anyhow::bail!(
+                    "Several users have '{}' in some letter case; give the exact address",
+                    email
+                ),
+            };
+            // Exactly the stored address just shown, so a change in between
+            // is not confirmed unseen.
+            if !crate::ews::global::trust_email(pool, &user_id, &stored).await? {
+                anyhow::bail!(
+                    "The address of '{}' changed meanwhile; run the command again",
+                    email
+                );
+            }
+            println!("{} Address confirmed: {}", "✓".green(), stored);
+            if let Some(cfg) = crate::ews::global::load_ews_global_config(pool, secret_key).await {
+                provision_and_report(pool, &cfg, &user_id).await;
             }
         }
         UserCommands::List => {
@@ -446,7 +530,7 @@ mod tests {
     #[tokio::test]
     async fn test_list_users_empty() {
         let pool = setup_db().await;
-        let result = run(&pool, &std::env::temp_dir(), UserCommands::List).await;
+        let result = run(&pool, &std::env::temp_dir(), &[0u8; 32], UserCommands::List).await;
         assert!(result.is_ok());
     }
 
@@ -456,7 +540,7 @@ mod tests {
         insert_user(&pool, "alice@test.com", "Alice", "admin").await;
         insert_user(&pool, "bob@test.com", "Bob", "user").await;
 
-        let result = run(&pool, &std::env::temp_dir(), UserCommands::List).await;
+        let result = run(&pool, &std::env::temp_dir(), &[0u8; 32], UserCommands::List).await;
         assert!(result.is_ok());
 
         let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users")
@@ -475,6 +559,7 @@ mod tests {
         let result = run(
             &pool,
             &std::env::temp_dir(),
+            &[0u8; 32],
             UserCommands::Promote {
                 email: "bob@test.com".to_string(),
             },
@@ -498,6 +583,7 @@ mod tests {
         let result = run(
             &pool,
             &std::env::temp_dir(),
+            &[0u8; 32],
             UserCommands::Demote {
                 email: "bob@test.com".to_string(),
             },
@@ -521,6 +607,7 @@ mod tests {
         let result = run(
             &pool,
             &std::env::temp_dir(),
+            &[0u8; 32],
             UserCommands::Demote {
                 email: "alice@test.com".to_string(),
             },
@@ -544,6 +631,7 @@ mod tests {
         let result = run(
             &pool,
             &std::env::temp_dir(),
+            &[0u8; 32],
             UserCommands::Disable {
                 email: "bob@test.com".to_string(),
             },
@@ -568,6 +656,7 @@ mod tests {
         run(
             &pool,
             &std::env::temp_dir(),
+            &[0u8; 32],
             UserCommands::Disable {
                 email: "bob@test.com".to_string(),
             },
@@ -579,6 +668,7 @@ mod tests {
         let result = run(
             &pool,
             &std::env::temp_dir(),
+            &[0u8; 32],
             UserCommands::Enable {
                 email: "bob@test.com".to_string(),
             },
@@ -601,6 +691,7 @@ mod tests {
         let result = run(
             &pool,
             &std::env::temp_dir(),
+            &[0u8; 32],
             UserCommands::Disable {
                 email: "nobody@test.com".to_string(),
             },
@@ -615,6 +706,7 @@ mod tests {
         let result = run(
             &pool,
             &std::env::temp_dir(),
+            &[0u8; 32],
             UserCommands::Promote {
                 email: "nobody@test.com".to_string(),
             },
@@ -633,6 +725,7 @@ mod tests {
         let result = run(
             &pool,
             &std::env::temp_dir(),
+            &[0u8; 32],
             UserCommands::Delete {
                 email: "bob@test.com".to_string(),
                 yes: true,
@@ -656,6 +749,7 @@ mod tests {
         let result = run(
             &pool,
             &std::env::temp_dir(),
+            &[0u8; 32],
             UserCommands::Delete {
                 email: "ghost@test.com".to_string(),
                 yes: true,
@@ -685,6 +779,7 @@ mod tests {
         run(
             &pool,
             &std::env::temp_dir(),
+            &[0u8; 32],
             UserCommands::Disable {
                 email: "bob@test.com".to_string(),
             },
@@ -700,5 +795,45 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(session_count.0, 0, "Sessions should be deleted on disable");
+    }
+
+    /// `calrs user trust-email` is the admin's confirmation that a person owns
+    /// their address: it finds the user in any letter case, and refuses an
+    /// unknown one with an error (a non-zero exit status).
+    #[tokio::test]
+    async fn trust_email_confirms_a_known_user_and_refuses_an_unknown_one() {
+        let pool = setup_db().await;
+        let id = insert_user(&pool, "bob@test.com", "Bob", "user").await;
+        let trusted = |pool: SqlitePool, id: String| async move {
+            sqlx::query_scalar::<_, bool>("SELECT email_trusted FROM users WHERE id = ?")
+                .bind(&id)
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+        };
+        assert!(!trusted(pool.clone(), id.clone()).await);
+
+        let unknown = run(
+            &pool,
+            &std::env::temp_dir(),
+            &[0u8; 32],
+            UserCommands::TrustEmail {
+                email: "nobody@test.com".to_string(),
+            },
+        )
+        .await;
+        assert!(unknown.is_err());
+
+        run(
+            &pool,
+            &std::env::temp_dir(),
+            &[0u8; 32],
+            UserCommands::TrustEmail {
+                email: "Bob@Test.com".to_string(),
+            },
+        )
+        .await
+        .unwrap();
+        assert!(trusted(pool.clone(), id.clone()).await);
     }
 }

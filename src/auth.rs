@@ -993,12 +993,14 @@ async fn register_handler(
         return render_register_error(&state, lang, "auth-error-password-length", &auth_config);
     }
 
-    // Check if email already taken
-    let existing: Option<(String,)> = sqlx::query_as("SELECT id FROM users WHERE email = ?")
-        .bind(email)
-        .fetch_optional(&state.pool)
-        .await
-        .unwrap_or(None);
+    // Check if email already taken, in any letter case: mail servers match
+    // addresses without regard to case, so `CEO@corp.com` is `ceo@corp.com`.
+    let existing: Option<(String,)> =
+        sqlx::query_as("SELECT id FROM users WHERE lower(email) = lower(?)")
+            .bind(email)
+            .fetch_optional(&state.pool)
+            .await
+            .unwrap_or(None);
 
     if existing.is_some() {
         return render_register_error(&state, lang, "auth-error-email-taken", &auth_config);
@@ -1039,6 +1041,12 @@ async fn register_handler(
         tracing::warn!(error = %e, "registration failed");
         return render_register_error(&state, lang, "auth-error-create-failed", &auth_config);
     }
+
+    // No managed Exchange source here, even with auto-provision on: nothing
+    // proves this person owns the address they typed, and impersonation would
+    // open that mailbox to them. The account stays untrusted
+    // (`users.email_trusted = 0`) until an admin confirms the address; see
+    // `crate::ews::global`.
 
     // Required MFA enrollment must complete before a normal session is issued.
     let Some(user) = get_user_by_id(&state.pool, &user_id).await else {
@@ -1447,9 +1455,11 @@ async fn oidc_callback(
         .email()
         .map(|e: &openidconnect::EndUserEmail| e.to_string())
         .unwrap_or_default();
-    // `email_verified` is optional in the spec. If the IdP doesn't assert
-    // verification, we treat it as unverified (conservative).
-    let email_verified = claims.email_verified().unwrap_or(false);
+    // `email_verified` is optional in the spec (ADFS and Entra ID do not send
+    // it by default). Absent, it never links or creates an account; for a
+    // returning user it leaves an admin's confirmation of an unchanged
+    // address in place (see `find_or_create_oidc_user_with_claim`).
+    let email_verified_claim = claims.email_verified();
     let name = claims
         .name()
         .and_then(
@@ -1481,11 +1491,11 @@ async fn oidc_callback(
     let claims = extract_claims_from_id_token(id_token.to_string().as_str());
 
     // Find or create user
-    let user_id = match find_or_create_oidc_user(
+    let user_id = match find_or_create_oidc_user_with_claim(
         &state.pool,
         &subject,
         &email,
-        email_verified,
+        email_verified_claim,
         &name,
         &auth_config,
     )
@@ -1513,6 +1523,17 @@ async fn oidc_callback(
         if let Err(e) = sync_user_groups(&state.pool, &user_id, groups).await {
             tracing::warn!(error = %e, "failed to sync OIDC groups");
         }
+    }
+
+    // `find_or_create_oidc_user` has just set `email_trusted` from this
+    // login's `email_verified` claim. A verified address gets its managed
+    // Exchange source (auto-provision on), or keeps the one it has in step
+    // with the address the IdP now reports; an unverified one loses it, so no
+    // mailbox stays attached to an address the IdP no longer vouches for.
+    // Best-effort.
+    {
+        let cfg = state.ews_global.read().await.clone();
+        crate::ews::global::after_oidc_login(&state.pool, cfg.as_ref(), &user_id).await;
     }
 
     // Create session
@@ -1565,6 +1586,7 @@ async fn oidc_callback(
 /// the IdP-issued stable identifier and doesn't rely on the email being
 /// accurate, so a returning user can always sign in once their account
 /// exists.
+#[cfg(test)]
 async fn find_or_create_oidc_user(
     pool: &SqlitePool,
     subject: &str,
@@ -1573,6 +1595,33 @@ async fn find_or_create_oidc_user(
     name: &str,
     auth_config: &AuthConfig,
 ) -> Result<String> {
+    find_or_create_oidc_user_with_claim(
+        pool,
+        subject,
+        email,
+        Some(email_verified),
+        name,
+        auth_config,
+    )
+    .await
+}
+
+/// [`find_or_create_oidc_user`] with the `email_verified` claim as sent:
+/// `None` when the identity provider left it out. Linking and creating an
+/// account require it to be `true`. For a returning user it decides whether
+/// calrs still trusts the address (and may open its Exchange mailbox):
+/// `true` trusts it, `false` drops the trust, and an absent claim keeps the
+/// trust the account had (an admin's confirmation) as long as the address is
+/// unchanged, letter case aside; a changed address is no longer trusted.
+async fn find_or_create_oidc_user_with_claim(
+    pool: &SqlitePool,
+    subject: &str,
+    email: &str,
+    email_verified_claim: Option<bool>,
+    name: &str,
+    auth_config: &AuthConfig,
+) -> Result<String> {
+    let email_verified = email_verified_claim == Some(true);
     // 1. Try to find by oidc_subject — always allowed, subject is the stable
     //    IdP-issued identity. Email is only a display attribute at this point.
     if let Some((id,)) = sqlx::query_as::<_, (String,)>(
@@ -1582,13 +1631,26 @@ async fn find_or_create_oidc_user(
     .fetch_optional(pool)
     .await?
     {
-        // Update email in case it changed on the IdP; only update name if currently empty
+        // Update email in case it changed on the IdP; only update name if
+        // currently empty. Whether calrs trusts the address (and so may open
+        // its Exchange mailbox): `email_verified: true` trusts it and records
+        // the IdP's verification; `false` drops both; an absent claim keeps
+        // both as they were when the new address equals the stored one
+        // ignoring ASCII letter case (SQLite `lower()`), and drops both when
+        // the address changed.
         let mut tx = pool.begin().await?;
         sqlx::query(
-            "UPDATE users SET name = CASE WHEN name IS NULL OR name = '' THEN ? ELSE name END, email = ?, updated_at = datetime('now') WHERE id = ?",
+            "UPDATE users SET name = CASE WHEN name IS NULL OR name = '' THEN ?1 ELSE name END, \
+                 email = ?2, \
+                 email_trusted = CASE WHEN ?3 = 1 THEN 1 \
+                     WHEN ?3 IS NULL AND lower(email) = lower(?2) THEN email_trusted ELSE 0 END, \
+                 email_verified_by_idp = CASE WHEN ?3 = 1 THEN 1 \
+                     WHEN ?3 IS NULL AND lower(email) = lower(?2) THEN email_verified_by_idp ELSE 0 END, \
+                 updated_at = datetime('now') WHERE id = ?4",
         )
         .bind(name)
         .bind(email)
+        .bind(email_verified_claim)
         .bind(&id)
         .execute(&mut *tx)
         .await?;
@@ -1600,13 +1662,26 @@ async fn find_or_create_oidc_user(
     // 2. Link to existing local user by email — only if the IdP asserts the
     //    email is verified. Otherwise an attacker could register at the IdP
     //    with the target's email and silently take over their local account.
-    if let Some((id, _existing_provider)) = sqlx::query_as::<_, (String, String)>(
-        "SELECT id, auth_provider FROM users WHERE email = ? AND enabled = 1",
+    //    Only an account no identity is linked to yet: one that already has
+    //    an `oidc_subject` belongs to another IdP identity (an address the
+    //    IdP recycled to a newcomer), and linking would hand that whole
+    //    account to the newcomer.
+    if let Some((id, existing_subject)) = sqlx::query_as::<_, (String, Option<String>)>(
+        "SELECT id, oidc_subject FROM users WHERE lower(email) = lower(trim(?)) AND enabled = 1",
     )
     .bind(email)
     .fetch_optional(pool)
     .await?
     {
+        if existing_subject.is_some() {
+            tracing::warn!(
+                email = %email, subject = %subject,
+                "OIDC login refused: the address belongs to an account linked to another identity"
+            );
+            anyhow::bail!(
+                "An account with this email is already linked to another single sign-on identity. Contact an administrator."
+            );
+        }
         if !email_verified {
             tracing::warn!(
                 email = %email, subject = %subject,
@@ -1639,7 +1714,7 @@ async fn find_or_create_oidc_user(
         // MFA policy exemption or skip reauthentication for policy changes.
         let mut tx = pool.begin().await?;
         let linked = sqlx::query(
-            "UPDATE users SET oidc_subject = ?, auth_provider = 'oidc', updated_at = datetime('now') WHERE id = ? AND enabled = 1",
+            "UPDATE users SET oidc_subject = ?, auth_provider = 'oidc', email_trusted = 1, email_verified_by_idp = 1, updated_at = datetime('now') WHERE id = ? AND enabled = 1 AND oidc_subject IS NULL",
         )
         .bind(subject)
         .bind(&id)
@@ -1676,10 +1751,10 @@ async fn find_or_create_oidc_user(
     // atomic with the row creation; see create_local_user for the rationale.
     let mut tx = pool.begin().await?;
     sqlx::query(
-        "INSERT INTO users (id, email, name, timezone, role, auth_provider, oidc_subject, username)
+        "INSERT INTO users (id, email, name, timezone, role, auth_provider, oidc_subject, username, email_trusted, email_verified_by_idp)
          VALUES (?, ?, ?, 'UTC',
                  CASE WHEN NOT EXISTS (SELECT 1 FROM users) THEN 'admin' ELSE 'user' END,
-                 'oidc', ?, ?)",
+                 'oidc', ?, ?, 1, 1)",
     )
     .bind(&user_id)
     .bind(email)
@@ -3331,6 +3406,116 @@ mod tests {
         assert_eq!(oidc_subject.as_deref(), Some("alice-sub-123"));
     }
 
+    /// Linking by email ignores letter case, like Exchange: an IdP reporting
+    /// `Alice@Company.com` (verified) links the local `alice@company.com`
+    /// instead of creating a second account for the same mailbox, and marks
+    /// the address as verified by the identity provider.
+    #[tokio::test]
+    async fn oidc_link_by_email_ignores_letter_case() {
+        let pool = setup_db().await;
+        let user_id = insert_user(&pool, "alice@company.com", "Alice", "user").await;
+        let cfg = auth_config_with_oidc(&pool, true).await;
+        let linked =
+            find_or_create_oidc_user(&pool, "sub-case", " Alice@Company.com", true, "Alice", &cfg)
+                .await
+                .unwrap();
+        assert_eq!(linked, user_id);
+        let (users, by_idp): (i64, bool) = sqlx::query_as(
+            "SELECT (SELECT COUNT(*) FROM users), \
+                    (SELECT email_verified_by_idp FROM users WHERE id = ?)",
+        )
+        .bind(&user_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!((users, by_idp), (1, true));
+    }
+
+    /// ADFS and Entra ID do not send `email_verified` by default. Without
+    /// it, an admin's confirmation of an unchanged address (letter case
+    /// aside) survives a login; an explicit `false`, or a new address, drops it.
+    #[tokio::test]
+    async fn an_absent_email_verified_claim_keeps_an_admin_confirmation() {
+        let pool = setup_db().await;
+        let cfg = auth_config_with_oidc(&pool, true).await;
+        let id = find_or_create_oidc_user(&pool, "sub-adfs", "jo@corp.com", true, "Jo", &cfg)
+            .await
+            .unwrap();
+        // The admin confirmed it; the IdP's own verification is not on record.
+        sqlx::query("UPDATE users SET email_trusted = 1, email_verified_by_idp = 0 WHERE id = ?")
+            .bind(&id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let trust = || async {
+            sqlx::query_as::<_, (bool, bool)>(
+                "SELECT email_trusted, email_verified_by_idp FROM users WHERE id = ?",
+            )
+            .bind(&id)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        };
+        let login = |email: &'static str, claim: Option<bool>| {
+            let pool = pool.clone();
+            let cfg = cfg.clone();
+            async move {
+                find_or_create_oidc_user_with_claim(&pool, "sub-adfs", email, claim, "Jo", &cfg)
+                    .await
+                    .unwrap()
+            }
+        };
+        login("Jo@Corp.com", None).await;
+        assert_eq!(trust().await, (true, false), "absent, same address: kept");
+        login("jo@corp.com", Some(false)).await;
+        assert_eq!(trust().await, (false, false), "explicitly false: dropped");
+        sqlx::query("UPDATE users SET email_trusted = 1 WHERE id = ?")
+            .bind(&id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        login("joanna@corp.com", None).await;
+        assert_eq!(
+            trust().await,
+            (false, false),
+            "absent, new address: dropped"
+        );
+        login("joanna@corp.com", Some(true)).await;
+        assert_eq!(trust().await, (true, true), "verified: trusted");
+    }
+
+    /// An address the IdP recycled: a newcomer with a new subject and the
+    /// previous holder's (verified) address must not take over the account
+    /// already linked to the previous holder's subject. Refused, whatever
+    /// auto-register says, and the account keeps its subject.
+    #[tokio::test]
+    async fn oidc_recycled_address_does_not_take_over_a_linked_account() {
+        let pool = setup_db().await;
+        let cfg = auth_config_with_oidc(&pool, true).await;
+        let first =
+            find_or_create_oidc_user(&pool, "sub-old", "pat@company.com", true, "Pat", &cfg)
+                .await
+                .unwrap();
+        let err = find_or_create_oidc_user(&pool, "sub-new", "Pat@company.com", true, "New", &cfg)
+            .await
+            .expect_err("a recycled address must not link to the linked account");
+        assert!(err.to_string().contains("already linked"), "{err}");
+        let (subject, users): (Option<String>, i64) = sqlx::query_as(
+            "SELECT oidc_subject, (SELECT COUNT(*) FROM users) FROM users WHERE id = ?",
+        )
+        .bind(&first)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!((subject.as_deref(), users), (Some("sub-old"), 1));
+        // The previous holder still signs in with their own subject.
+        let again =
+            find_or_create_oidc_user(&pool, "sub-old", "pat@company.com", true, "Pat", &cfg)
+                .await
+                .unwrap();
+        assert_eq!(again, first);
+    }
+
     #[tokio::test]
     async fn oidc_auto_register_requires_email_verified() {
         // Squatting scenario: auto-register is on. Attacker signs in with a
@@ -3422,6 +3607,102 @@ mod tests {
         .await
         .expect("returning user with existing oidc_subject must always work");
         assert_eq!(id_first, id_second);
+    }
+
+    /// Whether calrs trusts an SSO address (and so may open its Exchange
+    /// mailbox) is re-checked at every login: an address the IdP no longer
+    /// verifies loses its managed source, calendars and cached events with it.
+    #[tokio::test]
+    async fn an_unverified_oidc_address_loses_its_managed_exchange_source() {
+        let pool = setup_db().await;
+        let auth_cfg = auth_config_with_oidc(&pool, true).await;
+        let user_id = find_or_create_oidc_user(
+            &pool,
+            "sub-ews",
+            "boss@company.com",
+            true,
+            "Boss",
+            &auth_cfg,
+        )
+        .await
+        .unwrap();
+        let trusted = |pool: SqlitePool, id: String| async move {
+            sqlx::query_scalar::<_, bool>("SELECT email_trusted FROM users WHERE id = ?")
+                .bind(&id)
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+        };
+        assert!(trusted(pool.clone(), user_id.clone()).await);
+
+        let ews = crate::ews::global::EwsGlobalConfig {
+            url: "https://mail.company.com/EWS/Exchange.asmx".to_string(),
+            service_username: "svc".to_string(),
+            service_password: "pw".to_string(),
+            lock_user_sources: false,
+            auto_provision: true,
+            domain_override: None,
+        };
+        sqlx::query(
+            "UPDATE auth_config SET ews_global_enabled = 1, ews_global_url = ?, \
+             ews_service_username = 'svc', ews_service_password_enc = 'x' WHERE id = 'singleton'",
+        )
+        .bind(&ews.url)
+        .execute(&pool)
+        .await
+        .unwrap();
+        crate::ews::global::after_oidc_login(&pool, Some(&ews), &user_id).await;
+        let source: String = sqlx::query_scalar(
+            "SELECT cs.id FROM caldav_sources cs JOIN accounts a ON a.id = cs.account_id \
+             WHERE a.user_id = ? AND cs.managed = 1",
+        )
+        .bind(&user_id)
+        .fetch_one(&pool)
+        .await
+        .expect("a verified address is provisioned");
+        let cal = uuid::Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO calendars (id, source_id, href) VALUES (?, ?, 'CAL')")
+            .bind(&cal)
+            .bind(&source)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO events (id, calendar_id, uid, start_at, end_at) VALUES ('ev', ?, 'u', '20300101T100000', '20300101T110000')")
+            .bind(&cal)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // Next login: the IdP reports another address and does not verify it.
+        find_or_create_oidc_user(
+            &pool,
+            "sub-ews",
+            "ceo@company.com",
+            false,
+            "Boss",
+            &auth_cfg,
+        )
+        .await
+        .unwrap();
+        assert!(!trusted(pool.clone(), user_id.clone()).await);
+        // Even with global Exchange off, nothing stays attached.
+        crate::ews::global::after_oidc_login(&pool, None, &user_id).await;
+        let left: (i64, i64, i64) = sqlx::query_as(
+            "SELECT (SELECT COUNT(*) FROM caldav_sources WHERE managed = 1), \
+                    (SELECT COUNT(*) FROM calendars), (SELECT COUNT(*) FROM events)",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(left, (0, 0, 0));
+
+        // And with it on, the unverified address is not provisioned again.
+        crate::ews::global::after_oidc_login(&pool, Some(&ews), &user_id).await;
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM caldav_sources")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count, 0);
     }
 
     #[tokio::test]
