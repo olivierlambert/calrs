@@ -2373,6 +2373,15 @@ pub(crate) async fn cancel_orphaned_booking(
         booking_id = %booking_id,
         "booking cancelled: calendar event deleted externally"
     );
+    // The host deleted the event: a cancellation by the host for the
+    // booking webhooks (#168). Every provider's sync ends up here.
+    crate::web::webhooks::enqueue(
+        pool,
+        &booking_id,
+        crate::web::webhooks::Event::Cancelled,
+        crate::web::webhooks::Context::cancelled(crate::web::webhooks::Actor::Host, None),
+    )
+    .await;
     // The host's event is gone from this calendar; its other copies are
     // not: a claimant's (#269), copies recorded at a destination (#47) and
     // the host's other write calendars. Same delete as any host
@@ -4160,6 +4169,43 @@ mod tests {
         assert_eq!(since(pool.clone(), source.clone()).await, None);
     }
 
+    /// A Graph orphan cancellation queues the `booking.cancelled` webhook
+    /// (#168) as a cancellation by the host, once: a later sync finds
+    /// nothing more to cancel.
+    #[tokio::test]
+    async fn a_graph_orphan_cancellation_queues_one_webhook() {
+        let pool = setup_test_db().await;
+        let (source, et, user, calendar) = provider_fixture(&pool, kinds::MICROSOFT).await;
+        let booking = provider_booking(&pool, &et, "gone-in-outlook").await;
+        // Webhooks are an admin's unless the admin opens them to everyone.
+        sqlx::query("UPDATE users SET role = 'admin' WHERE id = ?")
+            .bind(&user)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO webhooks (id, user_id, url, secret_enc) SELECT 'wh', a.user_id, 'https://93.184.215.14/h', 'x' FROM event_types et JOIN accounts a ON a.id = et.account_id WHERE et.id = ?")
+            .bind(&et)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let start = Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
+        cached_provider_event(&pool, &calendar, "gone-in-outlook", &start).await;
+        for _ in 0..2 {
+            sync_provider_calendars(&pool, &[0; 32], &snapshot_provider("write"), &source)
+                .await
+                .unwrap();
+        }
+        assert_eq!(booking_status(&pool, &booking).await, "cancelled");
+        let payloads: Vec<String> = sqlx::query_scalar("SELECT payload FROM webhook_deliveries")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        assert_eq!(payloads.len(), 1, "{payloads:?}");
+        let v: serde_json::Value = serde_json::from_str(&payloads[0]).unwrap();
+        assert_eq!(v["event"], "booking.cancelled");
+        assert_eq!(v["booking"]["cancelled_by"], "host");
+    }
+
     /// Lists no calendar at all, which a mailbox never really has.
     fn provider_without_calendars() -> impl crate::providers::CalendarProvider {
         struct Empty;
@@ -4628,6 +4674,13 @@ mod tests {
         .await
         .unwrap();
 
+        // A webhook on the host's event types (#168).
+        sqlx::query("INSERT INTO webhooks (id, user_id, url, secret_enc) SELECT 'wh', a.user_id, 'https://93.184.215.14/h', 'x' FROM event_types et JOIN accounts a ON a.id = et.account_id WHERE et.id = ?")
+            .bind(&et_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
         let outcome = cancel_orphaned_booking(
             &pool,
             &key,
@@ -4637,6 +4690,15 @@ mod tests {
         )
         .await;
         assert!(matches!(outcome, OrphanOutcome::Cancelled));
+
+        // Queued as a cancellation by the host.
+        let payload: String = sqlx::query_scalar("SELECT payload FROM webhook_deliveries")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let v: serde_json::Value = serde_json::from_str(&payload).unwrap();
+        assert_eq!(v["event"], "booking.cancelled");
+        assert_eq!(v["booking"]["cancelled_by"], "host");
 
         let copies: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM events WHERE uid = 'deleted-uid' AND calendar_id = ?",

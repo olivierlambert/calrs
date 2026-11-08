@@ -13,6 +13,7 @@
 - [Teams](./teams.md)
 - [Shared Resources](./resources.md)
 - [SMS Notifications](./sms.md)
+- [Webhooks](./webhooks.md)
 - [Authentication](./authentication.md)
 - [MCP Integration](./mcp.md)
 - [Authentik (OIDC SSO)](./authentik.md)

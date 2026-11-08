@@ -1165,6 +1165,20 @@
   sync();
 })();
 </script>
+<!-- Booking webhooks (#168): who may add them -->
+<div class="card">
+  <h2>{{ t("admin-webhooks") }}</h2>
+  <p style="font-size: 0.875rem; color: var(--text-secondary); margin-bottom: 1rem;">{{ t("admin-webhooks-help", count=webhook_count) }}</p>
+  <form method="post" action="/dashboard/admin/webhooks/policy">
+    <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.925rem; cursor: pointer;">
+      <input type="checkbox" name="allow_all_users" value="on" {% if webhooks_allow_all_users %}checked{% endif %} style="width: 1rem; height: 1rem;">
+      {{ t("admin-webhooks-allow-all") }}
+    </label>
+    <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin: 0.375rem 0 0.75rem;">{{ t("admin-webhooks-allow-all-help") }}</span>
+    <button type="submit" class="adm-btn">{{ t("admin-save-policy") }}</button>
+  </form>
+  <p style="font-size: 0.8rem; color: var(--text-muted); margin-top: 1rem;"><a href="/dashboard/webhooks">{{ t("admin-webhooks-manage") }}</a></p>
+</div>
 </section>
 <!-- ============ meetings ============ -->
 <section class="adm-panel" id="panel-meetings" role="tabpanel" data-panel="meetings" aria-label="{{ t('admin-tab-meetings') }}">

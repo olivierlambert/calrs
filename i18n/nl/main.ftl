@@ -2114,3 +2114,87 @@ sources-destinations-saved = Opgeslagen. Nieuwe boekingen gaan naar de hier geko
 write-destination-not-yours = Er is niets opgeslagen: kies een van je eigen agenda's, voor een afspraaktype dat je begeleidt.
 write-destination-unavailable = { $name } (niet beschikbaar)
 write-destination-refused = Deze agenda weigerde de laatste boeking ({ $error }), die volgens de instelling van de bron is geschreven. De volgende boeking probeert het opnieuw.
+# Booking webhooks (templates/webhooks.html, admin card, #168)
+webhooks-title = Webhooks
+webhooks-back = Terug naar afspraaktypes
+webhooks-subtitle = calrs stuurt een ondertekend JSON-bericht naar deze adressen wanneer een boeking wordt gemaakt, aangevraagd, goedgekeurd, afgewezen, verloopt, wordt geannuleerd of verzet.
+webhooks-not-allowed = Op deze instantie zijn webhooks voorbehouden aan beheerders.
+webhooks-endpoints = Bestemmingen
+webhooks-empty = Nog geen webhooks. Voeg er hieronder een toe zodat calrs een ander systeem op de hoogte houdt van je boekingen.
+webhooks-scope = Gebeurtenissen sturen voor
+webhooks-scope-personal = Al mijn persoonlijke afspraaktypes
+webhooks-scope-event-type = Afspraaktype: { $title }
+webhooks-scope-team-event-type = Afspraaktype: { $title } ({ $team })
+webhooks-added-by = Toegevoegd door { $name }
+webhooks-state-off = Uitgeschakeld
+webhooks-never-sent = Nog niets verstuurd
+webhooks-state-ok = Laatste aflevering gelukt
+webhooks-state-failing = Laatste aflevering mislukt
+webhooks-queued =
+    { $count ->
+        [one] 1 aflevering wacht op een nieuwe poging
+       *[other] { $count } afleveringen wachten op een nieuwe poging
+    }
+webhooks-gave-up =
+    { $count ->
+        [one] 1 aflevering opgegeven na alle pogingen
+       *[other] { $count } afleveringen opgegeven na alle pogingen
+    }
+webhooks-send-test = Test versturen
+webhooks-enable = Inschakelen
+webhooks-disable = Uitschakelen
+webhooks-delete = Verwijderen
+webhooks-delete-confirm = Deze webhook verwijderen? Afleveringen die nog wachten vervallen.
+webhooks-edit = Bewerken
+webhooks-url = URL
+webhooks-url-hint = (https)
+webhooks-secret = Ondertekeningsgeheim
+webhooks-secret-hint = (minstens { $min } tekens, ondertekent elk verzoek, wordt nooit meer getoond)
+webhooks-save = Opslaan
+webhooks-add = Een webhook toevoegen
+webhooks-add-submit = Webhook toevoegen
+webhooks-privacy-note = Elk bericht bevat de naam, het e-mailadres, het telefoonnummer en de notities van de gast. Stuur het alleen naar een systeem dat je die gegevens toevertrouwt.
+webhooks-notice-created = Webhook toegevoegd. Gebruik "Test versturen" om te controleren of hij aankomt.
+webhooks-notice-updated = Webhook opgeslagen.
+webhooks-notice-deleted = Webhook verwijderd.
+webhooks-notice-enabled = Webhook ingeschakeld.
+webhooks-notice-disabled = Webhook uitgeschakeld. Afleveringen die nog wachtten zijn vervallen.
+webhooks-notice-test-ok = Test afgeleverd: de bestemming antwoordde met een 2xx-status.
+webhooks-error-url = Vul een volledige URL in, bijvoorbeeld https://hooks.example.com/calrs.
+webhooks-error-https = De URL moet beginnen met https://. Gewoon http werkt alleen voor een host op de lijst met toegestane privéhosts.
+webhooks-error-credentials = Haal de gebruikersnaam en het wachtwoord uit de URL: het ondertekeningsgeheim authenticeert calrs.
+webhooks-error-secret = Het ondertekeningsgeheim moet 16 tot 256 tekens lang zijn.
+webhooks-error-scope = Je kunt geen webhook aan dat afspraaktype toevoegen.
+webhooks-error-limit = Dit bereik heeft al het maximum van 10 webhooks.
+webhooks-error-test = De test is niet afgeleverd. De reden staat bij de webhook.
+admin-webhooks = Boekingswebhooks
+admin-webhooks-help =
+    { $count ->
+        [one] Op deze instantie is 1 webhook ingesteld.
+       *[other] Op deze instantie zijn { $count } webhooks ingesteld.
+    }
+admin-webhooks-allow-all = Alle gebruikers webhooks laten toevoegen
+admin-webhooks-allow-all-help = Standaard uit: een webhook stuurt namen, e-mailadressen en telefoonnummers van gasten naar een adres dat de gebruiker kiest, dus alleen beheerders mogen er een toevoegen. Uitschakelen stopt de webhooks die andere gebruikers hebben toegevoegd.
+admin-webhooks-manage = Je webhooks beheren
+webhooks-events = Gebeurtenissen
+webhooks-events-all = Alle gebeurtenissen
+webhooks-event-created = Geboekt (bevestigd)
+webhooks-event-requested = Aangevraagd (wacht op goedkeuring)
+webhooks-event-confirmed = Goedgekeurd
+webhooks-event-declined = Afgewezen
+webhooks-event-expired = Onbeantwoord verlopen
+webhooks-event-cancelled = Geannuleerd
+webhooks-event-rescheduled = Verzet
+webhooks-error-events = Kies minstens één gebeurtenis.
+webhooks-error-test-limit = Te veel tests in korte tijd. Wacht een paar minuten en probeer het opnieuw.
+webhooks-added-by-former = Toegevoegd door een voormalig lid
+webhooks-signature-help = Elk verzoek is ondertekend: <code>X-Calrs-Signature: sha256=&lt;hex&gt;</code> is een HMAC-SHA256 van de ruwe inhoud met het ondertekeningsgeheim als sleutel. De inhoud en de controles aan ontvangende kant staan op de pagina Webhooks van de calrs-documentatie.
+webhooks-state-suspended = Opgeschort: wie hem heeft toegevoegd, kan dit afspraaktype niet meer beheren. Neem hem over om hem te hervatten.
+webhooks-adopt = Overnemen
+webhooks-notice-adopted = Webhook overgenomen en hervat.
+webhooks-event-claimed = Geclaimd door een volger
+webhooks-error-address = Dit adres kan niet worden gebruikt: calrs stuurt alleen naar openbare internetadressen, tenzij de host op de lijst met toegestane privéhosts staat.
+webhooks-adopt-help = Door hem over te nemen wordt hij van jou en hervat hij. Bevestig het adres waar hij naartoe stuurt en stel een nieuw ondertekeningsgeheim in: wie hem heeft toegevoegd, kent het oude misschien. Afleveringen die nog wachten vervallen.
+webhooks-error-not-suspended = Alleen een opgeschorte webhook kan worden overgenomen.
+webhooks-error-new-secret = De URL verwijst nu naar een andere host: vul ook een nieuw ondertekeningsgeheim in.
+webhooks-url-masked-hint = (alleen wie hem heeft toegevoegd ziet de volledige URL: vul hem opnieuw in om op te slaan)

@@ -2112,3 +2112,87 @@ sources-destinations-saved = Guardado. Las nuevas reservas van a los calendarios
 write-destination-not-yours = No se guardó nada: elige uno de tus propios calendarios, para un tipo de evento que atiendas.
 write-destination-unavailable = { $name } (no disponible)
 write-destination-refused = Este calendario rechazó la última reserva ({ $error }), que se escribió según el ajuste de la fuente. La próxima reserva lo volverá a intentar.
+# Booking webhooks (templates/webhooks.html, admin card, #168)
+webhooks-title = Webhooks
+webhooks-back = Volver a los tipos de evento
+webhooks-subtitle = calrs envía un mensaje JSON firmado a estas direcciones cuando una reserva se crea, se solicita, se aprueba, se rechaza, caduca, se cancela o se mueve.
+webhooks-not-allowed = En esta instancia, los webhooks están reservados a los administradores.
+webhooks-endpoints = Destinos
+webhooks-empty = Todavía no hay webhooks. Añade uno abajo para que calrs avise a otro sistema de tus reservas.
+webhooks-scope = Enviar eventos de
+webhooks-scope-personal = Todos mis tipos de evento personales
+webhooks-scope-event-type = Tipo de evento: { $title }
+webhooks-scope-team-event-type = Tipo de evento: { $title } ({ $team })
+webhooks-added-by = Añadido por { $name }
+webhooks-state-off = Desactivado
+webhooks-never-sent = Aún no se ha enviado nada
+webhooks-state-ok = Último envío correcto
+webhooks-state-failing = Último envío fallido
+webhooks-queued =
+    { $count ->
+        [one] 1 envío esperando un nuevo intento
+       *[other] { $count } envíos esperando un nuevo intento
+    }
+webhooks-gave-up =
+    { $count ->
+        [one] 1 envío abandonado tras todos los intentos
+       *[other] { $count } envíos abandonados tras todos los intentos
+    }
+webhooks-send-test = Enviar prueba
+webhooks-enable = Activar
+webhooks-disable = Desactivar
+webhooks-delete = Eliminar
+webhooks-delete-confirm = ¿Eliminar este webhook? Los envíos que aún esperan se descartan.
+webhooks-edit = Editar
+webhooks-url = URL
+webhooks-url-hint = (https)
+webhooks-secret = Secreto de firma
+webhooks-secret-hint = (al menos { $min } caracteres, firma cada petición, no se vuelve a mostrar)
+webhooks-save = Guardar
+webhooks-add = Añadir un webhook
+webhooks-add-submit = Añadir webhook
+webhooks-privacy-note = Cada mensaje contiene el nombre, el correo, el teléfono y las notas del invitado. Envíalo solo a un sistema al que confíes esos datos.
+webhooks-notice-created = Webhook añadido. Usa «Enviar prueba» para comprobar que llega.
+webhooks-notice-updated = Webhook guardado.
+webhooks-notice-deleted = Webhook eliminado.
+webhooks-notice-enabled = Webhook activado.
+webhooks-notice-disabled = Webhook desactivado. Los envíos que aún esperaban se han descartado.
+webhooks-notice-test-ok = Prueba entregada: el destino respondió con un estado 2xx.
+webhooks-error-url = Introduce una URL completa, por ejemplo https://hooks.example.com/calrs.
+webhooks-error-https = La URL debe empezar por https://. El http simple solo funciona con un host de la lista de hosts privados permitidos.
+webhooks-error-credentials = Quita el usuario y la contraseña de la URL: el secreto de firma autentica a calrs.
+webhooks-error-secret = El secreto de firma debe tener entre 16 y 256 caracteres.
+webhooks-error-scope = No puedes añadir un webhook a ese tipo de evento.
+webhooks-error-limit = Este ámbito ya tiene el máximo de 10 webhooks.
+webhooks-error-test = La prueba no se entregó. El motivo aparece junto al webhook.
+admin-webhooks = Webhooks de reservas
+admin-webhooks-help =
+    { $count ->
+        [one] Hay 1 webhook configurado en esta instancia.
+       *[other] Hay { $count } webhooks configurados en esta instancia.
+    }
+admin-webhooks-allow-all = Permitir que cualquier usuario añada webhooks
+admin-webhooks-allow-all-help = Desactivado por defecto: un webhook envía nombres, correos y teléfonos de invitados a una dirección elegida por el usuario, así que solo los administradores pueden añadirlos. Desactivarlo detiene los webhooks que añadieron otros usuarios.
+admin-webhooks-manage = Gestionar tus webhooks
+webhooks-events = Eventos
+webhooks-events-all = Todos los eventos
+webhooks-event-created = Reservada (confirmada)
+webhooks-event-requested = Solicitada (esperando aprobación)
+webhooks-event-confirmed = Aprobada
+webhooks-event-declined = Rechazada
+webhooks-event-expired = Caducada sin respuesta
+webhooks-event-cancelled = Cancelada
+webhooks-event-rescheduled = Movida
+webhooks-error-events = Elige al menos un evento.
+webhooks-error-test-limit = Demasiadas pruebas en poco tiempo. Espera unos minutos y vuelve a intentarlo.
+webhooks-added-by-former = Añadido por un antiguo miembro
+webhooks-signature-help = Cada petición va firmada: <code>X-Calrs-Signature: sha256=&lt;hex&gt;</code> es un HMAC-SHA256 del cuerpo sin procesar, con el secreto de firma como clave. El contenido y las comprobaciones del receptor se describen en la página Webhooks de la documentación de calrs.
+webhooks-state-suspended = Suspendido: quien lo añadió ya no puede gestionar este tipo de evento. Hazte cargo de él para reanudarlo.
+webhooks-adopt = Hacerse cargo
+webhooks-notice-adopted = Webhook asumido y reanudado.
+webhooks-event-claimed = Asumida por un observador
+webhooks-error-address = No se puede usar esta dirección: calrs solo envía a direcciones públicas de Internet, salvo que el host esté en la lista de hosts privados permitidos.
+webhooks-adopt-help = Hacerte cargo de él lo hace tuyo y lo reanuda. Confirma la dirección a la que envía y define un nuevo secreto de firma: quien lo añadió puede conocer el anterior. Los envíos que aún esperan se descartan.
+webhooks-error-not-suspended = Solo se puede asumir un webhook suspendido.
+webhooks-error-new-secret = La URL apunta ahora a otro host: introduce también un nuevo secreto de firma.
+webhooks-url-masked-hint = (solo quien lo añadió ve la URL completa: vuelve a introducirla para guardar)

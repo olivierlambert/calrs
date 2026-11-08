@@ -26,6 +26,7 @@
     <p class="page-subtitle">{{ t("event-types-subtitle") }}</p>
   </div>
   <div class="page-actions">
+    {% if webhooks_allowed %}<a href="/dashboard/webhooks" class="ui-btn">{{ t("webhooks-title") }}</a>{% endif %}
     <a href="/dashboard/event-types/new" class="ui-btn ui-btn--primary" data-shortcut="new" title="{{ t('dash-shortcut-new') }} (n)">{{ t("event-types-new") }}</a>
   </div>
 </header>
