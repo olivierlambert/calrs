@@ -114,6 +114,10 @@ impl CalendarProvider for CaldavProvider {
         self.client.delete_event(calendar_id, uid).await
     }
 
+    async fn release_event(&self, calendar_id: &str, uid: &str) -> Result<()> {
+        self.client.release_event(calendar_id, uid).await
+    }
+
     async fn event_exists(&self, calendar_id: &str, uid: &str) -> Result<bool> {
         self.client.event_exists(calendar_id, uid).await
     }

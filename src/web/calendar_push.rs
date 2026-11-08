@@ -180,6 +180,67 @@ pub(super) async fn push_to_sources(
     }
 
     let ics = crate::email::generate_ics_caldav(details);
+    // One Google copy of the booking carries the guests as attendees (#237):
+    // Google adds an event to each attendee's own Google calendar, so a
+    // second copy with attendees would show them the meeting twice. The
+    // others are written without ATTENDEE lines, which also clears, without
+    // a word to anyone, attendees an earlier write left on them.
+    let is_google = |auth_type: &str, provider: Option<&str>| {
+        auth_type == "oauth2" && provider == Some("google")
+    };
+    let writes_to_google =
+        sources
+            .iter()
+            .any(|(_, _, _, _, _, auth_type, _, _, _, provider, _)| {
+                is_google(auth_type, provider.as_deref())
+            });
+    // This user's copy carries them when they hold the booking's attendee
+    // copy: on their Google row with the lowest source id among the rows
+    // this push writes (the chosen destination, the Meet's calendar, or the
+    // first Google source of the source setting).
+    let attendee_source: Option<String> = match owner {
+        CopyOwner::Host if writes_to_google => {
+            let holder = crate::google_calendar::attendee_copy_holder(pool, booking_uid).await;
+            if holder.as_deref() == Some(user_id) {
+                // The rule the Meet source follows (`google_meet`): a token,
+                // and a write calendar, so guests and Meet share one copy.
+                sources
+                    .iter()
+                    .filter(|row| is_google(&row.5, row.9.as_deref()))
+                    .filter(|row| row.6.as_deref().is_some_and(|t| !t.is_empty()))
+                    .filter(|row| !row.4.trim().is_empty())
+                    .map(|row| row.0.clone())
+                    .min()
+            } else {
+                None
+            }
+        }
+        _ => None,
+    };
+    let without_attendees = crate::google_calendar::split_scheduling(&ics).0;
+    // Google shares that copy with every attendee, description included,
+    // so it leaves out the guest's phone, which additional attendees never
+    // see (#261); the copies without attendees keep it for the host. A
+    // claimant listed on it would get it on their Google Calendar from
+    // Google, beside the copy calrs writes for them (#269): when they have
+    // one, they are left off. Without one they stay, and rely on it.
+    let attendee_ics = match &attendee_source {
+        Some(_) => {
+            let shared = crate::email::generate_ics_caldav(&crate::email::BookingDetails {
+                guest_phone: None,
+                ..details.clone()
+            });
+            let targets = booking_write_targets(pool, booking_uid, user_id).await;
+            match claimant_with_own_copy(pool, booking_uid, &targets).await {
+                Some((claimant, _)) => crate::google_calendar::without_attendees_named(
+                    &shared,
+                    &claimant_attendee_addresses(pool, booking_uid, &claimant).await,
+                ),
+                None => shared,
+            }
+        }
+        None => String::new(),
+    };
     let mut preserved_meet_href = false;
 
     for (
@@ -280,6 +341,38 @@ pub(super) async fn push_to_sources(
             // Later PUTs to other calendars must not overwrite this: cancel
             // keys off one href, and that has to be the Meet-holding calendar.
             preserved_meet_href = true;
+            // No PUT here, so nothing else would notice that minting the
+            // Meet could not add the guests: check, and leave a failure
+            // for the write-back retry when they are still missing.
+            if attendee_source.as_deref() == Some(source_id.as_str()) {
+                let ensured = match crate::oauth2_caldav::build_client_for_source(
+                    pool,
+                    key,
+                    source_id,
+                    url,
+                    auth_type,
+                    username,
+                    password_enc.as_deref(),
+                    access_token_enc.as_deref(),
+                    token_expires_at.as_deref(),
+                )
+                .await
+                {
+                    Ok(client) => {
+                        client
+                            .ensure_google_attendees(calendar_href, booking_uid, &attendee_ics)
+                            .await
+                    }
+                    Err(e) => Err(e),
+                };
+                if let Err(e) = ensured {
+                    tracing::warn!(uid = %booking_uid, error = format!("{e:#}"), "google meet: the Meet event still lacks its attendees");
+                    failures.push(PushFailure {
+                        message: format!("{source_name}: {e:#}"),
+                        refusal: None,
+                    });
+                }
+            }
             continue;
         }
 
@@ -319,9 +412,21 @@ pub(super) async fn push_to_sources(
 
         // A 2xx on the write is not proof the host sees the event (#162):
         // read it back by UID before calling it written.
-        let written =
-            crate::providers::put_and_verify(provider.as_ref(), calendar_href, booking_uid, &ics)
-                .await;
+        let google = is_google(auth_type, oauth2_provider.as_deref());
+        let source_ics = if !google {
+            &ics
+        } else if attendee_source.as_deref() == Some(source_id.as_str()) {
+            &attendee_ics
+        } else {
+            &without_attendees
+        };
+        let written = crate::providers::put_and_verify(
+            provider.as_ref(),
+            calendar_href,
+            booking_uid,
+            source_ics,
+        )
+        .await;
         let event_may_exist = match &written {
             Ok(()) => true,
             Err(e) => e.event_may_exist(),
@@ -444,7 +549,7 @@ async fn caldav_delete_for_user(
         {
             continue;
         }
-        delete_from(pool, key, &row, booking_uid).await;
+        delete_from(pool, key, &row, booking_uid, DeleteKind::Ended).await;
     }
 
     // Remove cached event
@@ -477,6 +582,56 @@ pub(super) async fn booking_claimant(pool: &SqlitePool, booking_uid: &str) -> Op
         return None;
     }
     Some(claimant)
+}
+
+/// The claimant of a booking whose own copy calrs writes (#269): one who
+/// is not a host and has a write collection no host writes to (a shared
+/// collection already holds the host's event). Returned with the hosts'
+/// collections, which their copy skips. `None` when no claimant copy is
+/// written.
+pub(super) async fn claimant_with_own_copy(
+    pool: &SqlitePool,
+    booking_uid: &str,
+    targets: &[String],
+) -> Option<(String, Vec<Collection>)> {
+    let claimant = booking_claimant(pool, booking_uid)
+        .await
+        .filter(|c| !targets.contains(c))?;
+    // Where the hosts' copies go, chosen destinations included (#47), as
+    // the push computes it.
+    let mut host_collections = Vec::new();
+    for target in targets {
+        let (rows, _) = host_write_sources(pool, booking_uid, target).await;
+        host_collections.extend(rows.iter().map(row_collection));
+    }
+    // The claimant's copy goes to their source setting (`push_claimant_copy`).
+    default_write_sources(pool, &claimant)
+        .await
+        .iter()
+        .any(|row| !host_collections.contains(&row_collection(row)))
+        .then_some((claimant, host_collections))
+}
+
+/// The addresses the claimant of a booking is listed under: the attendee
+/// row their claim added (found by user, #350), and their current address.
+async fn claimant_attendee_addresses(
+    pool: &SqlitePool,
+    booking_uid: &str,
+    claimant: &str,
+) -> Vec<String> {
+    sqlx::query_scalar(
+        "SELECT ba.email FROM booking_attendees ba
+         JOIN bookings b ON b.id = ba.booking_id
+         WHERE b.uid = ? AND ba.claimant_user_id = ?
+         UNION
+         SELECT COALESCE(booking_email, email) FROM users WHERE id = ?",
+    )
+    .bind(booking_uid)
+    .bind(claimant)
+    .bind(claimant)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default()
 }
 
 /// A server origin (scheme, host, port) and a collection on it.

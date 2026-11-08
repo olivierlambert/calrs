@@ -187,8 +187,10 @@ pub(super) async fn record_copy(
     href: &str,
 ) {
     let _ = sqlx::query(
-        "INSERT OR IGNORE INTO booking_write_copies (booking_uid, user_id, source_id, calendar_href) \
-         VALUES (?, ?, ?, ?)",
+        "INSERT INTO booking_write_copies (booking_uid, user_id, source_id, calendar_href) \
+         VALUES (?, ?, ?, ?) \
+         ON CONFLICT (booking_uid, user_id, source_id, calendar_href) \
+         DO UPDATE SET delete_attempts = 0, next_delete_at = NULL",
     )
     .bind(booking_uid)
     .bind(user_id)
@@ -220,6 +222,19 @@ async fn tracked_copies(
     .unwrap_or_default()
 }
 
+/// How a copy is deleted: a booking that ended (cancelled, declined) or a
+/// copy released because the booking moved to another calendar (#47).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum DeleteKind {
+    /// The booking ended: the copy must go, on Google even over CalDAV if
+    /// the quiet path fails.
+    Ended,
+    /// The booking goes on elsewhere: on Google a copy with attendees is
+    /// only deleted quietly, or kept for a later try
+    /// (`CalendarProvider::release_event`).
+    Release,
+}
+
 /// Delete the booking from one collection of one of the user's sources, and
 /// its cached copy there, so it stops blocking availability. Returns whether
 /// the copy is gone: deleted, or already absent (404 and 410 count as gone).
@@ -229,6 +244,7 @@ pub(super) async fn delete_from(
     key: &[u8; 32],
     row: &WriteSourceRow,
     booking_uid: &str,
+    kind: DeleteKind,
 ) -> bool {
     let (
         source_id,
@@ -260,7 +276,10 @@ pub(super) async fn delete_from(
         // An idle managed Exchange source: nothing to reach, nothing failed.
         // The copy stays recorded until the source is active again.
         Ok(None) => false,
-        Ok(Some(provider)) => match provider.delete_event(href, booking_uid).await {
+        Ok(Some(provider)) => match match kind {
+            DeleteKind::Ended => provider.delete_event(href, booking_uid).await,
+            DeleteKind::Release => provider.release_event(href, booking_uid).await,
+        } {
             Ok(()) => true,
             Err(e) => {
                 tracing::error!(uid = %booking_uid, calendar = %href, error = %e, "calendar event delete failed");
@@ -316,8 +335,9 @@ async fn delete_tracked(
     booking_uid: &str,
     user_id: &str,
     row: &WriteSourceRow,
+    kind: DeleteKind,
 ) -> bool {
-    let deleted = delete_from(pool, key, row, booking_uid).await;
+    let deleted = delete_from(pool, key, row, booking_uid, kind).await;
     if deleted {
         forget_copy(pool, booking_uid, user_id, row).await;
     }
@@ -335,7 +355,7 @@ pub(super) async fn delete_tracked_copies(
 ) -> Vec<CopyPlace> {
     let rows = tracked_copies(pool, booking_uid, user_id).await;
     for row in &rows {
-        delete_tracked(pool, key, booking_uid, user_id, row).await;
+        delete_tracked(pool, key, booking_uid, user_id, row, DeleteKind::Ended).await;
     }
     // A row whose source is no longer the user's cannot be reached at all.
     let _ = sqlx::query(
@@ -401,10 +421,37 @@ pub(super) async fn release_moved_copies(
             continue;
         }
         tracing::info!(uid = %booking_uid, user_id = %user_id, calendar = %row.4, "booking moved to another calendar: deleting the earlier copy");
-        delete_tracked(pool, key, booking_uid, user_id, &row).await;
+        if !delete_tracked(pool, key, booking_uid, user_id, &row, DeleteKind::Release).await {
+            schedule_release_retry(pool, booking_uid, user_id, &row).await;
+        }
         released.push(row);
     }
     released
+}
+
+/// A released copy that could not be deleted (on Google, a copy with
+/// attendees the Calendar API could not delete quietly): the background
+/// sweep tries it again on the write-back schedule. Meanwhile it keeps its
+/// attendees beside the new copy.
+async fn schedule_release_retry(
+    pool: &SqlitePool,
+    booking_uid: &str,
+    user_id: &str,
+    row: &WriteSourceRow,
+) {
+    let next = super::writeback::next_attempt_at(1, Utc::now())
+        .unwrap_or_else(|| Utc::now() + chrono::Duration::minutes(5));
+    let _ = sqlx::query(
+        "UPDATE booking_write_copies SET delete_attempts = MAX(delete_attempts, 1), next_delete_at = ?
+         WHERE booking_uid = ? AND user_id = ? AND source_id = ? AND calendar_href = ?",
+    )
+    .bind(next.format("%Y-%m-%d %H:%M:%S").to_string())
+    .bind(booking_uid)
+    .bind(user_id)
+    .bind(&row.0)
+    .bind(&row.4)
+    .execute(pool)
+    .await;
 }
 
 /// Release every recorded copy of users who no longer host the booking.
@@ -424,7 +471,9 @@ pub(super) async fn release_former_hosts(
             if keep.contains(&row_collection(&row)) {
                 continue;
             }
-            delete_tracked(pool, key, booking_uid, &user, &row).await;
+            if !delete_tracked(pool, key, booking_uid, &user, &row, DeleteKind::Release).await {
+                schedule_release_retry(pool, booking_uid, &user, &row).await;
+            }
             released.push(row);
         }
     }
@@ -525,13 +574,15 @@ pub(crate) async fn sweep_leftover_copies(
     .execute(pool)
     .await;
     let stamp = now.format("%Y-%m-%d %H:%M:%S").to_string();
-    let due: Vec<(String, String, String, String, i64)> = sqlx::query_as(&format!(
-        "SELECT bc.booking_uid, bc.user_id, bc.source_id, bc.calendar_href, bc.delete_attempts
+    // Also a copy whose release failed while the booking goes on
+    // (`schedule_release_retry`): still deleted quietly, or kept.
+    let due: Vec<(String, String, String, String, i64, String)> = sqlx::query_as(&format!(
+        "SELECT bc.booking_uid, bc.user_id, bc.source_id, bc.calendar_href, bc.delete_attempts, b.status
          FROM booking_write_copies bc
          JOIN bookings b ON b.uid = bc.booking_uid
          JOIN caldav_sources cs ON cs.id = bc.source_id AND cs.enabled = 1
          JOIN accounts a ON a.id = cs.account_id AND a.user_id = bc.user_id
-         WHERE b.status IN ('cancelled', 'declined') AND {ACTIVE}
+         WHERE (b.status IN ('cancelled', 'declined') OR bc.delete_attempts > 0) AND {ACTIVE}
            AND (bc.next_delete_at IS NULL OR bc.next_delete_at <= ?)
          ORDER BY bc.next_delete_at IS NOT NULL, bc.next_delete_at
          LIMIT ?",
@@ -543,13 +594,32 @@ pub(crate) async fn sweep_leftover_copies(
     .await
     .unwrap_or_default();
     let mut tried = 0;
-    for (uid, user, source_id, href, attempts) in &due {
+    for (uid, user, source_id, href, attempts, status) in &due {
         // Its source disabled or no longer the user's: left for later.
         let Some(row) = source_row(pool, user, source_id, href).await else {
             continue;
         };
+        let kind = if status == "cancelled" || status == "declined" {
+            DeleteKind::Ended
+        } else {
+            DeleteKind::Release
+        };
+        if kind == DeleteKind::Release && is_current_copy(pool, uid, &row).await {
+            // The booking came back to that calendar since: a live copy.
+            let _ = sqlx::query(
+                "UPDATE booking_write_copies SET delete_attempts = 0, next_delete_at = NULL
+                 WHERE booking_uid = ? AND user_id = ? AND source_id = ? AND calendar_href = ?",
+            )
+            .bind(uid)
+            .bind(user)
+            .bind(source_id)
+            .bind(href)
+            .execute(pool)
+            .await;
+            continue;
+        }
         tried += 1;
-        if delete_tracked(pool, key, uid, user, &row).await {
+        if delete_tracked(pool, key, uid, user, &row, kind).await {
             continue;
         }
         let attempts = attempts + 1;
@@ -578,6 +648,31 @@ pub(crate) async fn sweep_leftover_copies(
         .await;
     }
     tried
+}
+
+/// Whether `row` is where a current host of the booking writes it now.
+async fn is_current_copy(pool: &SqlitePool, booking_uid: &str, row: &WriteSourceRow) -> bool {
+    let owner: Option<String> = sqlx::query_scalar(
+        "SELECT a.user_id FROM bookings b
+         JOIN event_types et ON et.id = b.event_type_id
+         JOIN accounts a ON a.id = et.account_id WHERE b.uid = ?",
+    )
+    .bind(booking_uid)
+    .fetch_optional(pool)
+    .await
+    .unwrap_or(None)
+    .flatten();
+    let fallback = owner.unwrap_or_default();
+    for target in booking_write_targets(pool, booking_uid, &fallback).await {
+        let (rows, _) = host_write_sources(pool, booking_uid, &target).await;
+        if rows
+            .iter()
+            .any(|r| row_collection(r) == row_collection(row))
+        {
+            return true;
+        }
+    }
+    false
 }
 
 /// Whether the booking was written to any host calendar before: an href is
