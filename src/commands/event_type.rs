@@ -106,7 +106,8 @@ struct EventTypeRow {
 /// event type owner, and the rule is the web slot engine's
 /// (`booking_time::user_busy_bookings`): their own bookings, bookings assigned
 /// to them on other people's team event types, unassigned collective team
-/// bookings, and pending requests whose event type holds the slot. Bookings
+/// bookings, bookings they claimed as a watcher, and pending requests whose
+/// event type holds the slot. Bookings
 /// of other users on the same instance do not count. The window bounds are
 /// ISO local times and are widened by two days on each side, like the web
 /// path, because stored times may be UTC.
@@ -127,6 +128,7 @@ pub(crate) async fn host_busy_bookings(
            AND b.start_at <= strftime('%Y-%m-%dT%H:%M:%S', ?, '+2 days') AND b.end_at >= strftime('%Y-%m-%dT%H:%M:%S', ?, '-2 days')",
         crate::booking_time::user_busy_bookings(true)
     ))
+    .bind(&host)
     .bind(&host)
     .bind(&host)
     .bind(&host)

@@ -1701,6 +1701,7 @@ bookings-error-reschedule-resend-too-soon = The request was emailed to the guest
 bookings-resend-reschedule = Resend request
 bookings-resend-reschedule-hint = Email the guest the same link again (once an hour at most)
 troubleshoot-detail-pending-request = { $title } (pending request)
+troubleshoot-detail-claimed-booking = { $title } (claimed booking)
 etf-pending-blocks-slot = Pending requests block the time slot
 etf-pending-blocks-slot-help = While a request waits for your answer, nobody else can book that time, on this event type or any of your others.
 etf-pending-expiry = Request expiry

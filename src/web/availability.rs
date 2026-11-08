@@ -818,12 +818,13 @@ async fn busy_times(
     ));
 
     let exclude_id = exclude_booking_id.unwrap_or("");
-    // A booking makes a user busy when it is assigned to them, or when it
-    // is unassigned and they own the event type (personal bookings), or
-    // when it is an unassigned team booking (collective mode) and they are
-    // a member of that team. An assigned booking must NOT mark the event
-    // type owner busy: on a round-robin team the owner stays free when
-    // another member took the booking (#146).
+    // A booking makes a user busy when they host it (assigned to them,
+    // their own unassigned booking, or an unassigned collective booking of
+    // a team they belong to and are not excluded from, #375) or when they
+    // claimed it as a watcher (#374); see `booking_time::user_busy_bookings`.
+    // An assigned booking must NOT mark the event type owner busy: on a
+    // round-robin team the owner stays free when another member took the
+    // booking (#146).
     //
     // Pending requests count too when their own event type says so
     // (`pending_blocks_slot`, on by default): otherwise a second guest is
@@ -840,6 +841,7 @@ async fn busy_times(
            AND (? = '' OR b.id != ?)",
         crate::booking_time::user_busy_bookings(include_pending_holds)
     ))
+    .bind(user_id)
     .bind(user_id)
     .bind(user_id)
     .bind(user_id)
@@ -2890,17 +2892,26 @@ pub(super) async fn troubleshoot(
 
     // Bookings for this date: the same bookings that make this user busy on
     // the slot pages (their own, the ones assigned to them on someone else's
-    // team event type, unassigned collective ones, and held pending requests).
-    let bookings: Vec<(String, String, String, String, String)> = sqlx::query_as(&format!(
-        "SELECT CASE b.time_version WHEN 1 THEN b.start_at ELSE rtrim(b.start_at, 'Z') END AS start_at, CASE b.time_version WHEN 1 THEN b.end_at ELSE rtrim(b.end_at, 'Z') END AS end_at, b.guest_name, et.title, b.status
+    // team event type, unassigned collective ones, the ones they claimed as a
+    // watcher, and held pending requests). `claimed` is 1 for a booking the
+    // user is busy for only because they claimed it, so it is labelled so.
+    let bookings: Vec<(String, String, String, String, String, i64)> = sqlx::query_as(&format!(
+        "SELECT CASE b.time_version WHEN 1 THEN b.start_at ELSE rtrim(b.start_at, 'Z') END AS start_at, CASE b.time_version WHEN 1 THEN b.end_at ELSE rtrim(b.end_at, 'Z') END AS end_at, b.guest_name, et.title, b.status,
+                CASE WHEN {} THEN 0 ELSE 1 END AS claimed
          FROM bookings b
          JOIN event_types et ON et.id = b.event_type_id
          JOIN accounts a ON a.id = et.account_id
          WHERE {}
            AND b.start_at < strftime('%Y-%m-%dT%H:%M:%S', ?, '+2 days') AND b.end_at > strftime('%Y-%m-%dT%H:%M:%S', ?, '-2 days')
          ORDER BY b.start_at",
+        crate::booking_time::USER_HOSTS_BOOKING,
         crate::booking_time::user_busy_bookings(true)
     ))
+    .bind(&user.id)
+    .bind(&user.id)
+    .bind(&user.id)
+    .bind(&user.id)
+    .bind(&user.id)
     .bind(&user.id)
     .bind(&user.id)
     .bind(&user.id)
@@ -2987,9 +2998,16 @@ pub(super) async fn troubleshoot(
     // from a confirmed meeting.
     let bookings_parsed: Vec<(NaiveDateTime, NaiveDateTime, String, String)> = bookings
         .iter()
-        .filter_map(|(s, e, guest, et_title, status)| {
+        .filter_map(|(s, e, guest, et_title, status, claimed)| {
             let (start, end) = crate::booking_time::busy_range(s, e, host_tz)?;
-            let detail = if status == "pending" {
+            let detail = if *claimed == 1 {
+                tr1(
+                    auth_user.lang,
+                    "troubleshoot-detail-claimed-booking",
+                    "title",
+                    et_title,
+                )
+            } else if status == "pending" {
                 tr1(
                     auth_user.lang,
                     "troubleshoot-detail-pending-request",
