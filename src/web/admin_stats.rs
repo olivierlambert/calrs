@@ -193,9 +193,11 @@ pub(super) struct BookingFigures {
 
 /// How long `FiguresCache` serves the booking-wide figures.
 pub(super) const FIGURES_TTL: std::time::Duration = std::time::Duration::from_secs(60);
-/// Figures cheaper than this to compute are not cached, so a small instance
-/// always shows live numbers, exactly as before the cache existed.
-pub(super) const FIGURES_CACHE_MIN_COST: std::time::Duration = std::time::Duration::from_millis(40);
+/// Figures are only cached on instances with more bookings than this, so a
+/// small instance always shows live numbers, exactly as before the cache
+/// existed. Decided from the count the figures already carry, not from how
+/// long they took, so the same instance always behaves the same way.
+pub(super) const FIGURES_CACHE_MIN_BOOKINGS: i64 = 20_000;
 
 struct CachedFigures {
     week_start: WeekStart,
@@ -211,21 +213,21 @@ struct CachedFigures {
 /// minute, and the page says how old the figures are while it is cached.
 pub(crate) struct FiguresCache {
     ttl: std::time::Duration,
-    min_cost: std::time::Duration,
+    min_bookings: i64,
     slot: std::sync::Mutex<Option<CachedFigures>>,
 }
 
 impl Default for FiguresCache {
     fn default() -> Self {
-        Self::new(FIGURES_TTL, FIGURES_CACHE_MIN_COST)
+        Self::new(FIGURES_TTL, FIGURES_CACHE_MIN_BOOKINGS)
     }
 }
 
 impl FiguresCache {
-    pub(super) fn new(ttl: std::time::Duration, min_cost: std::time::Duration) -> Self {
+    pub(super) fn new(ttl: std::time::Duration, min_bookings: i64) -> Self {
         Self {
             ttl,
-            min_cost,
+            min_bookings,
             slot: std::sync::Mutex::new(None),
         }
     }
@@ -239,8 +241,8 @@ impl FiguresCache {
             .then(|| (cached.figures.clone(), age.as_secs()))
     }
 
-    /// Keep `figures`, computed from `started` on, if they took long
-    /// enough to be worth keeping. Their age counts from `started`.
+    /// Keep `figures`, computed from `started` on, if the instance has more
+    /// than `min_bookings` bookings. Their age counts from `started`.
     fn store(
         &self,
         week_start: WeekStart,
@@ -249,7 +251,7 @@ impl FiguresCache {
         started: std::time::Instant,
     ) {
         let mut slot = self.slot.lock().unwrap_or_else(|e| e.into_inner());
-        *slot = (started.elapsed() >= self.min_cost).then(|| CachedFigures {
+        *slot = (figures.bookings.total > self.min_bookings).then(|| CachedFigures {
             week_start,
             lang: lang.to_string(),
             computed_at: started,
@@ -393,7 +395,6 @@ async fn booking_figures(
     let t_30 = sql_time(now - Duration::days(30));
     let t_60 = sql_time(now - Duration::days(60));
     let t_7d_ahead = sql_time(now + Duration::days(7));
-    let t_24h_ahead = sql_time(now + Duration::hours(24));
     let t_rank = sql_time(now - Duration::days(RANKING_DAYS));
     let mut stats = BookingFigures::default();
 
@@ -441,15 +442,6 @@ async fn booking_figures(
     .fetch_one(pool)
     .await
     .unwrap_or_default();
-    let pending_expiring_24h: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM bookings
-         WHERE status = 'pending' AND pending_expires_at IS NOT NULL
-           AND datetime(pending_expires_at) <= datetime(?)",
-    )
-    .bind(&t_24h_ahead)
-    .fetch_one(pool)
-    .await
-    .unwrap_or(0);
     stats.bookings = BookingStats {
         total,
         confirmed,
@@ -460,7 +452,8 @@ async fn booking_figures(
         created_prev_30d,
         upcoming,
         upcoming_7d,
-        pending_expiring_24h,
+        // Read live by `live_stats`: the attention list relies on it.
+        pending_expiring_24h: 0,
     };
     let b = &stats.bookings;
     stats.status_segments = [
@@ -654,6 +647,17 @@ async fn live_stats(pool: &SqlitePool, now: DateTime<Utc>, figures: BookingFigur
         top_hosts: figures.top_hosts,
         ..AdminStats::default()
     };
+
+    // --- Pending requests about to expire: an attention item, so live ---
+    stats.bookings.pending_expiring_24h = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM bookings
+         WHERE status = 'pending' AND pending_expires_at IS NOT NULL
+           AND datetime(pending_expires_at) <= datetime(?)",
+    )
+    .bind(sql_time(now + Duration::hours(24)))
+    .fetch_one(pool)
+    .await
+    .unwrap_or(0);
 
     // --- Users ---
     let row: (i64, i64, i64, i64, i64, i64, i64, i64, i64) = sqlx::query_as(

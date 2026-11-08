@@ -301,7 +301,9 @@ async fn user_list_page(
 /// from (rebuilt from its parsed parameters, never echoed), else the panel.
 fn admin_users_return(back: Option<&str>, error: Option<&str>) -> String {
     let error = error.map(|e| format!("error={}", urlencoding::encode(e)));
-    let Some(back) = back.filter(|b| !b.is_empty()) else {
+    // No field at all: the browser-side list, which keeps its own tab. An
+    // empty one is the server-side list in its default state.
+    let Some(back) = back else {
         return match error {
             Some(error) => format!("/dashboard/admin?{error}"),
             None => "/dashboard/admin".to_string(),

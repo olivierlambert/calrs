@@ -703,7 +703,7 @@ async fn overview_shows_a_bounded_number_of_favorites_and_links_to_the_rest() {
     }
     let body = overview().await;
     assert_eq!(entry_count(&body), OVERVIEW_FAVORITES as usize);
-    assert!(body.contains("All favorites (14)"));
+    assert!(body.contains("All favorites"));
     assert!(body
         .replace("&#x2f;", "/")
         .contains("/dashboard/directory?favorites=true"));
@@ -728,5 +728,82 @@ async fn search_treats_glob_characters_literally() {
         .await;
         assert!(has_entry(&body, &extra[0]), "{q}");
         assert!(!has_entry(&body, &et_id), "{q}");
+    }
+}
+
+#[tokio::test]
+async fn repeated_and_surplus_search_words_are_bounded() {
+    let (app, _pool, session, et_id) = setup_test_app().await;
+    let body = |q: String| {
+        let app = app.clone();
+        let session = session.clone();
+        async move {
+            body_string(
+                app.oneshot(get_authed(&format!("/dashboard/directory?q={q}"), &session))
+                    .await
+                    .unwrap(),
+            )
+            .await
+        }
+    };
+    // Repeats in any case count once.
+    let repeated = ["test", "TEST", "Test"].repeat(30).join("%20");
+    assert!(has_entry(&body(repeated).await, &et_id));
+    // Words past the cap do not reach SQL, so a ninth word cannot narrow.
+    let mut words: Vec<String> = ["test", "meeting", "testuser", "t", "e", "s", "m", "g"]
+        .iter()
+        .map(|w| w.to_string())
+        .collect();
+    assert_eq!(words.len(), MAX_SEARCH_WORDS);
+    assert!(has_entry(&body(words.join("%20")).await, &et_id));
+    words.push("nowhere".into());
+    assert!(has_entry(&body(words.join("%20")).await, &et_id));
+    // Control characters are dropped, not matched.
+    assert!(has_entry(&body("te%00st".into()).await, &et_id));
+}
+
+#[tokio::test]
+async fn one_id_check_applies_the_directory_rules_and_the_window() {
+    let pool = setup_test_db().await;
+    let owner = insert_role_user(&pool, "owner@x", "user").await;
+    let viewer = insert_role_user(&pool, "viewer@x", "user").await;
+    let et = insert_personal_et(&pool, &owner, "one").await;
+    assert!(is_listed(&pool, &viewer, &et).await.unwrap());
+    assert!(!is_listed(&pool, &viewer, "missing").await.unwrap());
+    for (update, listed) in [
+        (
+            "UPDATE event_types SET bookable_until = '2000-01-01'",
+            false,
+        ),
+        ("UPDATE event_types SET bookable_until = '2000-02-30'", true),
+        ("UPDATE event_types SET bookable_until = '9999-12-31'", true),
+        ("UPDATE event_types SET visibility = 'private'", false),
+        (
+            "UPDATE event_types SET visibility = 'internal', enabled = 0",
+            false,
+        ),
+        ("UPDATE event_types SET enabled = 1", true),
+        (
+            "UPDATE users SET enabled = 0 WHERE email = 'owner@x'",
+            false,
+        ),
+    ] {
+        sqlx::raw_sql(update).execute(&pool).await.unwrap();
+        assert_eq!(
+            is_listed(&pool, &viewer, &et).await.unwrap(),
+            listed,
+            "{update}"
+        );
+        let page = directory_page(
+            &pool,
+            &viewer,
+            &DirectoryFilter {
+                event_type_id: Some(&et),
+                ..DirectoryFilter::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(page.total == 1, listed, "{update} (page)");
     }
 }

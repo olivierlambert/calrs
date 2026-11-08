@@ -762,6 +762,11 @@ async fn user_actions_return_to_the_list_page_they_came_from() {
     assert_eq!(location(&r), "/dashboard/admin?uq=member&up=2#users");
     let r = post("toggle-role", "back=us%3Dlast%26ud%3Ddesc").await;
     assert_eq!(location(&r), "/dashboard/admin?us=last&ud=desc#users");
+    // The server-side list in its default state still reopens the tab.
+    let r = post("toggle-role", "back=").await;
+    assert_eq!(location(&r), "/dashboard/admin#users");
+    let r = post("toggle-role", "back=").await;
+    assert_eq!(location(&r), "/dashboard/admin#users");
     // Something that is not a list state is never echoed.
     let r = post("toggle-role", "back=%2F%2Fevil.example%2F").await;
     assert_eq!(location(&r), "/dashboard/admin#users");

@@ -5,44 +5,69 @@
 /// pasted essay cannot turn into thousands of bound patterns.
 pub(super) const MAX_SEARCH_CHARS: usize = 200;
 
-/// The trimmed search text, cut to `MAX_SEARCH_CHARS`.
+/// The search text without control characters (a pasted NUL or escape
+/// is dropped, a tab or newline counts as a space), trimmed and cut to
+/// `MAX_SEARCH_CHARS`.
 pub(super) fn bounded_search(raw: &str) -> String {
-    raw.trim().chars().take(MAX_SEARCH_CHARS).collect()
+    let cleaned: String = raw
+        .chars()
+        .filter_map(|c| match c {
+            c if c.is_whitespace() => Some(' '),
+            c if c.is_control() => None,
+            c => Some(c),
+        })
+        .collect();
+    cleaned.trim().chars().take(MAX_SEARCH_CHARS).collect()
 }
 
-/// The uppercase form of `c` when it is a single character, the case
-/// variant `ci_glob` and `ci_contains` accept besides `c` itself.
-fn upper_variant(c: char) -> Option<char> {
-    let mut upper = c.to_uppercase();
-    match (upper.next(), upper.next()) {
-        (Some(u), None) if u != c => Some(u),
+/// `c` when it maps to exactly one character.
+fn single(mut mapped: impl Iterator<Item = char>) -> Option<char> {
+    match (mapped.next(), mapped.next()) {
+        (Some(one), None) => Some(one),
         _ => None,
     }
 }
 
+/// The characters a search character `c` stands for: itself, its lowercase
+/// and its uppercase when each is one character, and the uppercase of that
+/// lowercase. Built from the character as typed, so one whose lowercase is
+/// two characters still matches itself: "İ" (lowercase "i̇") finds "İlker",
+/// and "ẞ" finds both "ẞ" and "ß".
+fn case_set(c: char) -> Vec<char> {
+    let lower = single(c.to_lowercase());
+    let candidates = [
+        Some(c),
+        lower,
+        single(c.to_uppercase()),
+        lower.and_then(|l| single(l.to_uppercase())),
+    ];
+    let mut set = Vec::new();
+    for candidate in candidates.into_iter().flatten() {
+        if !set.contains(&candidate) {
+            set.push(candidate);
+        }
+    }
+    set
+}
+
 /// A SQLite `GLOB` pattern matching any text that contains `needle`, case
 /// blind for every alphabet (SQLite's own `LIKE` folds ASCII only, which
-/// would miss "DÉMO" for "Démo"). The needle is lowercased, then each
-/// character becomes a set of itself and its uppercase form: `démo` gives
-/// `*[dD][éÉ][mM][oO]*`. Everything else is literal, `%` and `_` included,
-/// and the pattern is always bound as a parameter, never spliced into SQL.
+/// would miss "DÉMO" for "Démo"). Each character becomes the set of its
+/// case forms (`case_set`): `Démo` gives `*[Dd][éÉ][mM][oO]*`. Everything
+/// else is literal, `%` and `_` included, and the pattern is always bound
+/// as a parameter, never spliced into SQL.
 pub(super) fn ci_glob(needle: &str) -> String {
     let mut pattern = String::from("*");
-    for c in needle.to_lowercase().chars() {
-        match upper_variant(c) {
-            Some(u) => {
-                pattern.push('[');
-                pattern.push(c);
-                pattern.push(u);
-                pattern.push(']');
-            }
-            // The three GLOB metacharacters, as one-character sets.
-            None if matches!(c, '*' | '?' | '[') => {
-                pattern.push('[');
-                pattern.push(c);
-                pattern.push(']');
-            }
-            None => pattern.push(c),
+    for c in needle.chars() {
+        let set = case_set(c);
+        if set.len() > 1 || matches!(c, '*' | '?' | '[') {
+            // A set, which also makes the three GLOB metacharacters literal.
+            // Cased letters are never `]`, `-` or `^`, so no escaping inside.
+            pattern.push('[');
+            pattern.extend(set);
+            pattern.push(']');
+        } else {
+            pattern.push(c);
         }
     }
     pattern.push('*');
@@ -52,17 +77,13 @@ pub(super) fn ci_glob(needle: &str) -> String {
 /// Whether `haystack` contains `needle` under the rule `ci_glob` gives
 /// SQLite, so that what a page highlights agrees with what SQL selected.
 pub(super) fn ci_contains(haystack: &str, needle: &str) -> bool {
-    let needle: Vec<char> = needle.to_lowercase().chars().collect();
-    if needle.is_empty() {
+    let sets: Vec<Vec<char>> = needle.chars().map(case_set).collect();
+    if sets.is_empty() {
         return true;
     }
     let hay: Vec<char> = haystack.chars().collect();
-    hay.windows(needle.len()).any(|window| {
-        window
-            .iter()
-            .zip(&needle)
-            .all(|(h, n)| h == n || upper_variant(*n) == Some(*h))
-    })
+    hay.windows(sets.len())
+        .any(|window| window.iter().zip(&sets).all(|(h, set)| set.contains(h)))
 }
 
 /// Page links under a list. Only built when the list runs over more than
@@ -128,21 +149,43 @@ mod tests {
 
     #[test]
     fn ci_glob_folds_every_alphabet_and_keeps_wildcards_literal() {
-        assert_eq!(ci_glob("Démo"), "*[dD][éÉ][mM][oO]*");
+        assert_eq!(ci_glob("Démo"), "*[Dd][éÉ][mM][oO]*");
         assert_eq!(ci_glob("a*b?[c]"), "*[aA][*][bB][?][[][cC]]*");
         assert_eq!(ci_glob("%_ 4"), "*%_ 4*");
-        // ß has no single-character uppercase; it stays itself.
+        // ß has no single-character uppercase; ẞ lowercases to it.
         assert_eq!(ci_glob("ß"), "*ß*");
+        assert_eq!(ci_glob("ẞ"), "*[ẞß]*");
+        // İ lowercases to two characters, so it stands for itself.
+        assert_eq!(ci_glob("İ"), "*İ*");
     }
 
     #[test]
     fn ci_contains_agrees_with_the_glob_rule() {
         assert!(ci_contains("Démo FR", "DÉMO fr"));
         assert!(ci_contains("Andy Host", "ndy h"));
+        assert!(ci_contains("ANDY", "andy"));
+        assert!(ci_contains("andy", "Andy"));
         assert!(ci_contains("Łukasz", "łuk"));
         assert!(!ci_contains("Demo", "démo"));
         assert!(!ci_contains("Andy", "andy host"));
         assert!(ci_contains("anything", ""));
+    }
+
+    #[test]
+    fn characters_with_long_case_forms_still_match_themselves() {
+        assert!(ci_contains("İlker Yılmaz", "İlker"));
+        assert!(ci_contains("Visit İstanbul", "İstanbul"));
+        assert!(ci_contains("Großmann", "GROẞMANN"));
+        assert!(ci_contains("GROẞMANN", "GROẞMANN"));
+        assert!(ci_contains("Großmann", "großmann"));
+    }
+
+    #[test]
+    fn bounded_search_drops_control_characters() {
+        assert_eq!(bounded_search("  a\0b\u{1b}[c  "), "ab[c");
+        assert_eq!(bounded_search("a\tb\nc"), "a b c");
+        assert_eq!(bounded_search("\0\0"), "");
+        assert_eq!(bounded_search(&"x".repeat(500)).len(), MAX_SEARCH_CHARS);
     }
 
     #[test]

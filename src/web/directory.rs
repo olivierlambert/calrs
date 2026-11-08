@@ -85,20 +85,42 @@ pub(super) struct DirectoryPage {
     pub offset: i64,
 }
 
+/// Search words pushed into SQL. Each one adds a host subquery per row, so
+/// repeats (in any case) are dropped and words past this many ignored.
+pub(super) const MAX_SEARCH_WORDS: usize = 8;
+
+/// The distinct words of a search, as typed (`ci_glob` folds the case).
 fn search_words(search: &str) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
     listing::bounded_search(search)
         .split_whitespace()
-        .map(str::to_lowercase)
+        .filter(|word| seen.insert(word.to_lowercase()))
+        .take(MAX_SEARCH_WORDS)
+        .map(str::to_string)
         .collect()
 }
 
+/// Whether a meeting's booking window has closed, by the date in its own
+/// zone, exactly as `BookingWindow` decides it everywhere else.
+fn window_closed(until: Option<&str>, timezone: Option<&str>) -> bool {
+    let tz = timezone
+        .and_then(|s| s.parse::<Tz>().ok())
+        .unwrap_or_else(server_tz);
+    let window = BookingWindow {
+        bookable_until: parse_optional_date(until),
+        ..BookingWindow::default()
+    };
+    window.is_expired(today_in(tz))
+}
+
 /// Listable meetings whose booking window has closed, by the date in their
-/// own zone. A value is "well-formed" when `date(v, '+0 days')` gives it
-/// back: the modifier makes SQLite normalise an impossible day such as
-/// 2000-02-30, which plain `date()` returns unchanged in older versions. SQL already drops a well-formed `bookable_until` before
-/// yesterday (closed in every zone) and keeps one from tomorrow on (open in
-/// every zone), so only today's and yesterday's, plus any value SQLite does
-/// not read as a date, are decided here, exactly as `BookingWindow` does.
+/// own zone. SQL already drops a well-formed `bookable_until` before
+/// yesterday (closed in every zone) and keeps one from tomorrow on (open
+/// in every zone), so only today's and yesterday's, plus any value SQLite
+/// does not read as a date, are decided here by `window_closed`. A value
+/// is well-formed when `date(v, '+0 days')` gives it back: the modifier
+/// makes SQLite normalise an impossible day such as 2000-02-30, which a
+/// plain `date()` returns unchanged in older versions.
 async fn closed_window_ids(pool: &SqlitePool, utc_today: NaiveDate) -> Result<String, sqlx::Error> {
     let rows: Vec<(String, Option<String>, Option<String>)> = sqlx::query_as(
         "SELECT et.id, et.bookable_until, COALESCE(NULLIF(et.timezone, ''), u.timezone)
@@ -119,17 +141,7 @@ async fn closed_window_ids(pool: &SqlitePool, utc_today: NaiveDate) -> Result<St
     .await?;
     let closed: Vec<String> = rows
         .into_iter()
-        .filter(|(_, until, timezone)| {
-            let tz = timezone
-                .as_deref()
-                .and_then(|s| s.parse::<Tz>().ok())
-                .unwrap_or_else(server_tz);
-            let window = BookingWindow {
-                bookable_until: parse_optional_date(until.as_deref()),
-                ..BookingWindow::default()
-            };
-            window.is_expired(today_in(tz))
-        })
+        .filter(|(_, until, timezone)| window_closed(until.as_deref(), timezone.as_deref()))
         .map(|(id, _, _)| id)
         .collect();
     Ok(serde_json::to_string(&closed).unwrap_or_else(|_| "[]".to_string()))
@@ -145,8 +157,7 @@ fn push_listable<'a>(
     qb: &mut sqlx::QueryBuilder<'a, sqlx::Sqlite>,
     user_id: &str,
     filter: &DirectoryFilter<'_>,
-    utc_today: NaiveDate,
-    closed_ids: String,
+    closed: Option<(NaiveDate, String)>,
 ) {
     qb.push(
         " FROM event_types et
@@ -160,19 +171,24 @@ fn push_listable<'a>(
         " WHERE et.enabled = 1 AND et.visibility IN ('public', 'internal')
            AND ((et.team_id IS NULL AND u.enabled = 1 AND COALESCE(u.username, '') <> '')
                 OR (et.team_id IS NOT NULL AND COALESCE(t.slug, '') <> ''
-                    AND (t.visibility = 'public' OR et.visibility = 'internal')))
-           AND NOT (et.bookable_until IS NOT NULL
-                    AND date(et.bookable_until, '+0 days') IS et.bookable_until
-                    AND et.bookable_until < ",
+                    AND (t.visibility = 'public' OR et.visibility = 'internal')))",
     );
-    qb.push_bind(
-        (utc_today - Duration::days(1))
-            .format("%Y-%m-%d")
-            .to_string(),
-    );
-    qb.push(") AND et.id NOT IN (SELECT value FROM json_each(");
-    qb.push_bind(closed_ids);
-    qb.push("))");
+    // Closed windows: `None` when the caller checks the one row itself.
+    if let Some((utc_today, closed_ids)) = closed {
+        qb.push(
+            " AND NOT (et.bookable_until IS NOT NULL
+                      AND date(et.bookable_until, '+0 days') IS et.bookable_until
+                      AND et.bookable_until < ",
+        );
+        qb.push_bind(
+            (utc_today - Duration::days(1))
+                .format("%Y-%m-%d")
+                .to_string(),
+        );
+        qb.push(") AND et.id NOT IN (SELECT value FROM json_each(");
+        qb.push_bind(closed_ids);
+        qb.push("))");
+    }
     if filter.favorites_only {
         qb.push(" AND f.user_id IS NOT NULL");
     }
@@ -205,7 +221,12 @@ pub(super) async fn directory_page(
     let closed = closed_window_ids(pool, utc_today).await?;
 
     let mut count = sqlx::QueryBuilder::new("SELECT COUNT(*)");
-    push_listable(&mut count, user_id, filter, utc_today, closed.clone());
+    push_listable(
+        &mut count,
+        user_id,
+        filter,
+        Some((utc_today, closed.clone())),
+    );
     let total: i64 = count.build_query_scalar().fetch_one(pool).await?;
     if total == 0 {
         return Ok(DirectoryPage {
@@ -230,7 +251,7 @@ pub(super) async fn directory_page(
                 f.user_id IS NOT NULL AS favorite,
                 et.bookable_until, COALESCE(NULLIF(et.timezone, ''), u.timezone) AS timezone"
     ));
-    push_listable(&mut select, user_id, filter, utc_today, closed);
+    push_listable(&mut select, user_id, filter, Some((utc_today, closed)));
     select.push(" ORDER BY owner_name COLLATE NOCASE, et.title COLLATE NOCASE, et.id");
     if let Some(limit) = filter.limit {
         select.push(" LIMIT ");
@@ -262,10 +283,18 @@ pub(super) async fn is_listed(
 ) -> Result<bool, sqlx::Error> {
     let filter = DirectoryFilter {
         event_type_id: Some(event_type_id),
-        limit: Some(1),
         ..DirectoryFilter::default()
     };
-    Ok(directory_page(pool, user_id, &filter).await?.total > 0)
+    // One row: no count, no page, no instance-wide closed-window list; its
+    // own window is checked directly.
+    let mut qb = sqlx::QueryBuilder::new(
+        "SELECT et.bookable_until, COALESCE(NULLIF(et.timezone, ''), u.timezone)",
+    );
+    push_listable(&mut qb, user_id, &filter, None);
+    qb.push(" LIMIT 1");
+    let row: Option<(Option<String>, Option<String>)> =
+        qb.build_query_as().fetch_optional(pool).await?;
+    Ok(row.is_some_and(|(until, timezone)| !window_closed(until.as_deref(), timezone.as_deref())))
 }
 
 /// Searchable hosts of the page's team meetings who match at least one

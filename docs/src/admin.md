@@ -26,11 +26,12 @@ page only ever carries 25 rows: press Enter to search, and use **Previous** and
 **Next** under the table. Promoting, disabling or deleting a user brings you
 back to the same page of the list.
 
-On a large instance, the booking figures of the overview (totals, the weekly
-chart and the 90-day rankings) are kept for a minute rather than recomputed on
-every visit; the chart's note then says how many seconds old they are. User
-counts, calendar health and the attention list are always live. Where the
-figures are quick to compute, as on most instances, they are never cached.
+On an instance with more than 20,000 bookings, the booking figures of the
+overview (totals, the weekly chart and the 90-day rankings) are kept for a
+minute rather than recomputed on every visit; the chart's note then says how
+many seconds old they are. User
+counts, calendar health and the attention list are always live. Smaller
+instances never cache them.
 
 ## Impersonation
 
