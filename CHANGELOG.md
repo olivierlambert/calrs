@@ -223,6 +223,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Security
 
+- **SSO linking no longer takes over an account through a recycled address** - An SSO login with a verified address belonging to a calrs account already linked to another identity (an address the identity provider reassigned to a newcomer) linked the newcomer to that account, handing them the previous holder's calrs account. Linking by address now only applies to an account no identity is linked to yet; otherwise the login is refused and an administrator decides.
 - **New users always get a scheduling account of their own** - Under certain conditions, a new user (registration, single sign-on auto-registration or `calrs user create`) could be attached to an existing user's scheduling account, with its event types, bookings and calendars. A new user now always gets a new account. At startup, an account left without a user is only linked to a user with the same address who has no account yet, and gets no new user when its address matches an existing user's except for letter case or spaces; otherwise it stays unlinked and a warning names it in the log for the administrator to review. A single sign-on login that changes a user's address now also updates the copy kept on their account. Registration also stores the email address without surrounding spaces.
 
 ## [2.0.0-beta.2] - 2026-11-07
