@@ -191,8 +191,54 @@ async fn collective_puts_the_guests_on_one_google_copy_only() {
     assert!(google.is_empty());
 }
 
-/// A claimed booking: the host's copy carries the guests, the claimant's
-/// copy none, even when an earlier calrs gave it some.
+/// A claimed booking, the claimant listed as an attendee the way a claim
+/// lists them (row by user, address under their claimant alias), pushed
+/// once. Returns the uid and the fake.
+async fn claimed_booking(claimant_writes: bool) -> (String, Arc<FakeGoogle>) {
+    let pool = setup_test_db().await;
+    let alice = insert_role_user(&pool, "alice@google.test", "user").await;
+    let carol = insert_role_user(&pool, "carol@google.test", "user").await;
+    let et_id = insert_personal_et(&pool, &alice, "g237claim").await;
+    let google = Arc::new(FakeGoogle::default());
+    let (base, server) = fake::serve(google.clone()).await;
+    google_source(&pool, "src-a", &alice, &base, "alice@google.test").await;
+    if claimant_writes {
+        google_source(&pool, "src-c", &carol, &base, "carol@google.test").await;
+    }
+    insert_booking(&pool, &et_id, None, start(), "confirmed").await;
+    let uid = only_booking_uid(&pool, &et_id).await;
+    sqlx::query("UPDATE bookings SET claimed_by_user_id = ? WHERE uid = ?")
+        .bind(&carol)
+        .bind(&uid)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO booking_attendees (id, booking_id, email, added_by_claim, claimant_user_id) \
+         SELECT 'ba-carol', id, 'Carol.Watch@google.test', 1, ? FROM bookings WHERE uid = ?",
+    )
+    .bind(&carol)
+    .bind(&uid)
+    .execute(&pool)
+    .await
+    .unwrap();
+    caldav_push_booking(&pool, &KEY, &alice, &uid, &claimed_details(&uid)).await;
+    server.abort();
+    (uid, google)
+}
+
+fn claimed_details(uid: &str) -> crate::email::BookingDetails {
+    let mut details = details(uid);
+    details
+        .additional_attendees
+        .push("Carol.Watch@google.test".to_string());
+    details
+}
+
+/// A claimed booking: the host's copy carries the guests and not the
+/// claimant, who has their own copy and would otherwise see the meeting
+/// twice; the claimant's copy carries no attendees, even when an earlier
+/// calrs gave it some.
 #[tokio::test]
 async fn a_claimants_google_copy_carries_no_attendees() {
     let pool = setup_test_db().await;
@@ -222,6 +268,30 @@ async fn a_claimants_google_copy_carries_no_attendees() {
         Some(Vec::new())
     );
     assert_nothing_announced(&google.log());
+}
+
+/// The claimant is left off the host's Google copy when calrs writes them
+/// a copy of their own, under the address the claim listed them with.
+#[tokio::test]
+async fn a_claimant_with_their_own_copy_is_not_a_google_attendee() {
+    let (uid, google) = claimed_booking(true).await;
+    assert_eq!(google.attendees("alice@google.test", &uid), Some(guests()));
+    assert_eq!(
+        google.attendees("carol@google.test", &uid),
+        Some(Vec::new())
+    );
+    assert_nothing_announced(&google.log());
+}
+
+/// Without a copy of their own, the claimant stays on the host's Google
+/// copy: the invitation is how the meeting reaches their calendar.
+#[tokio::test]
+async fn a_claimant_without_their_own_copy_stays_a_google_attendee() {
+    let (uid, google) = claimed_booking(false).await;
+    let mut expected = guests();
+    expected.push(json!({"email": "Carol.Watch@google.test"}));
+    assert_eq!(google.attendees("alice@google.test", &uid), Some(expected));
+    assert_eq!(google.attendees("carol@google.test", &uid), None);
 }
 
 /// A Meet booking whose owner (the stored organizer) is not the first

@@ -136,20 +136,15 @@ async fn push_claimant_copy(
     details: &crate::email::BookingDetails,
     targets: &[String],
 ) {
-    // A claimant who is also a host already has the host's copy.
-    let Some(claimant) = super::booking_claimant(pool, booking_uid)
-        .await
-        .filter(|c| !targets.contains(c))
+    // A claimant who is also a host already has the host's copy. A
+    // collection the claimant shares with a host (a team calendar) already
+    // holds the host's event: a second PUT of the uid would replace it,
+    // phone included, with the claimant's copy.
+    let Some((claimant, host_collections)) =
+        super::claimant_with_own_copy(pool, booking_uid, targets).await
     else {
         return;
     };
-    // A collection the claimant shares with a host (a team calendar) already
-    // holds the host's event: a second PUT of the uid would replace it,
-    // phone included, with the claimant's copy.
-    let mut host_collections = Vec::new();
-    for target in targets {
-        host_collections.extend(super::write_collections(pool, target).await);
-    }
     let details = crate::email::BookingDetails {
         guest_phone: None,
         ..details.clone()

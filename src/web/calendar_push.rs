@@ -174,6 +174,22 @@ pub(super) async fn caldav_push_booking_for_user(
         _ => None,
     };
     let without_attendees = crate::google_calendar::split_scheduling(&ics).0;
+    // A claimant listed on that copy would get it on their Google Calendar
+    // from Google, beside the copy calrs writes for them (#269): when they
+    // have one, they are left off. Without one they stay, and rely on it.
+    let attendee_ics = match &attendee_source {
+        Some(_) => {
+            let targets = booking_write_targets(pool, booking_uid, user_id).await;
+            match claimant_with_own_copy(pool, booking_uid, &targets).await {
+                Some((claimant, _)) => crate::google_calendar::without_attendees_named(
+                    &ics,
+                    &claimant_attendee_addresses(pool, booking_uid, &claimant).await,
+                ),
+                None => ics.clone(),
+            }
+        }
+        None => ics.clone(),
+    };
     let mut preserved_meet_href = false;
 
     for (
@@ -303,10 +319,12 @@ pub(super) async fn caldav_push_booking_for_user(
         // A 2xx on the write is not proof the host sees the event (#162):
         // read it back by UID before calling it written.
         let google = is_google(auth_type, oauth2_provider.as_deref());
-        let source_ics = if google && attendee_source.as_deref() != Some(source_id.as_str()) {
-            &without_attendees
-        } else {
+        let source_ics = if !google {
             &ics
+        } else if attendee_source.as_deref() == Some(source_id.as_str()) {
+            &attendee_ics
+        } else {
+            &without_attendees
         };
         let written = crate::providers::put_and_verify(
             provider.as_ref(),
@@ -496,6 +514,52 @@ pub(super) async fn booking_claimant(pool: &SqlitePool, booking_uid: &str) -> Op
         return None;
     }
     Some(claimant)
+}
+
+/// The claimant of a booking whose own copy calrs writes (#269): one who
+/// is not a host and has a write collection no host writes to (a shared
+/// collection already holds the host's event). Returned with the hosts'
+/// collections, which their copy skips. `None` when no claimant copy is
+/// written.
+pub(super) async fn claimant_with_own_copy(
+    pool: &SqlitePool,
+    booking_uid: &str,
+    targets: &[String],
+) -> Option<(String, Vec<Collection>)> {
+    let claimant = booking_claimant(pool, booking_uid)
+        .await
+        .filter(|c| !targets.contains(c))?;
+    let mut host_collections = Vec::new();
+    for target in targets {
+        host_collections.extend(write_collections(pool, target).await);
+    }
+    write_collections(pool, &claimant)
+        .await
+        .iter()
+        .any(|c| !host_collections.contains(c))
+        .then_some((claimant, host_collections))
+}
+
+/// The addresses the claimant of a booking is listed under: the attendee
+/// row their claim added (found by user, #350), and their current address.
+async fn claimant_attendee_addresses(
+    pool: &SqlitePool,
+    booking_uid: &str,
+    claimant: &str,
+) -> Vec<String> {
+    sqlx::query_scalar(
+        "SELECT ba.email FROM booking_attendees ba
+         JOIN bookings b ON b.id = ba.booking_id
+         WHERE b.uid = ? AND ba.claimant_user_id = ?
+         UNION
+         SELECT COALESCE(booking_email, email) FROM users WHERE id = ?",
+    )
+    .bind(booking_uid)
+    .bind(claimant)
+    .bind(claimant)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default()
 }
 
 /// A server origin (scheme, host, port) and a collection on it.

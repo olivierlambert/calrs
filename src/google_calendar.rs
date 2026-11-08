@@ -291,6 +291,41 @@ pub(crate) struct Attendee {
 /// attendees it named, deduplicated by address. The organizer is dropped
 /// rather than moved: Google makes the calendar's own account the organizer,
 /// which is also what lets that account mint the Meet.
+/// The address of an ATTENDEE value, without its `mailto:`.
+fn attendee_email(value: &str) -> &str {
+    let value = value.trim();
+    // `get`: a value whose seventh byte falls inside a character is no
+    // `mailto:` one, and must not panic.
+    match value.get(..7) {
+        Some(scheme) if scheme.eq_ignore_ascii_case("mailto:") => value[7..].trim(),
+        _ => value,
+    }
+}
+
+/// The ICS without the ATTENDEE lines of `emails` (case blind), refolded.
+/// Everything else is kept as it is.
+pub(crate) fn without_attendees_named(ics: &str, emails: &[String]) -> String {
+    if emails.is_empty() {
+        return ics.to_string();
+    }
+    let unfolded = crate::utils::unfold_ical(ics);
+    let kept: Vec<&str> = unfolded
+        .split('\n')
+        .map(|raw| raw.strip_suffix('\r').unwrap_or(raw))
+        .filter(|line| {
+            let Some(parsed) = crate::utils::parse_content_line(line) else {
+                return true;
+            };
+            if !parsed.name.eq_ignore_ascii_case("ATTENDEE") {
+                return true;
+            }
+            let email = attendee_email(parsed.value);
+            !emails.iter().any(|e| e.trim().eq_ignore_ascii_case(email))
+        })
+        .collect();
+    crate::email::fold_ics(&kept.join("\r\n"))
+}
+
 pub(crate) fn split_scheduling(ics: &str) -> (String, Vec<Attendee>) {
     let unfolded = crate::utils::unfold_ical(ics);
     let mut kept: Vec<&str> = Vec::new();
@@ -307,12 +342,7 @@ pub(crate) fn split_scheduling(ics: &str) -> (String, Vec<Attendee>) {
             continue;
         }
         let Some(parsed) = parsed else { continue };
-        let value = parsed.value.trim();
-        let email = if value.len() >= 7 && value[..7].eq_ignore_ascii_case("mailto:") {
-            value[7..].trim()
-        } else {
-            value
-        };
+        let email = attendee_email(parsed.value);
         if email.is_empty()
             || attendees
                 .iter()
@@ -1471,6 +1501,21 @@ mod tests {
         assert_eq!(
             fake.attendees(CAL, "picky@calrs").unwrap(),
             vec![json!({"email": "jane@example.com", "displayName": "Doe, Jane"})]
+        );
+    }
+
+    #[test]
+    fn attendee_addresses_never_split_a_character() {
+        assert_eq!(attendee_email("MAILTO:x@example.com"), "x@example.com");
+        assert_eq!(attendee_email("abc\u{2014}def"), "abc\u{2014}def");
+        assert_eq!(
+            attendee_email("j\u{fc}rgen@example.com"),
+            "j\u{fc}rgen@example.com"
+        );
+        let ics = "BEGIN:VEVENT\r\nSUMMARY:Intro \u{2014} call\r\nATTENDEE:mailto:Carol@example.com\r\nATTENDEE:mailto:jane@example.com\r\nEND:VEVENT\r\n";
+        assert_eq!(
+            without_attendees_named(ics, &["carol@example.com".to_string()]),
+            "BEGIN:VEVENT\r\nSUMMARY:Intro \u{2014} call\r\nATTENDEE:mailto:jane@example.com\r\nEND:VEVENT\r\n"
         );
     }
 
