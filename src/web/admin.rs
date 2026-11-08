@@ -800,6 +800,8 @@ pub(super) async fn admin_dashboard(
 
     let (sms_cost_today, sms_cost_currency) = crate::sms::cost_today(&state.pool).await;
     let sms_sent_today = crate::sms::sent_today(&state.pool).await;
+    let sms_segments_today = crate::sms::segments_today(&state.pool).await;
+    let sms_unknown_today = crate::sms::unknown_today(&state.pool).await;
     let sms_allow_all_users: bool =
         sqlx::query_scalar("SELECT sms_allow_all_users FROM auth_config WHERE id = 'singleton'")
             .fetch_optional(&state.pool)
@@ -994,6 +996,8 @@ pub(super) async fn admin_dashboard(
             sms_default_country => sms_default_country,
             sms_daily_cap => sms_daily_cap,
             sms_sent_today => sms_sent_today,
+            sms_segments_today => sms_segments_today,
+            sms_unknown_today => sms_unknown_today,
             sms_cost_today => format!("{:.2}", sms_cost_today),
             sms_cost_currency => sms_cost_currency,
             sms_allow_all_users => sms_allow_all_users,
@@ -2690,8 +2694,10 @@ pub(super) async fn admin_update_sms_test(
         }
     };
 
+    // Metered like a guest message: an admin test is billed like any other,
+    // so it shows in today's figures and stays inside the daily cap.
     let body = crate::i18n::translate(admin.lang, "admin-sms-test-body", None);
-    match crate::sms::send(&config, &to, &body).await {
+    match crate::sms::send_metered(&state.pool, &config, "test", &to, &body).await {
         Ok(_) => {
             tracing::info!(admin = %admin.user.email, provider = %config.provider, %to, "admin: test SMS sent");
             redirect(
@@ -2699,7 +2705,21 @@ pub(super) async fn admin_update_sms_test(
                 &crate::i18n::translate(admin.lang, "admin-sms-test-accepted", None),
             )
         }
-        Err(e) => {
+        Err(crate::sms::MeteredSendError::OverCap) => {
+            tracing::warn!(admin = %admin.user.email, cap = config.daily_cap, "admin: test SMS refused, daily cap reached");
+            redirect(
+                "error",
+                &crate::i18n::translate(admin.lang, "admin-sms-test-over-cap", None),
+            )
+        }
+        Err(crate::sms::MeteredSendError::Ledger(e)) => {
+            tracing::warn!(admin = %admin.user.email, error = %e, "admin: test SMS refused, usage ledger unavailable");
+            redirect(
+                "error",
+                &crate::i18n::translate(admin.lang, "admin-sms-test-ledger-failed", None),
+            )
+        }
+        Err(crate::sms::MeteredSendError::Gateway(e)) => {
             tracing::warn!(admin = %admin.user.email, provider = %config.provider, error = %e, "admin: test SMS failed");
             redirect("error", &e.to_string())
         }
