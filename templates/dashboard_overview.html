@@ -347,7 +347,7 @@
 
     {% if favorites %}
     <section class="sec fav-wrap" aria-labelledby="ov-favs">
-      <div class="sec-h"><h2 id="ov-favs">{{ t("directory-favorites") }}</h2><a href="/dashboard/directory">{{ t("directory-browse") }}</a></div>
+      <div class="sec-h"><h2 id="ov-favs">{{ t("directory-favorites") }}</h2>{% if favorites_total > favorites | length %}<a href="/dashboard/directory?favorites=true">{{ t("directory-all-favorites") }}</a>{% else %}<a href="/dashboard/directory">{{ t("directory-browse") }}</a>{% endif %}</div>
       {% with directory_entries=favorites, favorites_only=true %}
         {% include "partials/directory_entries.html" %}
       {% endwith %}

@@ -913,6 +913,37 @@ pub(super) fn open_minutes(
     merge(windows)
 }
 
+/// Take time off (#46) out of a day's open hours, both in minutes from the
+/// viewer's midnight: the user takes no bookings then, so the day is not
+/// open. A day off entirely comes back empty, and reads as closed.
+pub(super) fn without_time_off(
+    open: Vec<(i64, i64)>,
+    day: NaiveDate,
+    time_off: &[(NaiveDateTime, NaiveDateTime)],
+) -> Vec<(i64, i64)> {
+    let mut out = open;
+    for (s, e) in time_off {
+        let (cs, ce) = (minute_of(day, *s), minute_of(day, *e));
+        if ce <= cs {
+            continue;
+        }
+        out = out
+            .into_iter()
+            .flat_map(|(os, oe)| {
+                if cs >= oe || ce <= os {
+                    vec![(os, oe)]
+                } else {
+                    [(os, cs), (ce, oe)]
+                        .into_iter()
+                        .filter(|(a, b)| b > a)
+                        .collect()
+                }
+            })
+            .collect();
+    }
+    out
+}
+
 // --- The day ruler ---
 
 /// A block on the ruler, in minutes from the viewer's midnight.
@@ -1181,6 +1212,7 @@ pub(super) fn week_context(
     hours: &[EventTypeHours],
     bookings: &[DayBooking],
     busy: &[(NaiveDateTime, NaiveDateTime)],
+    time_off: &[(NaiveDateTime, NaiveDateTime)],
     viewer: Tz,
     now: NaiveDateTime,
     week_start: WeekStart,
@@ -1193,7 +1225,7 @@ pub(super) fn week_context(
             let day = first + Duration::days(i);
             (
                 day,
-                open_minutes(hours, day, viewer),
+                without_time_off(open_minutes(hours, day, viewer), day, time_off),
                 day_blocks(lang, day, bookings, busy),
             )
         })

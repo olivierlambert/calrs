@@ -417,6 +417,7 @@ async fn notify_pending_expired(
         host_language: None,
         host_timezone: stored_tz.name().to_string(),
         sequence: booking_ics_sequence(pool, &uid).await,
+        guest_footer: crate::email::guest_footer(pool, &et_id).await,
         ..Default::default()
     };
     // An expired reschedule of a confirmed booking withdraws the invite the
@@ -508,6 +509,8 @@ async fn send_pending_nudge(
         guest_language,
         host_timezone: stored_tz.name().to_string(),
         resource_name: booking_resource_label(pool, &uid).await,
+        // Host-only reminder: the guest footer is for guests.
+        guest_footer: None,
         ..Default::default()
     };
     for (host_id, name, email, language) in

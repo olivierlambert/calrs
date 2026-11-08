@@ -373,6 +373,9 @@ pub(super) async fn approve_booking_by_token(
     let guest_language = crate::email::stored_booking_language(&state.pool, &bid).await;
 
     let (guest_notes, guest_phone_shown) = booking_guest_input(&state.pool, &uid).await;
+    let additional_attendees = booking_additional_attendees(&state.pool, &uid).await;
+    let attendee_languages =
+        booking_attendee_languages(&state.pool, &uid, &additional_attendees).await;
     let details = crate::email::BookingDetails {
         utc_times: crate::booking_time::ics_times(&start_at, &end_at),
         event_title: event_title.clone(),
@@ -389,7 +392,7 @@ pub(super) async fn approve_booking_by_token(
         guest_phone: guest_phone_shown,
         location: location_display,
         reminder_minutes: None,
-        additional_attendees: booking_additional_attendees(&state.pool, &uid).await,
+        additional_attendees,
         // The guest booked in their own language; the host approving here may
         // well be browsing in another one, so this comes from the booking row
         // rather than from the approver's Accept-Language.
@@ -398,7 +401,8 @@ pub(super) async fn approve_booking_by_token(
         host_timezone: stored_tz.name().to_string(),
         resource_name: booking_resource_label(&state.pool, &uid).await,
         sequence: booking_ics_sequence(&state.pool, &uid).await,
-        attendee_languages: booking_attendee_languages(&state.pool, &uid).await,
+        attendee_languages,
+        guest_footer: crate::email::guest_footer(&state.pool, &event_type_id).await,
     };
 
     // Push to CalDAV calendar
@@ -696,6 +700,7 @@ pub(super) async fn decline_booking_by_token(
                 Some(uid) => booking_ics_sequence(&state.pool, uid).await,
                 None => 0,
             },
+            guest_footer: crate::email::guest_footer_for_booking(&state.pool, &bid).await,
             ..Default::default()
         };
         let details = with_invite_holders(&state.pool, details, true).await;
@@ -920,6 +925,8 @@ pub(super) async fn booking_ics(
         location: location.filter(|l| !l.is_empty()),
         host_timezone: stored_tz.name().to_string(),
         sequence: booking_ics_sequence(&state.pool, &uid).await,
+        // A calendar download, not an email.
+        guest_footer: None,
         ..Default::default()
     };
 
@@ -1236,6 +1243,7 @@ pub(super) async fn guest_cancel_booking(
         host_language: crate::email::supported_language(host_language),
         host_timezone: stored_tz.name().to_string(),
         sequence,
+        guest_footer: crate::email::guest_footer(&state.pool, &et_id).await,
         ..Default::default()
     };
     // Its attendees hold the invite if it was ever confirmed, even when this
@@ -2211,6 +2219,8 @@ pub(super) async fn guest_reschedule_booking(
                 host_language: host_language.clone(),
                 sequence: booking_ics_sequence(&state.pool, &uid).await,
                 additional_attendees: Vec::new(),
+                // Host-only email: the guest footer is for guests.
+                guest_footer: None,
             };
 
             // Send guest pending notice with new tokens
@@ -2247,6 +2257,8 @@ pub(super) async fn guest_reschedule_booking(
                 guest_language: booking_language,
                 host_timezone: host_tz.name().to_string(),
                 resource_name: booking_resource_label(&state.pool, &uid).await,
+                guest_footer: crate::email::guest_footer_for_booking(&state.pool, &booking_id)
+                    .await,
                 ..Default::default()
             };
             let new_confirm_token = new_confirm_token.clone();
@@ -2281,6 +2293,9 @@ pub(super) async fn guest_reschedule_booking(
     } else {
         // Confirmed reschedule (host-initiated or guest on non-confirmation event)
         // Push updated event to CalDAV
+        let additional_attendees = booking_additional_attendees(&state.pool, &uid).await;
+        let attendee_languages =
+            booking_attendee_languages(&state.pool, &uid, &additional_attendees).await;
         let push_details = crate::email::BookingDetails {
             utc_times: crate::booking_time::ics_times(&new_start_at, &new_end_at),
             event_title: et_title.clone(),
@@ -2297,12 +2312,13 @@ pub(super) async fn guest_reschedule_booking(
             guest_phone: guest_phone_shown,
             location: loc_value.clone(),
             reminder_minutes: None,
-            additional_attendees: booking_additional_attendees(&state.pool, &uid).await,
+            additional_attendees,
             guest_language: booking_language.clone(),
             host_language: host_language.clone(),
             host_timezone: host_tz.name().to_string(),
             sequence: booking_ics_sequence(&state.pool, &uid).await,
-            attendee_languages: booking_attendee_languages(&state.pool, &uid).await,
+            attendee_languages,
+            guest_footer: crate::email::guest_footer_for_booking(&state.pool, &booking_id).await,
             ..Default::default()
         };
         caldav_push_booking(
@@ -2355,6 +2371,7 @@ pub(super) async fn guest_reschedule_booking(
                 guest_language: booking_language,
                 host_language,
                 sequence: push_details.sequence,
+                guest_footer: push_details.guest_footer.clone(),
                 // The guest's moved invite replaces their confirmation one
                 // whole, so it keeps its attendees and notes (#267).
                 notes: push_details.notes.clone(),
@@ -2681,6 +2698,7 @@ pub(super) async fn host_reschedule_booking(
             // in the language they booked in (#209).
             guest_language: crate::email::stored_booking_language(&state.pool, &bid).await,
             host_timezone: host_tz.name().to_string(),
+            guest_footer: crate::email::guest_footer(&state.pool, &et_id).await,
             ..Default::default()
         };
 
@@ -2967,6 +2985,32 @@ pub(super) async fn claim_booking(
         .into_response();
     }
 
+    // List the claimant as an attendee, marked as added by the claim and as
+    // theirs, in the claim's own transaction: a claim whose row is missing
+    // would let a later attendee email take the claimant for a guest (#223).
+    // The row keeps this address after they change their booking email, and
+    // stays staff after their account is deleted.
+    let listed = sqlx::query(
+        "INSERT INTO booking_attendees (id, booking_id, email, added_by_claim, claimant_user_id) \
+         SELECT ?, ?, COALESCE(booking_email, email), 1, id FROM users WHERE id = ?",
+    )
+    .bind(uuid::Uuid::new_v4().to_string())
+    .bind(&booking_id)
+    .bind(&claimant_user_id)
+    .execute(&mut *tx)
+    .await;
+    match listed {
+        Ok(r) if r.rows_affected() == 1 => {}
+        Ok(_) => {
+            let _ = tx.rollback().await;
+            return internal_error_response("list the claimant", "claimant not found");
+        }
+        Err(e) => {
+            let _ = tx.rollback().await;
+            return internal_error_response("list the claimant", &e);
+        }
+    }
+
     // Mark this token as used
     let _ =
         sqlx::query("UPDATE booking_claim_tokens SET used_at = datetime('now') WHERE token = ?")
@@ -3058,15 +3102,6 @@ pub(super) async fn claim_booking(
     let start_time = extract_time_24h(&start_at);
     let end_time = extract_time_24h(&end_at);
 
-    // Add claimant as a booking attendee
-    let attendee_id = uuid::Uuid::new_v4().to_string();
-    let _ = sqlx::query("INSERT INTO booking_attendees (id, booking_id, email) VALUES (?, ?, ?)")
-        .bind(&attendee_id)
-        .bind(&booking_id)
-        .bind(&claimant_email)
-        .execute(&state.pool)
-        .await;
-
     let claim_host_tz = get_host_tz(&state.pool, &event_type_id).await;
 
     // Build details with claimant as additional attendee for CalDAV push
@@ -3093,6 +3128,8 @@ pub(super) async fn claim_booking(
         additional_attendees: booking_additional_attendees(&state.pool, &uid).await,
         host_timezone: claim_host_tz.name().to_string(),
         sequence: booking_ics_sequence(&state.pool, &uid).await,
+        // The claim confirmation goes to the claimant, not to a guest.
+        guest_footer: None,
         ..Default::default()
     };
     if !details.additional_attendees.contains(&claimant_email) {

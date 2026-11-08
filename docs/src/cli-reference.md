@@ -233,7 +233,13 @@ calrs user demote <EMAIL>      Demote to regular user
 calrs user disable <EMAIL>     Disable user account
 
 calrs user enable <EMAIL>      Enable user account
+
+calrs user time-off add <EMAIL> --from <WHEN> [--to <WHEN>] [--label <NOTE>] [--timezone <TZ>]
+calrs user time-off list <EMAIL>
+calrs user time-off remove <EMAIL> <ID>
 ```
+
+`time-off` manages a user's [time off](./event-types.md#time-off), the periods they take no bookings on any event type they host. `<WHEN>` is a date (`2026-12-21`) or a date and time (`2026-12-21T14:00`). `--to` is the last day, included, and defaults to `--from`; with a time it is the end time. Dates are read in the user's profile time zone unless `--timezone` says otherwise. `list` prints the ids `remove` takes; its end times are exclusive. Bookings already in a period are kept.
 
 ### `calrs serve`
 

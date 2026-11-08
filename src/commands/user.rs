@@ -60,6 +60,12 @@ pub enum UserCommands {
         #[arg(long)]
         password_stdin: bool,
     },
+    /// Manage a user's time off: periods they take no bookings, on every
+    /// event type they host
+    TimeOff {
+        #[command(subcommand)]
+        command: crate::commands::time_off::TimeOffCommands,
+    },
     /// Permanently delete a user and all data uniquely owned by them
     Delete {
         /// User email
@@ -72,6 +78,9 @@ pub enum UserCommands {
 
 pub async fn run(pool: &SqlitePool, data_dir: &Path, cmd: UserCommands) -> Result<()> {
     match cmd {
+        UserCommands::TimeOff { command } => {
+            crate::commands::time_off::run(pool, command).await?;
+        }
         UserCommands::ResetMfa { email } => {
             crate::mfa::reset(pool, &email).await?;
             println!("MFA reset for {email}; all sessions revoked.");
