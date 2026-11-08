@@ -277,7 +277,7 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
                 host_tz,
                 None,
             )
-            .await
+            .await?
             {
                 crate::resources::ResourceCheck::Busy => {
                     println!("{} A required resource is busy at that time.", "✗".red());

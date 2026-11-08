@@ -94,6 +94,25 @@ pub fn encode(start: NaiveDateTime, tz: Tz, minutes: i32) -> Option<(String, Str
     ))
 }
 
+/// One read on an availability path. Slot grids (`strict == false`) degrade as
+/// they always did: the error is logged and the empty value is used. Booking
+/// time checks (`strict == true`) get the error back, so a booking is refused
+/// instead of being checked against data that could not be read.
+pub fn read_or_default<T: Default>(
+    result: Result<T, sqlx::Error>,
+    strict: bool,
+    what: &str,
+) -> Result<T, sqlx::Error> {
+    match result {
+        Ok(value) => Ok(value),
+        Err(error) if strict => Err(error),
+        Err(error) => {
+            tracing::warn!(%error, what, "availability read failed, treated as empty");
+            Ok(T::default())
+        }
+    }
+}
+
 /// Resolve the configured zone; database failures must not masquerade as UTC.
 pub async fn event_timezone(pool: &SqlitePool, id: &str) -> Result<Tz, sqlx::Error> {
     let zone = sqlx::query_scalar::<_, Option<String>>("SELECT COALESCE(NULLIF(et.timezone, ''), u.timezone) FROM event_types et JOIN accounts a ON a.id = et.account_id LEFT JOIN users u ON u.id = a.user_id WHERE et.id = ?")
