@@ -135,6 +135,19 @@ These are busy intervals, not bookable slots: working hours, per-event-type
 buffers, notice periods, shared resources, and team scheduling rules still apply
 on the booking page.
 
+## What the model receives
+
+The tools are read-only, except `create_invite_link`, which creates a
+single-use invitation (or returns a public booking URL) and nothing else: no
+tool books, cancels, reschedules or emails anyone. What they return reaches the
+AI model as text, including event type titles that colleagues wrote (their
+internal meetings appear in `list_event_types`). Treat that text as untrusted
+input: a title can carry instructions aimed at the model (prompt injection).
+The worst such a title can obtain is what the tools allow, listing event types,
+reading your busy times and creating invite links in your name, but clients
+that also hold other tools (email, files, the web) should ask before acting on
+what a calrs result says.
+
 ## OAuth behavior
 
 The browser approval page lists the requested scopes:

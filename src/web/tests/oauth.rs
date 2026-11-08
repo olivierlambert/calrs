@@ -1242,3 +1242,93 @@ async fn oauth_authorize_has_a_looser_limit_than_registration() {
         .status();
     assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
 }
+
+#[tokio::test]
+async fn oauth_consent_while_impersonating_grants_as_the_admin() {
+    let _lock = crate::test_support::ENV_LOCK.lock().await;
+    let _env = environment();
+    let (app, pool, session, _) = setup_test_app().await;
+    let admin: String = sqlx::query_scalar("SELECT user_id FROM sessions WHERE id = ?")
+        .bind(&session)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let (target, _) =
+        insert_test_user_with_session(&pool, "Target", "target@example.com", "target").await;
+    let client = register_client(&app).await;
+    let response = app
+        .clone()
+        .oneshot(get(&authorization_uri(&client)))
+        .await
+        .unwrap();
+    let request = request_cookie(&response);
+    let cookies = format!(
+        "__Host-calrs_session={session}; __Host-calrs_oauth={request}; __Host-calrs_impersonate={target}; __Host-calrs_csrf=csrf"
+    );
+    let html = body_string(
+        app.clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/oauth/consent")
+                    .header("cookie", &cookies)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(html.contains("test@example.com"), "{html}");
+    assert!(!html.contains("target@example.com"));
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/oauth/consent")
+                .header("content-type", "application/x-www-form-urlencoded")
+                .header("cookie", &cookies)
+                .body(Body::from(format!(
+                    "_csrf=csrf&request_id={request}&decision=allow"
+                )))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    let owners: Vec<String> = sqlx::query_scalar("SELECT user_id FROM oauth_grants")
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+    assert_eq!(owners, vec![admin]);
+}
+
+#[tokio::test]
+async fn oauth_foreign_keys_are_indexed() {
+    let pool = setup_test_db().await;
+    let plan: Vec<(i64, i64, i64, String)> =
+        sqlx::query_as("EXPLAIN QUERY PLAN SELECT id FROM oauth_grants WHERE user_id = 'x'")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert!(
+        plan.iter()
+            .any(|row| row.3.contains("idx_oauth_grants_user")),
+        "{plan:?}"
+    );
+    let indexes: Vec<String> = sqlx::query_scalar(
+        "SELECT name FROM sqlite_master WHERE type = 'index' AND name LIKE 'idx_oauth_%' ORDER BY name",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    for name in [
+        "idx_oauth_credentials_grant",
+        "idx_oauth_grants_client",
+        "idx_oauth_grants_user",
+        "idx_oauth_requests_client",
+        "idx_oauth_requests_user",
+    ] {
+        assert!(indexes.iter().any(|i| i == name), "{name}: {indexes:?}");
+    }
+}

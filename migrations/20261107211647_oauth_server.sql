@@ -39,3 +39,9 @@ CREATE TABLE oauth_credentials (
 CREATE INDEX idx_oauth_credentials_grant ON oauth_credentials(grant_id);
 CREATE INDEX idx_oauth_grants_expiry ON oauth_grants(expires_at);
 CREATE INDEX idx_oauth_requests_expiry ON oauth_requests(expires_at);
+-- Foreign keys scanned by revoke_access, Connected apps, the admin count and
+-- the cleanup of unused clients.
+CREATE INDEX idx_oauth_grants_user ON oauth_grants(user_id);
+CREATE INDEX idx_oauth_grants_client ON oauth_grants(client_id);
+CREATE INDEX idx_oauth_requests_client ON oauth_requests(client_id);
+CREATE INDEX idx_oauth_requests_user ON oauth_requests(user_id);
