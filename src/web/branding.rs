@@ -605,49 +605,93 @@ pub(super) const LOGO_FILE: &str = "logo.png";
 /// File the optional dark-theme logo is stored under.
 pub(super) const LOGO_DARK_FILE: &str = "logo-dark.png";
 
+/// Logos are revalidated on every page view rather than cached for a time:
+/// the answer is cheap (a 304 from the file's metadata) and a new upload shows
+/// at once.
+const LOGO_CACHE_CONTROL: &str = "no-cache";
+
 /// `/logo`: the light logo, else the dark one when that is all there is.
-pub(super) async fn serve_logo(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    serve_logo_files(&state, &[LOGO_FILE, LOGO_DARK_FILE]).await
+pub(super) async fn serve_logo(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    serve_logo_files(&state, &headers, &[LOGO_FILE, LOGO_DARK_FILE]).await
 }
 
 /// `/logo/dark`: the dark logo, else the light one, so a single upload shows
 /// in both themes.
-pub(super) async fn serve_logo_dark(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    serve_logo_files(&state, &[LOGO_DARK_FILE, LOGO_FILE]).await
+pub(super) async fn serve_logo_dark(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    serve_logo_files(&state, &headers, &[LOGO_DARK_FILE, LOGO_FILE]).await
+}
+
+/// The validator of a stored logo: which file, its size and its modification
+/// time. The file is part of it because a route that falls back serves the
+/// other file, and uploading the missing logo must change what it answers.
+fn logo_etag(file: &str, meta: &std::fs::Metadata) -> String {
+    let modified = meta
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_nanos())
+        .unwrap_or_default();
+    let stem = file.trim_end_matches(".png");
+    format!("\"{stem}-{:x}-{modified:x}\"", meta.len())
 }
 
 /// Serves the first of `files` that exists in the data directory, 404 when
-/// none does.
-async fn serve_logo_files(state: &AppState, files: &[&str]) -> axum::response::Response {
-    let mut found = None;
+/// none does. Browsers revalidate on every page (`no-cache` with an ETag), so
+/// an upload or a removal shows at once instead of after an hour, which
+/// matters most for a route whose answer depends on another file existing.
+async fn serve_logo_files(
+    state: &AppState,
+    headers: &HeaderMap,
+    files: &[&str],
+) -> axum::response::Response {
     for file in files {
-        if let Ok(bytes) = tokio::fs::read(state.data_dir.join(file)).await {
-            found = Some(bytes);
-            break;
+        let path = state.data_dir.join(file);
+        let Ok(meta) = tokio::fs::metadata(&path).await else {
+            continue;
+        };
+        let etag = logo_etag(file, &meta);
+        let fresh = headers
+            .get(axum::http::header::IF_NONE_MATCH)
+            .and_then(|value| value.to_str().ok())
+            .is_some_and(|value| value.split(',').any(|tag| tag.trim() == etag));
+        if fresh {
+            return axum::response::Response::builder()
+                .status(axum::http::StatusCode::NOT_MODIFIED)
+                .header("ETag", &etag)
+                .header("Cache-Control", LOGO_CACHE_CONTROL)
+                .body(axum::body::Body::empty())
+                .unwrap_or_else(|_| axum::response::Response::new(axum::body::Body::empty()));
         }
+        let Ok(bytes) = tokio::fs::read(&path).await else {
+            continue;
+        };
+        let mut response = axum::response::Response::builder()
+            .status(200)
+            .header("ETag", &etag)
+            .header("Cache-Control", LOGO_CACHE_CONTROL);
+        response = match detect_image_ext(&bytes) {
+            Some("jpg") => response.header("Content-Type", "image/jpeg"),
+            Some(ext) => response.header("Content-Type", format!("image/{ext}")),
+            // Uploads have refused SVG since #97, but an instance set up before
+            // then can still hold one. Keep serving it, sandboxed so that opening
+            // `/logo` directly cannot run a script inside it.
+            None if looks_like_svg(&bytes) => response.header("Content-Type", "image/svg+xml").header(
+                "Content-Security-Policy",
+                "default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:; sandbox",
+            ),
+            None => response.header("Content-Type", "image/png"),
+        };
+        return response
+            .body(axum::body::Body::from(bytes))
+            .unwrap_or_else(|_| axum::response::Response::new(axum::body::Body::empty()));
     }
-    let Some(bytes) = found else {
-        return (axum::http::StatusCode::NOT_FOUND, "").into_response();
-    };
-    let mut response = axum::response::Response::builder()
-        .status(200)
-        .header("Cache-Control", "public, max-age=3600");
-    response = match detect_image_ext(&bytes) {
-        Some("jpg") => response.header("Content-Type", "image/jpeg"),
-        Some(ext) => response.header("Content-Type", format!("image/{ext}")),
-        // Uploads have refused SVG since #97, but an instance set up before
-        // then can still hold one. Keep serving it, sandboxed so that opening
-        // `/logo` directly cannot run a script inside it.
-        None if looks_like_svg(&bytes) => response.header("Content-Type", "image/svg+xml").header(
-            "Content-Security-Policy",
-            "default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:; sandbox",
-        ),
-        None => response.header("Content-Type", "image/png"),
-    };
-    response
-        .body(axum::body::Body::from(bytes))
-        .unwrap_or_else(|_| axum::response::Response::new(axum::body::Body::empty()))
-        .into_response()
+    (axum::http::StatusCode::NOT_FOUND, "").into_response()
 }
 
 /// Whether a stored logo is an SVG, as exported files start: possibly after a
@@ -659,6 +703,31 @@ fn looks_like_svg(bytes: &[u8]) -> bool {
     [&b"<svg"[..], b"<?xml", b"<!DOCTYPE svg", b"<!--"]
         .iter()
         .any(|prefix| start.starts_with(prefix))
+}
+
+/// `base.html`'s page background in the light and the dark theme, used when
+/// the theme CSS does not set one (the default theme sets nothing).
+pub(super) const DEFAULT_PAGE_BG: (&str, &str) = ("#f4f4f5", "#09090b");
+
+/// The page background a public page shows the company logo on, in the light
+/// and in the dark theme, read from the active theme CSS. The admin previews
+/// each logo on it, whatever theme the admin's own dashboard is in. Only a
+/// hex colour is taken, so nothing else can reach the `style` attribute.
+pub(super) fn logo_preview_backgrounds(theme_css: &str) -> (String, String) {
+    let (light, dark) = theme_css.split_once("html.dark").unwrap_or((theme_css, ""));
+    let page_bg = |block: &str| {
+        let value = block
+            .split("--bg:")
+            .nth(1)?
+            .split([';', '}'])
+            .next()?
+            .trim();
+        hex_to_rgb(value.strip_prefix('#')?).map(|_| value.to_string())
+    };
+    (
+        page_bg(light).unwrap_or_else(|| DEFAULT_PAGE_BG.0.to_string()),
+        page_bg(dark).unwrap_or_else(|| DEFAULT_PAGE_BG.1.to_string()),
+    )
 }
 
 // --- Favicon management ---

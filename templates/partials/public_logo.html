@@ -9,4 +9,4 @@ function calrsLogoFailed(img) {
   if (box && !box.querySelector('img:not([data-failed])')) box.style.display = 'none';
 }
 </script>
-<div class="logo">{% if company_link %}<a href="{{ company_link }}" target="_blank" rel="noopener noreferrer">{% endif %}<img class="logo-light" src="/logo" alt="" onerror="calrsLogoFailed(this)"><img class="logo-dark" src="/logo/dark" alt="" onerror="calrsLogoFailed(this)">{% if company_link %}</a>{% endif %}</div>
+<div class="logo">{% if company_link %}<a href="{{ company_link }}" target="_blank" rel="noopener noreferrer">{% endif %}{% set logo_alt = t("admin-logo") if company_link else "" %}<img class="logo-light" src="/logo" alt="{{ logo_alt }}" onerror="calrsLogoFailed(this)"><img class="logo-dark" src="/logo/dark" alt="{{ logo_alt }}" onerror="calrsLogoFailed(this)">{% if company_link %}</a>{% endif %}</div>

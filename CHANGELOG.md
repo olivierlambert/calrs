@@ -197,6 +197,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added
+
+- **Dark theme company logo** (#356, by @optimistic5) - The Branding tab of the admin panel takes a second, optional logo for the dark theme. Public booking pages carry both images and the `html.dark` class, set before first paint, picks one, so the theme toggle swaps the logo with no flash. With one logo uploaded it shows in both themes, so existing instances see no change: `/logo` is the light logo and the new `/logo/dark` the dark one, each falling back to the other. The dark logo follows the light one's rules (PNG, JPEG, GIF or WebP, 2 MB, checked by its bytes, no SVG). The admin previews each logo on the page background of the instance theme, light and dark. A linked logo now has a text alternative.
+
+### Changed
+
+- **Logo caching** - `/logo` and `/logo/dark` are revalidated on every page view (`Cache-Control: no-cache` with an `ETag`) instead of cached for an hour, so a new or removed logo shows at once. An unchanged logo costs a `304`. Uploads are written to a temporary file and renamed into place.
+
 ## [2.0.0-beta.3] - 2026-11-08
 
 The 2.0 features that waited in pull requests land: native Microsoft 365 and Outlook.com calendars through Microsoft Graph (#229, PR #290; thanks to @adeg, who wrote it and offered to maintain the provider), organization-wide Exchange calendars through impersonation (#138), Google out of office (#240), MCP over HTTP with OAuth (#273), a REST API with an OpenAPI reference (#169), booking webhooks (#168), booking questions (#210), host notes (#173), time off (#46), a write calendar per event type (#47) and a guest email footer (#223). Bookings are now checked one after the other under a lock, and an availability check that fails refuses the booking instead of treating the host as free. Twenty-three migrations, and a few changes of behaviour: read the upgrade notes below. **Back up your database before upgrading**, as for any pre-release.

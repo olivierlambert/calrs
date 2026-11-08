@@ -941,6 +941,7 @@ pub(super) async fn admin_dashboard(
         .and_then(|w| w.display_name.clone())
         .unwrap_or_default();
     drop(meeting_cfg);
+    let (logo_bg_light, logo_bg_dark) = logo_preview_backgrounds(&state.theme_css.read().await);
 
     Html(
         tmpl.render(context! {
@@ -1039,6 +1040,8 @@ pub(super) async fn admin_dashboard(
             meeting_webhook_display_name => meeting_webhook_display_name,
             has_logo => state.data_dir.join(LOGO_FILE).exists(),
             has_dark_logo => state.data_dir.join(LOGO_DARK_FILE).exists(),
+            logo_bg_light => logo_bg_light,
+            logo_bg_dark => logo_bg_dark,
             has_favicon => state.data_dir.join(FAVICON_FILE).exists(),
             company_link => get_company_link(&state.pool).await.unwrap_or_default(),
             current_theme => get_theme_name(&state.pool).await,
@@ -2985,7 +2988,15 @@ async fn save_logo(
         if bytes.len() > LOGO_MAX_BYTES || detect_image_ext(&bytes).is_none() {
             return admin_upload_refused(reason);
         }
-        if let Err(e) = tokio::fs::write(state.data_dir.join(file), &bytes).await {
+        // Written beside the target and renamed over it, so a page loading
+        // the logo meanwhile gets the old file or the new one, never half.
+        let staged = state.data_dir.join(format!("{file}.upload"));
+        let saved = match tokio::fs::write(&staged, &bytes).await {
+            Ok(()) => tokio::fs::rename(&staged, state.data_dir.join(file)).await,
+            Err(e) => Err(e),
+        };
+        if let Err(e) = saved {
+            let _ = tokio::fs::remove_file(&staged).await;
             tracing::error!(error = %e, file, "failed to save the logo");
             return admin_upload_refused(&format!("{reason}-save"));
         }

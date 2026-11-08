@@ -95,6 +95,12 @@ The **Guest email footer** card sets the default footer added to every email gue
 
 The checkbox on the card lets every user write footers on their own event types. It is off by default: the footer goes out under this instance's name, so only admins may write one until you turn it on.
 
+## Branding
+
+The **Branding** tab holds the company logo, the link it points to, the favicon and the theme.
+
+The company logo is shown at the top of the public booking pages. Upload a PNG, JPEG, GIF or WebP image of at most 2 MB; SVG is refused. A second, optional logo is used when the visitor's page is in the dark theme, for a wordmark that would not read on a dark background. With only one logo uploaded, it is shown in both themes. Each preview sits on the page background the instance theme gives public pages, light and dark, whatever theme your dashboard is in. A new logo shows to visitors on their next page view. Emails never carry the company logo.
+
 ## SMTP status
 
 Shows whether SMTP is configured and the current sender address. SMTP is configured via CLI (`calrs config smtp`) or by editing the database directly.
