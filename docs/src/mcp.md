@@ -195,10 +195,13 @@ the grant with its tokens at once. Admins see, in the action menu of a user in t
 admin panel, how many applications that user has connected, with an action that
 revokes all of them.
 
-The OAuth endpoints are rate limited per client IP (the rightmost
-`X-Forwarded-For` value, as for bookings): client registration and authorization
-10 requests per 15 minutes each, token exchanges and revocations 60 requests per
-5 minutes each. Over the limit they answer HTTP 429 with
+The OAuth endpoints are rate limited per client address (the rightmost
+`X-Forwarded-For` value, as for bookings; an IPv6 address counts by its /64):
+client registration 10 requests per 15 minutes, authorization, token exchanges
+and revocations 60 requests per 5 minutes each. At most 10,000 clients are
+registered; at that cap the oldest client that never obtained a grant is
+removed to make room, and registration is refused only when every client is in
+use. Over the limit they answer HTTP 429 with
 `{"error":"temporarily_unavailable"}`.
 
 Discovery and endpoints:

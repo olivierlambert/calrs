@@ -1115,3 +1115,121 @@ async fn oauth_registration_requires_ascii_normalized_redirects_and_consent_show
         "{html}"
     );
 }
+
+async fn register_from(app: &Router, ip: &str) -> StatusCode {
+    let mut request = Request::builder()
+        .method("POST")
+        .uri("/oauth/register")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({"client_name": "Cap", "redirect_uris": [CALLBACK]}).to_string(),
+        ))
+        .unwrap();
+    request
+        .headers_mut()
+        .insert("x-forwarded-for", ip.parse().unwrap());
+    app.clone().oneshot(request).await.unwrap().status()
+}
+
+#[tokio::test]
+async fn oauth_registration_at_the_cap_reclaims_the_oldest_unused_client() {
+    let _lock = crate::test_support::ENV_LOCK.lock().await;
+    let _env = environment();
+    let (app, pool, session, _) = setup_test_app().await;
+    let (used, _) = issue_tokens(&app, &session).await;
+    sqlx::query("UPDATE oauth_clients SET created_at = 0")
+        .execute(&pool)
+        .await
+        .unwrap();
+    // Fill up to the cap with unused clients, newer than the used one.
+    sqlx::query(
+        "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 9999)
+         INSERT INTO oauth_clients (id, name, redirect_uris, created_at)
+         SELECT 'filler-' || i, 'Filler', '[]', 1000 + i FROM n",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let total = || async {
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM oauth_clients")
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+    };
+    assert_eq!(total().await, 10_000);
+    assert_eq!(
+        register_from(&app, "2001:db8::1").await,
+        StatusCode::CREATED
+    );
+    assert_eq!(total().await, 10_000);
+    let oldest_unused: bool =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM oauth_clients WHERE id = 'filler-1')")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(!oldest_unused, "the oldest unused client made room");
+    let kept: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM oauth_clients WHERE id = ?)")
+        .bind(&used)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(kept, "a client with a grant is never reclaimed");
+
+    // When every client is in use, registration is refused.
+    sqlx::query(
+        "INSERT INTO oauth_requests (id, client_id, parameters, expires_at)
+         SELECT 'req-' || id, id, '{}', 9999999999 FROM oauth_clients
+         WHERE NOT EXISTS (SELECT 1 FROM oauth_grants g WHERE g.client_id = oauth_clients.id)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        register_from(&app, "2001:db8::2").await,
+        StatusCode::SERVICE_UNAVAILABLE
+    );
+    assert_eq!(total().await, 10_000);
+}
+
+#[tokio::test]
+async fn oauth_registration_limit_counts_an_ipv6_64_as_one_client() {
+    let _lock = crate::test_support::ENV_LOCK.lock().await;
+    let _env = environment();
+    let (app, _, _, _) = setup_test_app().await;
+    for i in 0..10 {
+        let ip = format!("2001:db8:aa:bb::{:x}", i + 1);
+        assert_eq!(register_from(&app, &ip).await, StatusCode::CREATED);
+    }
+    assert_eq!(
+        register_from(&app, "2001:db8:aa:bb:ffff::9").await,
+        StatusCode::TOO_MANY_REQUESTS
+    );
+    assert_eq!(
+        register_from(&app, "2001:db8:aa:bc::1").await,
+        StatusCode::CREATED
+    );
+}
+
+#[tokio::test]
+async fn oauth_authorize_has_a_looser_limit_than_registration() {
+    let _lock = crate::test_support::ENV_LOCK.lock().await;
+    let _env = environment();
+    let (app, _, _, _) = setup_test_app().await;
+    let client = register_client(&app).await;
+    for _ in 0..60 {
+        let status = app
+            .clone()
+            .oneshot(get(&authorization_uri(&client)))
+            .await
+            .unwrap()
+            .status();
+        assert_eq!(status, StatusCode::SEE_OTHER);
+    }
+    let status = app
+        .clone()
+        .oneshot(get(&authorization_uri(&client)))
+        .await
+        .unwrap()
+        .status();
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+}

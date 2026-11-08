@@ -29,6 +29,8 @@ const GRANT_LIFETIME: i64 = 30 * 86400;
 /// A registered client that never obtained a grant is dropped after a day, so
 /// anonymous registrations cannot hold the client cap for long.
 const UNUSED_CLIENT_LIFETIME: i64 = 86400;
+/// Registered clients kept at most (`register` reclaims unused ones).
+const CLIENT_CAP: i64 = 10_000;
 /// The local MFA policy of `auth::validate_session`, applied to a grant `g` of
 /// user `u`: a token is worth what the session that approved it was worth, and
 /// stops working when the admin starts requiring MFA it never passed.
@@ -144,17 +146,31 @@ async fn real_user(pool: &SqlitePool, jar: &CookieJar) -> Option<User> {
     auth::validate_session(pool, jar.get(auth::SESSION_COOKIE)?.value()).await
 }
 
-/// Per client IP. Registration and authorization are rare (a client does them
-/// once per connection) and share the login budget, 10 per 15 minutes each;
-/// token exchanges and revocations come from every connected client of an
-/// office behind one address, so they get 60 per 5 minutes each.
+/// The rate-limit identity of a client address: an IPv6 address counts by its
+/// /64, which one subscriber usually holds whole, so rotating addresses inside
+/// it buys nothing. IPv4 (and IPv4-mapped IPv6) counts per address.
+fn rate_key(headers: &HeaderMap) -> String {
+    let ip = crate::web::client_ip_for_rate_limit(headers);
+    match ip.parse::<std::net::IpAddr>() {
+        Ok(std::net::IpAddr::V6(v6)) => match v6.to_ipv4_mapped() {
+            Some(v4) => v4.to_string(),
+            None => {
+                let s = v6.segments();
+                format!("{:x}:{:x}:{:x}:{:x}::/64", s[0], s[1], s[2], s[3])
+            }
+        },
+        _ => ip,
+    }
+}
+
+/// Per client address (`rate_key`). Registration is rare (once per client)
+/// and uses the login budget, 10 per 15 minutes; authorization, token
+/// exchanges and revocations come from every connected client of an office
+/// behind one address, so they get 60 per 5 minutes each.
 async fn rate_limit(state: &AppState, headers: &HeaderMap, operation: &str) -> Result<(), Error> {
-    let key = format!(
-        "oauth:{operation}:{}",
-        crate::web::client_ip_for_rate_limit(headers)
-    );
+    let key = format!("oauth:{operation}:{}", rate_key(headers));
     let limiter = match operation {
-        "register" | "authorize" => &state.login_limiter,
+        "register" => &state.login_limiter,
         _ => &state.oauth_limiter,
     };
     if limiter.check_limited(&key).await {
@@ -278,6 +294,22 @@ fn loopback_redirect_matching_only_relaxes_the_port() {
 }
 
 #[test]
+fn rate_keys_group_ipv6_by_64_and_keep_ipv4_whole() {
+    let key = |ip: &str| {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-forwarded-for", ip.parse().unwrap());
+        rate_key(&headers)
+    };
+    assert_eq!(key("2001:db8:1:2::1"), key("2001:db8:1:2:ffff:abcd:1:2"));
+    assert_eq!(key("2001:db8:1:2::1"), "2001:db8:1:2::/64");
+    assert_ne!(key("2001:db8:1:2::1"), key("2001:db8:1:3::1"));
+    assert_eq!(key("203.0.113.7"), "203.0.113.7");
+    assert_ne!(key("203.0.113.7"), key("203.0.113.8"));
+    assert_eq!(key("::ffff:203.0.113.7"), "203.0.113.7");
+    assert_eq!(rate_key(&HeaderMap::new()), "unknown");
+}
+
+#[test]
 fn redirect_matching_is_literal_for_case_and_percent_encoding() {
     for (registered, requested) in [
         (
@@ -358,8 +390,15 @@ async fn register(
     }
     let id = random_token();
     let now = Utc::now().timestamp();
-    let inserted = sqlx::query("INSERT INTO oauth_clients (id, name, redirect_uris, created_at) SELECT ?, ?, ?, ? WHERE (SELECT COUNT(*) FROM oauth_clients) < 10000")
-        .bind(&id).bind(name).bind(json!(form.redirect_uris).to_string()).bind(now).execute(&state.pool).await?;
+    // At the cap, the oldest client that never got a grant (and has no
+    // authorization in progress) makes room, so a registration flood cannot
+    // lock out new clients; only a cap full of clients in use refuses.
+    let mut tx = state.pool.begin().await?;
+    sqlx::query("DELETE FROM oauth_clients WHERE id IN (SELECT c.id FROM oauth_clients c WHERE (SELECT COUNT(*) FROM oauth_clients) >= ? AND NOT EXISTS (SELECT 1 FROM oauth_grants g WHERE g.client_id = c.id) AND NOT EXISTS (SELECT 1 FROM oauth_requests r WHERE r.client_id = c.id) ORDER BY c.created_at, c.id LIMIT 1)")
+        .bind(CLIENT_CAP).execute(&mut *tx).await?;
+    let inserted = sqlx::query("INSERT INTO oauth_clients (id, name, redirect_uris, created_at) SELECT ?, ?, ?, ? WHERE (SELECT COUNT(*) FROM oauth_clients) < ?")
+        .bind(&id).bind(name).bind(json!(form.redirect_uris).to_string()).bind(now).bind(CLIENT_CAP).execute(&mut *tx).await?;
+    tx.commit().await?;
     if inserted.rows_affected() != 1 {
         return Err(Error(
             StatusCode::SERVICE_UNAVAILABLE,
