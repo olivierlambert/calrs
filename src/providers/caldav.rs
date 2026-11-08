@@ -45,6 +45,8 @@ impl CalendarProvider for CaldavProvider {
                 color: c.color,
                 change_marker: c.ctag,
                 sync_state: c.sync_token,
+                read_only: false,
+                shared: false,
             })
             .collect())
     }
@@ -112,6 +114,10 @@ impl CalendarProvider for CaldavProvider {
 
     async fn delete_event(&self, calendar_id: &str, uid: &str) -> Result<()> {
         self.client.delete_event(calendar_id, uid).await
+    }
+
+    async fn release_event(&self, calendar_id: &str, uid: &str) -> Result<()> {
+        self.client.release_event(calendar_id, uid).await
     }
 
     async fn event_exists(&self, calendar_id: &str, uid: &str) -> Result<bool> {

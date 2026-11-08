@@ -1,5 +1,7 @@
 mod admin;
 mod admin_stats;
+mod api;
+mod api_tokens;
 mod availability;
 mod booking;
 mod booking_actions;
@@ -18,6 +20,7 @@ mod invites;
 mod listing;
 mod mcp;
 pub mod meeting;
+mod microsoft;
 mod notify;
 mod overview_stats;
 mod pending;
@@ -80,6 +83,7 @@ use format::*;
 pub(crate) use hosts::booking_host_identity;
 use hosts::*;
 use invites::*;
+use microsoft::*;
 pub use notify::drain_emails;
 pub use notify::run_reminder_loop;
 pub(crate) use notify::spawn_emails;
@@ -169,6 +173,15 @@ pub struct AppState {
     pub mcp_limiter: RateLimiter,
     /// Other MCP requests (initialize, ping, tools/list), per user.
     pub mcp_request_limiter: RateLimiter,
+    /// REST API requests, per token (`api::authenticate`).
+    pub api_limiter: RateLimiter,
+    /// REST API slot reads and writes, per user (`api::heavy_limit`).
+    pub api_heavy_limiter: RateLimiter,
+    /// Personal access tokens just created, waiting to be shown once on the
+    /// page the creation redirects to (`api_tokens`): flash id to
+    /// (user id, secret, created).
+    pub(crate) api_token_flash:
+        std::sync::Mutex<HashMap<String, (String, String, std::time::Instant)>>,
     pub data_dir: PathBuf,
     pub secret_key: [u8; 32],
     pub theme_css: tokio::sync::RwLock<String>,
@@ -470,7 +483,13 @@ async fn csrf_cookie_middleware(
 ) -> axum::response::Response {
     let cross_site_cookie =
         is_embedded_booking_request(request.uri().path(), request.uri().query());
+    // The REST API is Bearer-only and never reads cookies: no CSRF cookie
+    // for its answers.
+    let api = request.uri().path() == "/api/v1" || request.uri().path().starts_with("/api/v1/");
     let mut response = next.run(request).await;
+    if api {
+        return response;
+    }
 
     // Handlers rendering an explicit CSRF field may already issue its cookie.
     // Do not replace it with a different token on a first visit.
@@ -703,6 +722,9 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
         oauth_register_limiter: RateLimiter::new(30, 900),
         mcp_limiter: RateLimiter::new(120, 60),
         mcp_request_limiter: RateLimiter::new(600, 60),
+        api_limiter: RateLimiter::new(300, 60),
+        api_heavy_limiter: RateLimiter::new(60, 300),
+        api_token_flash: std::sync::Mutex::new(HashMap::new()),
         secret_key,
         data_dir,
         theme_css: tokio::sync::RwLock::new(initial_theme_css),
@@ -722,6 +744,8 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
         .merge(crate::oauth::router())
         .merge(mcp::router())
         .merge(connected_apps::router())
+        .merge(api::router())
+        .merge(api_tokens::router())
         .route("/", get(root_redirect))
         .route("/dashboard", get(dashboard))
         .route("/dashboard/event-types", get(dashboard_event_types))
@@ -815,6 +839,8 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
         .route("/dashboard/sources/{id}/test", post(test_source))
         .route("/dashboard/sources/google/connect", get(google_connect))
         .route("/dashboard/sources/google/callback", get(google_callback))
+        .route("/dashboard/sources/microsoft/connect", post(microsoft_connect))
+        .route("/dashboard/sources/microsoft/callback", get(microsoft_callback))
         .route("/dashboard/sources/{id}/sync", post(sync_source))
         .route(
             "/dashboard/sources/{id}/force-sync",
@@ -892,6 +918,7 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
             "/dashboard/admin/google-oauth2",
             post(admin_update_google_oauth2),
         )
+        .route("/dashboard/admin/microsoft-oauth2", post(admin_update_microsoft_oauth2))
         .route("/dashboard/admin/captcha", post(admin_update_captcha))
         .route("/dashboard/admin/resources", post(admin_create_resource))
         .route(
@@ -1080,6 +1107,10 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
             "/dashboard/bookings/{id}/reschedule",
             get(host_reschedule_slots).post(host_reschedule_booking),
         )
+        .route(
+            "/dashboard/bookings/{id}/reschedule/resend",
+            post(host_resend_reschedule),
+        )
         .route("/u/{username}", get(user_profile))
         .route("/u/{username}/", get(redirect_user_profile_trailing_slash))
         .route("/u/{username}/{slug}", get(show_slots_for_user))
@@ -1090,7 +1121,13 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
         // Legacy single-user routes (kept for backward compatibility)
         .route("/{slug}", get(show_slots))
         .route("/{slug}/book", get(show_book_form).post(handle_booking))
-        .layer(TraceLayer::new_for_http())
+        // OAuth callback query strings contain authorization codes/state.
+        // Record only paths, never the default full request URI.
+        .layer(TraceLayer::new_for_http().make_span_with(
+            |request: &axum::http::Request<axum::body::Body>| {
+                tracing::info_span!("http_request", method = %request.method(), path = %request.uri().path())
+            },
+        ))
         .layer(axum::middleware::from_fn(csrf_cookie_middleware))
         // Keep scheduling pages and their date/query variants out of search
         // results. Do not block crawling in robots.txt: crawlers need to see

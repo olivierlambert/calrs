@@ -11,10 +11,23 @@ pub(super) async fn root_redirect() -> impl IntoResponse {
 // --- Dashboard (overview) ---
 
 /// Where "Open your calendar" goes: the calendar's own web app when the
-/// source tells us (Google, an Exchange server's OWA, the CalDAV server's
-/// origin, which is the web interface for Nextcloud, BlueMind and Kerio),
-/// else the sources page. calrs is the booking layer on top of it.
-fn calendar_web_url(url: &str, auth_type: &str, provider: &str) -> String {
+/// source tells us (Outlook on the web for Microsoft, Google, an Exchange
+/// server's OWA, the CalDAV server's origin, which is the web interface for
+/// Nextcloud, BlueMind and Kerio), else the sources page. calrs is the
+/// booking layer on top of it.
+pub(super) fn calendar_web_url(
+    url: &str,
+    auth_type: &str,
+    provider: &str,
+    microsoft_user_id: Option<&str>,
+) -> String {
+    if provider == crate::providers::factory::kinds::MICROSOFT {
+        return if microsoft_user_id.is_some_and(crate::microsoft_oauth::is_personal_account) {
+            "https://outlook.live.com/calendar/".to_string()
+        } else {
+            "https://outlook.office.com/calendar/".to_string()
+        };
+    }
     if auth_type == "oauth2" {
         return "https://calendar.google.com/".to_string();
     }
@@ -88,8 +101,9 @@ pub(super) async fn dashboard(
     .await
     .unwrap_or_default();
 
-    let source: Option<(String, String, String)> = sqlx::query_as(
-        "SELECT cs.url, COALESCE(cs.auth_type, ''), COALESCE(cs.provider_type, 'caldav')
+    let source: Option<(String, String, String, Option<String>)> = sqlx::query_as(
+        "SELECT cs.url, COALESCE(cs.auth_type, ''), COALESCE(cs.provider_type, 'caldav'),
+                cs.microsoft_user_id
          FROM caldav_sources cs JOIN accounts a ON a.id = cs.account_id
          WHERE a.user_id = ? ORDER BY cs.enabled DESC, cs.created_at LIMIT 1",
     )
@@ -235,7 +249,9 @@ pub(super) async fn dashboard(
 
     let calendar_url = source
         .as_ref()
-        .map(|(url, auth, provider)| calendar_web_url(url, auth, provider));
+        .map(|(url, auth, provider, microsoft_user)| {
+            calendar_web_url(url, auth, provider, microsoft_user.as_deref())
+        });
     let (impersonating, impersonating_name, _) = impersonation_ctx(&auth_user);
 
     Html(
@@ -566,9 +582,20 @@ pub(super) async fn dashboard_bookings(
             crate::i18n::translate(auth_user.lang, "bae-body-resource-gone", None)
         }
         Some("host-busy") => crate::i18n::translate(auth_user.lang, "bae-body-host-busy", None),
+        Some("host-not-synced") => {
+            crate::i18n::translate(auth_user.lang, "bae-body-host-not-synced", None)
+        }
         Some("no-bookable-dates") => {
             crate::i18n::translate(auth_user.lang, "bookings-error-no-bookable-dates", None)
         }
+        Some("reschedule-pending") => {
+            crate::i18n::translate(auth_user.lang, "bookings-error-reschedule-pending", None)
+        }
+        Some("reschedule-resend-too-soon") => crate::i18n::translate(
+            auth_user.lang,
+            "bookings-error-reschedule-resend-too-soon",
+            None,
+        ),
         Some(_) => crate::i18n::translate(auth_user.lang, "bookings-error-generic", None),
         None => String::new(),
     };
@@ -1535,8 +1562,31 @@ pub(super) async fn cancel_booking(
     if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
         return resp;
     }
-    let user = &auth_user.user;
+    host_cancel_booking(&state, &auth_user.user, &booking_id, form.reason).await;
+    Redirect::to("/dashboard/bookings").into_response()
+}
 
+/// What `host_cancel_booking` did.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum HostCancel {
+    /// No confirmed or pending booking of `user`'s event types has this id.
+    NotFound,
+    /// The booking changed state meanwhile (approved, cancelled, declined).
+    Unchanged,
+    /// Cancelled (it was confirmed) or declined (it was pending).
+    Done(&'static str),
+}
+
+/// The host ends a booking of one of their event types, as the dashboard's
+/// cancel button does: a pending request is declined, a confirmed booking
+/// cancelled, the calendar copies deleted, guest and host emailed and the
+/// guest texted. Shared with the REST API (#169).
+pub(super) async fn host_cancel_booking(
+    state: &AppState,
+    user: &crate::models::User,
+    booking_id: &str,
+    reason: Option<String>,
+) -> HostCancel {
     // Verify the booking belongs to this user and is confirmed or pending.
     // Pending bookings are "declined" (no CalDAV event was ever pushed); confirmed ones are "cancelled".
     #[allow(clippy::type_complexity)]
@@ -1561,7 +1611,7 @@ pub(super) async fn cancel_booking(
              JOIN accounts a ON a.id = et.account_id
              WHERE b.id = ? AND a.user_id = ? AND b.status IN ('confirmed', 'pending')",
     )
-    .bind(&booking_id)
+    .bind(booking_id)
     .bind(&user.id)
     .fetch_optional(&state.pool)
     .await
@@ -1583,7 +1633,7 @@ pub(super) async fn cancel_booking(
         guest_language,
     ) = match booking {
         Some(b) => b,
-        None => return Redirect::to("/dashboard/bookings").into_response(),
+        None => return HostCancel::NotFound,
     };
 
     let was_pending = prev_status == "pending";
@@ -1603,12 +1653,12 @@ pub(super) async fn cancel_booking(
         .map(|r| r.rows_affected())
         .unwrap_or(0);
     if changed == 0 {
-        return Redirect::to("/dashboard/bookings").into_response();
+        return HostCancel::Unchanged;
     }
 
     tracing::info!(booking_id = %bid, status = new_status, "booking {}", new_status);
     // Queued before the calendar deletes below, which can take a while.
-    let reason = form.reason.filter(|r| !r.trim().is_empty());
+    let reason = reason.filter(|r| !r.trim().is_empty());
     let (event, ctx) = if was_pending {
         (
             webhooks::Event::Declined,
@@ -1737,7 +1787,7 @@ pub(super) async fn cancel_booking(
         .await;
     }
 
-    Redirect::to("/dashboard/bookings").into_response()
+    HostCancel::Done(new_status)
 }
 
 // --- Confirm pending booking ---
@@ -1855,6 +1905,9 @@ pub(super) async fn confirm_booking(
     .await
     {
         tracing::warn!(booking_id = %bid, "approval refused: host no longer free");
+        if approval_hosts_awaiting_first_sync(&state.pool, &approval_hosts).await {
+            return Redirect::to("/dashboard/bookings?error=host-not-synced").into_response();
+        }
         return Redirect::to("/dashboard/bookings?error=host-busy").into_response();
     }
 

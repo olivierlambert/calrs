@@ -16,7 +16,7 @@ async fn json_body(response: Response) -> Value {
     serde_json::from_str(&body_string(response).await).unwrap()
 }
 
-async fn register_client(app: &Router) -> String {
+pub(super) async fn register_client(app: &Router) -> String {
     let response = app.clone().oneshot(Request::builder().method("POST").uri("/oauth/register")
         .header("content-type", "application/json")
         .body(Body::from(json!({"client_name": "Test <app>", "redirect_uris": [CALLBACK], "token_endpoint_auth_method": "none"}).to_string())).unwrap()).await.unwrap();
@@ -31,7 +31,7 @@ fn authorization_uri(client: &str) -> String {
     format!("/oauth/authorize?client_id={client}&redirect_uri={}&response_type=code&code_challenge={}&code_challenge_method=S256&resource={}&state=opaque-state", urlencoding::encode(CALLBACK), crate::oauth::hash(VERIFIER), urlencoding::encode(RESOURCE))
 }
 
-fn request_cookie(response: &Response) -> String {
+pub(super) fn request_cookie(response: &Response) -> String {
     response
         .headers()
         .get_all("set-cookie")
@@ -44,7 +44,12 @@ fn request_cookie(response: &Response) -> String {
         .unwrap()
 }
 
-fn consent_request(session: &str, request: &str, decision: &str, csrf: &str) -> Request<Body> {
+pub(super) fn consent_request(
+    session: &str,
+    request: &str,
+    decision: &str,
+    csrf: &str,
+) -> Request<Body> {
     Request::builder().method("POST").uri("/oauth/consent")
         .header("content-type", "application/x-www-form-urlencoded")
         .header("cookie", format!("__Host-calrs_session={session}; __Host-calrs_oauth={request}; __Host-calrs_csrf=csrf"))
@@ -78,6 +83,54 @@ async fn begin_consent(app: &Router, client: &str, session: &str) -> String {
     assert!(html.contains("Test &lt;app&gt;"));
     assert!(html.contains("127.0.0.1:4321"));
     request
+}
+
+/// Run the whole browser flow for `resource` with `scope` (all of the
+/// resource's scopes when `None`) and return the token response.
+pub(super) async fn issue_tokens_for(
+    app: &Router,
+    session: &str,
+    resource: &str,
+    scope: Option<&str>,
+) -> Value {
+    let client = register_client(app).await;
+    let mut uri = format!("/oauth/authorize?client_id={client}&redirect_uri={}&response_type=code&code_challenge={}&code_challenge_method=S256&resource={}&state=s", urlencoding::encode(CALLBACK), crate::oauth::hash(VERIFIER), urlencoding::encode(resource));
+    if let Some(scope) = scope {
+        uri.push_str(&format!("&scope={}", urlencoding::encode(scope)));
+    }
+    let response = app.clone().oneshot(get(&uri)).await.unwrap();
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    let request = request_cookie(&response);
+    let page = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/oauth/consent")
+                .header(
+                    "cookie",
+                    format!("__Host-calrs_session={session}; __Host-calrs_oauth={request}"),
+                )
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(page.status(), StatusCode::OK);
+    let response = app
+        .clone()
+        .oneshot(consent_request(session, &request, "allow", "csrf"))
+        .await
+        .unwrap();
+    let url = reqwest::Url::parse(response.headers()["location"].to_str().unwrap()).unwrap();
+    let code = url
+        .query_pairs()
+        .find(|(k, _)| k == "code")
+        .unwrap()
+        .1
+        .into_owned();
+    let response = exchange(app, &client, &code, VERIFIER, resource).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    json_body(response).await
 }
 
 pub(super) async fn issue_tokens(app: &Router, session: &str) -> (String, Value) {

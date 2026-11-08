@@ -60,6 +60,7 @@
 <div class="notice notice--info" role="status">{{ ic.icon("shield") }}<span>{{ t("sources-locked-notice") }}</span></div>
 {% endif %}
 <section class="sec">
+  {% if error %}<div class="notice notice--error" role="alert" style="margin-bottom: 1rem;">{{ ic.icon("alert", 14) }}<span>{{ error }}</span></div>{% endif %}
   {% if sources %}
     {% for s in sources %}
     <div class="source-item">
@@ -80,7 +81,7 @@
             {% if s.sync_error %}<span class="source-state is-error">{{ ic.icon("alert", 13) }}</span><span class="source-state is-error">{{ t("sources-state-failing") }}</span>{% endif %}
             {% if s.last_synced_iso %}{{ t("sources-last-sync") }} <time class="rel-time is-plain" datetime="{{ s.last_synced_iso }}">{{ s.last_synced }} UTC</time>{% else %}{{ t("sources-never-synced") }}{% endif %}
           </div>
-          {% if s.calendars %}<div class="source-meta">{{ t("sources-calendars-synced", synced=s.synced_count, total=s.calendars | length) }}</div>{% endif %}
+          {% if s.calendar_count %}<div class="source-meta">{{ t("sources-calendars-synced", synced=s.synced_count, total=s.calendar_count) }}</div>{% endif %}
         </div>
         <div class="source-actions">
           <form method="post" action="/dashboard/sources/{{ s.id }}/sync" style="margin: 0;">
@@ -92,11 +93,16 @@
           <form method="post" action="/dashboard/sources/{{ s.id }}/test" style="margin: 0;">
             <button type="submit" class="ui-btn ui-btn--sm">{{ t("sources-test") }}</button>
           </form>
-          {% if s.calendars %}
+          {% if s.calendar_count %}
           <a href="/dashboard/sources/{{ s.id }}/calendars" class="ui-btn ui-btn--sm">{{ t("sources-calendars") }}</a>
           {% endif %}
           {% if not s.managed or is_admin %}
-          {% if s.auth_type == "oauth2" %}
+          {% if s.provider_type == "microsoft" %}
+          <form method="post" action="/dashboard/sources/microsoft/connect" style="margin: 0;">
+            <input type="hidden" name="source_id" value="{{ s.id }}">
+            <button type="submit" class="ui-btn ui-btn--sm" title="{{ t('sources-reconnect-title') }}" {% if impersonating %}disabled{% endif %}>{{ t("sources-reconnect") }}</button>
+          </form>
+          {% elif s.auth_type == "oauth2" %}
           <a href="/dashboard/sources/google/connect" class="ui-btn ui-btn--sm" title="{{ t('sources-reconnect-title') }}">{{ t("sources-reconnect") }}</a>
           {% elif not s.managed %}
           <a href="/dashboard/sources/{{ s.id }}/edit" class="ui-btn ui-btn--sm">{{ t("sources-edit") }}</a>
@@ -107,10 +113,13 @@
         </div>
       </div>
       {% if s.sync_error %}<div class="source-sync-error">{{ t("sources-sync-failing", since=s.sync_failing_since, error=s.sync_error) }}</div>{% endif %}
+      {% if s.not_ready %}<div class="notice notice--warning" style="font-size: 13px; padding: 0.45rem 0.7rem; margin-top: 0.5rem;">{{ ic.icon("alert", 14) }}<span>{{ t("sources-microsoft-not-ready") }}</span></div>{% endif %}
       {% if s.calendars %}
       <div style="margin-top: 0.5rem;">
         {% if not s.write_calendar_href %}
         <div class="notice notice--warning" style="font-size: 13px; padding: 0.45rem 0.7rem; margin-bottom: 0.5rem;">{{ ic.icon("alert", 14) }}<span>{{ t("sources-no-write-calendar") }}</span></div>
+        {% elif s.write_calendar_read_only %}
+        <div class="notice notice--warning" style="font-size: 13px; padding: 0.45rem 0.7rem; margin-bottom: 0.5rem;">{{ ic.icon("alert", 14) }}<span>{{ t("sources-write-calendar-read-only") }}</span></div>
         {% endif %}
         <form method="post" action="/dashboard/sources/{{ s.id }}/write-calendar" class="source-write-calendar">
           <label>{{ t("sources-write-bookings-to") }}</label>

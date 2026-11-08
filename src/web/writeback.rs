@@ -100,21 +100,73 @@ pub(super) async fn push_and_record(
     details: &crate::email::BookingDetails,
     kind: PushKind,
 ) -> Vec<(String, String)> {
+    push_and_record_within(
+        pool,
+        key,
+        user_id,
+        booking_uid,
+        details,
+        kind,
+        INLINE_PUSH_BUDGET,
+    )
+    .await
+}
+
+/// How long a fresh push, which runs inside a booking request, keeps
+/// writing to further hosts' calendars (each Google one may wait on the
+/// Calendar API). The hosts left once it is spent are recorded as failed
+/// and written by the write-back retry a few minutes later.
+pub(super) const INLINE_PUSH_BUDGET: std::time::Duration = std::time::Duration::from_secs(45);
+
+/// [`push_and_record`] with a time budget for a fresh push: past it, the
+/// remaining hosts are left to the retry. The first host is always written.
+pub(super) async fn push_and_record_within(
+    pool: &SqlitePool,
+    key: &[u8; 32],
+    user_id: &str,
+    booking_uid: &str,
+    details: &crate::email::BookingDetails,
+    kind: PushKind,
+    budget: std::time::Duration,
+) -> Vec<(String, String)> {
     // One push per booking at a time: two pushes racing a change of
     // destination could each release the copy the other just wrote (#47).
     let lock = booking_push_lock(booking_uid);
     let _guard = lock.lock().await;
 
     let mut failures = Vec::new();
-    let targets = super::booking_write_targets(pool, booking_uid, user_id).await;
+    let mut targets = super::booking_write_targets(pool, booking_uid, user_id).await;
+    // The holder of the Google attendee copy writes first (#237): a calendar
+    // two hosts share then holds the holder's copy, with the guests, and
+    // the others skip it below rather than clear and rewrite it.
+    if let Some(holder) = crate::google_calendar::attendee_copy_holder(pool, booking_uid).await {
+        if let Some(i) = targets.iter().position(|t| *t == holder) {
+            let holder = targets.remove(i);
+            targets.insert(0, holder);
+        }
+    }
+    // Collections an earlier host of this push wrote: one event per
+    // collection, so a shared calendar is written once.
+    let mut written_collections: Vec<super::Collection> = Vec::new();
     // Read before anything is written: whether earlier copies may need to
     // move once this push has landed (#47).
     let was_written = super::was_written(pool, booking_uid).await;
     let had_copies = super::copy_users(pool, booking_uid).await;
     let mut plans = Vec::with_capacity(targets.len());
     let mut pushed_ok = Vec::with_capacity(targets.len());
-    for target in &targets {
+    let started = std::time::Instant::now();
+    for (i, target) in targets.iter().enumerate() {
         let (mut sources, mut plan) = super::host_write_sources(pool, booking_uid, target).await;
+        if kind == PushKind::Fresh && i > 0 && started.elapsed() >= budget {
+            // Not written, so nothing of theirs is released below.
+            failures.push((
+                target.clone(),
+                "not written yet: the calendar writes of this booking took too long, the write-back retries".to_string(),
+            ));
+            pushed_ok.push(false);
+            plans.push((sources, plan));
+            continue;
+        }
         if was_written && plan == super::WritePlan::Destination && !had_copies.contains(target) {
             // The booking's first push to a chosen destination: what the
             // source setting wrote before is recorded first, so it is
@@ -144,7 +196,7 @@ pub(super) async fn push_and_record(
             booking_uid,
             details,
             owner,
-            &[],
+            &written_collections,
             &sources,
             plan,
         )
@@ -174,7 +226,7 @@ pub(super) async fn push_and_record(
                         booking_uid,
                         details,
                         owner,
-                        &[],
+                        &written_collections,
                         &sources,
                         plan,
                     )
@@ -183,6 +235,9 @@ pub(super) async fn push_and_record(
             } else if pushed.is_empty() {
                 super::clear_refusal(pool, booking_uid, target).await;
             }
+        }
+        if pushed.is_empty() {
+            written_collections.extend(sources.iter().map(super::row_collection));
         }
         pushed_ok.push(pushed.is_empty());
         for failure in pushed {

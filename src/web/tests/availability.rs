@@ -176,6 +176,42 @@ async fn fetch_busy_times_empty_calendar() {
     assert!(busy.is_empty(), "No events or bookings → no busy times");
 }
 
+/// A Microsoft source that has not delivered its first snapshot makes the
+/// host busy for the whole window, and a window reaching past the Graph sync
+/// window is busy from its end: either way calrs never read that time.
+#[tokio::test]
+async fn an_unread_microsoft_calendar_blocks_rather_than_frees() {
+    let pool = setup_test_db().await;
+    let (user_id, account_id, _) = seed_test_data(&pool).await;
+    sqlx::query("INSERT INTO caldav_sources (id, account_id, name, url, username, provider_type) VALUES ('ms', ?, 'M', 'https://graph.microsoft.com/v1.0', 'u', 'microsoft')")
+        .bind(&account_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let today = chrono::Utc::now().date_naive();
+    let (start, end) = (
+        today.and_hms_opt(0, 0, 0).unwrap() + chrono::Duration::days(1),
+        today.and_hms_opt(0, 0, 0).unwrap() + chrono::Duration::days(8),
+    );
+    let busy = |start, end| fetch_busy_times_for_user(&pool, &user_id, start, end, Tz::UTC, None);
+    assert_eq!(busy(start, end).await, [(start, end)]);
+
+    sqlx::query("UPDATE caldav_sources SET last_full_sync = datetime('now') WHERE id = 'ms'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert!(busy(start, end).await.is_empty());
+
+    let far = start + chrono::Duration::days(800);
+    let blocked = busy(start, far).await;
+    assert_eq!(blocked.len(), 1);
+    assert!(
+        blocked[0].0 > start + chrono::Duration::days(700),
+        "{blocked:?}"
+    );
+    assert_eq!(blocked[0].1, far);
+}
+
 #[tokio::test]
 async fn fetch_busy_times_includes_bookings() {
     let pool = setup_test_db().await;
@@ -2821,6 +2857,148 @@ fn horizon_last_date_survives_an_absurdly_large_horizon() {
     );
 }
 
+#[tokio::test]
+async fn google_out_of_office_blocks_in_host_timezone_and_respects_calendar_selection() {
+    let pool = setup_test_db().await;
+    let (user_id, account_id, et_id) = seed_test_data(&pool).await;
+    seed_synced_event(
+        &pool,
+        &account_id,
+        "20261024T220000Z",
+        "20261025T230000Z",
+        "UTC",
+        "OPAQUE",
+    )
+    .await;
+    sqlx::query("UPDATE events SET google_out_of_office = 1")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let paris: Tz = "Europe/Paris".parse().unwrap();
+    let start = dt(2026, 10, 25, 9, 0);
+    let end = dt(2026, 10, 25, 17, 0);
+    let busy = fetch_busy_times_for_user(&pool, &user_id, start, end, paris, Some(&et_id)).await;
+    assert_eq!(busy, vec![(dt(2026, 10, 25, 0, 0), dt(2026, 10, 26, 0, 0))]);
+    assert!(has_conflict(&busy, start, end));
+
+    sqlx::query("UPDATE calendars SET is_busy = 0")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert!(
+        fetch_busy_times_for_user(&pool, &user_id, start, end, paris, Some(&et_id))
+            .await
+            .is_empty()
+    );
+    sqlx::query("UPDATE calendars SET is_busy = 1")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO calendars (id, source_id, href, is_busy) SELECT 'unselected', source_id, '/other/', 1 FROM calendars LIMIT 1")
+        .execute(&pool).await.unwrap();
+    sqlx::query(
+        "INSERT INTO event_type_calendars (event_type_id, calendar_id) VALUES (?, 'unselected')",
+    )
+    .bind(&et_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    assert!(
+        fetch_busy_times_for_user(&pool, &user_id, start, end, paris, Some(&et_id))
+            .await
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn google_out_of_office_timed_interval_blocks_across_utc_date_boundary() {
+    let pool = setup_test_db().await;
+    let (user_id, account_id, et_id) = seed_test_data(&pool).await;
+    seed_synced_event(
+        &pool,
+        &account_id,
+        "20261025T233000Z",
+        "20261026T003000Z",
+        "UTC",
+        "OPAQUE",
+    )
+    .await;
+    sqlx::query("UPDATE events SET google_out_of_office = 1")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let tokyo: Tz = "Asia/Tokyo".parse().unwrap();
+    let start = dt(2026, 10, 26, 8, 30);
+    let end = dt(2026, 10, 26, 9, 30);
+    let busy = fetch_busy_times_for_user(&pool, &user_id, start, end, tokyo, Some(&et_id)).await;
+    assert_eq!(busy, vec![(start, end)]);
+    assert!(has_conflict(&busy, start, end));
+    assert!(fetch_busy_times_for_user(
+        &pool,
+        &user_id,
+        dt(2026, 10, 27, 8, 30),
+        dt(2026, 10, 27, 9, 30),
+        tokyo,
+        Some(&et_id)
+    )
+    .await
+    .is_empty());
+}
+
+/// The troubleshoot view lists an absence on the days it covers, not on
+/// the day it ends at midnight, where it covers nothing.
+#[tokio::test]
+async fn troubleshoot_skips_an_absence_ending_at_midnight() {
+    let (app, pool, session, et_id) = setup_test_app().await;
+    let account_id: String =
+        sqlx::query_scalar("SELECT id FROM accounts WHERE email = 'test@example.com'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let day = far_future_monday();
+    let date = NaiveDate::parse_from_str(&day, "%Y-%m-%d").unwrap();
+    let compact = |d: NaiveDate, hm: &str| format!("{}T{hm}00Z", d.format("%Y%m%d"));
+    // Rules from midnight, so the timeline starts at 00:00.
+    sqlx::query("UPDATE availability_rules SET start_time = '00:00', end_time = '02:00' WHERE event_type_id = ?")
+        .bind(&et_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    seed_synced_event(
+        &pool,
+        &account_id,
+        &compact(date - Duration::days(1), "2000"),
+        &compact(date, "0000"),
+        "UTC",
+        "OPAQUE",
+    )
+    .await;
+    sqlx::query("UPDATE events SET summary = 'Ends-At-Midnight', google_out_of_office = 1")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO events (id, calendar_id, uid, summary, start_at, end_at, all_day, timezone, status, transp, google_out_of_office) \
+         SELECT 'early', calendar_id, 'early', 'Early-Absence', ?, ?, 0, 'UTC', 'CONFIRMED', 'OPAQUE', 1 FROM events LIMIT 1",
+    )
+    .bind(compact(date, "0030"))
+    .bind(compact(date, "0100"))
+    .execute(&pool)
+    .await
+    .unwrap();
+    let response = app
+        .oneshot(get_authed(
+            &format!("/dashboard/troubleshoot?date={day}&event_type=test-meeting"),
+            &session,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = body_string(response).await;
+    assert!(body.contains("Early-Absence"), "{body}");
+    assert!(!body.contains("Ends-At-Midnight"), "{body}");
+}
+
 // --- Timezone pickers (#265) ---
 
 /// A summer instant, so DST zones show their summer offset.
@@ -3087,6 +3265,141 @@ fn resolve_event_type_tz_keeps_a_null_row_following_its_owner() {
         .as_deref(),
         Some("Mars/Olympus_Mons")
     );
+}
+
+/// A calendar that is not busy by default (a colleague's, shared with the
+/// host) blocks nothing unless an event type selects it, and then blocks
+/// like any other: `is_busy` is the default, an explicit selection wins.
+#[tokio::test]
+async fn a_calendar_not_busy_by_default_blocks_only_when_selected() {
+    let pool = setup_test_db().await;
+    let (user_id, account_id, et_id) = seed_test_data(&pool).await;
+    seed_synced_event(
+        &pool,
+        &account_id,
+        "20260112T100000Z",
+        "20260112T110000Z",
+        "UTC",
+        "OPAQUE",
+    )
+    .await;
+    let colleague: String = sqlx::query_scalar("SELECT id FROM calendars")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE calendars SET is_busy = 0 WHERE id = ?")
+        .bind(&colleague)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let busy = |et: Option<String>| {
+        let pool = pool.clone();
+        let user_id = user_id.clone();
+        async move {
+            crate::web::fetch_busy_times_for_user(
+                &pool,
+                &user_id,
+                dt(2026, 1, 12, 0, 0),
+                dt(2026, 1, 12, 23, 59),
+                chrono_tz::UTC,
+                et.as_deref(),
+            )
+            .await
+        }
+    };
+    assert!(busy(None).await.is_empty());
+    assert!(busy(Some(et_id.clone())).await.is_empty());
+
+    sqlx::query("INSERT INTO event_type_calendars (event_type_id, calendar_id) VALUES (?, ?)")
+        .bind(&et_id)
+        .bind(&colleague)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        busy(Some(et_id)).await,
+        [(dt(2026, 1, 12, 10, 0), dt(2026, 1, 12, 11, 0))]
+    );
+}
+
+/// #324 on top of the selection rule above: a calendar that is not synced
+/// never blocks, even when an event type selects it, and a selection none of
+/// whose calendars is synced falls back to every busy synced calendar, so
+/// turning off a colleague's calendar the event type picked does not leave
+/// the host without busy time.
+#[tokio::test]
+async fn a_selected_calendar_that_is_not_synced_never_blocks() {
+    let pool = setup_test_db().await;
+    let (user_id, account_id, et_id) = seed_test_data(&pool).await;
+    seed_synced_event(
+        &pool,
+        &account_id,
+        "20260112T100000Z",
+        "20260112T110000Z",
+        "UTC",
+        "OPAQUE",
+    )
+    .await;
+    let own: String = sqlx::query_scalar("SELECT id FROM calendars")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    seed_synced_event(
+        &pool,
+        &account_id,
+        "20260112T140000Z",
+        "20260112T150000Z",
+        "UTC",
+        "OPAQUE",
+    )
+    .await;
+    let colleague: String = sqlx::query_scalar("SELECT id FROM calendars WHERE id != ?")
+        .bind(&own)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE calendars SET is_busy = 0 WHERE id = ?")
+        .bind(&colleague)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO event_type_calendars (event_type_id, calendar_id) VALUES (?, ?)")
+        .bind(&et_id)
+        .bind(&colleague)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let busy = |et: Option<String>| {
+        let pool = pool.clone();
+        let user_id = user_id.clone();
+        async move {
+            crate::web::fetch_busy_times_for_user(
+                &pool,
+                &user_id,
+                dt(2026, 1, 12, 0, 0),
+                dt(2026, 1, 12, 23, 59),
+                chrono_tz::UTC,
+                et.as_deref(),
+            )
+            .await
+        }
+    };
+    // Selected and synced: only the colleague's calendar counts.
+    assert_eq!(
+        busy(Some(et_id.clone())).await,
+        [(dt(2026, 1, 12, 14, 0), dt(2026, 1, 12, 15, 0))]
+    );
+
+    // Turned off, with an event a sync in flight wrote back: the selection
+    // no longer counts, and the busy synced calendar blocks again.
+    sqlx::query("UPDATE calendars SET sync_enabled = 0 WHERE id = ?")
+        .bind(&colleague)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let only_own = [(dt(2026, 1, 12, 10, 0), dt(2026, 1, 12, 11, 0))];
+    assert_eq!(busy(Some(et_id)).await, only_own);
+    assert_eq!(busy(None).await, only_own);
 }
 
 /// On the web paths a failing busy-time query costs only its own rows: the

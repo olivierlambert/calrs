@@ -709,19 +709,24 @@ async fn busy_times(
     // still make the booking conflict with its own calendar copy.
     let exclude_uid = exclude_booking_uid.unwrap_or("");
 
+    // API status events are UTC, while the requested window is host-local.
+    // Fetch them with timezone slack, then test overlap after conversion below.
     let events: Result<Vec<(String, String, Option<String>)>, _> = sqlx::query_as(
         "SELECT e.start_at, e.end_at, e.timezone FROM events e
          JOIN calendars c ON c.id = e.calendar_id
          JOIN caldav_sources cs ON cs.id = c.source_id
          JOIN accounts a ON a.id = cs.account_id
-         WHERE a.user_id = ? AND c.is_busy = 1 AND c.sync_enabled = 1
-           AND (NOT EXISTS (SELECT 1 FROM event_type_calendars etc JOIN calendars sc ON sc.id = etc.calendar_id WHERE etc.event_type_id = ? AND sc.sync_enabled = 1)
+         WHERE a.user_id = ? AND c.sync_enabled = 1
+           AND ((c.is_busy = 1 AND NOT EXISTS (SELECT 1 FROM event_type_calendars etc JOIN calendars sc ON sc.id = etc.calendar_id WHERE etc.event_type_id = ? AND sc.sync_enabled = 1))
                 OR c.id IN (SELECT calendar_id FROM event_type_calendars WHERE event_type_id = ?))
            AND (e.rrule IS NULL OR e.rrule = '')
            AND (e.status IS NULL OR e.status != 'CANCELLED')
            AND (e.transp IS NULL OR e.transp != 'TRANSPARENT')
            AND (? = '' OR e.uid != ?)
-           AND e.start_at <= ? AND e.end_at >= ?",
+           AND ((e.start_at <= ? AND e.end_at >= ?)
+                OR (e.google_out_of_office = 1
+                    AND e.start_at <= strftime('%Y%m%dT%H%M%S', ?, '+2 days')
+                    AND e.end_at >= strftime('%Y%m%dT%H%M%S', ?, '-2 days')))",
     )
     .bind(user_id)
     .bind(et_id_for_filter)
@@ -730,6 +735,8 @@ async fn busy_times(
     .bind(exclude_uid)
     .bind(&end_compact)
     .bind(&start_compact)
+    .bind(&end_iso)
+    .bind(&start_iso)
     .fetch_all(pool)
     .await;
     let events = busy_rows(events, strict, "calendar events", user_id)?;
@@ -739,7 +746,7 @@ async fn busy_times(
         .filter_map(|(s, e, tz)| {
             let start = convert_event_to_tz(parse_ical_datetime(s)?, tz.as_deref(), host_tz);
             let end = convert_event_to_tz(parse_ical_datetime(e)?, tz.as_deref(), host_tz);
-            Some((start, end))
+            (start <= window_end && end >= window_start).then_some((start, end))
         })
         .collect();
 
@@ -749,8 +756,8 @@ async fn busy_times(
          JOIN calendars c ON c.id = e.calendar_id
          JOIN caldav_sources cs ON cs.id = c.source_id
          JOIN accounts a ON a.id = cs.account_id
-         WHERE a.user_id = ? AND c.is_busy = 1 AND c.sync_enabled = 1
-           AND (NOT EXISTS (SELECT 1 FROM event_type_calendars etc JOIN calendars sc ON sc.id = etc.calendar_id WHERE etc.event_type_id = ? AND sc.sync_enabled = 1)
+         WHERE a.user_id = ? AND c.sync_enabled = 1
+           AND ((c.is_busy = 1 AND NOT EXISTS (SELECT 1 FROM event_type_calendars etc JOIN calendars sc ON sc.id = etc.calendar_id WHERE etc.event_type_id = ? AND sc.sync_enabled = 1))
                 OR c.id IN (SELECT calendar_id FROM event_type_calendars WHERE event_type_id = ?))
            AND (e.status IS NULL OR e.status != 'CANCELLED')
            AND (e.transp IS NULL OR e.transp != 'TRANSPARENT')
@@ -821,6 +828,22 @@ async fn busy_times(
             busy.push((start, end));
         }
     }
+
+    // A Microsoft source that has not delivered its first snapshot, or a
+    // time past what its last one covered, says nothing about the host's
+    // Outlook calendar: busy, rather than free.
+    busy.extend(
+        crate::commands::sync::microsoft_gap_intervals(
+            pool,
+            user_id,
+            window_start,
+            window_end,
+            host_tz,
+        )
+        .await
+        .into_iter()
+        .map(|(start, end, _)| (start, end)),
+    );
 
     // Time off (#46): the user takes no bookings then, whatever the event
     // type, so every caller of this function (slot pages, submit-time
@@ -2472,13 +2495,16 @@ pub(super) async fn troubleshoot(
          JOIN calendars c ON c.id = e.calendar_id
          JOIN caldav_sources cs ON cs.id = c.source_id
          JOIN accounts a ON a.id = cs.account_id
-         WHERE a.user_id = ? AND c.is_busy = 1 AND c.sync_enabled = 1
-           AND (NOT EXISTS (SELECT 1 FROM event_type_calendars etc JOIN calendars sc ON sc.id = etc.calendar_id WHERE etc.event_type_id = ? AND sc.sync_enabled = 1)
+         WHERE a.user_id = ? AND c.sync_enabled = 1
+           AND ((c.is_busy = 1 AND NOT EXISTS (SELECT 1 FROM event_type_calendars etc JOIN calendars sc ON sc.id = etc.calendar_id WHERE etc.event_type_id = ? AND sc.sync_enabled = 1))
                 OR c.id IN (SELECT calendar_id FROM event_type_calendars WHERE event_type_id = ?))
            AND (e.rrule IS NULL OR e.rrule = '')
            AND (e.status IS NULL OR e.status != 'CANCELLED')
            AND (e.transp IS NULL OR e.transp != 'TRANSPARENT')
-           AND ((e.start_at < ? AND e.end_at > ?) OR (e.start_at < ? AND e.end_at > ?))
+           AND ((e.start_at < ? AND e.end_at > ?) OR (e.start_at < ? AND e.end_at > ?)
+                OR (e.google_out_of_office = 1
+                    AND e.start_at <= strftime('%Y%m%dT%H%M%S', ?, '+2 days')
+                    AND e.end_at >= strftime('%Y%m%dT%H%M%S', ?, '-2 days')))
          ORDER BY e.start_at",
     )
     .bind(&user.id)
@@ -2486,6 +2512,8 @@ pub(super) async fn troubleshoot(
     .bind(&et_id)
     .bind(&day_end_compact)
     .bind(&day_start_compact)
+    .bind(&day_end_iso)
+    .bind(&day_start_iso)
     .bind(&day_end_iso)
     .bind(&day_start_iso)
     .fetch_all(&state.pool)
@@ -2497,6 +2525,17 @@ pub(super) async fn troubleshoot(
         .filter_map(|(s, e, summary, cal_name, event_tz)| {
             let start = convert_event_to_tz(parse_ical_datetime(s)?, event_tz.as_deref(), host_tz);
             let end = convert_event_to_tz(parse_ical_datetime(e)?, event_tz.as_deref(), host_tz);
+            if start.date() > target_date || end.date() < target_date {
+                return None;
+            }
+            // An event that only touches the day at a midnight (an absence
+            // ending at 00:00) takes none of it, buffers included.
+            let day_start = target_date.and_time(NaiveTime::MIN);
+            if end + Duration::minutes(buf_after as i64) <= day_start
+                || start - Duration::minutes(buf_before as i64) >= day_start + Duration::days(1)
+            {
+                return None;
+            }
             Some((
                 start.format("%Y-%m-%dT%H:%M:%S").to_string(),
                 end.format("%Y-%m-%dT%H:%M:%S").to_string(),
@@ -2521,8 +2560,8 @@ pub(super) async fn troubleshoot(
          JOIN calendars c ON c.id = e.calendar_id
          JOIN caldav_sources cs ON cs.id = c.source_id
          JOIN accounts a ON a.id = cs.account_id
-         WHERE a.user_id = ? AND c.is_busy = 1 AND c.sync_enabled = 1
-           AND (NOT EXISTS (SELECT 1 FROM event_type_calendars etc JOIN calendars sc ON sc.id = etc.calendar_id WHERE etc.event_type_id = ? AND sc.sync_enabled = 1)
+         WHERE a.user_id = ? AND c.sync_enabled = 1
+           AND ((c.is_busy = 1 AND NOT EXISTS (SELECT 1 FROM event_type_calendars etc JOIN calendars sc ON sc.id = etc.calendar_id WHERE etc.event_type_id = ? AND sc.sync_enabled = 1))
                 OR c.id IN (SELECT calendar_id FROM event_type_calendars WHERE event_type_id = ?))
            AND (e.status IS NULL OR e.status != 'CANCELLED')
            AND (e.transp IS NULL OR e.transp != 'TRANSPARENT')
@@ -3085,6 +3124,12 @@ pub(super) async fn troubleshoot(
         .to_string();
     // Troubleshoot is a dashboard page; keep English until dashboard is translated.
     let date_label = crate::i18n::format_long_date(target_date, "en");
+    // Every time reads as busy until the user's Microsoft calendar has
+    // delivered its first complete snapshot: say so rather than leave the
+    // timeline unexplained.
+    let calendar_not_ready =
+        crate::commands::sync::microsoft_coverage_gap(&state.pool, &user.id, Utc::now()).await
+            == Some(crate::commands::sync::CoverageGap::NotYetSynced);
 
     let tmpl = match state.templates.get_template("troubleshoot.html") {
         Ok(t) => t,
@@ -3105,6 +3150,7 @@ pub(super) async fn troubleshoot(
             has_rules => !rules.is_empty(),
             date_is_blocked => date_is_blocked,
             has_custom_hours => !day_overrides.is_empty() && !date_is_blocked,
+            calendar_not_ready => calendar_not_ready,
             blocks => blocks_ctx,
             hour_markers => hour_markers,
             breakdown => breakdown_ctx,

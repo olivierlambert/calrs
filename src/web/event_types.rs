@@ -573,7 +573,7 @@ pub(super) async fn new_event_type_form(
     // teams in the dropdown.
     let groups_ctx =
         form_teams_with_members(&state.pool, &form_admin_teams(&state.pool, user).await).await;
-    let calendars_ctx = form_busy_calendars(&state.pool, &user.id).await;
+    let calendars_ctx = form_calendars(&state.pool, &user.id).await;
 
     // Pre-fill availability from user's default schedule
     ensure_user_avail_seeded(&state.pool, &user.id).await;
@@ -1147,7 +1147,7 @@ pub(super) async fn edit_event_type_form(
     // Build per-day schedule string
     let avail_schedule = build_avail_schedule(&all_rules);
 
-    let calendars_ctx = form_busy_calendars(&state.pool, &user.id).await;
+    let calendars_ctx = form_calendars(&state.pool, &user.id).await;
 
     // Get currently selected calendars for this event type
     let selected_cals: Vec<(String,)> =
@@ -1963,13 +1963,16 @@ async fn form_teams_with_members(
     out
 }
 
-/// The user's busy calendars (`is_busy = 1`), for the calendar selection.
-async fn form_busy_calendars(pool: &SqlitePool, user_id: &str) -> Vec<minijinja::Value> {
+/// Every synced calendar of the user, for the calendar selection. With none
+/// selected, only the busy ones (`is_busy = 1`) are checked, which leaves out
+/// a colleague's shared one. A calendar that is not synced (#324) never
+/// blocks, so it is not offered.
+async fn form_calendars(pool: &SqlitePool, user_id: &str) -> Vec<minijinja::Value> {
     let calendars: Vec<(String, Option<String>, String)> = sqlx::query_as(
         "SELECT c.id, c.display_name, cs.name FROM calendars c
          JOIN caldav_sources cs ON cs.id = c.source_id
          JOIN accounts a ON a.id = cs.account_id
-         WHERE a.user_id = ? AND c.is_busy = 1 AND c.sync_enabled = 1
+         WHERE a.user_id = ? AND c.sync_enabled = 1
          ORDER BY cs.name, c.display_name",
     )
     .bind(user_id)
@@ -2225,7 +2228,7 @@ async fn render_event_type_form_error(
     };
     let calendars = match target {
         FormTarget::NewPersonal | FormTarget::EditPersonal { .. } => {
-            form_busy_calendars(pool, &user.id).await
+            form_calendars(pool, &user.id).await
         }
         _ => Vec::new(),
     };

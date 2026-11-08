@@ -426,11 +426,14 @@ async fn a_google_meet_event_is_created_on_the_destination_and_never_moves() {
         "INSERT INTO caldav_sources (id, account_id, name, url, username, enabled, \
              write_calendar_href, auth_type, oauth2_provider, access_token_enc, token_expires_at) \
              VALUES (?, ?, 'Google', 'https://apidata.example.test/dav/', 'alice', 1, ?, \
-             'oauth2', 'google', 'unopenable', '2099-01-01T00:00:00')",
+             'oauth2', 'google', ?, '2099-01-01T00:00:00Z')",
     )
     .bind(&source_id)
     .bind(&account_id)
     .bind(write_href)
+    // A token that decrypts: the push checks the Meet event's attendees
+    // with it (not a Google host here, so the check has nothing to do).
+    .bind(crate::crypto::encrypt_password(&[0u8; 32], "access-token").unwrap())
     .execute(&pool)
     .await
     .unwrap();

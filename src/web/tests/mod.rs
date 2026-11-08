@@ -6,6 +6,7 @@ use super::*;
 
 mod admin;
 mod admin_stats;
+mod api;
 mod auth_pages;
 mod availability;
 mod booking;
@@ -21,6 +22,7 @@ mod emails;
 mod event_types;
 mod ews_global;
 mod format;
+mod google_copies;
 mod guards;
 mod guest_footer;
 mod hosts;

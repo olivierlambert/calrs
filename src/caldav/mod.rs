@@ -25,7 +25,17 @@ pub struct CaldavClient {
     base_url: String,
     origin: String,
     auth: CaldavAuth,
+    /// Tests only: treat this client as a Google one and send its Calendar
+    /// API calls to this base instead of googleapis.com.
+    #[cfg(test)]
+    google_api_base: Option<String>,
 }
+
+/// See `CaldavClient::treat_as_google`.
+#[cfg(test)]
+static TEST_GOOGLE_ORIGINS: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::HashMap<String, String>>,
+> = std::sync::LazyLock::new(Default::default);
 
 /// Check if an IP address is in a private/reserved range (SSRF protection).
 /// Also used by outgoing booking webhooks (`web::webhooks`).
@@ -179,6 +189,50 @@ pub fn validate_caldav_url(url: &str) -> Result<()> {
 }
 
 impl CaldavClient {
+    /// Only send Google OAuth credentials to the Calendar API for a Google
+    /// source. Other CalDAV servers (including bearer-auth servers) stay local.
+    pub(crate) fn google_access_token(&self) -> Option<&str> {
+        let url = reqwest::Url::parse(&self.base_url).ok()?;
+        if url.scheme() != "https" || url.host_str() != Some(GOOGLE_CALDAV_HOST) {
+            return None;
+        }
+        match &self.auth {
+            CaldavAuth::Bearer { access_token } => Some(access_token),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn base_url(&self) -> &str {
+        &self.base_url
+    }
+
+    /// The Calendar API base and token for a Google client, `None` for any
+    /// other server. Booking writes to Google take the Calendar API detour
+    /// in `google_calendar` so Google sends no invitation of its own.
+    pub(crate) fn google_calendar_api(&self) -> Option<(&str, &str)> {
+        #[cfg(test)]
+        if let (Some(base), CaldavAuth::Bearer { access_token }) =
+            (&self.google_api_base, &self.auth)
+        {
+            return Some((base, access_token));
+        }
+        self.google_access_token()
+            .map(|token| (crate::google_meet::CALENDAR_API_BASE, token))
+    }
+
+    /// Tests only: every client built from now on for `origin` (scheme, host
+    /// and port, as `build` computes it) is a Google one whose Calendar API
+    /// lives at `api_base`. Lets a fake Google stand behind clients the code
+    /// under test builds itself (`build_client_for_source`). Each fake listens
+    /// on its own port, so parallel tests do not see each other's entries.
+    #[cfg(test)]
+    pub(crate) fn treat_as_google(origin: &str, api_base: &str) {
+        TEST_GOOGLE_ORIGINS.lock().unwrap().insert(
+            origin.trim_end_matches('/').to_string(),
+            api_base.trim_end_matches('/').to_string(),
+        );
+    }
+
     pub fn new(base_url: &str, username: &str, password: &str) -> Self {
         Self::build(
             base_url,
@@ -215,8 +269,10 @@ impl CaldavClient {
         Self {
             client,
             base_url: base,
-            origin,
             auth,
+            #[cfg(test)]
+            google_api_base: TEST_GOOGLE_ORIGINS.lock().unwrap().get(&origin).cloned(),
+            origin,
         }
     }
 
@@ -382,7 +438,64 @@ impl CaldavClient {
     }
 
     /// PUT an event (iCalendar) to a calendar
+    ///
+    /// On Google, the ATTENDEE and ORGANIZER lines do not go through CalDAV:
+    /// Google ignores `SCHEDULE-AGENT=CLIENT` and would mail its own
+    /// invitation. They are set through the Calendar API with
+    /// `sendUpdates=none` instead (`google_calendar`).
     pub async fn put_event(&self, calendar_href: &str, uid: &str, ics_data: &str) -> Result<()> {
+        if let Some((api_base, token)) = self.google_calendar_api() {
+            let Some(calendar_id) = crate::google_meet::calendar_id_from_caldav_href(calendar_href)
+            else {
+                // No calendar id, so no Calendar API: the attendees cannot be
+                // set silently, and over CalDAV Google would mail them.
+                tracing::warn!(uid = %uid, "google calendar: no calendar id in the collection href, writing the event without attendees");
+                let (host_only, _) = crate::google_calendar::split_scheduling(ics_data);
+                return self.put_event_raw(calendar_href, uid, &host_only).await;
+            };
+            return crate::google_calendar::put_event_without_invitations(
+                self,
+                &crate::google_calendar::EventsApi::new(api_base, token, &calendar_id),
+                calendar_href,
+                uid,
+                ics_data,
+            )
+            .await;
+        }
+        self.put_event_raw(calendar_href, uid, ics_data).await
+    }
+
+    /// On Google, make sure the event `uid` lists the attendees of
+    /// `ics_data` without rewriting it (`google_calendar::ensure_attendees`).
+    /// Nothing to do on any other server.
+    pub(crate) async fn ensure_google_attendees(
+        &self,
+        calendar_href: &str,
+        uid: &str,
+        ics_data: &str,
+    ) -> Result<()> {
+        let Some((api_base, token)) = self.google_calendar_api() else {
+            return Ok(());
+        };
+        let Some(calendar_id) = crate::google_meet::calendar_id_from_caldav_href(calendar_href)
+        else {
+            return Ok(());
+        };
+        crate::google_calendar::ensure_attendees(
+            &crate::google_calendar::EventsApi::new(api_base, token, &calendar_id),
+            uid,
+            ics_data,
+        )
+        .await
+    }
+
+    /// Plain CalDAV PUT of `ics_data`, whatever the server.
+    pub(crate) async fn put_event_raw(
+        &self,
+        calendar_href: &str,
+        uid: &str,
+        ics_data: &str,
+    ) -> Result<()> {
         let href = format!("{}/{}.ics", calendar_href.trim_end_matches('/'), uid);
         let url = self.resolve_url(&href);
 
@@ -413,6 +526,30 @@ impl CaldavClient {
         }
 
         Ok(())
+    }
+
+    /// GET one event resource: its iCalendar text, `None` when the server
+    /// says it does not exist (404/410). Any other answer is an error.
+    pub(crate) async fn get_event_raw(
+        &self,
+        calendar_href: &str,
+        uid: &str,
+    ) -> Result<Option<String>> {
+        let href = format!("{}/{}.ics", calendar_href.trim_end_matches('/'), uid);
+        let url = self.resolve_url(&href);
+        let resp = self
+            .apply_auth(self.client.get(&url))
+            .timeout(Duration::from_secs(10))
+            .send()
+            .await?;
+        let status = resp.status();
+        if matches!(status.as_u16(), 404 | 410) {
+            return Ok(None);
+        }
+        if !status.is_success() {
+            bail!("GET {} returned {}", url, status);
+        }
+        Ok(Some(resp.text().await?))
     }
 
     /// Check whether an event resource still exists on the server.
@@ -489,7 +626,53 @@ impl CaldavClient {
     }
 
     /// DELETE an event from a calendar
+    ///
+    /// On Google, an event that carries attendees is deleted through the
+    /// Calendar API with `sendUpdates=none`, so Google mails no cancellation
+    /// (calrs sends its own).
     pub async fn delete_event(&self, calendar_href: &str, uid: &str) -> Result<()> {
+        if let Some((api_base, token)) = self.google_calendar_api() {
+            if let Some(calendar_id) =
+                crate::google_meet::calendar_id_from_caldav_href(calendar_href)
+            {
+                return crate::google_calendar::delete_event_without_cancellations(
+                    self,
+                    &crate::google_calendar::EventsApi::new(api_base, token, &calendar_id),
+                    calendar_href,
+                    uid,
+                    crate::google_calendar::DeleteFallback::CalDav,
+                )
+                .await;
+            }
+        }
+        self.delete_event_raw(calendar_href, uid).await
+    }
+
+    /// Delete a copy of a booking that moved elsewhere (#47). Like
+    /// `delete_event`, except that on Google an event with attendees the
+    /// Calendar API cannot delete is left for a later try rather than
+    /// deleted over CalDAV, which would have Google mail a cancellation of
+    /// a meeting that still takes place.
+    pub(crate) async fn release_event(&self, calendar_href: &str, uid: &str) -> Result<()> {
+        if let Some((api_base, token)) = self.google_calendar_api() {
+            if let Some(calendar_id) =
+                crate::google_meet::calendar_id_from_caldav_href(calendar_href)
+            {
+                return crate::google_calendar::delete_event_without_cancellations(
+                    self,
+                    &crate::google_calendar::EventsApi::new(api_base, token, &calendar_id),
+                    calendar_href,
+                    uid,
+                    crate::google_calendar::DeleteFallback::Retry,
+                )
+                .await;
+            }
+        }
+        self.delete_event_raw(calendar_href, uid).await
+    }
+
+    /// Plain CalDAV DELETE, whatever the server.
+    pub(crate) async fn delete_event_raw(&self, calendar_href: &str, uid: &str) -> Result<()> {
         let href = format!("{}/{}.ics", calendar_href.trim_end_matches('/'), uid);
         let url = self.resolve_url(&href);
 

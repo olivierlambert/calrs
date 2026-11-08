@@ -33,16 +33,13 @@ anyone's mailbox content through calrs, impersonating the user included.
 ## 1. Prepare the Exchange service account
 
 Create a dedicated service account (e.g. `svc-calrs@example.com`) and grant it
-the **ApplicationImpersonation** RBAC role. From the Exchange Management Shell:
+the **ApplicationImpersonation** RBAC role from the Exchange Management Shell.
+Choose **one** of the two options below; do not run both. Running option A and
+then option B leaves the unscoped assignment in place, so the account can
+still impersonate every mailbox in the organization.
 
-```powershell
-New-ManagementRoleAssignment -Name "calrs-impersonation" `
-  -Role ApplicationImpersonation `
-  -User svc-calrs@example.com
-```
-
-To limit blast radius, scope the assignment to a specific set of mailboxes with
-a management scope instead of granting it tenant-wide:
+**Option A (recommended): only the mailboxes calrs should read.** Create a
+management scope for those mailboxes and assign the role within it:
 
 ```powershell
 New-ManagementScope -Name "calrs-mailboxes" `
@@ -54,6 +51,20 @@ New-ManagementRoleAssignment -Name "calrs-impersonation" `
   -CustomRecipientWriteScope "calrs-mailboxes"
 ```
 
+**Option B: every mailbox in the organization.** Only if calrs should be able
+to reach all mailboxes:
+
+```powershell
+New-ManagementRoleAssignment -Name "calrs-impersonation" `
+  -Role ApplicationImpersonation `
+  -User svc-calrs@example.com
+```
+
+If you already ran option B and want option A instead, remove the unscoped
+assignment first (`Get-ManagementRoleAssignment -Role ApplicationImpersonation
+-RoleAssignee svc-calrs@example.com`, then `Remove-ManagementRoleAssignment`
+on it).
+
 Note your EWS endpoint URL, usually:
 
 ```
@@ -62,9 +73,9 @@ https://mail.example.com/EWS/Exchange.asmx
 
 ---
 
-## 2. Configure calrs (Admin → EWS)
+## 2. Configure calrs (Admin → Sign-in and security)
 
-Go to **Admin dashboard → EWS** (the global impersonation section). Fields:
+Go to the admin dashboard, **Sign-in and security** tab, Exchange card (organization-wide Exchange through impersonation). Fields:
 
 | Field | Notes |
 |---|---|

@@ -15,6 +15,7 @@ use async_trait::async_trait;
 
 pub mod caldav;
 pub mod factory;
+pub mod graph;
 
 pub use factory::build_provider;
 
@@ -34,6 +35,12 @@ pub struct RemoteCalendar {
     /// Sync state cursor for incremental sync. Treat as opaque.
     /// CalDAV: WebDAV sync-token (RFC 6578). EWS: SyncFolderItems sync state.
     pub sync_state: Option<String>,
+    /// The account cannot write to it, so it is never offered for write-back.
+    /// Graph: `canEdit` is false. CalDAV and EWS: not reported.
+    pub read_only: bool,
+    /// Owned by someone else and shared with the account. Graph: the owner
+    /// differs from the default calendar's. CalDAV and EWS: not reported.
+    pub shared: bool,
 }
 
 /// A raw calendar event as iCalendar (RFC 5545) text plus its remote handle.
@@ -41,11 +48,39 @@ pub struct RemoteCalendar {
 /// `remote_id` is whatever the provider uses to address the item:
 /// CalDAV: the resource href (`/calendars/alice/work/UID.ics`).
 /// EWS:    the ItemId.
+///
+/// An empty `ical` marks an item the provider listed but could not convert
+/// (see [`RawEvent::unreadable`]): the sync skips it, and removes nothing
+/// from that calendar's cache until a snapshot without one.
 #[derive(Debug, Clone)]
 pub struct RawEvent {
     pub remote_id: String,
     pub ical: String,
 }
+
+impl RawEvent {
+    /// An item the provider listed but could not convert to iCalendar.
+    pub fn unreadable(remote_id: String) -> Self {
+        Self {
+            remote_id,
+            ical: String::new(),
+        }
+    }
+}
+
+/// A listed calendar the granted access cannot read (a colleague's or a
+/// room's calendar shared with the user, say). The sync skips it, unless it
+/// is the source's write calendar, rather than failing the whole source.
+#[derive(Debug)]
+pub struct CalendarUnreadable;
+
+impl std::fmt::Display for CalendarUnreadable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("this calendar cannot be read with the access granted to calrs")
+    }
+}
+
+impl std::error::Error for CalendarUnreadable {}
 
 /// Outcome of a delta sync (incremental fetch).
 #[derive(Debug, Clone, Default)]
@@ -97,6 +132,13 @@ pub trait CalendarProvider: Send + Sync {
     /// Delete an event by UID.
     async fn delete_event(&self, calendar_id: &str, uid: &str) -> Result<()>;
 
+    /// Delete the copy of a booking that moved to another calendar (#47).
+    /// A provider that may notify attendees when its quiet path fails
+    /// (Google) returns the error instead, for a later try; others delete.
+    async fn release_event(&self, calendar_id: &str, uid: &str) -> Result<()> {
+        self.delete_event(calendar_id, uid).await
+    }
+
     /// Whether an event with this UID can be read back from the calendar.
     ///
     /// `Ok(true)` when the server confirms it is there, `Ok(false)` when the
@@ -104,6 +146,16 @@ pub trait CalendarProvider: Send + Sync {
     /// 5xx, auth failure). Used to verify a write-back (#162): a 2xx on the
     /// write alone is not proof the host will see the event.
     async fn event_exists(&self, calendar_id: &str, uid: &str) -> Result<bool>;
+
+    /// Whether an event with this UID is anywhere the account can find it,
+    /// not only in `calendar_id`: what the orphan sweep asks before it
+    /// cancels a booking whose event left the calendar. The default looks in
+    /// `calendar_id` only; Graph also looks in every other calendar the
+    /// account lists, so an event the host moved to another calendar is not
+    /// taken for deleted. Any doubt is an `Err`, never `Ok(false)`.
+    async fn event_exists_anywhere(&self, calendar_id: &str, uid: &str) -> Result<bool> {
+        self.event_exists(calendar_id, uid).await
+    }
 
     /// The id (as `list_calendars` reports it) of the account's default
     /// calendar, when the backend has such a notion. Only EWS does today: the
@@ -121,6 +173,21 @@ pub trait CalendarProvider: Send + Sync {
         None
     }
 }
+
+/// A write the server accepted that is not complete: on Google, the event is
+/// on the calendar but its attendees could not be set. A write-back counts
+/// it as a failure to retry, with the event there (`WriteBackError::Verify`),
+/// so the booking keeps its href and a cancellation still deletes it.
+#[derive(Debug)]
+pub struct WrittenIncomplete(pub String);
+
+impl std::fmt::Display for WrittenIncomplete {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for WrittenIncomplete {}
 
 /// Why a calendar write-back did not land (#162).
 #[derive(Debug)]
@@ -201,10 +268,13 @@ pub async fn put_and_verify(
     uid: &str,
     ics: &str,
 ) -> std::result::Result<(), WriteBackError> {
-    provider
-        .put_event(calendar_id, uid, ics)
-        .await
-        .map_err(WriteBackError::Put)?;
+    if let Err(e) = provider.put_event(calendar_id, uid, ics).await {
+        return Err(if e.downcast_ref::<WrittenIncomplete>().is_some() {
+            WriteBackError::Verify(e)
+        } else {
+            WriteBackError::Put(e)
+        });
+    }
     match provider.event_exists(calendar_id, uid).await {
         Ok(true) => Ok(()),
         Ok(false) => Err(WriteBackError::NotReadable),
@@ -223,6 +293,8 @@ mod tests {
     #[derive(Default)]
     struct FakeProvider {
         put_fails: bool,
+        /// Writes, then reports the write incomplete.
+        put_incomplete: bool,
         drop_writes: bool,
         exists_fails: bool,
         stored: Mutex<Vec<String>>,
@@ -246,6 +318,10 @@ mod tests {
             Ok(DeltaResult::default())
         }
         async fn put_event(&self, _: &str, uid: &str, _: &str) -> Result<()> {
+            if self.put_incomplete {
+                self.stored.lock().unwrap().push(uid.to_string());
+                return Err(anyhow::Error::new(WrittenIncomplete("no attendees".into())));
+            }
             if self.put_fails {
                 anyhow::bail!("PUT returned 400 Bad Request");
             }
@@ -320,5 +396,20 @@ mod tests {
             .unwrap_err();
         assert!(matches!(err, WriteBackError::Verify(_)));
         assert!(err.to_string().contains("503"));
+    }
+
+    /// An incomplete write is a failure with the event there, so the
+    /// write-back keeps its href and retries.
+    #[tokio::test]
+    async fn an_incomplete_write_fails_with_the_event_there() {
+        let p = FakeProvider {
+            put_incomplete: true,
+            ..Default::default()
+        };
+        let err = put_and_verify(&p, "/cal/", "uid-1", "ics")
+            .await
+            .unwrap_err();
+        assert!(matches!(err, WriteBackError::Verify(_)), "{err}");
+        assert!(err.event_may_exist());
     }
 }

@@ -7,6 +7,7 @@
 - [Getting Started](./getting-started.md)
 - [CalDAV Integration](./caldav.md)
 - [Google Calendar](./google-calendar.md)
+- [Microsoft Calendar](./microsoft-calendar.md)
 - [Event Types](./event-types.md)
 - [Booking Flow](./booking-flow.md)
 - [Teams](./teams.md)
@@ -15,6 +16,7 @@
 - [Webhooks](./webhooks.md)
 - [Authentication](./authentication.md)
 - [MCP Integration](./mcp.md)
+- [REST API](./api.md)
 - [Authentik (OIDC SSO)](./authentik.md)
 
 # Administration

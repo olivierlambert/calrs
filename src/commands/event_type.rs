@@ -209,6 +209,80 @@ pub(crate) async fn host_time_off(
     Ok(busy)
 }
 
+/// The parts of a window no Microsoft calendar of `et_id`'s hosts was read
+/// for (see [`crate::commands::sync::microsoft_gap_intervals`]), the way the
+/// web slot engine treats them: on a collective team event type any eligible
+/// member's gap blocks; on a round-robin one a time is blocked only where
+/// every eligible member has one (anyone else could take it); otherwise the
+/// owner's.
+pub(crate) async fn host_microsoft_gaps(
+    pool: &SqlitePool,
+    et_id: &str,
+    window_start: NaiveDateTime,
+    window_end: NaiveDateTime,
+    host_tz: chrono_tz::Tz,
+) -> Result<
+    Vec<(
+        NaiveDateTime,
+        NaiveDateTime,
+        crate::commands::sync::CoverageGap,
+    )>,
+> {
+    let row: Option<(Option<String>, String, Option<String>)> = sqlx::query_as(
+        "SELECT et.team_id, et.scheduling_mode, a.user_id FROM event_types et \
+         JOIN accounts a ON a.id = et.account_id WHERE et.id = ?",
+    )
+    .bind(et_id)
+    .fetch_optional(pool)
+    .await?;
+    let Some((team_id, mode, owner)) = row else {
+        return Ok(Vec::new());
+    };
+    let gaps_of = |user: String| async move {
+        crate::commands::sync::microsoft_gap_intervals(
+            pool,
+            &user,
+            window_start,
+            window_end,
+            host_tz,
+        )
+        .await
+    };
+    let Some(team_id) = team_id else {
+        return Ok(match owner {
+            Some(owner) => gaps_of(owner).await,
+            None => Vec::new(),
+        });
+    };
+    let members: Vec<String> = sqlx::query_scalar(
+        "SELECT u.id FROM users u JOIN team_members tm ON tm.user_id = u.id \
+         LEFT JOIN event_type_member_weights etw ON etw.user_id = u.id AND etw.event_type_id = ? \
+         WHERE tm.team_id = ? AND u.enabled = 1 AND COALESCE(etw.weight, 1) > 0",
+    )
+    .bind(et_id)
+    .bind(&team_id)
+    .fetch_all(pool)
+    .await?;
+    let mut per_member = Vec::with_capacity(members.len());
+    for member in members {
+        per_member.push(gaps_of(member).await);
+    }
+    if mode == "collective" {
+        return Ok(per_member.into_iter().flatten().collect());
+    }
+    // Round robin: each member's gap runs from some start to the window's
+    // end, so the times nobody can vouch for start at the latest of them.
+    if per_member.is_empty() || per_member.iter().any(Vec::is_empty) {
+        return Ok(Vec::new());
+    }
+    Ok(per_member
+        .into_iter()
+        .flatten()
+        .max_by_key(|(start, _, _)| *start)
+        .into_iter()
+        .collect())
+}
+
 /// Fetch non-recurring, busy (non-cancelled, OPAQUE) events for `et_id` whose
 /// stored time range overlaps `[window_start, window_end]`. Only the event
 /// type owner's calendars count (and, when the event type selects calendars,
@@ -220,7 +294,8 @@ pub(crate) async fn host_time_off(
 /// event sorts lexically after its own date prefix ("20260618T100000" >
 /// "20260618"), so a window ending on the event's own date would silently miss
 /// it. Returns raw (start_at, end_at, timezone) rows for tz conversion by the
-/// caller.
+/// caller. UTC Google status events use a two-day SQL margin so host-local
+/// slots aren't missed before the caller converts the returned busy ranges.
 async fn fetch_nonrecurring_busy_events(
     pool: &SqlitePool,
     et_id: &str,
@@ -236,19 +311,24 @@ async fn fetch_nonrecurring_busy_events(
          JOIN accounts a ON a.id = cs.account_id
          WHERE a.user_id = (SELECT ha.user_id FROM event_types het
                             JOIN accounts ha ON ha.id = het.account_id WHERE het.id = ?)
-           AND c.is_busy = 1 AND c.sync_enabled = 1
-           AND (NOT EXISTS (SELECT 1 FROM event_type_calendars etc JOIN calendars sc ON sc.id = etc.calendar_id WHERE etc.event_type_id = ? AND sc.sync_enabled = 1)
+           AND c.sync_enabled = 1
+           AND ((c.is_busy = 1 AND NOT EXISTS (SELECT 1 FROM event_type_calendars etc JOIN calendars sc ON sc.id = etc.calendar_id WHERE etc.event_type_id = ? AND sc.sync_enabled = 1))
                 OR c.id IN (SELECT calendar_id FROM event_type_calendars WHERE event_type_id = ?))
            AND (e.rrule IS NULL OR e.rrule = '')
            AND (e.status IS NULL OR e.status != 'CANCELLED')
            AND (e.transp IS NULL OR e.transp != 'TRANSPARENT')
-           AND e.start_at <= ? AND e.end_at >= ?",
+           AND ((e.start_at <= ? AND e.end_at >= ?)
+                OR (e.google_out_of_office = 1
+                    AND e.start_at <= strftime('%Y%m%dT%H%M%S', ?, '+2 days')
+                    AND e.end_at >= strftime('%Y%m%dT%H%M%S', ?, '-2 days')))",
     )
     .bind(et_id)
     .bind(et_id)
     .bind(et_id)
     .bind(&end_compact)
     .bind(&start_compact)
+    .bind(window_end.format("%Y-%m-%dT%H:%M:%S").to_string())
+    .bind(window_start.format("%Y-%m-%dT%H:%M:%S").to_string())
     .fetch_all(pool)
     .await?;
     Ok(rows)
@@ -474,8 +554,8 @@ pub async fn run(pool: &SqlitePool, cmd: EventTypeCommands) -> Result<()> {
                  JOIN accounts a ON a.id = cs.account_id
                  WHERE a.user_id = (SELECT ha.user_id FROM event_types het
                                     JOIN accounts ha ON ha.id = het.account_id WHERE het.id = ?)
-                   AND c.is_busy = 1 AND c.sync_enabled = 1
-                   AND (NOT EXISTS (SELECT 1 FROM event_type_calendars etc JOIN calendars sc ON sc.id = etc.calendar_id WHERE etc.event_type_id = ? AND sc.sync_enabled = 1)
+                   AND c.sync_enabled = 1
+                   AND ((c.is_busy = 1 AND NOT EXISTS (SELECT 1 FROM event_type_calendars etc JOIN calendars sc ON sc.id = etc.calendar_id WHERE etc.event_type_id = ? AND sc.sync_enabled = 1))
                         OR c.id IN (SELECT calendar_id FROM event_type_calendars WHERE event_type_id = ?))
                    AND (e.status IS NULL OR e.status != 'CANCELLED')
                    AND (e.transp IS NULL OR e.transp != 'TRANSPARENT')
@@ -513,6 +593,15 @@ pub async fn run(pool: &SqlitePool, cmd: EventTypeCommands) -> Result<()> {
                         ));
                     }
                 }
+            }
+
+            // Times no Microsoft calendar of the hosts was read for, as on
+            // the web slot pages: `booking create` refuses them too.
+            for (s, e, _) in host_microsoft_gaps(pool, &et_id, now, window_end_dt, host_tz).await? {
+                busy_events.push((
+                    s.format("%Y-%m-%dT%H:%M:%S").to_string(),
+                    e.format("%Y-%m-%dT%H:%M:%S").to_string(),
+                ));
             }
 
             // The host's time off, as on the web slot pages (#46).
@@ -1097,6 +1186,59 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(busy().await.unwrap(), vec![(at(0), at(23))]);
+    }
+
+    /// Microsoft gaps follow the team: a collective event type is blocked by
+    /// any member's unread calendar, a round-robin one only when every
+    /// member has one, from the latest of their starts.
+    #[tokio::test]
+    async fn microsoft_gaps_follow_the_scheduling_mode() {
+        let pool = setup_db().await;
+        sqlx::raw_sql(
+            "INSERT INTO users (id, email, name, role, auth_provider, username, enabled) VALUES
+                 ('owner', 'owner@x', 'Owner', 'admin', 'local', 'owner', 1),
+                 ('m1', 'm1@x', 'M1', 'user', 'local', 'm1', 1),
+                 ('m2', 'm2@x', 'M2', 'user', 'local', 'm2', 1);
+             INSERT INTO accounts (id, name, email, timezone, user_id) VALUES
+                 ('acc-owner', 'Owner', 'owner@x', 'UTC', 'owner'),
+                 ('acc-m1', 'M1', 'm1@x', 'UTC', 'm1'),
+                 ('acc-m2', 'M2', 'm2@x', 'UTC', 'm2');
+             INSERT INTO teams (id, name, slug, visibility) VALUES ('t', 'T', 't', 'public');
+             INSERT INTO team_members (team_id, user_id, role, source) VALUES
+                 ('t', 'm1', 'member', 'direct'), ('t', 'm2', 'member', 'direct');
+             INSERT INTO event_types (id, account_id, team_id, slug, title, duration_min, scheduling_mode)
+                 VALUES ('et-team', 'acc-owner', 't', 'demo', 'Demo', 30, 'collective');
+             INSERT INTO caldav_sources (id, account_id, name, url, username, provider_type) VALUES
+                 ('ms1', 'acc-m1', 'M', 'https://graph.microsoft.com/v1.0', 'u', 'microsoft');",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let day = NaiveDate::from_ymd_opt(2030, 3, 18).unwrap();
+        let (start, end) = (
+            day.and_hms_opt(0, 0, 0).unwrap(),
+            day.and_hms_opt(23, 0, 0).unwrap(),
+        );
+        let utc = chrono_tz::Tz::UTC;
+        let gaps = || host_microsoft_gaps(&pool, "et-team", start, end, utc);
+        let spans = |g: Vec<(
+            NaiveDateTime,
+            NaiveDateTime,
+            crate::commands::sync::CoverageGap,
+        )>| { g.into_iter().map(|(s, e, _)| (s, e)).collect::<Vec<_>>() };
+        // Collective: m1's unread calendar blocks the team.
+        assert_eq!(spans(gaps().await.unwrap()), [(start, end)]);
+        // Round robin: m2 can take it.
+        sqlx::query("UPDATE event_types SET scheduling_mode = 'round_robin' WHERE id = 'et-team'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(gaps().await.unwrap().is_empty());
+        sqlx::query("INSERT INTO caldav_sources (id, account_id, name, url, username, provider_type) VALUES ('ms2', 'acc-m2', 'M', 'https://graph.microsoft.com/v1.0', 'u', 'microsoft')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(spans(gaps().await.unwrap()), [(start, end)]);
     }
 
     /// `event-type slots` adds the host's time off (#46), and only theirs.

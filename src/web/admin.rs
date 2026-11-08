@@ -523,9 +523,14 @@ pub(super) async fn admin_dashboard(
 
     // Connected apps (OAuth grants) of the listed users only.
     let user_apps: std::collections::HashMap<String, i64> = sqlx::query_as(
-        "SELECT user_id, COUNT(*) FROM oauth_grants
-         WHERE user_id IN (SELECT value FROM json_each(?))
-           AND revoked = 0 AND expires_at > CAST(strftime('%s', 'now') AS INTEGER)
+        "SELECT user_id, COUNT(*) FROM (
+             SELECT user_id FROM oauth_grants
+             WHERE user_id IN (SELECT value FROM json_each(?1))
+               AND revoked = 0 AND expires_at > CAST(strftime('%s', 'now') AS INTEGER)
+             UNION ALL
+             SELECT user_id FROM api_tokens
+             WHERE user_id IN (SELECT value FROM json_each(?1))
+               AND (expires_at IS NULL OR expires_at > CAST(strftime('%s', 'now') AS INTEGER)))
          GROUP BY user_id",
     )
     .bind(serde_json::to_string(&user_ids).unwrap_or_else(|_| "[]".to_string()))
@@ -677,6 +682,14 @@ pub(super) async fn admin_dashboard(
         .and_then(|c| c.google_oauth2_client_id.clone())
         .unwrap_or_default();
     let google_oauth2_configured = !google_oauth2_client_id.is_empty();
+    // Never load the secret into the template context.
+    let (microsoft_oauth2_client_id, microsoft_oauth2_tenant, microsoft_oauth2_configured):
+        (Option<String>, String, bool) = match sqlx::query_as(
+            "SELECT microsoft_oauth2_client_id, microsoft_oauth2_tenant, COALESCE(length(microsoft_oauth2_client_id) > 0 AND length(microsoft_oauth2_client_secret) > 0, 0) FROM auth_config WHERE id = 'singleton'",
+        ).fetch_one(&state.pool).await {
+            Ok(config) => config,
+            Err(e) => return internal_error_html("load Microsoft configuration", &e),
+        };
 
     let (
         smtp_configured,
@@ -821,6 +834,13 @@ pub(super) async fn admin_dashboard(
     .await
     .unwrap_or(None)
     .unwrap_or(false);
+    let api_tokens_allow_all_users: bool = sqlx::query_scalar(
+        "SELECT api_tokens_allow_all_users FROM auth_config WHERE id = 'singleton'",
+    )
+    .fetch_optional(&state.pool)
+    .await
+    .unwrap_or(None)
+    .unwrap_or(false);
 
     // Flash banner after a test round-trip (?sms_test=sent|checked|error).
     let sms_test_result = query.get("sms_test").cloned().unwrap_or_default();
@@ -940,6 +960,13 @@ pub(super) async fn admin_dashboard(
             oidc_auto_register => oidc_auto_register,
             google_oauth2_client_id => google_oauth2_client_id,
             google_oauth2_configured => google_oauth2_configured,
+            microsoft_oauth2_client_id => microsoft_oauth2_client_id.unwrap_or_default(),
+            microsoft_oauth2_tenant => microsoft_oauth2_tenant,
+            microsoft_oauth2_configured => microsoft_oauth2_configured,
+            microsoft_callback_uri => crate::microsoft_oauth::callback_uri(
+                &crate::settings::base_url().unwrap_or_default(),
+            )
+            .ok(),
             base_url => crate::settings::base_url().unwrap_or_default(),
             base_url_db => crate::settings::base_url_db().unwrap_or_default(),
             base_url_from_env => crate::settings::base_url_from_env(),
@@ -974,6 +1001,7 @@ pub(super) async fn admin_dashboard(
             webhook_count => webhook_count,
             guest_footer_default => guest_footer_default,
             guest_footer_allow_all_users => guest_footer_allow_all_users,
+            api_tokens_allow_all_users => api_tokens_allow_all_users,
             sms_enabled => sms_enabled,
             sms_from_env => sms_from_env,
             sms_error => sms_error,
