@@ -1,0 +1,1293 @@
+// REST API v1 (#169): authentication, scopes, ownership, the booking path
+// shared with the web form, idempotency and rate limits.
+
+use super::writeback_failures::{spawn_mock_dav, DavMode};
+use super::*;
+use axum::http::{Request, StatusCode};
+use serde_json::{json, Value};
+
+const API: &str = "https://cal.example/api/v1";
+const MCP: &str = "https://cal.example/mcp";
+
+fn api_get(uri: &str, token: &str) -> Request<Body> {
+    Request::builder()
+        .uri(uri)
+        .header("authorization", format!("Bearer {token}"))
+        .body(Body::empty())
+        .unwrap()
+}
+
+fn api_post(uri: &str, token: &str, body: &Value) -> Request<Body> {
+    Request::builder()
+        .method("POST")
+        .uri(uri)
+        .header("authorization", format!("Bearer {token}"))
+        .header("content-type", "application/json")
+        .body(Body::from(body.to_string()))
+        .unwrap()
+}
+
+async fn send(app: &Router, request: Request<Body>) -> (StatusCode, Value) {
+    let response = app.clone().oneshot(request).await.unwrap();
+    let status = response.status();
+    assert_eq!(
+        response
+            .headers()
+            .get("cache-control")
+            .map(|v| v.to_str().unwrap()),
+        Some("no-store")
+    );
+    assert!(
+        response.headers().get("set-cookie").is_none(),
+        "the API never sets cookies"
+    );
+    let body = body_string(response).await;
+    (status, serde_json::from_str(&body).unwrap_or(Value::Null))
+}
+
+async fn user_id(pool: &SqlitePool, username: &str) -> String {
+    sqlx::query_scalar("SELECT id FROM users WHERE username = ?")
+        .bind(username)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+/// A personal access token of `user` with `scope`, inserted directly.
+async fn pat(pool: &SqlitePool, user: &str, scope: &str) -> String {
+    let secret = crate::oauth::random_token();
+    let token = format!("calrs_pat_{secret}");
+    sqlx::query(
+        "INSERT INTO api_tokens (id, user_id, name, token_hash, hint, scope, created_at) VALUES (?, ?, 'test', ?, ?, ?, ?)",
+    )
+    .bind(uuid::Uuid::new_v4().to_string())
+    .bind(user)
+    .bind(crate::oauth::hash(&token))
+    .bind(&secret[..4])
+    .bind(scope)
+    .bind(Utc::now().timestamp())
+    .execute(pool)
+    .await
+    .unwrap();
+    token
+}
+
+const ALL: &str = "event-types:read slots:read bookings:read bookings:write";
+
+fn error_code(body: &Value) -> &str {
+    body["error"]["code"].as_str().unwrap_or("")
+}
+
+/// `far_future_monday()` at `hh:mm` UTC, as RFC 3339.
+fn monday_at(hhmm: &str) -> String {
+    format!("{}T{hhmm}:00Z", far_future_monday())
+}
+
+fn create_body(et_id: &str, start: &str, email: &str) -> Value {
+    json!({"event_type_id": et_id, "start": start, "timezone": "UTC", "name": "Api Guest", "email": email})
+}
+
+#[tokio::test]
+async fn api_needs_a_bearer_token_and_never_a_cookie() {
+    let _lock = crate::test_support::ENV_LOCK.lock().await;
+    let _env = super::oauth::environment();
+    let (app, pool, session, _) = setup_test_app().await;
+
+    let (status, body) = send(&app, get("/api/v1/event-types")).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_eq!(error_code(&body), "unauthorized");
+    assert!(body["error"]["message"].is_string());
+    let response = app
+        .clone()
+        .oneshot(get("/api/v1/event-types"))
+        .await
+        .unwrap();
+    assert!(response.headers()["www-authenticate"]
+        .to_str()
+        .unwrap()
+        .contains("https://cal.example/.well-known/oauth-protected-resource/api/v1"));
+
+    // A dashboard session is no credential here (no ambient authority).
+    let (status, _) = send(&app, get_authed("/api/v1/event-types", &session)).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let (status, _) = send(
+        &app,
+        Request::builder()
+            .uri("/api/v1/event-types")
+            .header("authorization", format!("Bearer {session}"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+    let token = pat(&pool, &user_id(&pool, "testuser").await, ALL).await;
+    let (status, body) = send(&app, api_get("/api/v1/event-types", &token)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["event_types"].as_array().unwrap().len(), 1);
+    assert_eq!(body["next_cursor"], Value::Null);
+
+    // JSON errors everywhere under /api, including unknown paths and methods.
+    let (status, body) = send(&app, api_get("/api/v1/nothing", &token)).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(error_code(&body), "not_found");
+    let (status, body) = send(&app, api_post("/api/v1/event-types", &token, &json!({}))).await;
+    assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED);
+    assert_eq!(error_code(&body), "method_not_allowed");
+
+    // No CORS: a browser page of another origin is refused outright.
+    let mut request = api_get("/api/v1/event-types", &token);
+    request
+        .headers_mut()
+        .insert("origin", "https://evil.example".parse().unwrap());
+    let (status, body) = send(&app, request).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(error_code(&body), "origin_not_allowed");
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("OPTIONS")
+                .uri("/api/v1/bookings")
+                .header("origin", "https://evil.example")
+                .header("access-control-request-method", "POST")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert!(response
+        .headers()
+        .get("access-control-allow-origin")
+        .is_none());
+}
+
+#[tokio::test]
+async fn api_scopes_are_enforced_per_endpoint() {
+    let _lock = crate::test_support::ENV_LOCK.lock().await;
+    let _env = super::oauth::environment();
+    let (app, pool, _, et_id) = setup_test_app().await;
+    let user = user_id(&pool, "testuser").await;
+    let day = far_future_monday();
+    let cases: Vec<(&str, Request<Body>)> = vec![
+        ("event-types:read", api_get("/api/v1/event-types", "")),
+        (
+            "event-types:read",
+            api_get(&format!("/api/v1/event-types/{et_id}"), ""),
+        ),
+        (
+            "slots:read",
+            api_get(
+                &format!("/api/v1/event-types/{et_id}/slots?from={day}&to={day}"),
+                "",
+            ),
+        ),
+        ("bookings:read", api_get("/api/v1/bookings", "")),
+        (
+            "bookings:write",
+            api_post(
+                "/api/v1/bookings",
+                "",
+                &create_body(&et_id, &monday_at("10:00"), "s@test.com"),
+            ),
+        ),
+    ];
+    for (scope, request) in cases {
+        let others: Vec<&str> = crate::oauth::API_SCOPES
+            .iter()
+            .copied()
+            .filter(|s| *s != scope)
+            .collect();
+        let narrow = pat(&pool, &user, &others.join(" ")).await;
+        let (mut parts, body) = request.into_parts();
+        parts
+            .headers
+            .insert("authorization", format!("Bearer {narrow}").parse().unwrap());
+        let response = app
+            .clone()
+            .oneshot(Request::from_parts(parts, body))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN, "{scope}");
+        assert!(response.headers()["www-authenticate"]
+            .to_str()
+            .unwrap()
+            .contains(&format!("scope=\"{scope}\"")));
+    }
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM bookings")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 0);
+}
+
+#[tokio::test]
+async fn api_tokens_page_creates_once_and_revokes() {
+    let _lock = crate::test_support::ENV_LOCK.lock().await;
+    let _env = super::oauth::environment();
+    let (app, pool, session, _) = setup_test_app().await;
+    let csrf = "csrf-api";
+    let response = app
+        .clone()
+        .oneshot(post_form(
+            "/dashboard/settings/api-tokens",
+            &session,
+            csrf,
+            &format!("_csrf={csrf}&name=CRM+sync&scope_event_types=on&expires_days=30"),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()["cache-control"], "no-store");
+    let page = body_string(response).await;
+    let start = page.find("calrs_pat_").unwrap();
+    let token: String = page[start..]
+        .chars()
+        .take_while(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-')
+        .collect();
+    assert_eq!(token.len(), "calrs_pat_".len() + 43);
+    // Stored hashed; the list shows only a hint afterwards.
+    let stored: (String, String, Option<i64>) =
+        sqlx::query_as("SELECT token_hash, scope, expires_at FROM api_tokens")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(stored.0, crate::oauth::hash(&token));
+    assert_eq!(stored.1, "event-types:read");
+    assert!(stored.2.unwrap() > Utc::now().timestamp() + 29 * 86400);
+    let list = body_string(
+        app.clone()
+            .oneshot(get_authed("/dashboard/settings/api-tokens", &session))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(list.contains("CRM sync"));
+    assert!(!list.contains(&token));
+
+    let (status, _) = send(&app, api_get("/api/v1/event-types", &token)).await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _) = send(&app, api_get("/api/v1/bookings", &token)).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+
+    // Without CSRF nothing is created; without a scope neither.
+    let response = app
+        .clone()
+        .oneshot(post_form(
+            "/dashboard/settings/api-tokens",
+            &session,
+            csrf,
+            "name=x&scope_slots=on",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    let response = app
+        .clone()
+        .oneshot(post_form(
+            "/dashboard/settings/api-tokens",
+            &session,
+            csrf,
+            &format!("_csrf={csrf}&name=x&expires_days=7"),
+        ))
+        .await
+        .unwrap();
+    assert!(body_string(response)
+        .await
+        .contains("Choose at least one permission."));
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM api_tokens")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 1);
+
+    // Another user's revoke deletes nothing.
+    let (_, other_session) =
+        insert_test_user_with_session(&pool, "Other", "other@test.com", "other").await;
+    let id: String = sqlx::query_scalar("SELECT id FROM api_tokens")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let uri = format!("/dashboard/settings/api-tokens/{id}/revoke");
+    app.clone()
+        .oneshot(post_form(
+            &uri,
+            &other_session,
+            csrf,
+            &format!("_csrf={csrf}"),
+        ))
+        .await
+        .unwrap();
+    let (status, _) = send(&app, api_get("/api/v1/event-types", &token)).await;
+    assert_eq!(status, StatusCode::OK);
+    let response = app
+        .clone()
+        .oneshot(post_form(&uri, &session, csrf, &format!("_csrf={csrf}")))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    let (status, _) = send(&app, api_get("/api/v1/event-types", &token)).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn api_tokens_follow_the_admin_switch_suspension_expiry_and_mfa() {
+    let _lock = crate::test_support::ENV_LOCK.lock().await;
+    let _env = super::oauth::environment();
+    let (app, pool, _, _) = setup_test_app().await;
+    let (member, member_session) =
+        insert_test_user_with_session(&pool, "Member", "member@test.com", "member").await;
+    let csrf = "csrf-api";
+    let create = |session: String| {
+        post_form(
+            "/dashboard/settings/api-tokens",
+            &session,
+            csrf,
+            &format!("_csrf={csrf}&name=n&scope_event_types=on&expires_days=0"),
+        )
+    };
+    // Off by default: a member cannot create one, and the page says so.
+    let response = app
+        .clone()
+        .oneshot(create(member_session.clone()))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    let page = body_string(
+        app.clone()
+            .oneshot(get_authed(
+                "/dashboard/settings/api-tokens",
+                &member_session,
+            ))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(page.contains("Only administrators can create API tokens"));
+
+    let admin_session: String = sqlx::query_scalar("SELECT id FROM sessions WHERE user_id = ?")
+        .bind(user_id(&pool, "testuser").await)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let response = app
+        .clone()
+        .oneshot(post_form(
+            "/dashboard/admin/api-tokens",
+            &admin_session,
+            csrf,
+            &format!("_csrf={csrf}&allow_all_users=on"),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    // A member cannot flip the switch.
+    let response = app
+        .clone()
+        .oneshot(post_form(
+            "/dashboard/admin/api-tokens",
+            &member_session,
+            csrf,
+            &format!("_csrf={csrf}"),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    let response = app
+        .clone()
+        .oneshot(create(member_session.clone()))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let token = pat(&pool, &member, "event-types:read").await;
+    let (status, _) = send(&app, api_get("/api/v1/event-types", &token)).await;
+    assert_eq!(status, StatusCode::OK);
+
+    // Switching it off stops the member's tokens at once.
+    sqlx::query("UPDATE auth_config SET api_tokens_allow_all_users = 0")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (status, _) = send(&app, api_get("/api/v1/event-types", &token)).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    sqlx::query("UPDATE auth_config SET api_tokens_allow_all_users = 1")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (status, _) = send(&app, api_get("/api/v1/event-types", &token)).await;
+    assert_eq!(status, StatusCode::OK);
+
+    // Expired.
+    sqlx::query("UPDATE api_tokens SET expires_at = ? WHERE user_id = ?")
+        .bind(Utc::now().timestamp() - 1)
+        .bind(&member)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (status, _) = send(&app, api_get("/api/v1/event-types", &token)).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    sqlx::query("UPDATE api_tokens SET expires_at = NULL WHERE user_id = ?")
+        .bind(&member)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // The admin's MFA requirement applies to a token created without MFA.
+    sqlx::query("UPDATE auth_config SET mfa_required = 1")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (status, _) = send(&app, api_get("/api/v1/event-types", &token)).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    sqlx::query("UPDATE auth_config SET mfa_required = 0")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (status, _) = send(&app, api_get("/api/v1/event-types", &token)).await;
+    assert_eq!(status, StatusCode::OK);
+
+    // Suspension deletes the tokens: re-enabling does not bring them back.
+    crate::auth::set_user_enabled(&pool, &member, false)
+        .await
+        .unwrap();
+    crate::auth::set_user_enabled(&pool, &member, true)
+        .await
+        .unwrap();
+    let (status, _) = send(&app, api_get("/api/v1/event-types", &token)).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let left: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM api_tokens WHERE user_id = ?")
+        .bind(&member)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(left, 0);
+
+    // The admin's "revoke connected apps" takes the tokens too.
+    let token = pat(&pool, &member, "event-types:read").await;
+    let response = app
+        .clone()
+        .oneshot(post_form(
+            &format!("/dashboard/admin/users/{member}/revoke-apps"),
+            &admin_session,
+            csrf,
+            &format!("_csrf={csrf}"),
+        ))
+        .await
+        .unwrap();
+    assert!(response.status().is_redirection());
+    let (status, _) = send(&app, api_get("/api/v1/event-types", &token)).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn api_oauth_grants_are_bound_to_the_api_resource() {
+    let _lock = crate::test_support::ENV_LOCK.lock().await;
+    let _env = super::oauth::environment();
+    let (app, pool, session, _) = setup_test_app().await;
+
+    let metadata: Value = serde_json::from_str(
+        &body_string(
+            app.clone()
+                .oneshot(get("/.well-known/oauth-protected-resource/api/v1"))
+                .await
+                .unwrap(),
+        )
+        .await,
+    )
+    .unwrap();
+    assert_eq!(metadata["resource"], API);
+    assert_eq!(metadata["scopes_supported"].as_array().unwrap().len(), 4);
+
+    let tokens = super::oauth::issue_tokens_for(&app, &session, API, None).await;
+    assert_eq!(tokens["scope"], ALL);
+    let api_token = tokens["access_token"].as_str().unwrap().to_string();
+    let (status, body) = send(&app, api_get("/api/v1/event-types", &api_token)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    // An MCP token does not open the API, nor an API token MCP.
+    let mcp = super::oauth::issue_tokens_for(&app, &session, MCP, None).await;
+    let mcp_token = mcp["access_token"].as_str().unwrap();
+    let (status, _) = send(&app, api_get("/api/v1/event-types", mcp_token)).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        "authorization",
+        format!("Bearer {api_token}").parse().unwrap(),
+    );
+    assert!(crate::oauth::bearer_user(&pool, &headers, MCP)
+        .await
+        .unwrap()
+        .is_none());
+
+    // MCP scopes cannot be asked for the API, nor API scopes for MCP.
+    for (resource, scope) in [(API, "calendar:read"), (MCP, "bookings:write")] {
+        let client = super::oauth::register_client(&app).await;
+        let uri = format!("/oauth/authorize?client_id={client}&redirect_uri={}&response_type=code&code_challenge={}&code_challenge_method=S256&resource={}&scope={scope}", urlencoding::encode("http://127.0.0.1:4321/callback"), crate::oauth::hash("abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGH"), urlencoding::encode(resource));
+        let response = app.clone().oneshot(get(&uri)).await.unwrap();
+        assert!(response.headers()["location"]
+            .to_str()
+            .unwrap()
+            .contains("error=invalid_scope"));
+    }
+
+    // A narrower grant only gets what it asked for, and shows on Connected
+    // apps with the API's own permissions.
+    let narrow = super::oauth::issue_tokens_for(&app, &session, API, Some("bookings:read")).await;
+    let narrow = narrow["access_token"].as_str().unwrap();
+    let (status, _) = send(&app, api_get("/api/v1/bookings", narrow)).await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _) = send(&app, api_get("/api/v1/event-types", narrow)).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let apps = body_string(
+        app.clone()
+            .oneshot(get_authed("/dashboard/settings/apps", &session))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(apps.contains("Read the bookings you host"));
+    assert!(apps.contains("Book, cancel and reschedule"));
+
+    // Revocation from Connected apps ends it at once.
+    let grants: Vec<String> = sqlx::query_scalar("SELECT id FROM oauth_grants WHERE resource = ?")
+        .bind(API)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+    for grant in grants {
+        app.clone()
+            .oneshot(post_form(
+                &format!("/dashboard/settings/apps/{grant}/revoke"),
+                &session,
+                "c",
+                "_csrf=c",
+            ))
+            .await
+            .unwrap();
+    }
+    let (status, _) = send(&app, api_get("/api/v1/event-types", &api_token)).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn api_event_types_follow_the_integration_rules() {
+    let _lock = crate::test_support::ENV_LOCK.lock().await;
+    let _env = super::oauth::environment();
+    let (app, pool, _, et_id) = setup_test_app().await;
+    let owner = user_id(&pool, "testuser").await;
+    let other = insert_role_user(&pool, "other@test.com", "user").await;
+    let member = insert_role_user(&pool, "member@test.com", "user").await;
+    sqlx::query("UPDATE auth_config SET api_tokens_allow_all_users = 1")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (_, team_et) = insert_team_with_et(
+        &pool,
+        "crew",
+        "crew-call",
+        &[(&owner, "admin"), (&member, "member")],
+    )
+    .await;
+    let other_token = pat(&pool, &other, ALL).await;
+    let member_token = pat(&pool, &member, ALL).await;
+    let owner_token = pat(&pool, &owner, ALL).await;
+
+    let ids = |body: &Value| -> Vec<(String, bool)> {
+        body["event_types"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| {
+                (
+                    e["id"].as_str().unwrap().to_string(),
+                    e["manageable"].as_bool().unwrap(),
+                )
+            })
+            .collect()
+    };
+    let (_, body) = send(&app, api_get("/api/v1/event-types", &owner_token)).await;
+    let mut listed = ids(&body);
+    listed.sort();
+    let mut expected = vec![(et_id.clone(), true), (team_et.clone(), true)];
+    expected.sort();
+    assert_eq!(listed, expected);
+    let (_, body) = send(&app, api_get("/api/v1/event-types", &other_token)).await;
+    assert!(ids(&body).is_empty());
+    let (_, body) = send(&app, api_get("/api/v1/event-types", &member_token)).await;
+    assert!(ids(&body).is_empty(), "a plain team member manages nothing");
+
+    // Another user's event type is not found, whatever the endpoint.
+    let day = far_future_monday();
+    for request in [
+        api_get(&format!("/api/v1/event-types/{et_id}"), &other_token),
+        api_get(
+            &format!("/api/v1/event-types/{et_id}/slots?from={day}&to={day}"),
+            &other_token,
+        ),
+        api_post(
+            "/api/v1/bookings",
+            &other_token,
+            &create_body(&et_id, &monday_at("10:00"), "x@test.com"),
+        ),
+    ] {
+        let (status, body) = send(&app, request).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    }
+
+    // An internal type the directory offers is listed read-only.
+    sqlx::query("UPDATE event_types SET visibility = 'internal' WHERE id = ?")
+        .bind(&et_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (_, body) = send(&app, api_get("/api/v1/event-types", &other_token)).await;
+    assert_eq!(ids(&body), vec![(et_id.clone(), false)]);
+    let (status, body) = send(
+        &app,
+        api_get(&format!("/api/v1/event-types/{et_id}"), &other_token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["event_type"]["manageable"], false);
+    assert!(body["event_type"].get("location_value").is_none());
+    let (status, body) = send(
+        &app,
+        api_get(
+            &format!("/api/v1/event-types/{et_id}/slots?from={day}&to={day}"),
+            &other_token,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(error_code(&body), "forbidden");
+    let (status, _) = send(
+        &app,
+        api_post(
+            "/api/v1/bookings",
+            &other_token,
+            &create_body(&et_id, &monday_at("10:00"), "x@test.com"),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+
+    // Disabled types disappear.
+    sqlx::query("UPDATE event_types SET enabled = 0 WHERE id = ?")
+        .bind(&et_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (status, _) = send(
+        &app,
+        api_get(&format!("/api/v1/event-types/{et_id}"), &owner_token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn api_slots_come_from_the_slot_engine_and_booking_takes_them() {
+    let _lock = crate::test_support::ENV_LOCK.lock().await;
+    let _env = super::oauth::environment();
+    let (app, pool, _, et_id) = setup_test_app().await;
+    let owner = user_id(&pool, "testuser").await;
+    let account: String = sqlx::query_scalar("SELECT id FROM accounts WHERE user_id = ?")
+        .bind(&owner)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let day = far_future_monday();
+    let compact = day.replace('-', "");
+    seed_synced_event(
+        &pool,
+        &account,
+        &format!("{compact}T100000"),
+        &format!("{compact}T110000"),
+        "UTC",
+        "OPAQUE",
+    )
+    .await;
+    // Fresh sources: no sync is attempted.
+    sqlx::query("UPDATE caldav_sources SET last_synced = datetime('now')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let token = pat(&pool, &owner, ALL).await;
+    let uri = format!("/api/v1/event-types/{et_id}/slots?from={day}&to={day}");
+    let (status, body) = send(&app, api_get(&uri, &token)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let times: Vec<String> = body["slots"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["time"].as_str().unwrap().to_string())
+        .collect();
+    let mut expected = Vec::new();
+    for h in 9..17 {
+        for m in [0, 30] {
+            if h != 10 {
+                expected.push(format!("{h:02}:{m:02}"));
+            }
+        }
+    }
+    assert_eq!(times, expected);
+    assert_eq!(body["slots"][0]["start"], monday_at("09:00"));
+    assert_eq!(body["slots"][0]["end"], monday_at("09:30"));
+
+    // In another timezone: the guest's day, the guest's times.
+    let (_, tokyo) = send(&app, api_get(&format!("{uri}&timezone=Asia/Tokyo"), &token)).await;
+    assert_eq!(tokyo["timezone"], "Asia/Tokyo");
+    let first = &tokyo["slots"][0];
+    assert_eq!(first["start"], monday_at("09:00"));
+    assert_eq!(first["time"], "18:00");
+    assert!(tokyo["slots"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|s| s["date"] == day.as_str()));
+    // 15:00 UTC is the next day in Tokyo.
+    assert!(!tokyo["slots"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|s| s["start"] == monday_at("15:00").as_str()));
+
+    // A time the engine offers can be booked, and is then gone.
+    let mut create = create_body(&et_id, &monday_at("09:00"), "tokyo@test.com");
+    create["timezone"] = json!("Asia/Tokyo");
+    let (status, body) = send(&app, api_post("/api/v1/bookings", &token, &create)).await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    assert_eq!(body["booking"]["guest"]["timezone"], "Asia/Tokyo");
+    assert_eq!(body["booking"]["start"], monday_at("09:00"));
+    let (_, again) = send(&app, api_get(&uri, &token)).await;
+    assert_ne!(again["slots"][0]["time"], "09:00");
+
+    // Bad windows.
+    for query in [
+        format!("from={day}"),
+        format!("from={day}&to=2020-01-01"),
+        format!("from={day}&to={day}&timezone=Mars/Base"),
+        format!("from={day}&to={day}&extra=1"),
+        "from=2020-01-01&to=2020-01-02".to_string(),
+    ] {
+        let (status, body) = send(
+            &app,
+            api_get(
+                &format!("/api/v1/event-types/{et_id}/slots?{query}"),
+                &token,
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{query}: {body}");
+    }
+}
+
+/// Counts what one booking produced: emails per recipient and calendar
+/// writes, for the comparison of the web form and the API.
+async fn booking_effects(
+    pool: &SqlitePool,
+    mails: &std::sync::Mutex<Vec<CapturedMail>>,
+    guest: &str,
+) -> (usize, usize, bool, String) {
+    let guest_mails = settled_mails_to(mails, guest).await;
+    let with_ics = guest_mails
+        .iter()
+        .filter(|m| m.contains("text/calendar"))
+        .count();
+    let (href, status): (Option<String>, String) =
+        sqlx::query_as("SELECT caldav_calendar_href, status FROM bookings WHERE guest_email = ?")
+            .bind(guest)
+            .fetch_one(pool)
+            .await
+            .unwrap();
+    (guest_mails.len(), with_ics, href.is_some(), status)
+}
+
+#[tokio::test]
+async fn api_booking_goes_through_the_web_booking_path() {
+    let _lock = crate::test_support::ENV_LOCK.lock().await;
+    let _env = super::oauth::environment();
+    let (app, pool, _, et_id) = setup_test_app().await;
+    let (port, mails) = spawn_capturing_mta().await;
+    use_capturing_mta(&pool, port).await;
+    let owner = user_id(&pool, "testuser").await;
+    let (base, dav) = spawn_mock_dav(DavMode::Ok).await;
+    seed_write_source(&pool, &owner, &base).await;
+    sqlx::query("UPDATE caldav_sources SET last_synced = datetime('now')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let token = pat(&pool, &owner, ALL).await;
+
+    // The web form.
+    let csrf = "csrf-web";
+    let response = app
+        .clone()
+        .oneshot(post_form_unauthed(
+            "/u/testuser/test-meeting/book",
+            csrf,
+            &book_body(csrf),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    // The API, an hour later.
+    let (status, body) = send(
+        &app,
+        api_post(
+            "/api/v1/bookings",
+            &token,
+            &create_body(&et_id, &monday_at("11:00"), "api@test.com"),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    assert_eq!(body["booking"]["status"], "confirmed");
+
+    let web = booking_effects(&pool, &mails, "guest@test.com").await;
+    let api = booking_effects(&pool, &mails, "api@test.com").await;
+    assert_eq!(web, (1, 1, true, "confirmed".to_string()));
+    assert_eq!(api, web);
+    assert_eq!(dav.stored(), 2, "both pushed to the host calendar");
+    assert_eq!(settled_mails_to(&mails, "test@example.com").await.len(), 2);
+
+    // The stored rows agree on everything the form path sets.
+    #[allow(clippy::type_complexity)]
+    let rows: Vec<(i64, String, String, Option<String>, bool, bool)> = sqlx::query_as(
+        "SELECT time_version, guest_timezone, language, confirm_token, cancel_token IS NOT NULL, reschedule_token IS NOT NULL FROM bookings ORDER BY start_at",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(rows[0], rows[1]);
+
+    // No token of the booking leaves through the API.
+    let (cancel, reschedule): (String, String) = sqlx::query_as(
+        "SELECT cancel_token, reschedule_token FROM bookings WHERE guest_email = 'api@test.com'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let text = body.to_string();
+    assert!(!text.contains(&cancel) && !text.contains(&reschedule));
+
+    // The same slot again: refused under the same rules as the form.
+    let (status, body) = send(
+        &app,
+        api_post(
+            "/api/v1/bookings",
+            &token,
+            &create_body(&et_id, &monday_at("10:00"), "late@test.com"),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(error_code(&body), "slot_unavailable");
+
+    // An event type that needs approval: a pending request, no write-back,
+    // and the host is asked to approve.
+    sqlx::query("UPDATE event_types SET requires_confirmation = 1 WHERE id = ?")
+        .bind(&et_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (status, body) = send(
+        &app,
+        api_post(
+            "/api/v1/bookings",
+            &token,
+            &create_body(&et_id, &monday_at("14:00"), "pending@test.com"),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    assert_eq!(body["booking"]["status"], "pending");
+    let pending = booking_effects(&pool, &mails, "pending@test.com").await;
+    assert_eq!(pending, (1, 0, false, "pending".to_string()));
+    assert_eq!(dav.stored(), 2);
+    let host = settled_mails_to(&mails, "test@example.com").await;
+    assert_eq!(host.len(), 3);
+    assert!(host.iter().any(|m| m.contains("/booking/approve/")));
+}
+
+#[tokio::test]
+async fn api_booking_validates_its_input() {
+    let _lock = crate::test_support::ENV_LOCK.lock().await;
+    let _env = super::oauth::environment();
+    let (app, pool, _, et_id) = setup_test_app().await;
+    let token = pat(&pool, &user_id(&pool, "testuser").await, ALL).await;
+    let base = create_body(&et_id, &monday_at("10:00"), "v@test.com");
+    let with = |key: &str, value: Value| {
+        let mut body = base.clone();
+        body[key] = value;
+        body
+    };
+    let cases = [
+        (with("email", json!("not-an-email")), "invalid_request"),
+        (with("name", json!("")), "invalid_request"),
+        (with("start", json!("tomorrow")), "invalid_start"),
+        (
+            with("start", json!(monday_at("10:00").replace(":00Z", ":30Z"))),
+            "invalid_start",
+        ),
+        (with("timezone", json!("Nowhere/City")), "invalid_timezone"),
+        (with("language", json!("xx")), "invalid_request"),
+        (with("attendees", json!(["a@x.com"])), "invalid_attendees"),
+        (with("surprise", json!(1)), "invalid_json"),
+    ];
+    for (body, code) in cases {
+        let (status, answer) = send(&app, api_post("/api/v1/bookings", &token, &body)).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert_eq!(error_code(&answer), code, "{body}");
+    }
+    // Off the grid, in the past, outside the horizon.
+    let (status, answer) = send(
+        &app,
+        api_post(
+            "/api/v1/bookings",
+            &token,
+            &with("start", json!(monday_at("10:10"))),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(error_code(&answer), "slot_unavailable");
+    let (status, answer) = send(
+        &app,
+        api_post(
+            "/api/v1/bookings",
+            &token,
+            &with("start", json!("2020-01-06T10:00:00Z")),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(error_code(&answer), "too_soon");
+    set_horizon(&pool, &et_id, 7).await;
+    let (status, answer) = send(&app, api_post("/api/v1/bookings", &token, &base)).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(error_code(&answer), "outside_booking_window");
+
+    // Not JSON, and too big.
+    let mut request = api_post("/api/v1/bookings", &token, &base);
+    request
+        .headers_mut()
+        .insert("content-type", "text/plain".parse().unwrap());
+    let (status, answer) = send(&app, request).await;
+    assert_eq!(status, StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    assert_eq!(error_code(&answer), "unsupported_media_type");
+    let (status, answer) = send(
+        &app,
+        api_post(
+            "/api/v1/bookings",
+            &token,
+            &with("notes", json!("x".repeat(20 * 1024))),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+    assert_eq!(error_code(&answer), "payload_too_large");
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM bookings")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 0);
+}
+
+#[tokio::test]
+async fn api_idempotency_key_replays_the_first_answer() {
+    let _lock = crate::test_support::ENV_LOCK.lock().await;
+    let _env = super::oauth::environment();
+    let (app, pool, _, et_id) = setup_test_app().await;
+    let owner = user_id(&pool, "testuser").await;
+    let token = pat(&pool, &owner, ALL).await;
+    let body = create_body(&et_id, &monday_at("10:00"), "idem@test.com");
+    let keyed = |body: &Value, key: &str| {
+        let mut request = api_post("/api/v1/bookings", &token, body);
+        request
+            .headers_mut()
+            .insert("idempotency-key", key.parse().unwrap());
+        request
+    };
+    let first = app.clone().oneshot(keyed(&body, "k-1")).await.unwrap();
+    assert_eq!(first.status(), StatusCode::CREATED);
+    let first_body = body_string(first).await;
+    let second = app.clone().oneshot(keyed(&body, "k-1")).await.unwrap();
+    assert_eq!(second.status(), StatusCode::CREATED);
+    assert_eq!(second.headers()["idempotency-replayed"], "true");
+    assert_eq!(body_string(second).await, first_body);
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM bookings")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 1);
+
+    // The key with another body, and a malformed key.
+    let other = create_body(&et_id, &monday_at("11:00"), "idem@test.com");
+    let (status, answer) = send(&app, keyed(&other, "k-1")).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(error_code(&answer), "idempotency_key_reused");
+    let (status, _) = send(&app, keyed(&other, "has space")).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    // Keys are per user: another user's identical key is theirs.
+    let other_user = insert_role_user(&pool, "o@test.com", "admin").await;
+    let other_et = insert_personal_et(&pool, &other_user, "o-meet").await;
+    for day in [1, 2, 3, 4, 5] {
+        sqlx::query("INSERT INTO availability_rules (id, event_type_id, day_of_week, start_time, end_time) VALUES (?, ?, ?, '09:00', '17:00')")
+            .bind(uuid::Uuid::new_v4().to_string())
+            .bind(&other_et)
+            .bind(day)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+    let other_token = pat(&pool, &other_user, ALL).await;
+    let mut request = api_post(
+        "/api/v1/bookings",
+        &other_token,
+        &create_body(&other_et, &monday_at("10:00"), "idem@test.com"),
+    );
+    request
+        .headers_mut()
+        .insert("idempotency-key", "k-1".parse().unwrap());
+    let (status, _) = send(&app, request).await;
+    assert_eq!(status, StatusCode::CREATED);
+
+    // A refusal is replayed too; a key older than a day is forgotten.
+    let taken = create_body(&et_id, &monday_at("10:00"), "again@test.com");
+    let (status, _) = send(&app, keyed(&taken, "k-2")).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    let response = app.clone().oneshot(keyed(&taken, "k-2")).await.unwrap();
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    assert_eq!(response.headers()["idempotency-replayed"], "true");
+    sqlx::query("UPDATE api_idempotency SET created_at = created_at - 90000")
+        .execute(&pool)
+        .await
+        .unwrap();
+    crate::oauth::cleanup(&pool).await.unwrap();
+    let left: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM api_idempotency")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(left, 0);
+}
+
+#[tokio::test]
+async fn api_bookings_are_read_and_changed_by_their_hosts_only() {
+    let _lock = crate::test_support::ENV_LOCK.lock().await;
+    let _env = super::oauth::environment();
+    let (app, pool, _, et_id) = setup_test_app().await;
+    let (port, mails) = spawn_capturing_mta().await;
+    use_capturing_mta(&pool, port).await;
+    let owner = user_id(&pool, "testuser").await;
+    let other = insert_role_user(&pool, "other@test.com", "admin").await;
+    let token = pat(&pool, &owner, ALL).await;
+    let other_token = pat(&pool, &other, ALL).await;
+    let start = Utc::now() + Duration::days(10);
+    let id = insert_v1_booking(
+        &pool,
+        &et_id,
+        "guest@b.test",
+        start,
+        30,
+        "confirmed",
+        &[("host_notes", Some("met at the fair".to_string()))],
+    )
+    .await;
+    let pending = insert_v1_booking(
+        &pool,
+        &et_id,
+        "pending@b.test",
+        start + Duration::hours(2),
+        30,
+        "pending",
+        &[],
+    )
+    .await;
+
+    let (status, body) = send(&app, api_get("/api/v1/bookings", &token)).await;
+    assert_eq!(status, StatusCode::OK);
+    let listed = body["bookings"].as_array().unwrap();
+    assert_eq!(listed.len(), 2);
+    assert_eq!(listed[0]["id"], id.as_str());
+    assert_eq!(listed[0]["host_notes"], "met at the fair");
+    assert_eq!(listed[0]["guest"]["email"], "guest@b.test");
+    assert!(listed[0].get("cancel_token").is_none());
+    let (_, body) = send(&app, api_get("/api/v1/bookings?status=pending", &token)).await;
+    assert_eq!(body["bookings"].as_array().unwrap().len(), 1);
+    let from = (start + Duration::hours(1)).to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    let (_, body) = send(
+        &app,
+        api_get(&format!("/api/v1/bookings?from={from}"), &token),
+    )
+    .await;
+    assert_eq!(body["bookings"][0]["id"], pending.as_str());
+    let (status, _) = send(&app, api_get("/api/v1/bookings?status=gone", &token)).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    // Another user (an admin, even) sees and changes none of it.
+    let (_, body) = send(&app, api_get("/api/v1/bookings", &other_token)).await;
+    assert!(body["bookings"].as_array().unwrap().is_empty());
+    for request in [
+        api_get(&format!("/api/v1/bookings/{id}"), &other_token),
+        api_post(
+            &format!("/api/v1/bookings/{id}/cancel"),
+            &other_token,
+            &json!({}),
+        ),
+        api_post(
+            &format!("/api/v1/bookings/{id}/request-reschedule"),
+            &other_token,
+            &json!({}),
+        ),
+    ] {
+        let (status, _) = send(&app, request).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+    assert_eq!(booking_status(&pool, &id).await, "confirmed");
+
+    // The host asks for a new time: a new link, the guest emailed.
+    let before: String = sqlx::query_scalar("SELECT reschedule_token FROM bookings WHERE id = ?")
+        .bind(&id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let (status, body) = send(
+        &app,
+        api_post(
+            &format!("/api/v1/bookings/{id}/request-reschedule"),
+            &token,
+            &json!({}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (after, by_host): (String, i64) =
+        sqlx::query_as("SELECT reschedule_token, reschedule_by_host FROM bookings WHERE id = ?")
+            .bind(&id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_ne!(before, after);
+    assert_eq!(by_host, 1);
+    assert!(!body.to_string().contains(&after));
+    assert_eq!(settled_mails_to(&mails, "guest@b.test").await.len(), 1);
+
+    // Cancel with a reason; the pending one is declined.
+    let (status, body) = send(
+        &app,
+        api_post(
+            &format!("/api/v1/bookings/{id}/cancel"),
+            &token,
+            &json!({"reason": "double booked"}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["booking"]["status"], "cancelled");
+    let guest = settled_mails_to(&mails, "guest@b.test").await;
+    assert_eq!(guest.len(), 2);
+    assert!(guest[1].contains("double booked"));
+    let (status, body) = send(
+        &app,
+        api_post(&format!("/api/v1/bookings/{id}/cancel"), &token, &json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(error_code(&body), "booking_not_active");
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/v1/bookings/{pending}/cancel"))
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(booking_status(&pool, &pending).await, "declined");
+}
+
+#[tokio::test]
+async fn api_a_host_who_does_not_own_the_event_type_reads_but_cannot_cancel() {
+    let _lock = crate::test_support::ENV_LOCK.lock().await;
+    let _env = super::oauth::environment();
+    let (app, pool, _, _) = setup_test_app().await;
+    let owner = user_id(&pool, "testuser").await;
+    let member = insert_role_user(&pool, "member@test.com", "admin").await;
+    let (_, team_et) = insert_team_with_et(
+        &pool,
+        "crew",
+        "crew-call",
+        &[(&owner, "admin"), (&member, "member")],
+    )
+    .await;
+    let id = insert_v1_booking(
+        &pool,
+        &team_et,
+        "guest@t.test",
+        Utc::now() + Duration::days(5),
+        30,
+        "confirmed",
+        &[("assigned_user_id", Some(member.clone()))],
+    )
+    .await;
+    let token = pat(&pool, &member, ALL).await;
+    let (status, body) = send(&app, api_get(&format!("/api/v1/bookings/{id}"), &token)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body["booking"]["event_type"]["team_id"].is_string());
+    let (status, body) = send(
+        &app,
+        api_post(&format!("/api/v1/bookings/{id}/cancel"), &token, &json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(error_code(&body), "forbidden");
+    assert_eq!(booking_status(&pool, &id).await, "confirmed");
+}
+
+#[tokio::test]
+async fn api_requests_are_rate_limited_per_token_and_writes_per_user() {
+    let _lock = crate::test_support::ENV_LOCK.lock().await;
+    let _env = super::oauth::environment();
+    let (app, pool, _, _) = setup_test_app().await;
+    let owner = user_id(&pool, "testuser").await;
+    let token = pat(&pool, &owner, ALL).await;
+    let second = pat(&pool, &owner, ALL).await;
+    for _ in 0..300 {
+        let (status, _) = send(&app, api_get("/api/v1/bookings", &token)).await;
+        assert_eq!(status, StatusCode::OK);
+    }
+    let response = app
+        .clone()
+        .oneshot(api_get("/api/v1/bookings", &token))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+    assert!(response.headers().contains_key("retry-after"));
+    let (_, body) = send(&app, api_get("/api/v1/bookings", &token)).await;
+    assert_eq!(error_code(&body), "rate_limited");
+    // Another token has its own read budget...
+    let (status, _) = send(&app, api_get("/api/v1/bookings", &second)).await;
+    assert_eq!(status, StatusCode::OK);
+    // ...but writes share one per user.
+    for _ in 0..60 {
+        let (status, _) = send(
+            &app,
+            api_post("/api/v1/bookings/nope/cancel", &second, &json!({})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+    let third = pat(&pool, &owner, ALL).await;
+    let (status, _) = send(
+        &app,
+        api_post("/api/v1/bookings/nope/cancel", &third, &json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+}

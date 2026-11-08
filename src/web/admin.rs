@@ -523,9 +523,14 @@ pub(super) async fn admin_dashboard(
 
     // Connected apps (OAuth grants) of the listed users only.
     let user_apps: std::collections::HashMap<String, i64> = sqlx::query_as(
-        "SELECT user_id, COUNT(*) FROM oauth_grants
-         WHERE user_id IN (SELECT value FROM json_each(?))
-           AND revoked = 0 AND expires_at > CAST(strftime('%s', 'now') AS INTEGER)
+        "SELECT user_id, COUNT(*) FROM (
+             SELECT user_id FROM oauth_grants
+             WHERE user_id IN (SELECT value FROM json_each(?1))
+               AND revoked = 0 AND expires_at > CAST(strftime('%s', 'now') AS INTEGER)
+             UNION ALL
+             SELECT user_id FROM api_tokens
+             WHERE user_id IN (SELECT value FROM json_each(?1))
+               AND (expires_at IS NULL OR expires_at > CAST(strftime('%s', 'now') AS INTEGER)))
          GROUP BY user_id",
     )
     .bind(serde_json::to_string(&user_ids).unwrap_or_else(|_| "[]".to_string()))
@@ -810,6 +815,13 @@ pub(super) async fn admin_dashboard(
     .await
     .unwrap_or(None)
     .unwrap_or(false);
+    let api_tokens_allow_all_users: bool = sqlx::query_scalar(
+        "SELECT api_tokens_allow_all_users FROM auth_config WHERE id = 'singleton'",
+    )
+    .fetch_optional(&state.pool)
+    .await
+    .unwrap_or(None)
+    .unwrap_or(false);
 
     // Flash banner after a test round-trip (?sms_test=sent|checked|error).
     let sms_test_result = query.get("sms_test").cloned().unwrap_or_default();
@@ -959,6 +971,7 @@ pub(super) async fn admin_dashboard(
             sms_allow_all_users => sms_allow_all_users,
             guest_footer_default => guest_footer_default,
             guest_footer_allow_all_users => guest_footer_allow_all_users,
+            api_tokens_allow_all_users => api_tokens_allow_all_users,
             sms_enabled => sms_enabled,
             sms_from_env => sms_from_env,
             sms_error => sms_error,

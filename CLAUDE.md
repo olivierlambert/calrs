@@ -205,6 +205,8 @@ Files: `src/web/` (see `ARCHITECTURE.md` for which file owns which page), templa
 
 **Source sync failures (#162):** `sync_source`/`sync_ews_source` record their outcome via `commands::sync_health`; `sync::sync_one_source` is the single client dispatch (background, on-demand, dashboard button, CLI) and records pre-request failures too. A failed calendar fails its source's sync. Availability keeps being served from the cache. The owner is emailed once when `sync_failure_count >= 3` and failing for over 60 min; success clears everything and re-arms. On-demand syncs skip sources that failed in the last 5 min (`last_sync_error_at`), and the background loop orders by the later of `last_synced`/`last_sync_error_at`. `calrs sync` exits 1 when any source failed.
 
+**REST API (#169):** `src/web/api.rs`, JSON under `/api/v1`, documented in `docs/src/api.md`. Bearer only, cookies never read (no CSRF surface), no CORS, a foreign `Origin` refused, 16 KiB bodies, `{"error":{"code","message"}}` everywhere. Tokens: OAuth access tokens for the resource `<base>/api/v1` (`oauth::api_resource`, scopes `oauth::API_SCOPES`, a grant is bound to one resource) or personal access tokens (`calrs_pat_` + 43 chars, `api_tokens` table, hashed, created at `/dashboard/settings/api-tokens` by `src/web/api_tokens.rs`; admins only unless `auth_config.api_tokens_allow_all_users`, checked at every use). Both follow `GRANT_MFA_POLICY`, and `mfa::revoke_access`, `delete_unverified_local_grants` and the admin's revoke-all delete PATs too. Scope: event types the user manages (`MANAGES_EVENT_TYPE` in `directory.rs`, no admin bypass, plus directory internal types read-only via `distributable_event_types`, shared with MCP); bookings by `NOTE_HOSTS`; cancel/request-reschedule by the dashboard's owner rule. Writes reuse `book_personal`/`book_team` (`booking.rs`, with `BookingAccess::Manager`: no invite), `host_cancel_booking` (`dashboard.rs`) and `host_request_reschedule` (`booking_actions.rs`); the web handlers call the same functions and render `BookingRefusal::into_page`. Rate limits: `api_limiter` 300/min per token, `api_heavy_limiter` 60/5 min per user for slots and POSTs. `Idempotency-Key` on `POST /bookings` (`api_idempotency`, per user, 24 h, 5xx not stored).
+
 **Security hardening (1.0):**
 - **CSRF protection** — double-submit cookie pattern on all 31 POST handlers via `csrf_cookie_middleware`. Client-side JS injects `_csrf` hidden field. Multipart forms use query parameter.
 - **Booking rate limiting** — per-IP (10 req / 5 min) on all 4 booking handlers. Client IP is the *rightmost* `X-Forwarded-For` value (the trusted proxy's view of its peer; leftmost is attacker-controlled). See `client_ip_for_rate_limit()` in `src/web/mod.rs`.
@@ -396,7 +398,7 @@ The country is **seeded, not guessed**. Only an explicit BCP-47 region subtag co
 - ~~**Passwords echoed to terminal**~~ — **Fixed in v0.10.0**: `prompt_password()` now uses `rpassword` for hidden input.
 
 ### Features not yet implemented
-- REST API for third-party integrations (tracked in #169)
+- Moving a booking to a host-chosen time through the REST API (v1 only asks the guest to pick one)
 
 **Note:** delta sync is implemented. `commands/sync.rs` stores a per-calendar `sync-token` (migration 027) and `ctag`, issues an RFC 6578 `sync-collection` REPORT when it has one, and falls back to a full fetch when the server rejects it or reports an empty delta against a changed ctag. `--full` clears both. EWS sources keep their own flow.
 

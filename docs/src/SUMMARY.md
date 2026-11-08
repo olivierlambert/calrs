@@ -14,6 +14,7 @@
 - [SMS Notifications](./sms.md)
 - [Authentication](./authentication.md)
 - [MCP Integration](./mcp.md)
+- [REST API](./api.md)
 - [Authentik (OIDC SSO)](./authentik.md)
 
 # Administration

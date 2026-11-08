@@ -445,6 +445,14 @@ oauth-invites = Einladungslinks mit Ihren Berechtigungen erstellen
 
 apps-subtitle = Anwendungen, denen Sie erlaubt haben, in Ihrem Namen zu handeln, etwa KI-Assistenten, die über MCP verbunden sind. Ein Widerruf beendet ihren Zugriff sofort.
 apps-empty = Keine Anwendung verbunden. Ein MCP-Client bittet beim ersten Verbinden um Ihre Zustimmung.
+oauth-slots = Buchbare Zeiten der Terminarten lesen, die Sie verwalten
+oauth-bookings-read = Buchungen lesen, bei denen Sie Gastgeber sind, mit den Angaben der Gäste
+oauth-bookings-write = Auf Terminarten, die Sie verwalten, buchen, stornieren und verschieben, mit E-Mails an die Gäste
+api-tokens-subtitle = Tokens, mit denen Ihre eigenen Skripte die REST-API von calrs in Ihrem Namen aufrufen. Ein Token gilt, bis es abläuft oder Sie es widerrufen.
+api-tokens-created = Kopieren Sie dieses Token jetzt: Es wird nur einmal angezeigt.
+api-tokens-error-name = Geben Sie dem Token einen Namen mit höchstens 100 Zeichen.
+api-tokens-error-scope = Wählen Sie mindestens eine Berechtigung.
+api-tokens-error-limit = Sie haben bereits 20 Tokens. Widerrufen Sie zuerst eines.
 
 # Write destination per event type (#47)
 etf-write-destination-help = Nur für diese Terminart. Standardmäßig landen sie im Schreibkalender jeder Ihrer Quellen. Bei einer Team-Terminart gilt das nur für die Buchungen, die Sie übernehmen.

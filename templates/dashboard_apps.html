@@ -37,6 +37,9 @@
           {% if a.events %}<li>{{ t("oauth-events") }}</li>{% endif %}
           {% if a.blocks %}<li>{{ t("oauth-blocks") }}</li>{% endif %}
           {% if a.invites %}<li>{{ t("oauth-invites") }}</li>{% endif %}
+          {% if a.slots %}<li>{{ t("oauth-slots") }}</li>{% endif %}
+          {% if a.bookings_read %}<li>{{ t("oauth-bookings-read") }}</li>{% endif %}
+          {% if a.bookings_write %}<li>{{ t("oauth-bookings-write") }}</li>{% endif %}
         </ul>
         <div class="app-meta">
           {{ t("apps-approved", date=a.approved) }}<br>

@@ -22,7 +22,17 @@ use std::sync::Arc;
 
 use crate::{auth, models::User, web::AppState};
 
+/// The scopes of the MCP resource (`resource()`).
 pub const SCOPES: [&str; 3] = ["event-types:read", "calendar:read", "invites:write"];
+/// The scopes of the REST API resource (`api_resource()`, #169). A grant is
+/// bound to one resource, so `event-types:read` of an MCP grant never opens
+/// the API, nor the other way round.
+pub const API_SCOPES: [&str; 4] = [
+    "event-types:read",
+    "slots:read",
+    "bookings:read",
+    "bookings:write",
+];
 const CONTINUE_COOKIE: &str = "__Host-calrs_oauth";
 const ACCESS_LIFETIME: i64 = 3600;
 const GRANT_LIFETIME: i64 = 30 * 86400;
@@ -50,7 +60,7 @@ const CLIENT_CAP: i64 = 10_000;
 /// The local MFA policy of `auth::validate_session`, applied to a grant `g` of
 /// user `u`: a token is worth what the session that approved it was worth, and
 /// stops working when the admin starts requiring MFA it never passed.
-const GRANT_MFA_POLICY: &str = "(u.auth_provider != 'local'
+pub(crate) const GRANT_MFA_POLICY: &str = "(u.auth_provider != 'local'
     OR (SELECT mfa_required FROM auth_config WHERE id = 'singleton') = 0
     OR (g.mfa_verified = 1 AND EXISTS (SELECT 1 FROM user_mfa WHERE user_id = u.id)))";
 
@@ -64,6 +74,10 @@ pub fn router() -> Router<Arc<AppState>> {
         .route(
             "/.well-known/oauth-protected-resource/mcp",
             get(resource_metadata),
+        )
+        .route(
+            "/.well-known/oauth-protected-resource/api/v1",
+            get(api_resource_metadata),
         )
         .route("/oauth/register", post(register))
         .route("/oauth/authorize", get(authorize))
@@ -84,6 +98,34 @@ pub fn resource() -> String {
     format!("{}/mcp", issuer())
 }
 
+/// The REST API resource (#169): `<base>/api/v1`.
+pub fn api_resource() -> String {
+    format!("{}/api/v1", issuer())
+}
+
+/// The scopes a grant for `resource` may carry, or `None` for a resource
+/// calrs does not serve.
+fn resource_scopes(resource: &str) -> Option<&'static [&'static str]> {
+    if resource == self::resource() {
+        Some(&SCOPES)
+    } else if resource == api_resource() {
+        Some(&API_SCOPES)
+    } else {
+        None
+    }
+}
+
+/// Every scope of every resource, once each, for the server metadata.
+fn all_scopes() -> Vec<&'static str> {
+    let mut all: Vec<&str> = SCOPES.to_vec();
+    for scope in API_SCOPES {
+        if !all.contains(&scope) {
+            all.push(scope);
+        }
+    }
+    all
+}
+
 async fn metadata() -> Json<serde_json::Value> {
     let base = issuer();
     Json(json!({
@@ -99,7 +141,7 @@ async fn metadata() -> Json<serde_json::Value> {
         "code_challenge_methods_supported": ["S256"],
         // RFC 9207: the consent redirect carries `iss`.
         "authorization_response_iss_parameter_supported": true,
-        "scopes_supported": SCOPES,
+        "scopes_supported": all_scopes(),
         "client_id_metadata_document_supported": false
     }))
 }
@@ -108,6 +150,13 @@ async fn resource_metadata() -> Json<serde_json::Value> {
     Json(
         json!({"resource": resource(), "authorization_servers": [issuer()],
         "scopes_supported": SCOPES, "bearer_methods_supported": ["header"]}),
+    )
+}
+
+async fn api_resource_metadata() -> Json<serde_json::Value> {
+    Json(
+        json!({"resource": api_resource(), "authorization_servers": [issuer()],
+        "scopes_supported": API_SCOPES, "bearer_methods_supported": ["header"]}),
     )
 }
 
@@ -483,7 +532,7 @@ async fn register(
 
 /// Characters a client name could use to look like another one on the consent
 /// page: controls, bidirectional overrides and invisible separators.
-fn spoofing_char(c: char) -> bool {
+pub(crate) fn spoofing_char(c: char) -> bool {
     c.is_control()
         || matches!(c, '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2060}'..='\u{2069}' | '\u{feff}' | '\u{061c}' | '\u{00ad}')
 }
@@ -523,9 +572,9 @@ async fn authorize(
     if params.response_type != "code" {
         return Err(invalid("unsupported_response_type"));
     }
-    if params.resource != resource() {
+    let Some(allowed) = resource_scopes(&params.resource) else {
         return Err(invalid("invalid_target"));
-    }
+    };
     if params.code_challenge_method != "S256"
         || params.code_challenge.len() != 43
         || URL_SAFE_NO_PAD.decode(&params.code_challenge).is_err()
@@ -533,9 +582,9 @@ async fn authorize(
     {
         return Err(invalid("invalid_request"));
     }
-    let requested = params.scope.clone().unwrap_or_else(|| SCOPES.join(" "));
+    let requested = params.scope.clone().unwrap_or_else(|| allowed.join(" "));
     let scopes: Vec<&str> = requested.split_whitespace().collect();
-    if scopes.is_empty() || scopes.iter().any(|s| !SCOPES.contains(s)) {
+    if scopes.is_empty() || scopes.iter().any(|s| !allowed.contains(s)) {
         // RFC 6749 section 4.1.2.1: the client and its callback are valid,
         // so the error goes back to the client rather than to the browser.
         let mut redirect =
@@ -609,6 +658,9 @@ async fn consent_page(
             events => scopes.split_whitespace().any(|s| s == SCOPES[0]),
             blocks => scopes.split_whitespace().any(|s| s == SCOPES[1]),
             invites => scopes.split_whitespace().any(|s| s == SCOPES[2]),
+            slots => scopes.split_whitespace().any(|s| s == API_SCOPES[1]),
+            bookings_read => scopes.split_whitespace().any(|s| s == API_SCOPES[2]),
+            bookings_write => scopes.split_whitespace().any(|s| s == API_SCOPES[3]),
             csrf_token => csrf, request_id => id,
         })).map_err(|e| { tracing::error!(%e, "OAuth consent template"); Error(StatusCode::INTERNAL_SERVER_ERROR, "server_error") })?;
     // The approval is one click: never let another page frame it, not even
@@ -736,7 +788,8 @@ async fn token(
         _ => return Err(invalid("unsupported_grant_type")),
     };
     let value = value.ok_or(invalid("invalid_request"))?;
-    if form.resource != resource() {
+    // The grant is bound to its resource (the query below matches it).
+    if resource_scopes(&form.resource).is_none() {
         return Err(invalid("invalid_target"));
     }
     let now = Utc::now().timestamp();
@@ -861,13 +914,30 @@ pub async fn bearer_user(
     headers: &HeaderMap,
     audience: &str,
 ) -> Result<Option<(User, String)>, Error> {
-    let Some(value) = headers.get("authorization").and_then(|h| h.to_str().ok()) else {
+    Ok(bearer_grant(pool, headers, audience)
+        .await?
+        .map(|(user, scope, _)| (user, scope)))
+}
+
+/// The bearer token of `Authorization` when it has the shape of an access
+/// token (43 characters of URL-safe base64), else `None`.
+pub(crate) fn bearer_token(headers: &HeaderMap) -> Option<&str> {
+    let value = headers.get("authorization")?.to_str().ok()?;
+    let (scheme, token) = value.split_once(' ')?;
+    scheme.eq_ignore_ascii_case("bearer").then_some(token)
+}
+
+/// `bearer_user`, also returning the grant the token belongs to (the REST
+/// API counts its rate limits per grant).
+pub(crate) async fn bearer_grant(
+    pool: &SqlitePool,
+    headers: &HeaderMap,
+    audience: &str,
+) -> Result<Option<(User, String, String)>, Error> {
+    let Some(token) = bearer_token(headers) else {
         return Ok(None);
     };
-    let Some((scheme, token)) = value.split_once(' ') else {
-        return Ok(None);
-    };
-    if !scheme.eq_ignore_ascii_case("bearer") || token.len() != 43 {
+    if token.len() != 43 {
         return Ok(None);
     }
     let query = format!("SELECT g.id, g.user_id, COALESCE(c.scope, g.scope), g.scope FROM oauth_credentials c JOIN oauth_grants g ON g.id = c.grant_id JOIN users u ON u.id = g.user_id WHERE c.hash = ? AND c.kind = 'access' AND c.expires_at > ? AND g.expires_at > ? AND g.revoked = 0 AND g.resource = ? AND {GRANT_MFA_POLICY}");
@@ -895,7 +965,7 @@ pub async fn bearer_user(
         sqlx::query("UPDATE oauth_grants SET last_used_at = ? WHERE id = ? AND (last_used_at IS NULL OR last_used_at < ?)")
             .bind(now).bind(&grant).bind(now - 60).execute(pool).await?;
     }
-    Ok(user.map(|u| (u, scope)))
+    Ok(user.map(|u| (u, scope, grant)))
 }
 
 /// Deletes every grant a local account approved from a session that had not
@@ -922,9 +992,35 @@ pub(crate) async fn delete_unverified_local_grants(
         "DELETE FROM oauth_requests WHERE user_id IN (SELECT id FROM users WHERE auth_provider = 'local')
              AND NOT EXISTS (SELECT 1 FROM user_mfa m WHERE m.user_id = oauth_requests.user_id)",
     )
+    .execute(&mut *conn)
+    .await?;
+    // Personal access tokens created from such a session go the same way.
+    sqlx::query(
+        "DELETE FROM api_tokens WHERE mfa_verified = 0
+             AND user_id IN (SELECT id FROM users WHERE auth_provider = 'local')",
+    )
     .execute(conn)
     .await?;
     Ok(())
+}
+
+/// Deletes the user's personal access tokens (#169): one (API tokens
+/// "Revoke"), or all of them (admin, and `mfa::revoke_access`). Returns how
+/// many went.
+pub(crate) async fn delete_api_tokens(
+    conn: &mut SqliteConnection,
+    user_id: &str,
+    token_id: Option<&str>,
+) -> Result<u64, sqlx::Error> {
+    Ok(
+        sqlx::query("DELETE FROM api_tokens WHERE user_id = ? AND (? IS NULL OR id = ?)")
+            .bind(user_id)
+            .bind(token_id)
+            .bind(token_id)
+            .execute(conn)
+            .await?
+            .rows_affected(),
+    )
 }
 
 /// Deletes the user's grants with their tokens: one grant (Connected apps
@@ -967,6 +1063,14 @@ pub async fn cleanup(pool: &SqlitePool) -> Result<(), sqlx::Error> {
         .await?;
     sqlx::query("DELETE FROM oauth_credentials WHERE kind = 'access' AND expires_at <= ?")
         .bind(now)
+        .execute(pool)
+        .await?;
+    sqlx::query("DELETE FROM api_tokens WHERE expires_at IS NOT NULL AND expires_at <= ?")
+        .bind(now)
+        .execute(pool)
+        .await?;
+    sqlx::query("DELETE FROM api_idempotency WHERE created_at <= ?")
+        .bind(now - 86400)
         .execute(pool)
         .await?;
     // Retain spent refresh credentials until their grant expires (replay detection).

@@ -80,7 +80,7 @@ Every user-facing string goes through Fluent (`i18n/`).
 |---|---|
 | `mod.rs` | `AppState`, `create_router` (every route), middleware (CSRF, CSP, embed), rate limiter, client IP, error helpers, sidebar context, booking error page helpers |
 | `public_pages.rs` | Public GET pages: user and team profiles, slot pickers, booking forms, dynamic group links, legacy redirects |
-| `booking.rs` | Booking form POST handlers for every URL shape, input validation, location resolution, SMS phone mode |
+| `booking.rs` | Booking form POST handlers for every URL shape, input validation, location resolution, SMS phone mode. The personal and team handlers are thin: `book_personal` and `book_team` do the booking (shared with the REST API) and return a `BookingRefusal` the handler renders as before |
 | `booking_actions.rs` | Token pages reached from emails: approve, decline, guest cancel, reschedule (guest and host), claim, ICS |
 | `availability.rs` | Slot computation, busy times, frequency limits, user working hours, timezone helpers, horizon, troubleshoot view |
 | `hosts.rs` | Who hosts a booking: host identity, collective members, write targets, reschedule and approval hosts |
@@ -99,6 +99,8 @@ Every user-facing string goes through Fluent (`i18n/`).
 | `invites.rs` | Invite Links page, invite management, bulk invites, quick links |
 | `connected_apps.rs` | Connected apps page (`/dashboard/settings/apps`): the user's OAuth grants with revoke, and the admin's revoke-all for a user |
 | `mcp.rs` | Stateless Streamable HTTP `/mcp`, JSON-RPC lifecycle, three scoped tools; reuses invites and availability services |
+| `api.rs` | REST API v1 under `/api/v1` (#169): Bearer authentication (OAuth tokens for `<base>/api/v1`, personal access tokens), scopes, JSON errors, rate limits, idempotency keys; event types, slots (`compute_slots`), bookings; writes call `book_personal`/`book_team` (`booking.rs`), `host_cancel_booking` (`dashboard.rs`) and `host_request_reschedule` (`booking_actions.rs`) |
+| `api_tokens.rs` | API tokens page (`/dashboard/settings/api-tokens`): create (shown once), list, revoke personal access tokens; the admin switch letting every user create them |
 | `teams.rs` | Teams listing, creation, settings, avatars |
 | `sources.rs` | Calendar sources: add, edit, test, sync, remove, write-back setup, calendars to sync, Google connect |
 | `admin.rs` | Admin panel: users, auth and OIDC, theme, captcha, SMTP, SMS, meeting links, resources, impersonation |
@@ -116,7 +118,7 @@ with `use super::*` and sees those fixtures and every item of `web`:
 `security`, `auth_pages`, `branding`, `format`, `availability`, `resources`,
 `hosts`, `event_types`, `invites`, `booking`, `public_pages`,
 `booking_actions`, `booking_notes`, `dashboard`, `sources`, `admin`, `emails`,
-`page_language`, `guards`, plus `booking_time`, `pending_hold`,
+`page_language`, `guards`, `api`, `oauth`, `mcp`, plus `booking_time`, `pending_hold`,
 `writeback_failures`, `write_destinations`, `organizer`, `duplicate_event_type` and `time_off`.
 
 ### `src/email/`
@@ -163,8 +165,12 @@ Call sites use `crate::email::name` whatever file `name` lives in.
   `mfa_verified` and `GRANT_MFA_POLICY` applies `validate_session`'s MFA rule
   to every token use; `mfa::revoke_access` deletes a user's grants with their
   sessions. Cleanup joins the hourly session sweep.
-  MCP has no session state or SSE tasks and adds no dependencies. Tests:
-  `src/web/tests/oauth.rs` and `src/web/tests/mcp.rs`.
+  MCP has no session state or SSE tasks and adds no dependencies. A second
+  resource, `<base>/api/v1`, has its own scopes (`oauth::API_SCOPES`) for the
+  REST API (`src/web/api.rs`), which also accepts personal access tokens
+  (`api_tokens` table, migration `20261108064145_api_tokens`) under the same
+  MFA policy and revocation. Tests: `src/web/tests/oauth.rs`,
+  `src/web/tests/mcp.rs` and `src/web/tests/api.rs`.
 - **Auth extractors** (`src/auth.rs`). `AuthUser` redirects to login,
   `AdminUser` returns 403, `OptionalAuthUser` for public pages. Each resolves
   the viewer's language once.

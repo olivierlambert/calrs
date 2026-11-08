@@ -524,6 +524,19 @@
   </form>
 </div>
 
+<!-- Personal access tokens for the REST API (#169) -->
+<div class="card">
+  <h2>{{ t("admin-api-tokens") }}</h2>
+  <form method="post" action="/dashboard/admin/api-tokens">
+    <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.925rem; cursor: pointer;">
+      <input type="checkbox" name="allow_all_users" value="on" {% if api_tokens_allow_all_users %}checked{% endif %} style="width: 1rem; height: 1rem;">
+      {{ t("admin-api-tokens-allow-all") }}
+    </label>
+    <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin: 0.375rem 0 0.75rem;">{{ t("admin-api-tokens-allow-all-help") }}</span>
+    <button type="submit" class="adm-btn">{{ t("admin-save-policy") }}</button>
+  </form>
+</div>
+
 <!-- OIDC settings -->
 <div class="card">
   <h2>{{ t("admin-oidc-settings") }}</h2>

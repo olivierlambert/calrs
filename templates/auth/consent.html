@@ -22,6 +22,9 @@
     {% if events %}<li>{{ t("oauth-events") }}</li>{% endif %}
     {% if blocks %}<li>{{ t("oauth-blocks") }}</li>{% endif %}
     {% if invites %}<li>{{ t("oauth-invites") }}</li>{% endif %}
+    {% if slots %}<li>{{ t("oauth-slots") }}</li>{% endif %}
+    {% if bookings_read %}<li>{{ t("oauth-bookings-read") }}</li>{% endif %}
+    {% if bookings_write %}<li>{{ t("oauth-bookings-write") }}</li>{% endif %}
   </ul>
   <form class="oauth-consent-actions" method="post" action="/oauth/consent">
     <input type="hidden" name="_csrf" value="{{ csrf_token }}">

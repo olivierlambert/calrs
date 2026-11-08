@@ -1,5 +1,7 @@
 mod admin;
 mod admin_stats;
+mod api;
+mod api_tokens;
 mod availability;
 mod booking;
 mod booking_actions;
@@ -162,6 +164,10 @@ pub struct AppState {
     pub mcp_limiter: RateLimiter,
     /// Other MCP requests (initialize, ping, tools/list), per user.
     pub mcp_request_limiter: RateLimiter,
+    /// REST API requests, per token (`api::authenticate`).
+    pub api_limiter: RateLimiter,
+    /// REST API slot reads and writes, per user (`api::heavy_limit`).
+    pub api_heavy_limiter: RateLimiter,
     pub data_dir: PathBuf,
     pub secret_key: [u8; 32],
     pub theme_css: tokio::sync::RwLock<String>,
@@ -459,7 +465,13 @@ async fn csrf_cookie_middleware(
 ) -> axum::response::Response {
     let cross_site_cookie =
         is_embedded_booking_request(request.uri().path(), request.uri().query());
+    // The REST API is Bearer-only and never reads cookies: no CSRF cookie
+    // for its answers.
+    let api = request.uri().path() == "/api/v1" || request.uri().path().starts_with("/api/v1/");
     let mut response = next.run(request).await;
+    if api {
+        return response;
+    }
 
     // Handlers rendering an explicit CSRF field may already issue its cookie.
     // Do not replace it with a different token on a first visit.
@@ -690,6 +702,8 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
         oauth_register_limiter: RateLimiter::new(30, 900),
         mcp_limiter: RateLimiter::new(120, 60),
         mcp_request_limiter: RateLimiter::new(600, 60),
+        api_limiter: RateLimiter::new(300, 60),
+        api_heavy_limiter: RateLimiter::new(60, 300),
         secret_key,
         data_dir,
         theme_css: tokio::sync::RwLock::new(initial_theme_css),
@@ -708,6 +722,8 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
         .merge(crate::oauth::router())
         .merge(mcp::router())
         .merge(connected_apps::router())
+        .merge(api::router())
+        .merge(api_tokens::router())
         .route("/", get(root_redirect))
         .route("/dashboard", get(dashboard))
         .route("/dashboard/event-types", get(dashboard_event_types))
