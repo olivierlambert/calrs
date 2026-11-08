@@ -467,3 +467,343 @@ async fn team_meetings_match_their_hosts_without_revealing_private_teams() {
     assert!(has_entry(&body, &et));
     assert!(body.contains("directory-hosts"));
 }
+
+fn entry_count(body: &str) -> usize {
+    body.matches("class=\"directory-entry\"").count()
+}
+
+/// Add `n` public meetings to the owner of `et_id`, titled to sort after
+/// "Test Meeting" and before nothing else.
+async fn add_meetings(pool: &SqlitePool, et_id: &str, n: usize) -> Vec<String> {
+    let account: String = sqlx::query_scalar("SELECT account_id FROM event_types WHERE id = ?")
+        .bind(et_id)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    let mut ids = Vec::new();
+    for i in 0..n {
+        let id = uuid::Uuid::new_v4().to_string();
+        sqlx::query(
+            "INSERT INTO event_types (id, account_id, slug, title, duration_min, buffer_before, buffer_after, min_notice_min, enabled)
+             VALUES (?, ?, ?, ?, 30, 0, 0, 0, 1)",
+        )
+        .bind(&id)
+        .bind(&account)
+        .bind(format!("extra-{i:03}"))
+        .bind(format!("Extra {i:03}"))
+        .execute(pool)
+        .await
+        .unwrap();
+        ids.push(id);
+    }
+    ids
+}
+
+#[tokio::test]
+async fn directory_pages_large_catalogues_and_shows_no_pager_when_everything_fits() {
+    let (app, pool, _, et_id) = setup_test_app().await;
+    let (_, viewer) = insert_test_user_with_session(&pool, "Viewer", "viewer@x", "viewer").await;
+    let page = |uri: String| {
+        let app = app.clone();
+        let viewer = viewer.clone();
+        async move { body_string(app.oneshot(get_authed(&uri, &viewer)).await.unwrap()).await }
+    };
+    // A small directory: one page, no controls, exactly as before.
+    let body = page("/dashboard/directory".into()).await;
+    assert_eq!(entry_count(&body), 1);
+    assert!(!body.contains("class=\"ui-pager\""));
+
+    let extra = add_meetings(&pool, &et_id, 60).await;
+    let body = page("/dashboard/directory".into()).await;
+    assert_eq!(entry_count(&body), DIRECTORY_PAGE_SIZE as usize);
+    assert!(body.contains("class=\"ui-pager\""));
+    assert!(body.contains("1 to 50 of 61"));
+    assert!(body.contains("rel=\"next\""));
+    assert!(!body.contains("rel=\"prev\""));
+    // Ordered by owner then title: "Extra 000".."Extra 059", then "Test Meeting".
+    assert!(has_entry(&body, &extra[0]));
+    assert!(!has_entry(&body, &et_id));
+
+    let body = page("/dashboard/directory?page=2".into()).await;
+    assert_eq!(entry_count(&body), 11);
+    assert!(has_entry(&body, &et_id));
+    assert!(body.contains("51 to 61 of 61"));
+    // Past the end, or nonsense: the last page, or the first.
+    let body = page("/dashboard/directory?page=99".into()).await;
+    assert!(body.contains("51 to 61 of 61"));
+    let body = page("/dashboard/directory?page=abc".into()).await;
+    assert!(body.contains("1 to 50 of 61"));
+
+    // The search narrows in SQL and the pager keeps it in its links.
+    let body = page("/dashboard/directory?q=extra%2005".into()).await;
+    assert_eq!(entry_count(&body), 11);
+    assert!(!body.contains("class=\"ui-pager\""));
+    let body = page("/dashboard/directory?q=extra".into()).await;
+    assert!(body.contains("1 to 50 of 60"));
+    assert!(body
+        .replace("&amp;", "&")
+        .replace("&#x2f;", "/")
+        .contains("/dashboard/directory?q=extra&page=2"));
+}
+
+#[tokio::test]
+async fn paged_queries_keep_every_visibility_check_for_favorites_and_searches() {
+    let (app, pool, _, et_id) = setup_test_app().await;
+    let (_, viewer) = insert_test_user_with_session(&pool, "Viewer", "viewer@x", "viewer").await;
+    let extra = add_meetings(&pool, &et_id, 2).await;
+    for id in [&et_id, &extra[0], &extra[1]] {
+        assert_eq!(favorite(&app, &viewer, id, true).await.status(), 200);
+    }
+    // Starred, then hidden in every way a meeting can be.
+    for update in [
+        "UPDATE event_types SET visibility = 'private' WHERE slug = 'extra-000'",
+        "UPDATE event_types SET enabled = 0 WHERE slug = 'extra-001'",
+    ] {
+        sqlx::raw_sql(update).execute(&pool).await.unwrap();
+    }
+    for uri in [
+        "/dashboard",
+        "/dashboard/directory",
+        "/dashboard/directory?favorites=true",
+        "/dashboard/directory?favorites=true&q=extra",
+        "/dashboard/directory?q=extra",
+        "/dashboard/directory?q=extra&page=2",
+    ] {
+        let body = body_string(app.clone().oneshot(get_authed(uri, &viewer)).await.unwrap()).await;
+        assert!(!has_entry(&body, &extra[0]), "{uri}");
+        assert!(!has_entry(&body, &extra[1]), "{uri}");
+    }
+    for id in &extra {
+        assert_eq!(favorite(&app, &viewer, id, true).await.status(), 404);
+    }
+    // A private team's public meeting is never offered, starred or searched.
+    let (team, team_et) = insert_team_with_et(&pool, "hidden-team", "demo", &[]).await;
+    assert_eq!(favorite(&app, &viewer, &team_et, true).await.status(), 200);
+    sqlx::query("UPDATE teams SET visibility = 'private' WHERE id = ?")
+        .bind(&team)
+        .execute(&pool)
+        .await
+        .unwrap();
+    for uri in [
+        "/dashboard",
+        "/dashboard/directory?favorites=true",
+        "/dashboard/directory?q=hidden-team",
+    ] {
+        let body = body_string(app.clone().oneshot(get_authed(uri, &viewer)).await.unwrap()).await;
+        assert!(!has_entry(&body, &team_et), "{uri}");
+    }
+    // The count behind the overview link only counts what the viewer may see.
+    let page = directory_page(
+        &pool,
+        &crate_user_id(&pool, "viewer@x").await,
+        &DirectoryFilter {
+            favorites_only: true,
+            ..DirectoryFilter::default()
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(page.total, 1);
+}
+
+async fn crate_user_id(pool: &SqlitePool, email: &str) -> String {
+    sqlx::query_scalar("SELECT id FROM users WHERE email = ?")
+        .bind(email)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn closed_booking_windows_follow_each_meetings_own_zone() {
+    let pool = setup_test_db().await;
+    let owner = insert_role_user(&pool, "owner@x", "user").await;
+    let viewer = insert_role_user(&pool, "viewer@x", "user").await;
+    let utc_today = Utc::now().date_naive();
+    let mut expected = Vec::new();
+    for (i, tz) in [
+        "Pacific/Kiritimati",
+        "Pacific/Pago_Pago",
+        "UTC",
+        "Europe/Paris",
+    ]
+    .iter()
+    .enumerate()
+    {
+        for days in -3..=2 {
+            let until = utc_today + Duration::days(days);
+            let id = insert_personal_et(&pool, &owner, &format!("w{i}-{}", days + 3)).await;
+            sqlx::query("UPDATE event_types SET timezone = ?, bookable_until = ? WHERE id = ?")
+                .bind(tz)
+                .bind(until.format("%Y-%m-%d").to_string())
+                .bind(&id)
+                .execute(&pool)
+                .await
+                .unwrap();
+            let window = BookingWindow {
+                bookable_until: Some(until),
+                ..BookingWindow::default()
+            };
+            let open = !window.is_expired(today_in(tz.parse().unwrap()));
+            expected.push((id, open, format!("{tz} until {until}")));
+        }
+    }
+    // Values SQLite does not read as dates are no bound, as in BookingWindow.
+    for (slug, value) in [
+        ("odd-1", " 2000-01-01 "),
+        ("odd-2", "2000-02-30"),
+        ("odd-3", "soon"),
+    ] {
+        let id = insert_personal_et(&pool, &owner, slug).await;
+        sqlx::query("UPDATE event_types SET bookable_until = ? WHERE id = ?")
+            .bind(value)
+            .bind(&id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let open = parse_optional_date(Some(value)).is_none_or(|d| d >= utc_today);
+        expected.push((id, open, format!("odd {value:?}")));
+    }
+    let page = directory_page(&pool, &viewer, &DirectoryFilter::default())
+        .await
+        .unwrap();
+    let listed: Vec<&str> = page.entries.iter().map(|e| e.id.as_str()).collect();
+    for (id, open, what) in &expected {
+        assert_eq!(listed.contains(&id.as_str()), *open, "{what}");
+    }
+    assert_eq!(page.total as usize, listed.len());
+}
+
+#[tokio::test]
+async fn overview_shows_a_bounded_number_of_favorites_and_links_to_the_rest() {
+    let (app, pool, _, et_id) = setup_test_app().await;
+    let (_, viewer) = insert_test_user_with_session(&pool, "Viewer", "viewer@x", "viewer").await;
+    let extra = add_meetings(&pool, &et_id, 14).await;
+    for id in extra.iter().take(3) {
+        assert_eq!(favorite(&app, &viewer, id, true).await.status(), 200);
+    }
+    let overview = || {
+        let app = app.clone();
+        let viewer = viewer.clone();
+        async move {
+            body_string(
+                app.oneshot(get_authed("/dashboard", &viewer))
+                    .await
+                    .unwrap(),
+            )
+            .await
+        }
+    };
+    let body = overview().await;
+    assert_eq!(entry_count(&body), 3);
+    assert!(body.contains("Browse directory"));
+    assert!(!body.contains("All favorites"));
+    for id in extra.iter().skip(3) {
+        assert_eq!(favorite(&app, &viewer, id, true).await.status(), 200);
+    }
+    let body = overview().await;
+    assert_eq!(entry_count(&body), OVERVIEW_FAVORITES as usize);
+    assert!(body.contains("All favorites"));
+    assert!(body
+        .replace("&#x2f;", "/")
+        .contains("/dashboard/directory?favorites=true"));
+}
+
+#[tokio::test]
+async fn search_treats_glob_characters_literally() {
+    let (app, pool, session, et_id) = setup_test_app().await;
+    let extra = add_meetings(&pool, &et_id, 1).await;
+    sqlx::query("UPDATE event_types SET title = 'Plan [a*b?]' WHERE id = ?")
+        .bind(&extra[0])
+        .execute(&pool)
+        .await
+        .unwrap();
+    for q in ["%5Ba*b%3F%5D", "*", "%3F", "%5B"] {
+        let body = body_string(
+            app.clone()
+                .oneshot(get_authed(&format!("/dashboard/directory?q={q}"), &session))
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert!(has_entry(&body, &extra[0]), "{q}");
+        assert!(!has_entry(&body, &et_id), "{q}");
+    }
+}
+
+#[tokio::test]
+async fn repeated_and_surplus_search_words_are_bounded() {
+    let (app, _pool, session, et_id) = setup_test_app().await;
+    let body = |q: String| {
+        let app = app.clone();
+        let session = session.clone();
+        async move {
+            body_string(
+                app.oneshot(get_authed(&format!("/dashboard/directory?q={q}"), &session))
+                    .await
+                    .unwrap(),
+            )
+            .await
+        }
+    };
+    // Repeats in any case count once.
+    let repeated = ["test", "TEST", "Test"].repeat(30).join("%20");
+    assert!(has_entry(&body(repeated).await, &et_id));
+    // Words past the cap do not reach SQL, so a ninth word cannot narrow.
+    let mut words: Vec<String> = ["test", "meeting", "testuser", "t", "e", "s", "m", "g"]
+        .iter()
+        .map(|w| w.to_string())
+        .collect();
+    assert_eq!(words.len(), MAX_SEARCH_WORDS);
+    assert!(has_entry(&body(words.join("%20")).await, &et_id));
+    words.push("nowhere".into());
+    assert!(has_entry(&body(words.join("%20")).await, &et_id));
+    // Control characters are dropped, not matched.
+    assert!(has_entry(&body("te%00st".into()).await, &et_id));
+}
+
+#[tokio::test]
+async fn one_id_check_applies_the_directory_rules_and_the_window() {
+    let pool = setup_test_db().await;
+    let owner = insert_role_user(&pool, "owner@x", "user").await;
+    let viewer = insert_role_user(&pool, "viewer@x", "user").await;
+    let et = insert_personal_et(&pool, &owner, "one").await;
+    assert!(is_listed(&pool, &viewer, &et).await.unwrap());
+    assert!(!is_listed(&pool, &viewer, "missing").await.unwrap());
+    for (update, listed) in [
+        (
+            "UPDATE event_types SET bookable_until = '2000-01-01'",
+            false,
+        ),
+        ("UPDATE event_types SET bookable_until = '2000-02-30'", true),
+        ("UPDATE event_types SET bookable_until = '9999-12-31'", true),
+        ("UPDATE event_types SET visibility = 'private'", false),
+        (
+            "UPDATE event_types SET visibility = 'internal', enabled = 0",
+            false,
+        ),
+        ("UPDATE event_types SET enabled = 1", true),
+        (
+            "UPDATE users SET enabled = 0 WHERE email = 'owner@x'",
+            false,
+        ),
+    ] {
+        sqlx::raw_sql(update).execute(&pool).await.unwrap();
+        assert_eq!(
+            is_listed(&pool, &viewer, &et).await.unwrap(),
+            listed,
+            "{update}"
+        );
+        let page = directory_page(
+            &pool,
+            &viewer,
+            &DirectoryFilter {
+                event_type_id: Some(&et),
+                ..DirectoryFilter::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(page.total == 1, listed, "{update} (page)");
+    }
+}

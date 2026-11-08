@@ -625,3 +625,206 @@ async fn sms_config_round_trips_through_the_database() {
         .unwrap()
         .is_none());
 }
+
+/// Add `n` users named "Member NNN" (every seventh disabled), created in
+/// order after the admin.
+async fn add_members(pool: &SqlitePool, n: usize) {
+    for i in 0..n {
+        sqlx::query(
+            "INSERT INTO users (id, email, name, role, auth_provider, username, enabled, created_at)
+             VALUES (?, ?, ?, 'user', 'local', ?, ?, ?)",
+        )
+        .bind(uuid::Uuid::new_v4().to_string())
+        .bind(format!("member{i:03}@example.com"))
+        .bind(format!("Member {i:03}"))
+        .bind(format!("member{i:03}"))
+        .bind(i % 7 != 0)
+        .bind(format!("2030-01-01 00:{:02}:{:02}", i / 60, i % 60))
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+}
+
+fn user_rows(body: &str) -> usize {
+    body.matches("<tr class=\"user-item").count()
+}
+
+#[tokio::test]
+async fn small_instances_keep_the_browser_side_users_list() {
+    let (app, pool, session, _) = setup_test_app().await;
+    add_members(&pool, (USERS_INLINE_MAX - 1) as usize).await;
+    let body = body_string(
+        app.oneshot(get_authed("/dashboard/admin?up=3&uq=nobody", &session))
+            .await
+            .unwrap(),
+    )
+    .await;
+    // Everyone is rendered for the browser to filter, query ignored.
+    assert_eq!(user_rows(&body), USERS_INLINE_MAX as usize);
+    assert!(body.contains("id=\"user-list\""));
+    assert!(body.contains("id=\"user-search\""));
+    assert!(!body.contains("user-list-server"));
+    assert!(!body.contains("name=\"back\""));
+    assert!(!body.contains("class=\"ui-pager\""));
+}
+
+#[tokio::test]
+async fn large_instances_page_search_filter_and_sort_users_on_the_server() {
+    let (app, pool, session, _) = setup_test_app().await;
+    add_members(&pool, 130).await;
+    let page = |uri: &str| {
+        let app = app.clone();
+        let session = session.clone();
+        let uri = uri.to_string();
+        async move { body_string(app.oneshot(get_authed(&uri, &session)).await.unwrap()).await }
+    };
+    let body = page("/dashboard/admin").await;
+    assert!(body.contains("user-list-server"));
+    assert!(!body.contains("id=\"user-list\""));
+    assert_eq!(user_rows(&body), USERS_PAGE_SIZE as usize);
+    assert!(body.contains("1 to 25 of 131"));
+    assert!(body.contains("131 of 131 users"));
+    // Creation order: the admin, then Member 000 onwards.
+    assert!(body.contains("Member 023"));
+    assert!(!body.contains("Member 024"));
+
+    let body = page("/dashboard/admin?up=6").await;
+    assert_eq!(user_rows(&body), 6);
+    assert!(body.contains("Member 129"));
+    let body = page("/dashboard/admin?up=60").await;
+    assert!(body.contains("126 to 131 of 131"));
+
+    // Search is literal and case blind, on name or email.
+    let body = page("/dashboard/admin?uq=MEMBER%2012").await;
+    assert_eq!(user_rows(&body), 10);
+    assert!(!body.contains("class=\"ui-pager\""));
+    assert!(body.contains("10 of 131 users"));
+    let body = page("/dashboard/admin?uq=member007%40").await;
+    assert_eq!(user_rows(&body), 1);
+    let body = page("/dashboard/admin?uq=%25").await;
+    assert_eq!(user_rows(&body), 0);
+    assert!(body.contains("No users match your filter."));
+
+    // Filters are the chips; the active one is marked.
+    let body = page("/dashboard/admin?uf=disabled").await;
+    assert_eq!(user_rows(&body), 19);
+    assert!(body.contains("aria-current=\"true\">Disabled"));
+    assert!(body.contains("is-disabled"));
+    let body = page("/dashboard/admin?uf=nonsense").await;
+    assert_eq!(user_rows(&body), USERS_PAGE_SIZE as usize);
+
+    // Sorting by name, descending, from the header link.
+    let body = page("/dashboard/admin?us=name&ud=desc").await;
+    assert!(body.contains("Member 129"));
+    assert!(!body.contains("Member 000"));
+    assert!(body.contains("aria-sort=\"descending\""));
+    assert!(body
+        .replace("&amp;", "&")
+        .replace("&#x2f;", "/")
+        .contains("/dashboard/admin?us=name&ud=asc#users"));
+
+    // Action forms carry the list state back.
+    let body = page("/dashboard/admin?uq=member&uf=disabled&up=1").await;
+    assert!(body.contains("name=\"back\" value=\"uq=member&amp;uf=disabled\""));
+}
+
+#[tokio::test]
+async fn user_actions_return_to_the_list_page_they_came_from() {
+    let (app, pool, session, _) = setup_test_app().await;
+    add_members(&pool, 3).await;
+    let target: String =
+        sqlx::query_scalar("SELECT id FROM users WHERE email = 'member001@example.com'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let post = |path: &str, body: &str| {
+        let app = app.clone();
+        let session = session.clone();
+        let uri = format!("/dashboard/admin/users/{target}/{path}");
+        let body = format!("_csrf=c&{body}");
+        async move {
+            app.oneshot(post_form(&uri, &session, "c", &body))
+                .await
+                .unwrap()
+        }
+    };
+    let location = |r: &Response| r.headers()["location"].to_str().unwrap().to_string();
+    // No list state: the panel, as before.
+    let r = post("toggle-enabled", "").await;
+    assert_eq!(location(&r), "/dashboard/admin");
+    // List state is rebuilt from its parameters, unknown ones dropped.
+    let r = post(
+        "toggle-enabled",
+        "back=uq%3Dmember%26up%3D2%26evil%3Dhttps%3A%2F%2Fx.example",
+    )
+    .await;
+    assert_eq!(location(&r), "/dashboard/admin?uq=member&up=2#users");
+    let r = post("toggle-role", "back=us%3Dlast%26ud%3Ddesc").await;
+    assert_eq!(location(&r), "/dashboard/admin?us=last&ud=desc#users");
+    // The server-side list in its default state still reopens the tab.
+    let r = post("toggle-role", "back=").await;
+    assert_eq!(location(&r), "/dashboard/admin#users");
+    let r = post("toggle-role", "back=").await;
+    assert_eq!(location(&r), "/dashboard/admin#users");
+    // Something that is not a list state is never echoed.
+    let r = post("toggle-role", "back=%2F%2Fevil.example%2F").await;
+    assert_eq!(location(&r), "/dashboard/admin#users");
+    let role: String = sqlx::query_scalar("SELECT role FROM users WHERE id = ?")
+        .bind(&target)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(role, "user", "toggled twice");
+    // A refusal keeps the list state next to the error.
+    let admin_id: String = sqlx::query_scalar("SELECT id FROM users WHERE role = 'admin'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let r = app
+        .clone()
+        .oneshot(post_form(
+            &format!("/dashboard/admin/users/{admin_id}/toggle-role"),
+            &session,
+            "c",
+            "_csrf=c&back=uf%3Dadmin",
+        ))
+        .await
+        .unwrap();
+    let loc = location(&r);
+    assert!(loc.starts_with("/dashboard/admin?error="), "{loc}");
+    assert!(loc.ends_with("&uf=admin#users"), "{loc}");
+    // CSRF still applies.
+    let r = post("toggle-enabled", "").await;
+    assert_eq!(r.status(), 303);
+    let r = app
+        .oneshot(post_form(
+            &format!("/dashboard/admin/users/{target}/toggle-enabled"),
+            &session,
+            "c",
+            "_csrf=wrong&back=up%3D2",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 403);
+}
+
+#[test]
+fn user_list_state_reads_its_own_query_string_back() {
+    let state = UserListState::from_query_string("uq=a%20b+c&uf=oidc&us=created&ud=asc&up=4");
+    assert_eq!(state.q, "a b c");
+    assert_eq!(state.filter, UserFilter::Oidc);
+    assert_eq!(state.sort, Some(UserSort::Created));
+    assert!(!state.desc);
+    assert_eq!(state.page, 4);
+    assert_eq!(
+        UserListState::from_query_string(&state.query_string(4)),
+        state
+    );
+    let default = UserListState::from_query_string("");
+    assert_eq!(default.query_string(1), "");
+    assert_eq!(default.href(1), "/dashboard/admin#users");
+    // A sort with no direction takes its natural one.
+    assert!(UserListState::from_query_string("us=last").desc);
+    assert!(!UserListState::from_query_string("us=name").desc);
+}
