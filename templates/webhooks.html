@@ -76,7 +76,7 @@
             {% if w.queued %}<br>{{ t("webhooks-queued", count=w.queued) }}{% endif %}
             {% if w.failed %}<br><span class="wh-state is-error">{{ t("webhooks-gave-up", count=w.failed) }}</span>{% endif %}
           </div>
-          {% if w.enabled and w.last_error %}<div class="wh-error">{{ w.last_error }}</div>{% endif %}
+          {% if w.last_error %}<div class="wh-error">{{ w.last_error }}</div>{% endif %}
         </div>
         <div class="wh-actions">
           {% if w.suspended and not w.personal %}

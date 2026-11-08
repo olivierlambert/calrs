@@ -34,8 +34,7 @@ const ERRORS: &[&str] = &[
     "webhooks-error-url",
     "webhooks-error-https",
     "webhooks-error-credentials",
-    "webhooks-error-private",
-    "webhooks-error-resolve",
+    "webhooks-error-address",
     "webhooks-error-secret",
     "webhooks-error-scope",
     "webhooks-error-limit",
@@ -323,6 +322,7 @@ pub(super) async fn create_webhook(
     };
     let allowlist = crate::settings::private_host_allowlist();
     if let Err(e) = check_target(&form.url, &allowlist).await {
+        tracing::info!(user = %user.email, error = %e, "webhook URL refused");
         return back("error", e.key());
     }
     let existing: i64 = match &event_type_id {
@@ -393,6 +393,7 @@ pub(super) async fn update_webhook(
     };
     let allowlist = crate::settings::private_host_allowlist();
     if let Err(e) = check_target(&form.url, &allowlist).await {
+        tracing::info!(user = %user.email, error = %e, "webhook URL refused");
         return back("error", e.key());
     }
     let secret_enc = if form.secret.is_empty() {
@@ -406,7 +407,14 @@ pub(super) async fn update_webhook(
         return back("error", "webhooks-error-secret");
     };
     if let Err(e) = sqlx::query(
-        "UPDATE webhooks SET url = ?, secret_enc = COALESCE(?, secret_enc), events = ? WHERE id = ?",
+        // A new URL is a new receiver: the last result was someone else's.
+        "UPDATE webhooks SET
+             last_attempt_at = CASE WHEN url = ?1 THEN last_attempt_at END,
+             last_status = CASE WHEN url = ?1 THEN last_status END,
+             last_error = CASE WHEN url = ?1 THEN last_error END,
+             last_success_at = CASE WHEN url = ?1 THEN last_success_at END,
+             url = ?1, secret_enc = COALESCE(?2, secret_enc), events = ?3
+         WHERE id = ?4",
     )
     .bind(form.url.trim())
     .bind(&secret_enc)

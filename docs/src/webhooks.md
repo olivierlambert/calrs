@@ -208,7 +208,8 @@ within a second.
   delays the others. While a receiver is failing, its other deliveries wait
   for the same retry, so it gets one request per retry, not one per booking.
 - Each webhook shows the time and result of its last attempt, the error (with
-  at most 200 characters of the response body), and how many deliveries wait
+  at most 200 characters of the response body, also while it is switched off;
+  changing its URL clears them), and how many deliveries wait
   for a retry or were given up.
 - **Send test** sends a `ping` straight away and shows the result, whatever
   events are ticked. Each user can send 10 tests per 10 minutes.
@@ -228,6 +229,10 @@ A webhook URL must be:
 - on a public address. Hosts that resolve to loopback, private, link-local or
   carrier-grade NAT addresses are refused unless allowlisted, the same policy
   as CalDAV sources and resource feeds.
+
+A private address and a host name that does not resolve get the same message
+("this address cannot be used"), so the form cannot be used to find out which
+internal names exist; the server log has the detail.
 
 The URL is checked when it is saved and again before every delivery, and the
 request connects to the addresses that were checked, so a DNS answer that

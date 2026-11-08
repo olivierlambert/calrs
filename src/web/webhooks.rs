@@ -745,8 +745,22 @@ impl TargetError {
             TargetError::Invalid => "webhooks-error-url",
             TargetError::HttpsRequired => "webhooks-error-https",
             TargetError::Credentials => "webhooks-error-credentials",
-            TargetError::Private(_) => "webhooks-error-private",
-            TargetError::Unresolvable(_) => "webhooks-error-resolve",
+            // One message for both: telling them apart would let a user
+            // probe which internal host names exist. The log has the detail.
+            TargetError::Private(_) | TargetError::Unresolvable(_) => "webhooks-error-address",
+        }
+    }
+
+    /// The text stored with a refused delivery and shown on the page: no
+    /// address, no resolver detail (see [`TargetError::key`]).
+    pub fn shown(&self) -> &'static str {
+        match self {
+            TargetError::Invalid => "not a valid URL",
+            TargetError::HttpsRequired => "only https URLs are allowed",
+            TargetError::Credentials => "credentials in the URL are not allowed",
+            TargetError::Private(_) | TargetError::Unresolvable(_) => {
+                "the address cannot be used (not a public address, or not found)"
+            }
         }
     }
 }
@@ -903,7 +917,10 @@ async fn post(
 ) -> Attempt {
     let target = match check_target(url, allowlist).await {
         Ok(t) => t,
-        Err(e) => return Attempt::failed(None, format!("refused: {e}")),
+        Err(e) => {
+            tracing::info!(error = %e, "webhook target refused");
+            return Attempt::failed(None, format!("refused: {}", e.shown()));
+        }
     };
     // No proxy: reqwest honours HTTP(S)_PROXY and ALL_PROXY by default, and a
     // proxy resolves the host itself, which would undo the address checks

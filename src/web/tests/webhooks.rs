@@ -687,17 +687,23 @@ async fn unsafe_urls_and_weak_secrets_are_refused() {
         (
             "https%3A%2F%2F10.1.2.3%2Fh",
             SECRET,
-            "webhooks-error-private",
+            "webhooks-error-address",
         ),
         (
             "https%3A%2F%2F%5B%3A%3Affff%3A127.0.0.1%5D%2Fh",
             SECRET,
-            "webhooks-error-private",
+            "webhooks-error-address",
         ),
         (
             "https%3A%2F%2Fu%3Ap%4093.184.215.14%2Fh",
             SECRET,
             "webhooks-error-credentials",
+        ),
+        // Unresolvable reads the same as private: no probing of host names.
+        (
+            "https%3A%2F%2Fno-such-host.invalid%2Fh",
+            SECRET,
+            "webhooks-error-address",
         ),
         ("nope", SECRET, "webhooks-error-url"),
         (
@@ -996,8 +1002,7 @@ async fn webhook_page_keys_exist() {
         "webhooks-error-url",
         "webhooks-error-https",
         "webhooks-error-credentials",
-        "webhooks-error-private",
-        "webhooks-error-resolve",
+        "webhooks-error-address",
         "webhooks-error-secret",
         "webhooks-error-scope",
         "webhooks-error-limit",
@@ -1594,4 +1599,72 @@ async fn a_claim_is_sent_with_the_claimant() {
     assert_eq!(v["event"], "booking.claimed");
     assert_eq!(v["booking"]["claimed_by"]["email"], "watcher@example.com");
     assert_eq!(v["booking"]["hosts"][0]["email"], "test@example.com");
+}
+
+#[tokio::test]
+async fn a_new_url_clears_the_last_result_and_errors_stay_visible() {
+    let (app, pool, session, _) = setup_test_app().await;
+    let admin_id = test_user_id(&pool).await;
+    let id = insert_webhook(&pool, &admin_id, None, "https://93.184.215.14/a").await;
+    sqlx::query("UPDATE webhooks SET enabled = 0, last_status = 500, last_error = 'HTTP 500: boom', last_attempt_at = '2030-01-01T00:00:00Z' WHERE id = ?")
+        .bind(&id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    // Switched off, the last error is still shown.
+    let page = body_string(
+        app.clone()
+            .oneshot(get_authed("/dashboard/webhooks", &session))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(page.contains("HTTP 500: boom"));
+
+    let csrf = "csrf-wh-reset";
+    let update = |url: &'static str| {
+        post_form(
+            &format!("/dashboard/webhooks/{id}/update"),
+            &session,
+            csrf,
+            &format!("_csrf={csrf}&url={url}&secret=&events=booking.created"),
+        )
+    };
+    // Same URL: kept.
+    app.clone()
+        .oneshot(update("https%3A%2F%2F93.184.215.14%2Fa"))
+        .await
+        .unwrap();
+    let kept: (Option<i64>, Option<String>) =
+        sqlx::query_as("SELECT last_status, last_error FROM webhooks")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(kept, (Some(500), Some("HTTP 500: boom".to_string())));
+    // New URL: cleared.
+    app.oneshot(update("https%3A%2F%2F93.184.215.14%2Fb"))
+        .await
+        .unwrap();
+    let cleared: (Option<i64>, Option<String>, Option<String>) =
+        sqlx::query_as("SELECT last_status, last_error, last_attempt_at FROM webhooks")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(cleared, (None, None, None));
+}
+
+#[tokio::test]
+async fn a_refused_delivery_does_not_say_why_in_detail() {
+    let pool = setup_test_db().await;
+    let (user_id, _, et_id) = seed_test_data(&pool).await;
+    let wid = insert_webhook(&pool, &user_id, None, "https://10.9.8.7/hook").await;
+    assert_eq!(queue_one(&pool, &et_id).await, 1);
+    wh::deliver_due_with(&pool, &[0u8; 32], Utc::now(), &[]).await;
+    let error: String = sqlx::query_scalar("SELECT last_error FROM webhooks WHERE id = ?")
+        .bind(&wid)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(error.starts_with("refused"), "{error}");
+    assert!(!error.contains("10.9.8.7"), "{error}");
 }
