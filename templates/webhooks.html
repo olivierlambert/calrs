@@ -59,7 +59,7 @@
     <div class="wh-item">
       <div class="wh-summary">
         <div class="wh-details">
-          <div class="wh-url">{{ w.url }}</div>
+          <div class="wh-url">{{ w.url_display }}</div>
           <div class="wh-meta">
             {% if w.personal %}{{ t("webhooks-scope-personal") }}{% elif w.team_name %}{{ t("webhooks-scope-team-event-type", title=w.event_type_title, team=w.team_name) }}{% else %}{{ t("webhooks-scope-event-type", title=w.event_type_title) }}{% endif %}
             {% if not w.personal %}<br>{% if w.added_by %}{{ t("webhooks-added-by", name=w.added_by) }}{% else %}{{ t("webhooks-added-by-former") }}{% endif %}{% endif %}
@@ -79,11 +79,6 @@
           {% if w.last_error %}<div class="wh-error">{{ w.last_error }}</div>{% endif %}
         </div>
         <div class="wh-actions">
-          {% if w.suspended and not w.personal %}
-          <form method="post" action="/dashboard/webhooks/{{ w.id }}/adopt">
-            <button type="submit" class="ui-btn ui-btn--sm ui-btn--primary">{{ t("webhooks-adopt") }}</button>
-          </form>
-          {% endif %}
           <form method="post" action="/dashboard/webhooks/{{ w.id }}/test">
             <button type="submit" class="ui-btn ui-btn--sm">{{ t("webhooks-send-test") }}</button>
           </form>
@@ -95,12 +90,29 @@
           </form>
         </div>
       </div>
+      {% if w.suspended and not w.personal %}
+      <details class="wh-edit" open>
+        <summary>{{ t("webhooks-adopt") }}</summary>
+        <form method="post" action="/dashboard/webhooks/{{ w.id }}/adopt">
+          <p class="sec-note" style="margin-bottom: 0.75rem;">{{ t("webhooks-adopt-help") }}</p>
+          <div class="form-group">
+            <label for="wh-adopt-url-{{ w.id }}">{{ t("webhooks-url") }}</label>
+            <input type="url" id="wh-adopt-url-{{ w.id }}" name="url" value="" placeholder="{{ w.url_display }}" required maxlength="2048">
+          </div>
+          <div class="form-group">
+            <label for="wh-adopt-secret-{{ w.id }}">{{ t("webhooks-secret") }} <span class="hint">{{ t("webhooks-secret-hint", min=secret_min) }}</span></label>
+            <input type="password" id="wh-adopt-secret-{{ w.id }}" name="secret" required minlength="{{ secret_min }}" maxlength="256" autocomplete="new-password">
+          </div>
+          <button type="submit" class="ui-btn ui-btn--primary">{{ t("webhooks-adopt") }}</button>
+        </form>
+      </details>
+      {% endif %}
       <details class="wh-edit">
         <summary>{{ t("webhooks-edit") }}</summary>
         <form method="post" action="/dashboard/webhooks/{{ w.id }}/update">
           <div class="form-group">
-            <label for="wh-url-{{ w.id }}">{{ t("webhooks-url") }}</label>
-            <input type="url" id="wh-url-{{ w.id }}" name="url" value="{{ w.url }}" required maxlength="2048">
+            <label for="wh-url-{{ w.id }}">{{ t("webhooks-url") }}{% if not w.mine %} <span class="hint">{{ t("webhooks-url-masked-hint") }}</span>{% endif %}</label>
+            <input type="url" id="wh-url-{{ w.id }}" name="url" value="{{ w.url }}" placeholder="{{ w.url_display }}" required maxlength="2048">
           </div>
           <div class="form-group">
             <label for="wh-secret-{{ w.id }}">{{ t("webhooks-secret") }} <span class="hint">{{ t("admin-keep-current-set-hint") }}</span></label>

@@ -1199,7 +1199,7 @@ async fn an_event_type_webhook_outlives_the_user_who_added_it_suspended() {
             &format!("/dashboard/webhooks/{wid}/adopt"),
             &admin_session,
             csrf,
-            &format!("_csrf={csrf}"),
+            &format!("_csrf={csrf}&url=https%3A%2F%2F93.184.215.14%2Fmine&secret=fresh-secret-0123456789"),
         ))
         .await
         .unwrap();
@@ -1253,7 +1253,7 @@ async fn the_take_over_is_for_managers_only() {
         &format!("/dashboard/webhooks/{wid}/adopt"),
         &outsider,
         csrf,
-        &format!("_csrf={csrf}"),
+        &format!("_csrf={csrf}&url=https%3A%2F%2F93.184.215.14%2Fx&secret=fresh-secret-0123456789"),
     ))
     .await
     .unwrap();
@@ -1793,4 +1793,168 @@ async fn an_unfilled_reservation_is_filled_with_its_context_later() {
     assert_eq!(v["booking"]["reason"], "Ill");
     assert_eq!(v["booking"]["cancelled_by"], "guest");
     assert_eq!(rows[1].1, "reserved");
+}
+
+#[tokio::test]
+async fn taking_over_needs_a_suspended_webhook_and_a_new_secret() {
+    let (app, pool, admin_session, _) = setup_test_app().await;
+    let (team_id, team_et, leaver, wid) = team_webhook_by_second_admin(&pool).await;
+    let csrf = "csrf-wh-adopt2";
+    let adopt = |body: String| {
+        post_form(
+            &format!("/dashboard/webhooks/{wid}/adopt"),
+            &admin_session,
+            csrf,
+            &body,
+        )
+    };
+    // Active: not anyone's to take.
+    let response = app
+        .clone()
+        .oneshot(adopt(format!(
+            "_csrf={csrf}&url=https%3A%2F%2F93.184.215.14%2Fmine&secret=fresh-secret-0123456789"
+        )))
+        .await
+        .unwrap();
+    assert_eq!(
+        response.headers()["location"],
+        "/dashboard/webhooks?error=webhooks-error-not-suspended"
+    );
+    let owner: Option<String> = sqlx::query_scalar("SELECT user_id FROM webhooks")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(owner.as_deref(), Some(leaver.as_str()));
+
+    // Queue one, then the leaver is demoted: suspended.
+    assert_eq!(queue_one(&pool, &team_et).await, 1);
+    sqlx::query("UPDATE team_members SET role = 'member' WHERE team_id = ? AND user_id = ?")
+        .bind(&team_id)
+        .bind(&leaver)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let old_secret: String = sqlx::query_scalar("SELECT secret_enc FROM webhooks")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    // A secret is required.
+    let response = app
+        .clone()
+        .oneshot(adopt(format!(
+            "_csrf={csrf}&url=https%3A%2F%2F93.184.215.14%2Fmine&secret="
+        )))
+        .await
+        .unwrap();
+    assert_eq!(
+        response.headers()["location"],
+        "/dashboard/webhooks?error=webhooks-error-secret"
+    );
+    app.oneshot(adopt(format!(
+        "_csrf={csrf}&url=https%3A%2F%2F93.184.215.14%2Fmine&secret=fresh-secret-0123456789"
+    )))
+    .await
+    .unwrap();
+    let (owner, url, secret_enc): (Option<String>, String, String) =
+        sqlx::query_as("SELECT user_id, url, secret_enc FROM webhooks")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(owner, Some(test_user_id(&pool).await));
+    assert_eq!(url, "https://93.184.215.14/mine");
+    assert_ne!(secret_enc, old_secret);
+    assert_eq!(
+        crate::crypto::decrypt_value(&[0u8; 32], &secret_enc).unwrap(),
+        "fresh-secret-0123456789"
+    );
+    // What was queued for the old receiver is gone.
+    assert!(deliveries(&pool).await.is_empty());
+}
+
+#[tokio::test]
+async fn a_url_change_drops_the_queue_and_another_host_needs_a_new_secret() {
+    let (app, pool, session, et_id) = setup_test_app().await;
+    let admin_id = test_user_id(&pool).await;
+    let wid = insert_webhook(&pool, &admin_id, None, "https://93.184.215.14/a").await;
+    let csrf = "csrf-wh-url";
+    let update = |url: &str, secret: &str| {
+        post_form(
+            &format!("/dashboard/webhooks/{wid}/update"),
+            &session,
+            csrf,
+            &format!("_csrf={csrf}&url={url}&secret={secret}&events=booking.created"),
+        )
+    };
+    assert_eq!(queue_one(&pool, &et_id).await, 1);
+    // Another host, no new secret: refused, queue kept.
+    let response = app
+        .clone()
+        .oneshot(update("https%3A%2F%2F93.184.215.15%2Fa", ""))
+        .await
+        .unwrap();
+    assert_eq!(
+        response.headers()["location"],
+        "/dashboard/webhooks?error=webhooks-error-new-secret"
+    );
+    assert_eq!(deliveries(&pool).await.len(), 1);
+    // Same host, another path: fine without a secret, and the queue goes.
+    app.clone()
+        .oneshot(update("https%3A%2F%2F93.184.215.14%2Fb", ""))
+        .await
+        .unwrap();
+    assert!(deliveries(&pool).await.is_empty());
+    // Another host with a new secret: fine.
+    app.oneshot(update(
+        "https%3A%2F%2F93.184.215.15%2Fc",
+        "another-secret-0123456789",
+    ))
+    .await
+    .unwrap();
+    let url: String = sqlx::query_scalar("SELECT url FROM webhooks")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(url, "https://93.184.215.15/c");
+}
+
+#[tokio::test]
+async fn only_the_webhooks_user_sees_its_full_url() {
+    let (app, pool, admin_session, _) = setup_test_app().await;
+    let (lead, lead_session) =
+        insert_test_user_with_session(&pool, "Lead", "lead@example.com", "lead").await;
+    let admin_id = test_user_id(&pool).await;
+    let (_, team_et) = insert_team_with_et(
+        &pool,
+        "mask-team",
+        "mask-call",
+        &[(&admin_id, "admin"), (&lead, "admin")],
+    )
+    .await;
+    sqlx::query("UPDATE auth_config SET webhooks_allow_all_users = 1 WHERE id = 'singleton'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    insert_webhook(
+        &pool,
+        &lead,
+        Some(&team_et),
+        "https://hooks.example.com/services/T0KEN/s3cret",
+    )
+    .await;
+    let page = |session: String| {
+        let app = app.clone();
+        async move {
+            body_string(
+                app.oneshot(get_authed("/dashboard/webhooks", &session))
+                    .await
+                    .unwrap(),
+            )
+            .await
+        }
+    };
+    let own = page(lead_session).await;
+    assert!(own.contains("T0KEN"));
+    let other = page(admin_session).await;
+    assert!(!other.contains("T0KEN"), "the path leaked");
+    assert!(other.contains("hooks.example.com"));
 }

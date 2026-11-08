@@ -2054,3 +2054,7 @@ webhooks-adopt = Reprendre
 webhooks-notice-adopted = Webhook repris et réactivé.
 webhooks-event-claimed = Prise par un observateur
 webhooks-error-address = Cette adresse ne peut pas être utilisée : calrs n'envoie qu'à des adresses publiques d'Internet, sauf si l'hôte figure dans la liste des hôtes privés autorisés.
+webhooks-adopt-help = Le reprendre en fait le vôtre et le relance. Confirmez l'adresse à laquelle il envoie et définissez un nouveau secret de signature : la personne qui l'a ajouté connaît peut-être l'ancien. Les envois encore en attente sont abandonnés.
+webhooks-error-not-suspended = Seul un webhook suspendu peut être repris.
+webhooks-error-new-secret = L'URL pointe maintenant vers un autre hôte : saisissez aussi un nouveau secret de signature.
+webhooks-url-masked-hint = (seule la personne qui l'a ajouté voit l'URL complète : saisissez-la à nouveau pour enregistrer)

@@ -27,7 +27,10 @@ Each webhook covers one of:
 - **One event type**: a personal event type you own, or a team event type of
   a team you administer. Everyone who may manage that event type (the owner,
   the team's admins, instance admins) sees the webhook and can edit or remove
-  it; the page shows who added it.
+  it; the page shows who added it. Only that person sees the full URL; the
+  others see its scheme and host, since a path often carries a token, and
+  retype the URL to change it. A URL on another host needs a new signing
+  secret, and any URL change drops what is still queued.
 
 Up to 10 webhooks per scope.
 
@@ -36,7 +39,9 @@ event type. When they cannot any more (removed from the team or no longer
 one of its admins, the team deleted, their account disabled or deleted), the
 webhook is **suspended**: kept, shown as suspended to the event type's
 managers, and its queued deliveries dropped. A current manager can **Take
-over** the webhook, which makes it theirs and resumes it. A webhook for "all
+over** the webhook: they confirm its URL and set a new signing secret (the
+previous person may know the old one), and it becomes theirs and resumes,
+with its queue dropped. An active webhook cannot be taken over. A webhook for "all
 my personal event types" is deleted with its user.
 
 ## Choosing events
@@ -226,9 +231,20 @@ A webhook URL must be:
   private-host allowlist (`CALRS_ALLOW_PRIVATE_HOSTS`, or **Admin panel →
   System**), for a receiver on the same private network.
 - free of a user name or password: the signature authenticates calrs.
-- on a public address. Hosts that resolve to loopback, private, link-local or
-  carrier-grade NAT addresses are refused unless allowlisted, the same policy
-  as CalDAV sources and resource feeds.
+- on a public address, the same policy as CalDAV sources and resource feeds.
+  These count as private and are refused unless the host is allowlisted:
+  `0.0.0.0/8`, `10.0.0.0/8`, `100.64.0.0/10` (carrier-grade NAT),
+  `127.0.0.0/8`, `169.254.0.0/16`, `172.16.0.0/12`, `192.168.0.0/16`,
+  `198.18.0.0/15`, `224.0.0.0/4` (multicast), `240.0.0.0/4` (reserved and
+  broadcast); `::`, `::1`, `fc00::/7`, `fe80::/10`, `fec0::/10`, `ff00::/8`
+  and `64:ff9b:1::/48`. IPv6 addresses that carry an IPv4 address
+  (`::ffff:a.b.c.d`, `::ffff:0:a.b.c.d`, `::a.b.c.d`, `64:ff9b::/96`,
+  `2002::/16`) are judged by that IPv4 address.
+
+A host on the private-host allowlist skips the address check entirely: any
+port and path on it can be reached, plain `http` included, and "Send test"
+shows the start of its error responses. Only allowlist hosts you mean to
+receive webhooks.
 
 A private address and a host name that does not resolve get the same message
 ("this address cannot be used"), so the form cannot be used to find out which

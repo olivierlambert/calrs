@@ -2056,3 +2056,7 @@ webhooks-adopt = Take over
 webhooks-notice-adopted = Webhook taken over and resumed.
 webhooks-event-claimed = Claimed by a watcher
 webhooks-error-address = This address cannot be used: calrs only sends to public internet addresses, unless the host is on the private-host allowlist.
+webhooks-adopt-help = Taking it over makes it yours and resumes it. Confirm the address it sends to and set a new signing secret: the previous one may be known to the person who added it. Deliveries still waiting are dropped.
+webhooks-error-not-suspended = Only a suspended webhook can be taken over.
+webhooks-error-new-secret = The URL now points to another host: enter a new signing secret too.
+webhooks-url-masked-hint = (only the person who added it sees the full URL: enter it again to save)

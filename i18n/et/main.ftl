@@ -2054,3 +2054,7 @@ webhooks-adopt = Võta üle
 webhooks-notice-adopted = Veebihaak üle võetud ja jätkatud.
 webhooks-event-claimed = Jälgija võttis üle
 webhooks-error-address = Seda aadressi ei saa kasutada: calrs saadab ainult avalikele internetiaadressidele, välja arvatud juhul, kui host on lubatud privaathostide loendis.
+webhooks-adopt-help = Ülevõtmine teeb selle sinu omaks ja jätkab seda. Kinnita aadress, kuhu see saadab, ja määra uus allkirja saladus: selle lisaja võib vana teada. Veel ootavad saadetised jäetakse ära.
+webhooks-error-not-suspended = Üle võtta saab ainult peatatud veebihaaki.
+webhooks-error-new-secret = URL osutab nüüd teisele hostile: sisesta ka uus allkirja saladus.
+webhooks-url-masked-hint = (täielikku URL-i näeb ainult selle lisaja: salvestamiseks sisesta see uuesti)

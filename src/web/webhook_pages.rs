@@ -41,6 +41,8 @@ const ERRORS: &[&str] = &[
     "webhooks-error-test",
     "webhooks-error-test-limit",
     "webhooks-error-events",
+    "webhooks-error-not-suspended",
+    "webhooks-error-new-secret",
 ];
 
 /// Whether this user may add and manage webhooks at all: admins always,
@@ -160,12 +162,13 @@ pub(super) async fn webhooks_page(
             Option<String>,
             Option<String>,
             Option<String>,
+            Option<String>,
             bool,
             i64,
             i64,
         )> = sqlx::query_as(&format!(
             "SELECT w.id, w.url, w.event_type_id, et.title, t.name, w.enabled,
-                    w.last_attempt_at, w.last_status, w.last_error, u.name, w.events,
+                    w.last_attempt_at, w.last_status, w.last_error, u.name, w.events, w.user_id,
                     {managed},
                     (SELECT COUNT(*) FROM webhook_deliveries d WHERE d.webhook_id = w.id AND d.state = 'pending'),
                     (SELECT COUNT(*) FROM webhook_deliveries d WHERE d.webhook_id = w.id AND d.state = 'failed')
@@ -199,14 +202,18 @@ pub(super) async fn webhooks_page(
             last_error,
             added_by,
             events,
+            owner,
             managed,
             queued,
             failed,
         ) in rows
         {
+            let mine = owner.as_deref() == Some(user.id.as_str());
             endpoints_ctx.push(context! {
                 id => id,
-                url => url,
+                url => if mine { url.clone() } else { String::new() },
+                url_display => if mine { url } else { masked_url(&url) },
+                mine => mine,
                 personal => et_id.is_none(),
                 event_type_title => et_title,
                 team_name => team_name,
@@ -391,6 +398,19 @@ pub(super) async fn update_webhook(
     let Ok(events) = super::webhooks::events_column(&form.events) else {
         return back("error", "webhooks-error-events");
     };
+    let old_url: String = sqlx::query_scalar("SELECT url FROM webhooks WHERE id = ?")
+        .bind(&id)
+        .fetch_optional(&state.pool)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_default();
+    let url_changed = old_url != form.url.trim();
+    // Another host is another receiver: the secret it would be signed with
+    // must be one its new owner chose, not the old one carried over.
+    if url_changed && form.secret.is_empty() && origin(&old_url) != origin(&form.url) {
+        return back("error", "webhooks-error-new-secret");
+    }
     let allowlist = crate::settings::private_host_allowlist();
     if let Err(e) = check_target(&form.url, &allowlist).await {
         tracing::info!(user = %user.email, error = %e, "webhook URL refused");
@@ -424,6 +444,10 @@ pub(super) async fn update_webhook(
     .await
     {
         return internal_error_response("update webhook", &e);
+    }
+    if url_changed {
+        // What was queued was meant for the old receiver.
+        drop_queue(&state.pool, &id).await;
     }
     tracing::info!(webhook = %id, user = %user.email, secret_changed = secret_enc.is_some(), "webhook updated");
     back("notice", "webhooks-notice-updated")
@@ -520,32 +544,107 @@ pub(super) async fn test_webhook(
     }
 }
 
+#[derive(Deserialize)]
+pub(super) struct AdoptWebhookForm {
+    _csrf: Option<String>,
+    url: String,
+    secret: String,
+}
+
 /// Take over a suspended event type webhook: the person who added it can no
-/// longer manage the event type (or is gone), and a current manager makes
-/// it theirs, which resumes it. Only event type webhooks: a personal one
-/// always belongs to its user.
+/// longer manage the event type (or is gone). A current manager confirms
+/// the URL and sets a new secret (the old one may be known to that person),
+/// and the webhook becomes theirs and resumes, with its queue dropped. Only
+/// a suspended event type webhook: a personal one always belongs to its
+/// user, and an active one is not anyone's to take.
 pub(super) async fn adopt_webhook(
     State(state): State<Arc<AppState>>,
     auth_user: crate::auth::AuthUser,
     headers: HeaderMap,
     Path(id): Path<String>,
-    Form(form): Form<WebhookActionForm>,
+    Form(form): Form<AdoptWebhookForm>,
 ) -> impl IntoResponse {
     let user = &auth_user.user;
     if let Err(resp) = guard(&state, &headers, &form._csrf, user, Some(&id)).await {
         return resp;
     }
-    if let Err(e) =
-        sqlx::query("UPDATE webhooks SET user_id = ? WHERE id = ? AND event_type_id IS NOT NULL")
-            .bind(&user.id)
-            .bind(&id)
-            .execute(&state.pool)
-            .await
-    {
-        return internal_error_response("take over webhook", &e);
+    if !secret_ok(&form.secret) {
+        return back("error", "webhooks-error-secret");
     }
+    let allowlist = crate::settings::private_host_allowlist();
+    if let Err(e) = check_target(&form.url, &allowlist).await {
+        tracing::info!(user = %user.email, error = %e, "webhook URL refused");
+        return back("error", e.key());
+    }
+    let secret_enc = match crate::crypto::encrypt_value(&state.secret_key, &form.secret) {
+        Ok(v) => v,
+        Err(e) => return internal_error_response("encrypt webhook secret", &e),
+    };
+    let taken = sqlx::query(&format!(
+        "UPDATE webhooks SET user_id = ?1, url = ?2, secret_enc = ?3,
+                last_attempt_at = NULL, last_status = NULL, last_error = NULL, last_success_at = NULL
+         WHERE id = ?4 AND event_type_id IS NOT NULL AND id IN (
+             SELECT w.id FROM webhooks w LEFT JOIN users u ON u.id = w.user_id
+             WHERE NOT {managed})",
+        managed = super::webhooks::MANAGED,
+    ))
+    .bind(&user.id)
+    .bind(form.url.trim())
+    .bind(&secret_enc)
+    .bind(&id)
+    .execute(&state.pool)
+    .await;
+    match taken {
+        Ok(r) if r.rows_affected() == 1 => {}
+        Ok(_) => return back("error", "webhooks-error-not-suspended"),
+        Err(e) => return internal_error_response("take over webhook", &e),
+    }
+    drop_queue(&state.pool, &id).await;
     tracing::info!(webhook = %id, user = %user.email, "webhook taken over");
     back("notice", "webhooks-notice-adopted")
+}
+
+/// Delete what is queued for a webhook: it goes to another receiver now.
+async fn drop_queue(pool: &SqlitePool, webhook_id: &str) {
+    let _ = sqlx::query(
+        "DELETE FROM webhook_deliveries WHERE webhook_id = ? AND state IN ('pending', 'reserved')",
+    )
+    .bind(webhook_id)
+    .execute(pool)
+    .await;
+}
+
+/// `scheme://host[:port]` of a URL, the part every manager may see: the path
+/// and query often carry a token, shown only to the webhook's own user.
+fn masked_url(url: &str) -> String {
+    match reqwest::Url::parse(url) {
+        Ok(u) => {
+            let port = u.port().map(|p| format!(":{p}")).unwrap_or_default();
+            let rest = if u.path() == "/" && u.query().is_none() {
+                ""
+            } else {
+                "/..."
+            };
+            format!(
+                "{}://{}{}{}",
+                u.scheme(),
+                u.host_str().unwrap_or(""),
+                port,
+                rest
+            )
+        }
+        Err(_) => String::new(),
+    }
+}
+
+/// Scheme, host and port, to tell whether a new URL is another receiver.
+fn origin(url: &str) -> Option<(String, String, Option<u16>)> {
+    let u = reqwest::Url::parse(url.trim()).ok()?;
+    Some((
+        u.scheme().to_string(),
+        u.host_str()?.to_ascii_lowercase(),
+        u.port_or_known_default(),
+    ))
 }
 
 /// Admin panel: whether non-admins may add webhooks.

@@ -444,3 +444,6 @@ admin-webhooks-manage = Ihre Webhooks verwalten
 webhooks-error-events = Wählen Sie mindestens ein Ereignis aus.
 webhooks-error-test-limit = Zu viele Tests in kurzer Zeit. Warten Sie ein paar Minuten und versuchen Sie es erneut.
 webhooks-state-suspended = Ausgesetzt: Die Person, die ihn hinzugefügt hat, kann diese Terminart nicht mehr verwalten. Übernehmen Sie ihn, um ihn fortzusetzen.
+webhooks-adopt-help = Wenn Sie ihn übernehmen, gehört er Ihnen und läuft wieder. Bestätigen Sie die Adresse, an die er sendet, und legen Sie ein neues Signaturgeheimnis fest: Die Person, die ihn hinzugefügt hat, kennt das alte womöglich. Noch wartende Zustellungen werden verworfen.
+webhooks-error-new-secret = Die URL zeigt jetzt auf einen anderen Host: Geben Sie auch ein neues Signaturgeheimnis ein.
+webhooks-url-masked-hint = (nur die Person, die ihn hinzugefügt hat, sieht die vollständige URL: geben Sie sie zum Speichern erneut ein)

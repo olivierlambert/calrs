@@ -2054,3 +2054,7 @@ webhooks-adopt = Prendi in carico
 webhooks-notice-adopted = Webhook preso in carico e riattivato.
 webhooks-event-claimed = Presa in carico da un osservatore
 webhooks-error-address = Questo indirizzo non può essere usato: calrs invia solo a indirizzi Internet pubblici, a meno che l'host sia nell'elenco degli host privati consentiti.
+webhooks-adopt-help = Prenderlo in carico lo rende tuo e lo riattiva. Conferma l'indirizzo a cui invia e imposta un nuovo segreto di firma: chi lo ha aggiunto potrebbe conoscere quello precedente. Gli invii ancora in attesa vengono scartati.
+webhooks-error-not-suspended = Solo un webhook sospeso può essere preso in carico.
+webhooks-error-new-secret = L'URL ora punta a un altro host: inserisci anche un nuovo segreto di firma.
+webhooks-url-masked-hint = (solo chi lo ha aggiunto vede l'URL completo: inseriscilo di nuovo per salvare)

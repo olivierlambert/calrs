@@ -2054,3 +2054,7 @@ webhooks-adopt = Übernehmen
 webhooks-notice-adopted = Webhook übernommen und fortgesetzt.
 webhooks-event-claimed = Von einem Beobachter übernommen
 webhooks-error-address = Diese Adresse kann nicht verwendet werden: calrs sendet nur an öffentliche Internetadressen, außer der Host steht auf der Liste erlaubter privater Hosts.
+webhooks-adopt-help = Wenn du ihn übernimmst, gehört er dir und läuft wieder. Bestätige die Adresse, an die er sendet, und lege ein neues Signaturgeheimnis fest: Die Person, die ihn hinzugefügt hat, kennt das alte womöglich. Noch wartende Zustellungen werden verworfen.
+webhooks-error-not-suspended = Nur ein ausgesetzter Webhook kann übernommen werden.
+webhooks-error-new-secret = Die URL zeigt jetzt auf einen anderen Host: Gib auch ein neues Signaturgeheimnis ein.
+webhooks-url-masked-hint = (nur die Person, die ihn hinzugefügt hat, sieht die vollständige URL: gib sie zum Speichern erneut ein)

@@ -2131,3 +2131,7 @@ webhooks-adopt = Przejmij
 webhooks-notice-adopted = Przejęto i wznowiono webhook.
 webhooks-event-claimed = Przejęta przez obserwatora
 webhooks-error-address = Tego adresu nie można użyć: calrs wysyła tylko na publiczne adresy internetowe, chyba że host jest na liście dozwolonych hostów prywatnych.
+webhooks-adopt-help = Przejęcie sprawia, że webhook staje się Twój i zostaje wznowiony. Potwierdź adres, na który wysyła, i ustaw nowy sekret podpisu: osoba, która go dodała, może znać poprzedni. Oczekujące doręczenia zostaną odrzucone.
+webhooks-error-not-suspended = Przejąć można tylko wstrzymany webhook.
+webhooks-error-new-secret = Adres URL wskazuje teraz na inny host: podaj też nowy sekret podpisu.
+webhooks-url-masked-hint = (pełny adres URL widzi tylko osoba, która go dodała: wpisz go ponownie, aby zapisać)

@@ -2056,3 +2056,7 @@ webhooks-adopt = Overnemen
 webhooks-notice-adopted = Webhook overgenomen en hervat.
 webhooks-event-claimed = Geclaimd door een volger
 webhooks-error-address = Dit adres kan niet worden gebruikt: calrs stuurt alleen naar openbare internetadressen, tenzij de host op de lijst met toegestane privéhosts staat.
+webhooks-adopt-help = Door hem over te nemen wordt hij van jou en hervat hij. Bevestig het adres waar hij naartoe stuurt en stel een nieuw ondertekeningsgeheim in: wie hem heeft toegevoegd, kent het oude misschien. Afleveringen die nog wachten vervallen.
+webhooks-error-not-suspended = Alleen een opgeschorte webhook kan worden overgenomen.
+webhooks-error-new-secret = De URL verwijst nu naar een andere host: vul ook een nieuw ondertekeningsgeheim in.
+webhooks-url-masked-hint = (alleen wie hem heeft toegevoegd ziet de volledige URL: vul hem opnieuw in om op te slaan)
