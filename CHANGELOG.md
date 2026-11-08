@@ -188,6 +188,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added
+
+- **Guest email footer** (#223, #350) - Admins can set a short footer (bold, italic and links, 500 characters at most, one text for all languages) added to every email a guest or an additional attendee receives: confirmation, reminder, cancellation, pending notice, decline, expiry, "pick a new time", reschedule and invite. An event type can replace it with its own. Host, watcher and claimant emails never carry it. Only admins write footers, unless an admin turns on "Let all users set a footer on their own event types" (separate from the SMS policy). Two migrations (`20261107192406_guest_email_footer`, `20261107212745_claimant_attendee`). Thanks @optimistic5.
+
 ### Changed
 
 - **Booking directory scales to large instances** (#340) - The directory's visibility rules, search and favorites filter now run in SQL, 50 meetings to a page with Previous and Next links once there are more, and the host search only reads the members of the meetings on the page. Search stays literal, case blind in every alphabet, and multi-word. The dashboard shows the first 12 favorites and links to the rest. Searches drop control characters and use at most 8 distinct words. A favorite still never grants access: every query applies the same checks. A directory that fits on one page looks exactly as before.

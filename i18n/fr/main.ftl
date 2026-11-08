@@ -1048,6 +1048,9 @@ etf-vis-internal = Interne
 etf-reminder = Rappel de réservation
 etf-reminder-none = Aucun rappel
 etf-reminder-help = Envoyer un e-mail de rappel à vous et à votre invité avant la réunion.
+etf-guest-footer = Pied de page des e-mails
+etf-guest-footer-placeholder = ex. Une question ? Téléphone : +33 1 23 45 67 89
+etf-guest-footer-help = Ajouté à la fin de chaque e-mail que l'invité reçoit pour cette réservation, quelle que soit la langue. Remplace le pied de page par défaut défini par l'administrateur. Gras, italique et liens uniquement.
 etf-dynamic-group = Lien de groupe dynamique
 etf-dynamic-group-help = Créez un lien de réunion ponctuel qui vérifie vos disponibilités et celles d'autres utilisateurs.
 etf-dynamic-group-search = Rechercher un utilisateur à ajouter...
@@ -1323,6 +1326,13 @@ admin-sms-clear-confirm = Supprimer la configuration SMS enregistrée en base ?
 admin-sms-allow-all = Autoriser tout utilisateur à activer les SMS sur ses types d'événement
 admin-sms-allow-all-help = Désactivé par défaut : les SMS consomment le crédit du compte configuré ici, donc seuls les administrateurs peuvent basculer un type d'événement en mode SMS.
 admin-save-policy = Enregistrer la politique
+admin-guest-footer = Pied de page des e-mails aux invités
+admin-guest-footer-help = Un court texte ajouté à la fin de chaque e-mail envoyé aux invités et aux participants : confirmations, rappels, annulations, etc. Les e-mails destinés à l'hôte, et au membre d'équipe qui a pris en charge la réservation, ne sont pas modifiés.
+admin-guest-footer-default = Pied de page par défaut
+admin-guest-footer-default-help = Utilisé lorsqu'un type d'événement n'a pas de pied de page propre. Le même texte est envoyé dans toutes les langues. Gras, italique et liens uniquement.
+admin-guest-footer-allow-all = Autoriser tout utilisateur à définir un pied de page sur ses propres types d'événement
+admin-guest-footer-allow-all-help = Désactivé par défaut : le pied de page part au nom de cette instance, donc seuls les administrateurs peuvent en écrire un. Un pied de page défini sur un type d'événement remplace celui par défaut ci-dessus.
+admin-save-guest-footer = Enregistrer le pied de page
 admin-page-of = Page %1 sur %2
 admin-show-more-js = Afficher %1 de plus
 admin-show-fewer = Afficher moins
@@ -1619,6 +1629,7 @@ validate-email-length = L'adresse e-mail doit contenir entre 1 et 255 caractère
 validate-email-invalid = Veuillez saisir une adresse e-mail valide.
 validate-notes-length = Les notes ne doivent pas dépasser 5000 caractères.
 validate-date-too-far = Impossible de réserver plus d'un an à l'avance.
+validate-guest-footer-too-long = Le pied de page des e-mails ne doit pas dépasser 500 caractères.
 
 # Additional guests and dynamic group links (src/web/mod.rs)
 

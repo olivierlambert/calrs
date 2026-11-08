@@ -402,6 +402,7 @@ pub(super) async fn send_invite_bulk(
         None
     };
 
+    let guest_footer = crate::email::guest_footer(&state.pool, &et_id).await;
     for (email, name) in valid_recipients {
         let token = uuid::Uuid::new_v4().to_string();
         let row_id = uuid::Uuid::new_v4().to_string();
@@ -452,6 +453,7 @@ pub(super) async fn send_invite_bulk(
                     message_opt,
                     &invite_url,
                     expires_at.as_deref(),
+                    guest_footer.as_deref(),
                 )
                 .await;
                 if let Err(e) = send_res {
