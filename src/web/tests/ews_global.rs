@@ -79,6 +79,17 @@ async fn trust(pool: &SqlitePool, user_id: &str) {
         .unwrap();
 }
 
+/// Record that the identity provider verified the user's address, as an SSO
+/// login with `email_verified` does. A new domain override re-maps such an
+/// address without asking the admin to confirm it again.
+async fn idp_verify(pool: &SqlitePool, user_id: &str) {
+    sqlx::query("UPDATE users SET email_trusted = 1, email_verified_by_idp = 1 WHERE id = ?")
+        .bind(user_id)
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
 /// Give `user_id` the trusted address `email` (as an SSO login reporting a
 /// verified address does) and provision them.
 async fn provision(pool: &SqlitePool, user_id: &str, email: &str) -> String {
@@ -207,6 +218,7 @@ async fn admin_save_refuses_an_incomplete_config_and_provisions_a_complete_one()
     let data_dir = std::env::temp_dir().join(format!("calrs_test_{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&data_dir).unwrap();
     trust(&pool, &admin_id).await;
+    idp_verify(&pool, &admin_id).await;
     let app = create_router(pool.clone(), data_dir, [0u8; 32]).await;
     let csrf = "csrf-ews-admin";
     let url = "https%3A%2F%2Fexample.com%2FEWS%2FExchange.asmx";
@@ -1124,6 +1136,9 @@ async fn changing_the_mailbox_domain_resets_every_managed_source() {
     let (admin_id, _, _) = seed_test_data(&pool).await;
     store_config_for(&pool, EWS_URL, None).await;
     let source_id = provision(&pool, &admin_id, "test@example.com").await;
+    // An SSO user: the override re-maps their verified address without a
+    // new confirmation.
+    idp_verify(&pool, &admin_id).await;
     let cal_id = uuid::Uuid::new_v4().to_string();
     sqlx::query("INSERT INTO calendars (id, source_id, href, display_name) VALUES (?, ?, 'CAL-old', 'Calendar')")
         .bind(&cal_id)
@@ -1307,6 +1322,7 @@ async fn the_domain_override_only_rewrites_its_from_domain() {
     let pool = setup_test_db().await;
     let (admin_id, _, _) = seed_test_data(&pool).await;
     trust(&pool, &admin_id).await;
+    idp_verify(&pool, &admin_id).await;
     let session = uuid::Uuid::new_v4().to_string();
     sqlx::query(
         "INSERT INTO sessions (id, user_id, expires_at) VALUES (?, ?, datetime('now', '+1 day'))",
@@ -1380,6 +1396,7 @@ async fn the_domain_override_only_rewrites_its_from_domain() {
         .await
         .unwrap();
     trust(&pool, &other).await;
+    idp_verify(&pool, &other).await;
     let cfg = crate::ews::global::load_ews_global_config(&pool, &[0u8; 32])
         .await
         .unwrap();
@@ -2069,9 +2086,15 @@ async fn a_sync_of_a_mailbox_the_source_left_stores_nothing() {
         .unwrap();
     assert_eq!(calendars, 0, "the old mailbox's calendars do not come back");
 
-    // A folder the new mailbox does not list goes; the listed one gets a
-    // neutral name, not its folder name.
+    // A folder the new mailbox does not list goes (after two listings in a
+    // row); the listed one gets a neutral name, not its folder name.
     sqlx::query("INSERT INTO calendars (id, source_id, href, display_name) VALUES ('gone', ?, 'CAL-gone', 'Old')")
+        .bind(&source)
+        .execute(&pool)
+        .await
+        .unwrap();
+    crate::commands::sync::sync_source_by_id(&pool, &[0u8; 32], &source).await;
+    sqlx::query("UPDATE caldav_sources SET last_synced = NULL WHERE id = ?")
         .bind(&source)
         .execute(&pool)
         .await
@@ -2161,4 +2184,246 @@ async fn an_idle_managed_source_says_why() {
         .await
         .unwrap();
     assert_eq!(reason().await, Some("sources-managed-global-disabled"));
+}
+
+/// Seed a cached calendar on `source`, selected by event type `et_id`.
+async fn seed_selected_calendar(pool: &SqlitePool, source: &str, et_id: &str) {
+    let cal = uuid::Uuid::new_v4().to_string();
+    sqlx::query("INSERT INTO calendars (id, source_id, href, display_name) VALUES (?, ?, 'CAL-x', 'Exchange calendar 1')")
+        .bind(&cal)
+        .bind(source)
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO event_type_calendars (event_type_id, calendar_id) VALUES (?, ?)")
+        .bind(et_id)
+        .bind(&cal)
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+async fn calendar_count(pool: &SqlitePool, source: &str) -> i64 {
+    sqlx::query_scalar("SELECT COUNT(*) FROM calendars WHERE source_id = ?")
+        .bind(source)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+/// Writing the endpoint differently (path case) on the same server keeps
+/// what the managed sources cached; another server resets them, and the
+/// notice counts the event types that lost a calendar selection.
+#[tokio::test]
+async fn only_a_new_server_resets_the_managed_sources() {
+    let pool = setup_test_db().await;
+    let (admin_id, _, et_id) = seed_test_data(&pool).await;
+    store_global_config(&pool, false, false).await;
+    let source = provision(&pool, &admin_id, "test@example.com").await;
+    seed_selected_calendar(&pool, &source, &et_id).await;
+    let (app, session) = admin_app(&pool, &admin_id).await;
+    let csrf = "csrf-ews-server";
+    let save = |url: &'static str| {
+        let app = app.clone();
+        let session = session.clone();
+        async move {
+            let resp = app
+                .oneshot(post_form(
+                    "/dashboard/admin/ews",
+                    &session,
+                    csrf,
+                    &format!("_csrf={csrf}&ews_global_enabled=on&ews_global_url={url}&ews_service_username=svc%40example.com&ews_service_password=pw"),
+                ))
+                .await
+                .unwrap();
+            resp.headers()["location"].to_str().unwrap().to_string()
+        }
+    };
+    let location = save("https%3A%2F%2Fexample.com%2Fews%2Fexchange.asmx").await;
+    assert!(!location.contains("lost="), "{location}");
+    assert_eq!(calendar_count(&pool, &source).await, 1, "same server: kept");
+
+    let location = save("https%3A%2F%2Fwww.example.com%2FEWS%2FExchange.asmx").await;
+    assert!(location.contains("lost=1"), "{location}");
+    assert_eq!(
+        calendar_count(&pool, &source).await,
+        0,
+        "another server: reset"
+    );
+}
+
+/// The eviction of an admin-confirmed holder and the IdP-verified owner's
+/// insert are one transaction: when the insert writes nothing (the feature
+/// switched off meanwhile), the holder keeps the mailbox. When it goes
+/// through, the status table says from whom it was taken.
+#[tokio::test]
+async fn a_takeover_is_all_or_nothing_and_shown() {
+    let pool = setup_test_db().await;
+    let (admin_id, _, _) = seed_test_data(&pool).await;
+    store_config_for(&pool, EWS_URL, None).await;
+    provision(&pool, &admin_id, "ceo@example.com").await;
+    let owner = insert_role_user(&pool, "CEO@example.com", "user").await;
+    sqlx::query("INSERT INTO accounts (id, name, email, timezone, user_id) VALUES (?, 'C', 'CEO@example.com', 'UTC', ?)")
+        .bind(uuid::Uuid::new_v4().to_string())
+        .bind(&owner)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE users SET email_trusted = 1, email_verified_by_idp = 1 WHERE id = ?")
+        .bind(&owner)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let cfg = crate::ews::global::load_ews_global_config(&pool, &[0u8; 32])
+        .await
+        .unwrap();
+
+    sqlx::query("UPDATE auth_config SET ews_global_enabled = 0 WHERE id = 'singleton'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        crate::ews::global::provision_managed_ews_source_for_user(&pool, &cfg, &owner)
+            .await
+            .unwrap(),
+        crate::ews::global::Provisioned::Inactive
+    );
+    assert!(
+        managed_source_of(&pool, &admin_id).await.is_some(),
+        "the holder keeps it"
+    );
+
+    sqlx::query("UPDATE auth_config SET ews_global_enabled = 1 WHERE id = 'singleton'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    crate::ews::global::provision_managed_ews_source_for_user(&pool, &cfg, &owner)
+        .await
+        .unwrap();
+    assert!(managed_source_of(&pool, &admin_id).await.is_none());
+    let (app, session) = admin_app(&pool, &admin_id).await;
+    let page = body_string(
+        app.oneshot(get_authed("/dashboard/admin", &session))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(
+        page.contains("Taken over from ceo@example.com on"),
+        "status shows it"
+    );
+}
+
+/// A new domain override that maps two sources onto one mailbox gives it to
+/// the owner the identity provider verified, even when the other account is
+/// older; and an address trusted on an admin's word only must be confirmed
+/// again when the override changes the mailbox it opens.
+#[tokio::test]
+async fn a_new_override_prefers_the_verified_owner_and_asks_for_reconfirmation() {
+    let pool = setup_test_db().await;
+    let (admin_id, _, _) = seed_test_data(&pool).await;
+    store_config_for(&pool, EWS_URL, None).await;
+    // Older, admin-confirmed: jsmith@example.com.
+    provision(&pool, &admin_id, "jsmith@example.com").await;
+    // Newer, IdP-verified: jsmith@example.local, which the new override maps
+    // onto jsmith@example.com.
+    let owner = insert_role_user(&pool, "jsmith@example.local", "user").await;
+    sqlx::query("INSERT INTO accounts (id, name, email, timezone, user_id) VALUES (?, 'J', 'jsmith@example.local', 'UTC', ?)")
+        .bind(uuid::Uuid::new_v4().to_string())
+        .bind(&owner)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE users SET email_trusted = 1, email_verified_by_idp = 1 WHERE id = ?")
+        .bind(&owner)
+        .execute(&pool)
+        .await
+        .unwrap();
+    // A third, admin-confirmed address the override re-maps.
+    let local = insert_role_user(&pool, "ann@example.local", "user").await;
+    trust(&pool, &local).await;
+    crate::ews::global::provision_managed_ews_source_for_user(
+        &pool,
+        &crate::ews::global::load_ews_global_config(&pool, &[0u8; 32])
+            .await
+            .unwrap(),
+        &owner,
+    )
+    .await
+    .unwrap();
+
+    let new = crate::ews::global::DomainOverride::new(Some("example.local"), Some("example.com"));
+    assert_eq!(
+        crate::ews::global::untrust_remapped(&pool, None, new.as_ref())
+            .await
+            .unwrap(),
+        1,
+        "only the admin-confirmed address the override re-maps"
+    );
+    let ann_trusted: bool = sqlx::query_scalar("SELECT email_trusted FROM users WHERE id = ?")
+        .bind(&local)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(!ann_trusted);
+    crate::ews::global::retarget_managed_sources(&pool, new.as_ref())
+        .await
+        .unwrap();
+    assert_eq!(
+        managed_source_of(&pool, &owner).await.unwrap().1.as_deref(),
+        Some("jsmith@example.com"),
+        "the verified owner gets the mailbox"
+    );
+    assert!(managed_source_of(&pool, &admin_id).await.is_none());
+}
+
+/// Removing a managed source waits for its mailbox lock, so it never runs
+/// in the middle of a sync storing what it fetched.
+#[tokio::test]
+async fn removing_a_managed_source_waits_for_its_lock() {
+    let pool = setup_test_db().await;
+    let (admin_id, _, _) = seed_test_data(&pool).await;
+    store_config_for(&pool, EWS_URL, None).await;
+    let source = provision(&pool, &admin_id, "test@example.com").await;
+    let lock = crate::ews::global::mailbox_lock(&source);
+    let guard = lock.lock().await;
+    let task = {
+        let pool = pool.clone();
+        let admin_id = admin_id.clone();
+        tokio::spawn(async move {
+            crate::ews::global::remove_managed_source(&pool, &admin_id)
+                .await
+                .unwrap()
+        })
+    };
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    assert!(
+        managed_source_of(&pool, &admin_id).await.is_some(),
+        "still there while the lock is held"
+    );
+    drop(guard);
+    assert_eq!(task.await.unwrap(), 1);
+    assert!(managed_source_of(&pool, &admin_id).await.is_none());
+}
+
+/// A database written before the https rule cannot send the service
+/// password in clear: only loopback http (a local test server) is accepted.
+#[tokio::test]
+async fn a_stored_http_endpoint_leaves_the_feature_off() {
+    for (url, ok) in [
+        ("https://mail.example.com/EWS/Exchange.asmx", true),
+        ("http://mail.example.com/EWS/Exchange.asmx", false),
+        ("http://127.0.0.1:8080/EWS/Exchange.asmx", true),
+        ("http://[::1]/EWS/Exchange.asmx", true),
+        ("ftp://mail.example.com/", false),
+    ] {
+        assert_eq!(crate::ews::global::endpoint_is_acceptable(url), ok, "{url}");
+    }
+    let pool = setup_test_db().await;
+    store_config_for(&pool, "http://mail.example.com/EWS/Exchange.asmx", None).await;
+    assert!(
+        crate::ews::global::load_ews_global_config(&pool, &[0u8; 32])
+            .await
+            .is_none()
+    );
 }

@@ -99,6 +99,26 @@ impl EwsGlobalConfig {
     }
 }
 
+/// Whether a stored endpoint may receive the service account's password:
+/// https, or plain http to the loopback interface only (a local test
+/// server). The admin card already refuses anything but https; this keeps a
+/// database written before that rule from sending it in clear.
+pub fn endpoint_is_acceptable(url: &str) -> bool {
+    let Ok(parsed) = reqwest::Url::parse(url.trim()) else {
+        return false;
+    };
+    match parsed.scheme() {
+        "https" => true,
+        "http" => parsed.host_str().is_some_and(|h| {
+            h.eq_ignore_ascii_case("localhost")
+                || h.trim_matches(['[', ']'])
+                    .parse::<std::net::IpAddr>()
+                    .is_ok_and(|ip| ip.is_loopback())
+        }),
+        _ => false,
+    }
+}
+
 /// Hydrate the global EWS config from `auth_config`. Returns `None` when the
 /// feature is disabled or any required field is missing: both cases mean
 /// "behave exactly as if the feature didn't exist".
@@ -128,7 +148,7 @@ pub async fn load_ews_global_config(pool: &SqlitePool, key: &[u8; 32]) -> Option
     if enabled == 0 {
         return None;
     }
-    let url = url.filter(|s| !s.trim().is_empty())?;
+    let url = url.filter(|s| endpoint_is_acceptable(s))?;
     let username = username.filter(|s| !s.trim().is_empty())?;
     let password_enc = password_enc.filter(|s| !s.trim().is_empty())?;
     let password = crate::crypto::decrypt_value(key, &password_enc).ok()?;
@@ -315,8 +335,8 @@ pub async fn provision_managed_ews_source_for_user(
     // unique index catches a concurrent provisioning of the same mailbox. An
     // owner the identity provider verified outranks an account that only an
     // admin vouched for: that account's source goes, the owner's is created.
-    let holder: Option<(String, String, bool)> = sqlx::query_as(
-        "SELECT cs.id, a.user_id, u.email_verified_by_idp FROM caldav_sources cs \
+    let holder: Option<(String, String, String, bool)> = sqlx::query_as(
+        "SELECT cs.id, a.user_id, u.email, u.email_verified_by_idp FROM caldav_sources cs \
          JOIN accounts a ON a.id = cs.account_id JOIN users u ON u.id = a.user_id \
          WHERE cs.managed = 1 AND cs.provider_type = 'ews' \
            AND cs.impersonate_email = ? AND cs.account_id != ?",
@@ -325,20 +345,25 @@ pub async fn provision_managed_ews_source_for_user(
     .bind(&account_id)
     .fetch_optional(pool)
     .await?;
-    if let Some((holder_source, holder_user, holder_verified)) = holder {
-        if idp_verified && !holder_verified {
-            let holder_lock = mailbox_lock(&holder_source);
-            let _holder_guard = holder_lock.lock().await;
-            delete_source(pool, &holder_source).await?;
-            tracing::warn!(
-                user_id = %user_id,
-                previous_user_id = %holder_user,
-                mailbox = %mailbox,
-                "managed EWS source taken over: the identity provider verified this owner, the previous holder was only confirmed by an admin"
-            );
-        } else {
+    // The eviction and the insert below are one transaction: if the insert
+    // writes nothing (feature switched off meanwhile), the holder keeps it.
+    let mut takeover: Option<(String, String, String)> = None;
+    let holder_lock;
+    let _holder_guard;
+    if let Some((holder_source, holder_user, holder_email, holder_verified)) = holder {
+        if !(idp_verified && !holder_verified) {
             return conflict(pool, user_id).await;
         }
+        holder_lock = mailbox_lock(&holder_source);
+        _holder_guard = holder_lock.lock().await;
+        takeover = Some((holder_source, holder_user, holder_email));
+    }
+    let mut tx = pool.begin().await?;
+    if let Some((holder_source, _, _)) = &takeover {
+        sqlx::query("DELETE FROM caldav_sources WHERE id = ?")
+            .bind(holder_source)
+            .execute(&mut *tx)
+            .await?;
     }
 
     // An existing row follows the user's current mailbox, which an OIDC
@@ -365,15 +390,38 @@ pub async fn provision_managed_ews_source_for_user(
     .bind(&cfg.service_username)
     .bind(&mailbox)
     .bind(user_id)
-    .fetch_optional(pool)
+    .fetch_optional(&mut *tx)
     .await;
     let touched = match touched {
         Ok(t) => t,
         Err(sqlx::Error::Database(e)) if e.is_unique_violation() => {
+            tx.rollback().await?;
             return conflict(pool, user_id).await;
         }
         Err(e) => return Err(e.into()),
     };
+    if let Some((_, holder_user, holder_email)) = &takeover {
+        let Some(taker) = touched.as_deref() else {
+            // Nothing written: the holder keeps the mailbox.
+            tx.rollback().await?;
+            return Ok(Provisioned::Inactive);
+        };
+        sqlx::query(
+            "UPDATE caldav_sources SET taken_over_from = ?, taken_over_at = datetime('now') \
+             WHERE id = ?",
+        )
+        .bind(holder_email)
+        .bind(taker)
+        .execute(&mut *tx)
+        .await?;
+        tracing::warn!(
+            user_id = %user_id,
+            previous_user_id = %holder_user,
+            mailbox = %mailbox,
+            "managed EWS source taken over: the identity provider verified this owner, the previous holder was only confirmed by an admin"
+        );
+    }
+    tx.commit().await?;
 
     match touched {
         Some(existing) if existing != id => {
@@ -419,14 +467,34 @@ const FEATURE_ON_SQL: &str = "EXISTS (SELECT 1 FROM auth_config ac WHERE ac.id =
 /// one left in place would read the mailbox of an address they no longer
 /// have.
 async fn conflict(pool: &SqlitePool, user_id: &str) -> Result<Provisioned> {
-    remove_managed_source(pool, user_id).await?;
+    // The caller holds this user's source lock.
+    remove_managed_source_held(pool, user_id).await?;
     tracing::warn!(user_id = %user_id, "managed EWS source not provisioned: another user's source already impersonates this mailbox");
     Ok(Provisioned::Conflict)
 }
 
-/// Delete a user's managed source; its calendars and cached events cascade.
-/// Returns how many rows went (0 or 1).
+/// Delete a user's managed source, under its [`mailbox_lock`] so no sync
+/// stores anything for it afterwards; its calendars and cached events
+/// cascade. Returns how many rows went (0 or 1).
 pub async fn remove_managed_source(pool: &SqlitePool, user_id: &str) -> Result<u64> {
+    let ids: Vec<String> = sqlx::query_scalar(
+        "SELECT cs.id FROM caldav_sources cs JOIN accounts a ON a.id = cs.account_id \
+         WHERE a.user_id = ? AND cs.managed = 1 AND cs.provider_type = 'ews'",
+    )
+    .bind(user_id)
+    .fetch_all(pool)
+    .await?;
+    let mut removed = 0;
+    for id in ids {
+        let lock = mailbox_lock(&id);
+        let _guard = lock.lock().await;
+        removed += delete_source(pool, &id).await?;
+    }
+    Ok(removed)
+}
+
+/// [`remove_managed_source`] for a caller already holding the lock.
+async fn remove_managed_source_held(pool: &SqlitePool, user_id: &str) -> Result<u64> {
     Ok(sqlx::query(
         "DELETE FROM caldav_sources WHERE managed = 1 AND provider_type = 'ews' \
          AND account_id IN (SELECT id FROM accounts WHERE user_id = ?)",
@@ -440,14 +508,58 @@ pub async fn remove_managed_source(pool: &SqlitePool, user_id: &str) -> Result<u
 /// Delete every managed source whose user is not trusted (or is gone), so no
 /// mailbox stays attached to an address calrs cannot vouch for.
 pub async fn remove_untrusted_managed_sources(pool: &SqlitePool) -> Result<u64> {
-    Ok(sqlx::query(
-        "DELETE FROM caldav_sources WHERE managed = 1 AND provider_type = 'ews' \
+    const UNTRUSTED: &str = "managed = 1 AND provider_type = 'ews' \
          AND NOT EXISTS (SELECT 1 FROM accounts a JOIN users u ON u.id = a.user_id \
-                         WHERE a.id = caldav_sources.account_id AND u.email_trusted = 1)",
+                         WHERE a.id = caldav_sources.account_id AND u.email_trusted = 1)";
+    let ids: Vec<String> =
+        sqlx::query_scalar(&format!("SELECT id FROM caldav_sources WHERE {UNTRUSTED}"))
+            .fetch_all(pool)
+            .await?;
+    let mut removed = 0;
+    for id in ids {
+        let lock = mailbox_lock(&id);
+        let _guard = lock.lock().await;
+        removed += sqlx::query(&format!(
+            "DELETE FROM caldav_sources WHERE id = ? AND {UNTRUSTED}"
+        ))
+        .bind(&id)
+        .execute(pool)
+        .await?
+        .rows_affected();
+    }
+    Ok(removed)
+}
+
+/// After the admin changed the domain override: an address trusted on an
+/// admin's word only (not verified by the identity provider) that now maps
+/// to another mailbox is no longer trusted, since the admin confirmed it for
+/// the mailbox it opened then. It shows up again in the list of addresses to
+/// confirm, with its new mailbox. Returns how many addresses that was.
+pub async fn untrust_remapped(
+    pool: &SqlitePool,
+    old: Option<&DomainOverride>,
+    new: Option<&DomainOverride>,
+) -> Result<u64> {
+    let users: Vec<(String, String)> = sqlx::query_as(
+        "SELECT id, email FROM users WHERE email_trusted = 1 AND email_verified_by_idp = 0",
     )
-    .execute(pool)
-    .await?
-    .rows_affected())
+    .fetch_all(pool)
+    .await?;
+    let mut count = 0;
+    for (id, email) in users {
+        if mailbox_for(&email, old) == mailbox_for(&email, new) {
+            continue;
+        }
+        sqlx::query(
+            "UPDATE users SET email_trusted = 0, updated_at = datetime('now') WHERE id = ?",
+        )
+        .bind(&id)
+        .execute(pool)
+        .await?;
+        tracing::warn!(user_id = %id, "address to confirm again: the domain override now maps it to another mailbox");
+        count += 1;
+    }
+    Ok(count)
 }
 
 /// Provision a managed source for every enabled, trusted user, oldest
@@ -540,16 +652,23 @@ pub async fn after_oidc_login(pool: &SqlitePool, cfg: Option<&EwsGlobalConfig>, 
 pub async fn retarget_managed_sources(
     pool: &SqlitePool,
     domain_override: Option<&DomainOverride>,
-) -> Result<()> {
+) -> Result<u64> {
     remove_untrusted_managed_sources(pool).await?;
-    let rows: Vec<(String, String, String)> = sqlx::query_as(
-        "SELECT cs.id, u.email, COALESCE(cs.impersonate_email, '') FROM caldav_sources cs \
+    // Owners the identity provider verified first, then oldest first: of two
+    // sources moving onto one mailbox, the verified owner gets it.
+    let rows: Vec<(String, String, String, bool)> = sqlx::query_as(
+        "SELECT cs.id, u.email, COALESCE(cs.impersonate_email, ''), u.email_verified_by_idp \
+         FROM caldav_sources cs \
          JOIN accounts a ON a.id = cs.account_id JOIN users u ON u.id = a.user_id \
-         WHERE cs.managed = 1 AND cs.provider_type = 'ews' ORDER BY u.created_at, u.id",
+         WHERE cs.managed = 1 AND cs.provider_type = 'ews' \
+         ORDER BY u.email_verified_by_idp DESC, u.created_at, u.id",
     )
     .fetch_all(pool)
     .await?;
-    for (id, email, current) in rows {
+    let mut lost = 0;
+    for (id, email, current, verified) in rows {
+        let lock = mailbox_lock(&id);
+        let _guard = lock.lock().await;
         let Some(mailbox) = mailbox_for(&email, domain_override) else {
             delete_source(pool, &id).await?;
             continue;
@@ -557,43 +676,83 @@ pub async fn retarget_managed_sources(
         if mailbox == current {
             continue;
         }
-        let lock = mailbox_lock(&id);
-        let _guard = lock.lock().await;
+        let holder: Option<(String, String, bool)> = sqlx::query_as(
+            "SELECT cs.id, u.email, u.email_verified_by_idp FROM caldav_sources cs \
+             JOIN accounts a ON a.id = cs.account_id JOIN users u ON u.id = a.user_id \
+             WHERE cs.managed = 1 AND cs.provider_type = 'ews' \
+               AND cs.impersonate_email = ? AND cs.id != ?",
+        )
+        .bind(&mailbox)
+        .bind(&id)
+        .fetch_optional(pool)
+        .await?;
+        let holder_lock;
+        let _holder_guard;
+        let mut tx = pool.begin().await?;
+        if let Some((holder_id, holder_email, holder_verified)) = &holder {
+            if !(verified && !holder_verified) {
+                tx.rollback().await?;
+                tracing::warn!(source_id = %id, "managed EWS source removed: its new mailbox is already another user's");
+                delete_source(pool, &id).await?;
+                continue;
+            }
+            holder_lock = mailbox_lock(holder_id);
+            _holder_guard = holder_lock.lock().await;
+            sqlx::query("DELETE FROM caldav_sources WHERE id = ?")
+                .bind(holder_id)
+                .execute(&mut *tx)
+                .await?;
+            sqlx::query(
+                "UPDATE caldav_sources SET taken_over_from = ?, taken_over_at = datetime('now') \
+                 WHERE id = ?",
+            )
+            .bind(holder_email)
+            .bind(&id)
+            .execute(&mut *tx)
+            .await?;
+            tracing::warn!(source_id = %id, mailbox = %mailbox, "managed EWS source taken over on retarget: the identity provider verified this owner, the previous holder was only confirmed by an admin");
+        }
         let moved = sqlx::query("UPDATE caldav_sources SET impersonate_email = ? WHERE id = ?")
             .bind(&mailbox)
             .bind(&id)
-            .execute(pool)
+            .execute(&mut *tx)
             .await;
         match moved {
-            Ok(_) => forget_mailbox_held(pool, &id).await?,
+            Ok(_) => {
+                tx.commit().await?;
+                lost += forget_mailbox_held(pool, &id).await?;
+            }
             Err(sqlx::Error::Database(e)) if e.is_unique_violation() => {
+                tx.rollback().await?;
                 tracing::warn!(source_id = %id, "managed EWS source removed: its new mailbox is already another user's");
                 delete_source(pool, &id).await?;
             }
             Err(e) => return Err(e.into()),
         }
     }
-    Ok(())
+    Ok(lost)
 }
 
-async fn delete_source(pool: &SqlitePool, source_id: &str) -> Result<()> {
-    sqlx::query("DELETE FROM caldav_sources WHERE id = ?")
+/// Delete one source row; the caller holds its [`mailbox_lock`].
+async fn delete_source(pool: &SqlitePool, source_id: &str) -> Result<u64> {
+    Ok(sqlx::query("DELETE FROM caldav_sources WHERE id = ?")
         .bind(source_id)
         .execute(pool)
-        .await?;
-    Ok(())
+        .await?
+        .rows_affected())
 }
 
 /// Remove every managed source (their calendars and cached events cascade).
 /// Bookings already written into the mailboxes stay there. Returns how many
 /// sources went.
 pub async fn remove_all_managed_sources(pool: &SqlitePool) -> Result<u64> {
-    Ok(
-        sqlx::query("DELETE FROM caldav_sources WHERE managed = 1 AND provider_type = 'ews'")
-            .execute(pool)
-            .await?
-            .rows_affected(),
-    )
+    let mut removed = 0;
+    for id in managed_source_ids(pool).await? {
+        let lock = mailbox_lock(&id);
+        let _guard = lock.lock().await;
+        removed += delete_source(pool, &id).await?;
+    }
+    Ok(removed)
 }
 
 /// Drop everything a managed source cached from the mailbox it used to read:
@@ -605,7 +764,10 @@ pub async fn remove_all_managed_sources(pool: &SqlitePool) -> Result<u64> {
 /// mailbox would send bookings to a folder this source no longer reads. The
 /// next sync discovers the new mailbox's calendars, and the user picks a
 /// write calendar again (the sources page already asks for one).
-pub async fn forget_mailbox(pool: &SqlitePool, source_id: &str) -> Result<()> {
+///
+/// Returns how many event types lost a calendar selection with it (each is
+/// logged), for the admin's notice.
+pub async fn forget_mailbox(pool: &SqlitePool, source_id: &str) -> Result<u64> {
     let lock = mailbox_lock(source_id);
     let _guard = lock.lock().await;
     forget_mailbox_held(pool, source_id).await
@@ -613,7 +775,21 @@ pub async fn forget_mailbox(pool: &SqlitePool, source_id: &str) -> Result<()> {
 
 /// [`forget_mailbox`] for a caller already holding the source's
 /// [`mailbox_lock`].
-async fn forget_mailbox_held(pool: &SqlitePool, source_id: &str) -> Result<()> {
+async fn forget_mailbox_held(pool: &SqlitePool, source_id: &str) -> Result<u64> {
+    let event_types: Vec<String> = sqlx::query_scalar(
+        "SELECT DISTINCT etc.event_type_id FROM event_type_calendars etc \
+         JOIN calendars c ON c.id = etc.calendar_id WHERE c.source_id = ?",
+    )
+    .bind(source_id)
+    .fetch_all(pool)
+    .await?;
+    if !event_types.is_empty() {
+        tracing::warn!(
+            source_id = %source_id,
+            event_types = ?event_types,
+            "managed EWS source reads another mailbox: these event types lost their calendar selection"
+        );
+    }
     sqlx::query("DELETE FROM calendars WHERE source_id = ?")
         .bind(source_id)
         .execute(pool)
@@ -625,7 +801,7 @@ async fn forget_mailbox_held(pool: &SqlitePool, source_id: &str) -> Result<()> {
     .bind(source_id)
     .execute(pool)
     .await?;
-    Ok(())
+    Ok(event_types.len() as u64)
 }
 
 /// Every managed EWS source, so a change of endpoint or domain override can

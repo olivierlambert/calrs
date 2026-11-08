@@ -591,6 +591,8 @@
   </div>
   {% if ews_notice == "saved" %}
   <p style="color: var(--success); font-size: 0.875rem;">{% if ews_provisioned is none %}{{ t("admin-ews-notice-saved") }}{% else %}{{ t("admin-ews-notice-provisioned", count=ews_provisioned) }}{% endif %}</p>
+  {% if ews_selections_lost %}<p class="adm-error-text" style="font-size: 0.875rem;">{{ t("admin-ews-notice-selections-reset", count=ews_selections_lost) }}</p>{% endif %}
+  {% if ews_reconfirm %}<p class="adm-error-text" style="font-size: 0.875rem;">{{ t("admin-ews-notice-reconfirm", count=ews_reconfirm) }}</p>{% endif %}
   {% elif ews_notice == "invalid-url" %}
   <p class="adm-error-text" style="font-size: 0.875rem;">{{ t("admin-ews-notice-invalid-url") }}</p>
   {% elif ews_notice == "incomplete" %}
@@ -708,6 +710,7 @@
               {% else %}
                 <span class="adm-error-text">{% if s.status == "no-mailbox" %}{{ t("admin-ews-row-no-mailbox") }}{% elif s.status == "never" %}{{ t("admin-ews-row-never") }}{% else %}{{ s.error }}{% endif %}</span>
               {% endif %}
+              {% if s.taken_over_from %}<div class="adm-muted" style="font-size: 0.8rem;">{{ t("admin-ews-row-taken-over", user=s.taken_over_from, when=s.taken_over_at) }}</div>{% endif %}
             </td>
             <td style="text-align: right;">
               {% if s.user_id %}

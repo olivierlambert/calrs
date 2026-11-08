@@ -775,20 +775,38 @@ async fn sync_ews_calendars(
         }
     }
 
-    // A folder the mailbox no longer lists is gone, with its cached events
-    // (they cascade); a write calendar pointing at it is cleared.
-    let stored: Vec<(String, String)> =
-        sqlx::query_as("SELECT id, href FROM calendars WHERE source_id = ?")
-            .bind(source_id)
-            .fetch_all(pool)
-            .await?;
-    for (id, href) in stored {
-        if !listed.contains(&href.as_str()) {
-            sqlx::query("DELETE FROM calendars WHERE id = ?")
-                .bind(&id)
-                .execute(pool)
+    // A folder the mailbox stops listing is dropped, with its cached events
+    // and the event types' selections of it (they cascade), only once it has
+    // been missing from two successful listings in a row; a write calendar
+    // pointing at it is then cleared. An empty listing proves nothing (a
+    // mailbox always has its calendar folder), so it never drops anything.
+    if !listed.is_empty() {
+        let stored: Vec<(String, String, i64)> =
+            sqlx::query_as("SELECT id, href, ews_missing_count FROM calendars WHERE source_id = ?")
+                .bind(source_id)
+                .fetch_all(pool)
                 .await?;
-            tracing::info!(source_id = %source_id, "EWS calendar no longer listed by the server: removed");
+        for (id, href, misses) in stored {
+            if listed.contains(&href.as_str()) {
+                if misses > 0 {
+                    sqlx::query("UPDATE calendars SET ews_missing_count = 0 WHERE id = ?")
+                        .bind(&id)
+                        .execute(pool)
+                        .await?;
+                }
+            } else if misses >= 1 {
+                sqlx::query("DELETE FROM calendars WHERE id = ?")
+                    .bind(&id)
+                    .execute(pool)
+                    .await?;
+                tracing::info!(source_id = %source_id, calendar_id = %id, "EWS calendar missing from two listings in a row: removed");
+            } else {
+                sqlx::query("UPDATE calendars SET ews_missing_count = 1 WHERE id = ?")
+                    .bind(&id)
+                    .execute(pool)
+                    .await?;
+                tracing::info!(source_id = %source_id, calendar_id = %id, "EWS calendar not listed by the server: kept until the next listing");
+            }
         }
     }
     sqlx::query(
@@ -1894,6 +1912,137 @@ mod tests {
             "availability reads the same exceptions as from the full text"
         );
         assert_eq!(exdates.len(), 2);
+    }
+
+    /// An EWS client listing whatever calendars a test sets, with no events.
+    struct ListingProvider(std::sync::Mutex<Vec<&'static str>>);
+
+    #[async_trait::async_trait]
+    impl crate::providers::CalendarProvider for ListingProvider {
+        async fn check_connection(&self) -> Result<bool> {
+            Ok(true)
+        }
+        async fn list_calendars(&self) -> Result<Vec<crate::providers::RemoteCalendar>> {
+            Ok(self
+                .0
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|id| crate::providers::RemoteCalendar {
+                    id: id.to_string(),
+                    display_name: Some(id.to_string()),
+                    color: None,
+                    change_marker: None,
+                    sync_state: None,
+                })
+                .collect())
+        }
+        async fn fetch_events(&self, _: &str) -> Result<Vec<crate::providers::RawEvent>> {
+            Ok(vec![])
+        }
+        async fn fetch_events_since(
+            &self,
+            _: &str,
+            _: &str,
+        ) -> Result<Vec<crate::providers::RawEvent>> {
+            Ok(vec![])
+        }
+        async fn sync_delta(
+            &self,
+            _: &str,
+            _: Option<&str>,
+        ) -> Result<crate::providers::DeltaResult> {
+            Ok(Default::default())
+        }
+        async fn put_event(&self, _: &str, _: &str, _: &str) -> Result<()> {
+            Ok(())
+        }
+        async fn delete_event(&self, _: &str, _: &str) -> Result<()> {
+            Ok(())
+        }
+        async fn event_exists(&self, _: &str, _: &str) -> Result<bool> {
+            Ok(false)
+        }
+    }
+
+    /// A calendar an EWS server stops listing is kept through one listing and
+    /// dropped at the second in a row, with its event-type selection; one
+    /// listed again in between starts over; an empty listing drops nothing.
+    /// The source here is the user's own EWS source, not a managed one.
+    #[tokio::test]
+    async fn an_unlisted_ews_calendar_goes_only_after_two_listings() {
+        let pool = setup_test_db().await;
+        let (source, et_id) = seed_fixtures(&pool).await;
+        sqlx::query("UPDATE caldav_sources SET provider_type = 'ews', write_calendar_href = 'B' WHERE id = ?")
+            .bind(&source)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let provider = ListingProvider(std::sync::Mutex::new(vec!["A", "B"]));
+        let key = [0u8; 32];
+        sync_ews_source(&pool, &key, &provider, &source)
+            .await
+            .unwrap();
+        let b: String =
+            sqlx::query_scalar("SELECT id FROM calendars WHERE source_id = ? AND href = 'B'")
+                .bind(&source)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        sqlx::query("INSERT INTO event_type_calendars (event_type_id, calendar_id) VALUES (?, ?)")
+            .bind(&et_id)
+            .bind(&b)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let hrefs = || async {
+            sqlx::query_scalar::<_, String>(
+                "SELECT href FROM calendars WHERE source_id = ? ORDER BY href",
+            )
+            .bind(&source)
+            .fetch_all(&pool)
+            .await
+            .unwrap()
+        };
+
+        // An empty answer proves nothing.
+        *provider.0.lock().unwrap() = vec![];
+        sync_ews_source(&pool, &key, &provider, &source)
+            .await
+            .unwrap();
+        assert_eq!(hrefs().await, ["A", "B"]);
+
+        // Missing once: kept. Listed again: the count starts over.
+        *provider.0.lock().unwrap() = vec!["A"];
+        sync_ews_source(&pool, &key, &provider, &source)
+            .await
+            .unwrap();
+        assert_eq!(hrefs().await, ["A", "B"]);
+        *provider.0.lock().unwrap() = vec!["A", "B"];
+        sync_ews_source(&pool, &key, &provider, &source)
+            .await
+            .unwrap();
+        *provider.0.lock().unwrap() = vec!["A"];
+        sync_ews_source(&pool, &key, &provider, &source)
+            .await
+            .unwrap();
+        assert_eq!(hrefs().await, ["A", "B"], "one miss after a listing");
+
+        // Missing twice in a row: gone, with its selection and the write
+        // calendar that pointed at it.
+        sync_ews_source(&pool, &key, &provider, &source)
+            .await
+            .unwrap();
+        assert_eq!(hrefs().await, ["A"]);
+        let (links, write): (i64, Option<String>) = sqlx::query_as(
+            "SELECT (SELECT COUNT(*) FROM event_type_calendars), \
+                    (SELECT write_calendar_href FROM caldav_sources WHERE id = ?)",
+        )
+        .bind(&source)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!((links, write), (0, None));
     }
 
     /// #310: the background loop only picks a source whose last attempt,

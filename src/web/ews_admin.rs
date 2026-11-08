@@ -27,9 +27,10 @@ const UNTRUSTED_SHOWN: usize = 20;
 /// query value; anything unknown is dropped.
 pub(super) async fn admin_context(
     state: &AppState,
-    notice: Option<&str>,
-    provisioned: Option<&str>,
+    query: &std::collections::HashMap<String, String>,
 ) -> minijinja::Value {
+    let notice = query.get("ews").map(String::as_str);
+    let count = |k: &str| query.get(k).and_then(|n| n.parse::<u32>().ok());
     let cfg = state.ews_global.read().await.clone();
     // What the admin last saved, even when incomplete or switched off: the
     // live config is `None` then, but the form must not come back empty.
@@ -77,9 +78,11 @@ pub(super) async fn admin_context(
         bool,
         bool,
         String,
+        Option<String>,
+        Option<String>,
     )> = sqlx::query_as(
         "SELECT u.email, cs.impersonate_email, cs.last_synced, cs.last_sync_error, cs.enabled, \
-                u.enabled, u.email_trusted, u.id \
+                u.enabled, u.email_trusted, u.id, cs.taken_over_from, cs.taken_over_at \
              FROM caldav_sources cs \
              JOIN accounts a ON a.id = cs.account_id \
              JOIN users u ON u.id = a.user_id \
@@ -93,7 +96,18 @@ pub(super) async fn admin_context(
     let mut sources: Vec<minijinja::Value> = rows
         .iter()
         .map(
-            |(email, mailbox, last_synced, last_error, enabled, user_enabled, trusted, user_id)| {
+            |(
+                email,
+                mailbox,
+                last_synced,
+                last_error,
+                enabled,
+                user_enabled,
+                trusted,
+                user_id,
+                taken_over_from,
+                taken_over_at,
+            )| {
                 // `status` picks the wording in the template; `error` is the
                 // server's own message, shown as-is when there is no better
                 // one. The fault code leads the message (see
@@ -112,6 +126,8 @@ pub(super) async fn admin_context(
                 }
                 context! {
                     user_id => user_id,
+                    taken_over_from => taken_over_from,
+                    taken_over_at => taken_over_at,
                     email => email,
                     // The address actually impersonated, after the override.
                     mailbox => mailbox.clone().unwrap_or_default(),
@@ -210,7 +226,11 @@ pub(super) async fn admin_context(
         ews_notice => notice.filter(|n| NOTICES.contains(n)).unwrap_or(""),
         // How many managed sources the save just created, when it ran the
         // batch, or the removal deleted (`?n=`); absent otherwise.
-        ews_provisioned => provisioned.and_then(|n| n.parse::<u32>().ok()),
+        ews_provisioned => count("n"),
+        // Event types that lost a calendar selection, and addresses to
+        // confirm again, after a save that changed the mailboxes.
+        ews_selections_lost => count("lost"),
+        ews_reconfirm => count("reconfirm"),
     }
 }
 
@@ -246,12 +266,30 @@ fn redirect_with(notice: &str) -> Response {
 
 /// A successful save that also ran the provisioning batch says how many
 /// sources it created, so the admin sees that the click did something.
-fn redirect_saved(provisioned: Option<usize>) -> Response {
-    match provisioned {
-        Some(n) => Redirect::to(&format!("/dashboard/admin?ews=saved&n={n}#ews-global")),
-        None => Redirect::to("/dashboard/admin?ews=saved#ews-global"),
+/// Also carries how many event types lost a calendar selection (`lost`) and
+/// how many addresses need a new confirmation (`reconfirm`), when any did.
+fn redirect_saved(provisioned: Option<usize>, lost: u64, reconfirm: u64) -> Response {
+    let mut url = String::from("/dashboard/admin?ews=saved");
+    if let Some(n) = provisioned {
+        url.push_str(&format!("&n={n}"));
     }
-    .into_response()
+    if lost > 0 {
+        url.push_str(&format!("&lost={lost}"));
+    }
+    if reconfirm > 0 {
+        url.push_str(&format!("&reconfirm={reconfirm}"));
+    }
+    url.push_str("#ews-global");
+    Redirect::to(&url).into_response()
+}
+
+/// Scheme, host and port of a URL, lowercased: the server it names.
+fn url_origin(url: Option<&str>) -> Option<String> {
+    let url = url.map(str::trim).filter(|u| !u.is_empty())?;
+    Some(match reqwest::Url::parse(url) {
+        Ok(u) => u.origin().ascii_serialization(),
+        Err(_) => url.to_ascii_lowercase(),
+    })
 }
 
 pub(super) async fn admin_update_ews_global(
@@ -308,8 +346,11 @@ pub(super) async fn admin_update_ews_global(
         stored.as_ref().filter(|s| !s.is_empty()) == new.as_ref()
     };
     let url_moved = normalized_url(previous_url.as_deref()) != normalized_url(url.as_deref());
-    let mailboxes_moved =
-        url_moved || !same(&previous_domain, &imp_domain) || !same(&previous_from, &from_domain);
+    // Which mailbox each source reads depends on the server (scheme, host,
+    // port) and the domain override, not on how the URL's path is written.
+    let server_moved = url_origin(previous_url.as_deref()) != url_origin(url.as_deref());
+    let override_moved =
+        !same(&previous_domain, &imp_domain) || !same(&previous_from, &from_domain);
     // The stored password belongs to the account and the server it was typed
     // for. Kept across a new endpoint or a new account, it would be sent to
     // wherever the URL now points: never keep it then.
@@ -379,33 +420,53 @@ pub(super) async fn admin_update_ews_global(
         return internal_error_response("save global EWS config", &e);
     }
 
-    if mailboxes_moved {
-        // Each source moves to the mailbox its user's address now maps to
-        // (or goes, when that mailbox is another user's), then forgets what
-        // it cached from the old one.
-        let domain_override =
-            ews_global::DomainOverride::new(from_domain.as_deref(), imp_domain.as_deref());
-        if let Err(e) =
-            ews_global::retarget_managed_sources(&state.pool, domain_override.as_ref()).await
-        {
-            tracing::warn!(error = %e, "could not retarget the managed sources after the Exchange target changed");
+    // Event types that lost a calendar selection because their source now
+    // reads another mailbox, and addresses an admin must confirm again.
+    let mut lost: u64 = 0;
+    let mut reconfirm: u64 = 0;
+    if override_moved {
+        // An admin confirmed an address for the mailbox it opened then: one
+        // that now maps elsewhere needs a new confirmation. Then each source
+        // moves to the mailbox its user's address maps to (or goes, when
+        // that mailbox is another user's) and forgets what it cached.
+        let old =
+            ews_global::DomainOverride::new(previous_from.as_deref(), previous_domain.as_deref());
+        let new = ews_global::DomainOverride::new(from_domain.as_deref(), imp_domain.as_deref());
+        match ews_global::untrust_remapped(&state.pool, old.as_ref(), new.as_ref()).await {
+            Ok(n) => reconfirm = n,
+            Err(e) => {
+                tracing::warn!(error = %e, "could not check confirmed addresses against the new domain override")
+            }
         }
+        match ews_global::retarget_managed_sources(&state.pool, new.as_ref()).await {
+            Ok(n) => lost += n,
+            Err(e) => {
+                tracing::warn!(error = %e, "could not retarget the managed sources after the domain override changed")
+            }
+        }
+    }
+    if server_moved {
+        // Another Exchange server: folder ids mean nothing there, so every
+        // managed source starts again from discovery.
         match ews_global::managed_source_ids(&state.pool).await {
             Ok(ids) => {
                 for id in &ids {
-                    if let Err(e) = ews_global::forget_mailbox(&state.pool, id).await {
-                        tracing::warn!(error = %e, source_id = %id, "could not reset a managed source after the Exchange target changed");
+                    match ews_global::forget_mailbox(&state.pool, id).await {
+                        Ok(n) => lost += n,
+                        Err(e) => {
+                            tracing::warn!(error = %e, source_id = %id, "could not reset a managed source after the Exchange server changed")
+                        }
                     }
                 }
                 if !ids.is_empty() {
                     tracing::info!(
                         sources = ids.len(),
-                        "Exchange target changed: managed sources reset, their calendars will be rediscovered"
+                        "Exchange server changed: managed sources reset, their calendars will be rediscovered"
                     );
                 }
             }
             Err(e) => {
-                tracing::warn!(error = %e, "could not list managed sources after the Exchange target changed")
+                tracing::warn!(error = %e, "could not list managed sources after the Exchange server changed")
             }
         }
     }
@@ -449,7 +510,7 @@ pub(super) async fn admin_update_ews_global(
         return redirect_with("password-cleared");
     }
     if notice == "saved" {
-        redirect_saved(provisioned)
+        redirect_saved(provisioned, lost, reconfirm)
     } else {
         redirect_with(notice)
     }
@@ -514,6 +575,7 @@ pub(super) async fn admin_remove_user_source(
     if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
         return resp;
     }
+    // Locked and deleted in `remove_managed_source`.
     let source: Option<String> = sqlx::query_scalar(
         "SELECT cs.id FROM caldav_sources cs JOIN accounts a ON a.id = cs.account_id \
          WHERE a.user_id = ? AND cs.managed = 1 AND cs.provider_type = 'ews'",
@@ -522,11 +584,9 @@ pub(super) async fn admin_remove_user_source(
     .fetch_optional(&state.pool)
     .await
     .unwrap_or(None);
-    let Some(source) = source else {
+    if source.is_none() {
         return Redirect::to("/dashboard/admin#ews-global").into_response();
-    };
-    let lock = ews_global::mailbox_lock(&source);
-    let _guard = lock.lock().await;
+    }
     if let Err(e) = ews_global::remove_managed_source(&state.pool, &form.user_id).await {
         return internal_error_response("remove a managed EWS source", &e);
     }
