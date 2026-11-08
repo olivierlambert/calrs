@@ -223,10 +223,7 @@ pub(crate) fn split_scheduling(ics: &str) -> (String, Vec<Attendee>) {
         }
         let display_name = parsed
             .param("CN")
-            .map(|cn| {
-                // RFC 6868 caret escapes, as `sanitize_ics_param` writes them.
-                cn.replace("^n", " ").replace("^'", "\"").replace("^^", "^")
-            })
+            .map(decode_param_value)
             .filter(|cn| !cn.trim().is_empty());
         attendees.push(Attendee {
             email: email.to_string(),
@@ -234,6 +231,31 @@ pub(crate) fn split_scheduling(ics: &str) -> (String, Vec<Attendee>) {
         });
     }
     (crate::email::fold_ics(&kept.join("\r\n")), attendees)
+}
+
+/// Undo RFC 6868 caret escapes, as `sanitize_ics_param` writes them, in
+/// one left-to-right pass so `^^n` is a caret then `n`, not a newline. A
+/// newline becomes a space: this is a display name.
+fn decode_param_value(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    let mut chars = value.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != '^' {
+            out.push(c);
+            continue;
+        }
+        match chars.peek() {
+            Some('n') => out.push(' '),
+            Some('\'') => out.push('"'),
+            Some('^') => out.push('^'),
+            _ => {
+                out.push('^');
+                continue;
+            }
+        }
+        chars.next();
+    }
+    out
 }
 
 /// One event found by iCalUID.
@@ -545,7 +567,18 @@ pub(crate) async fn put_event_without_invitations(
     let added = tokio::time::timeout_at(deadline, async {
         // Looked up again: the PUT may have replaced the event under a new id.
         match api.find_written(uid).await? {
-            Some(found) => api.set_attendees(&found.id, &attendees).await.map(|_| true),
+            Some(found) => match api.set_attendees(&found.id, &attendees).await {
+                // One address Google refuses fails the whole list. The guest
+                // matters most (Meet admits listed attendees without the
+                // lobby), so they go on alone and the rest are logged.
+                Err(e) if e.status == Some(400) && attendees.len() > 1 => {
+                    tracing::warn!(uid = %uid, error = %e, "google calendar: attendee list refused, adding the guest alone");
+                    api.set_attendees(&found.id, &attendees[..1])
+                        .await
+                        .map(|_| true)
+                }
+                other => other.map(|_| true),
+            },
             None => Ok(false),
         }
     })
@@ -1197,6 +1230,33 @@ mod tests {
         assert_eq!(fake.attendees("/dav/team", "odd@calrs"), Some(Vec::new()));
     }
 
+    /// One address Google refuses does not cost the guest their place on
+    /// the event: they are added alone.
+    #[tokio::test]
+    async fn a_refused_attendee_list_still_lists_the_guest() {
+        let fake = std::sync::Arc::new(FakeGoogle::rejecting("bob@example.com"));
+        let (client, server) = serve_fake(fake.clone()).await;
+        client
+            .put_event(HREF, "picky@calrs", &booking_ics("picky@calrs"))
+            .await
+            .unwrap();
+        server.abort();
+        assert_nothing_announced(&log(&fake));
+        assert_eq!(
+            fake.attendees(CAL, "picky@calrs").unwrap(),
+            vec![json!({"email": "jane@example.com", "displayName": "Doe, Jane"})]
+        );
+    }
+
+    #[test]
+    fn caret_escapes_decode_in_one_pass() {
+        assert_eq!(decode_param_value("a^^nb"), "a^nb");
+        assert_eq!(decode_param_value("a^nb"), "a b");
+        assert_eq!(decode_param_value("^'Q^'"), "\"Q\"");
+        assert_eq!(decode_param_value("^^^'"), "^\"");
+        assert_eq!(decode_param_value("a^xb^"), "a^xb^");
+    }
+
     /// Any other CalDAV server keeps the ATTENDEE lines (with
     /// SCHEDULE-AGENT=CLIENT) and sees no Calendar API call.
     #[tokio::test]
@@ -1242,6 +1302,8 @@ pub(crate) mod fake {
         api_delay: Option<std::time::Duration>,
         /// Calendar API deletes (only) answer this status.
         api_delete_failure: Option<u16>,
+        /// An attendee update naming this address answers 400.
+        rejected_attendee: Option<&'static str>,
     }
 
     /// Google's answer when the Calendar API is not enabled in the project.
@@ -1260,6 +1322,14 @@ pub(crate) mod fake {
         pub(crate) fn slow(delay: std::time::Duration) -> Self {
             Self {
                 api_delay: Some(delay),
+                ..Default::default()
+            }
+        }
+
+        /// A Google that refuses any attendee list naming `email`.
+        pub(crate) fn rejecting(email: &'static str) -> Self {
+            Self {
+                rejected_attendee: Some(email),
                 ..Default::default()
             }
         }
@@ -1409,6 +1479,12 @@ pub(crate) mod fake {
         };
         match method.as_str() {
             "PATCH" => {
+                if fake
+                    .rejected_attendee
+                    .is_some_and(|email| body.contains(email))
+                {
+                    return StatusCode::BAD_REQUEST.into_response();
+                }
                 let patch: Value = serde_json::from_str(&body).unwrap();
                 let attendees = patch["attendees"].as_array().cloned().unwrap_or_default();
                 events.get_mut(&key).unwrap().1 = attendees;
