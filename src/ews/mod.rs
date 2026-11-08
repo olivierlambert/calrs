@@ -97,6 +97,29 @@ impl EwsProvider {
     }
 }
 
+/// The EWS error codes that mean the folder is gone or does not take writes
+/// from this account (#47): a retry gets the same answer.
+const PERMANENT_WRITE_FAULTS: [&str; 2] = ["ErrorAccessDenied", "ErrorFolderNotFound"];
+
+/// The fault code of an EWS write error when a retry will not change it.
+pub(crate) fn permanent_write_fault(message: &str) -> Option<&'static str> {
+    let fault = message.strip_prefix(soap::SOAP_FAULT_PREFIX)?;
+    PERMANENT_WRITE_FAULTS
+        .into_iter()
+        .find(|code| fault.starts_with(code))
+}
+
+/// Mark an EWS write error as a permanent refusal when it is one.
+fn permanent_if_refused(e: anyhow::Error) -> anyhow::Error {
+    match permanent_write_fault(&e.root_cause().to_string()) {
+        Some(code) => anyhow::Error::new(crate::providers::PermanentRefusal {
+            summary: code.to_string(),
+            message: format!("{e:#}"),
+        }),
+        None => e,
+    }
+}
+
 #[async_trait]
 impl CalendarProvider for EwsProvider {
     fn impersonated_mailbox(&self) -> Option<&str> {
@@ -272,7 +295,8 @@ impl CalendarProvider for EwsProvider {
             ics,
             self.impersonate(),
         )
-        .await?;
+        .await
+        .map_err(permanent_if_refused)?;
         Ok(())
     }
 

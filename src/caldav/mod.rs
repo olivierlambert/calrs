@@ -357,6 +357,19 @@ impl CaldavClient {
 
         let status = resp.status();
         if !status.is_success() && status.as_u16() != 201 && status.as_u16() != 204 {
+            // Read only to tell a Google rate limit or quota (a 403 that
+            // passes) from a refusal for good; the error carries no body.
+            let body = if status.as_u16() == 403 {
+                resp.text().await.unwrap_or_default()
+            } else {
+                String::new()
+            };
+            if refused_for_good(status.as_u16(), &body) {
+                return Err(anyhow::Error::new(crate::providers::PermanentRefusal {
+                    summary: status.to_string(),
+                    message: format!("PUT {url} returned {status}"),
+                }));
+            }
             bail!("PUT {} returned {}", url, status);
         }
 
@@ -445,7 +458,8 @@ impl CaldavClient {
         let resp = self.apply_auth(req).send().await?;
 
         let status = resp.status();
-        if !status.is_success() && status.as_u16() != 204 && status.as_u16() != 404 {
+        // Already gone counts as deleted: 404, or 410 Gone.
+        if !status.is_success() && !matches!(status.as_u16(), 204 | 404 | 410) {
             bail!("DELETE {} returned {}", url, status);
         }
 
@@ -735,6 +749,29 @@ const REPORT_CALENDAR_DATA: &str = r#"<?xml version="1.0" encoding="utf-8"?>
     </c:comp-filter>
   </c:filter>
 </c:calendar-query>"#;
+
+/// The reasons Google gives with a 403 that pass with time: rate limits and
+/// quotas.
+const GOOGLE_TRANSIENT_403: [&str; 4] = [
+    "rateLimitExceeded",
+    "userRateLimitExceeded",
+    "quotaExceeded",
+    "dailyLimitExceeded",
+];
+
+/// Whether a refused PUT will be refused again on a retry (#47): the
+/// calendar is gone (404), does not take writes (405), or forbids them
+/// (403). Google answers its rate limits and quotas with a 403 too, which
+/// pass.
+pub(crate) fn refused_for_good(status: u16, body: &str) -> bool {
+    match status {
+        404 | 405 => true,
+        403 => !GOOGLE_TRANSIENT_403
+            .iter()
+            .any(|reason| body.contains(reason)),
+        _ => false,
+    }
+}
 
 #[cfg(test)]
 mod tests {

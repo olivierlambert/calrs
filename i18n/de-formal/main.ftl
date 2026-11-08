@@ -443,3 +443,8 @@ time-off-error-too-many = Sie haben bereits 100 Zeiträume geplant. Löschen Sie
 time-off-hint = Um Daten für alle Terminarten auf einmal zu sperren, nutzen Sie { $link }.
 time-off-pending-notice = Anfragen, die in einem Zeitraum auf Ihre Bestätigung warten, lassen sich nicht mehr annehmen: Lehnen Sie sie ab oder löschen Sie zuerst die Abwesenheit.
 time-off-impersonating = Sie sehen diese Seite als { $name }. Die Abwesenheiten sind für Sie hier nur lesbar, die Notizen sind ausgeblendet.
+
+# Write destination per event type (#47)
+etf-write-destination-help = Nur für diese Terminart. Standardmäßig landen sie im Schreibkalender jeder Ihrer Quellen. Bei einer Team-Terminart gilt das nur für die Buchungen, die Sie übernehmen.
+sources-destinations-help = Wählen Sie für jede Terminart den Kalender, in den ihre bestätigten Buchungen geschrieben werden. Bei einer Team-Terminart gilt das für die Buchungen, die Sie übernehmen; die anderen Mitglieder wählen ihren eigenen. Bereits geschriebene Buchungen ziehen beim nächsten Schreiben um: bei einer Verschiebung, Freigabe, Wiederholung oder Übernahme.
+write-destination-not-yours = Nichts wurde gespeichert: Wählen Sie einen Ihrer eigenen Kalender, für eine Terminart, die Sie übernehmen.

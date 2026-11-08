@@ -4,9 +4,16 @@ use super::*;
 
 // --- Dashboard: Sources ---
 
+#[derive(Deserialize)]
+pub(super) struct SourcesQuery {
+    /// Outcome of the last "Bookings by meeting" save: `saved` or `refused`.
+    destinations: Option<String>,
+}
+
 pub(super) async fn dashboard_sources(
     State(state): State<Arc<AppState>>,
     auth_user: crate::auth::AuthUser,
+    Query(query): Query<SourcesQuery>,
 ) -> impl IntoResponse {
     let user = &auth_user.user;
 
@@ -109,6 +116,38 @@ pub(super) async fn dashboard_sources(
         )
         .collect();
 
+    // Bookings by meeting (#47): every event type the user hosts, with the
+    // calendar its confirmed bookings go to. Shown once there is a calendar
+    // to choose.
+    let choices = destination_choices(&state.pool, &user.id).await;
+    let destination_calendars: Vec<minijinja::Value> = choices
+        .iter()
+        .map(|(id, name)| context! { id => id, name => name })
+        .collect();
+    let mut destinations: Vec<minijinja::Value> = Vec::new();
+    for (id, title, team, selected, refused) in hosted_event_types(&state.pool, &user.id).await {
+        // A stored choice whose source is disabled stays selected, marked
+        // unavailable, so saving the page unchanged keeps it.
+        let unavailable =
+            unavailable_option(&state.pool, &user.id, auth_user.lang, &selected, &choices).await;
+        if destination_calendars.is_empty() && unavailable.is_none() {
+            continue;
+        }
+        destinations.push(context! {
+            id => id,
+            title => title,
+            team => team,
+            selected => selected,
+            unavailable => unavailable,
+            refused => refused,
+        });
+    }
+    let destinations_status = match query.destinations.as_deref() {
+        Some("saved") => "saved",
+        Some("refused") => "refused",
+        _ => "",
+    };
+
     let tmpl = match state.templates.get_template("dashboard_sources.html") {
         Ok(t) => t,
         Err(e) => return internal_error_html("template render", &e),
@@ -121,6 +160,9 @@ pub(super) async fn dashboard_sources(
             sidebar => sidebar_context(&auth_user, "sources"),
             lang => auth_user.lang,
             sources => sources_ctx,
+            destinations => destinations,
+            destination_calendars => destination_calendars,
+            destinations_status => destinations_status,
             impersonating => impersonating,
             impersonating_name => impersonating_name,
             lock_user_sources => ews_admin::source_lockdown(&state, &auth_user).await.is_some(),
@@ -1287,6 +1329,49 @@ pub(super) async fn set_write_calendar(
     tracing::info!(source_id = %source_id, "write calendar configured");
 
     Redirect::to("/dashboard/sources").into_response()
+}
+
+/// Save the "Bookings by meeting" choices of the sources page (#47): one
+/// `et_<event type id>` field per event type, holding a calendar id or empty
+/// for the source setting. Every choice is checked before any is saved: the
+/// user must host the event type and own the calendar.
+pub(super) async fn save_write_destinations(
+    State(state): State<Arc<AppState>>,
+    auth_user: crate::auth::AuthUser,
+    headers: HeaderMap,
+    Form(fields): Form<Vec<(String, String)>>,
+) -> impl IntoResponse {
+    let csrf = fields
+        .iter()
+        .find(|(name, _)| name == "_csrf")
+        .map(|(_, value)| value.clone());
+    if let Err(resp) = verify_csrf_token(&headers, &csrf) {
+        return resp;
+    }
+    let user_id = &auth_user.user.id;
+    let choices: Vec<(&str, &str)> = fields
+        .iter()
+        .filter_map(|(name, value)| Some((name.strip_prefix("et_")?, value.trim())))
+        .collect();
+    for (et_id, calendar_id) in &choices {
+        if !hosts_event_type(&state.pool, user_id, et_id).await
+            || !acceptable_destination(&state.pool, user_id, Some(et_id), calendar_id).await
+        {
+            tracing::warn!(user_id = %user_id, event_type_id = %et_id, "write destination refused");
+            return Redirect::to("/dashboard/sources?destinations=refused#destinations")
+                .into_response();
+        }
+    }
+    for (et_id, calendar_id) in &choices {
+        if set_destination(&state.pool, user_id, et_id, calendar_id)
+            .await
+            .is_err()
+        {
+            return Redirect::to("/dashboard/sources?destinations=refused#destinations")
+                .into_response();
+        }
+    }
+    Redirect::to("/dashboard/sources?destinations=saved#destinations").into_response()
 }
 
 // --- Google Calendar OAuth2 connect flow ---

@@ -85,6 +85,7 @@ Every user-facing string goes through Fluent (`i18n/`).
 | `hosts.rs` | Who hosts a booking: host identity, collective members, write targets, reschedule and approval hosts |
 | `calendar_push.rs` | Pushing and deleting booking events on host calendars and resource collections |
 | `writeback.rs` | Write-back failure recording and retry (#162) |
+| `write_targets.rs` | Write destination per event type (#47): which of a host's calendars a booking is written to, moving and deleting the copies written there, the choices offered in the event type form and on the sources page |
 | `pending.rs` | Pending requests: expiry deadline, sweep (expire and nudge), pending settings on event types |
 | `notify.rs` | `spawn_emails` / `drain_emails`, new-booking notifications, reminders, watchers, SMS on new booking, the background loop |
 | `meeting.rs` | Auto-generated meeting links (Jitsi, webhook, Google Meet) |
@@ -114,7 +115,8 @@ with `use super::*` and sees those fixtures and every item of `web`:
 `hosts`, `event_types`, `invites`, `booking`, `public_pages`,
 `booking_actions`, `booking_notes`, `dashboard`, `sources`, `admin`, `emails`,
 `ews_global`, `page_language`, `guards`, plus `booking_time`, `pending_hold`,
-`writeback_failures`, `organizer`, `duplicate_event_type` and `time_off`.
+`writeback_failures`, `write_destinations`, `organizer`, `duplicate_event_type`
+and `time_off`.
 
 ### `src/email/`
 
@@ -167,8 +169,10 @@ Call sites use `crate::email::name` whatever file `name` lives in.
 - **Calendar providers and write-back** (`src/providers/`, `src/caldav/`,
   `src/ews/`, `src/web/calendar_push.rs`, `src/web/writeback.rs`).
   `CalendarProvider` is the trait, `src/providers/factory.rs` builds one from a
-  `caldav_sources` row. Confirmed bookings are pushed to the host calendar,
-  verified, and failures are recorded and retried by the background loop.
+  `caldav_sources` row. Confirmed bookings are pushed to the host calendar
+  (the one chosen for the event type, `src/web/write_targets.rs`, else each
+  source's write calendar), verified, and failures are recorded and retried
+  by the background loop.
   Sync lives in `src/commands/sync.rs` (`sync_if_stale` on page loads) and
   `src/commands/sync_health.rs` (failure tracking).
 - **Availability** (`src/web/availability.rs`). `compute_slots` combines

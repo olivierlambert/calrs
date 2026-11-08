@@ -2427,3 +2427,71 @@ async fn a_stored_http_endpoint_leaves_the_feature_off() {
             .is_none()
     );
 }
+
+/// Per-event-type write destinations (#47) treat a managed Exchange
+/// calendar like the user's own only while its source is active: an owner
+/// whose address is not trusted cannot pick it, and while the feature is
+/// off a booking whose destination is that calendar is neither written nor
+/// recorded as a failure.
+#[tokio::test]
+async fn a_managed_calendar_is_a_destination_only_while_active() {
+    let pool = setup_test_db().await;
+    let (host_id, _, et_id) = seed_test_data(&pool).await;
+    let (endpoint, ews) = spawn_mock_ews().await;
+    store_config_for(&pool, &endpoint, None).await;
+    let source = provision(&pool, &host_id, "test@example.com").await;
+    crate::commands::sync::sync_source_by_id(&pool, &[0u8; 32], &source).await;
+    let cal_id: String = sqlx::query_scalar("SELECT id FROM calendars WHERE source_id = ?")
+        .bind(&source)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(is_destination_choice(&pool, &host_id, &cal_id).await);
+
+    sqlx::query("UPDATE users SET email_trusted = 0 WHERE id = ?")
+        .bind(&host_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert!(!is_destination_choice(&pool, &host_id, &cal_id).await);
+    assert!(destination_choices(&pool, &host_id)
+        .await
+        .iter()
+        .all(|(id, _)| *id != cal_id));
+    trust(&pool, &host_id).await;
+    assert!(set_destination(&pool, &host_id, &et_id, &cal_id)
+        .await
+        .is_ok());
+
+    // Feature off: the booking whose destination is that calendar is not
+    // written there, and nothing is recorded as a failure or a copy.
+    sqlx::query("UPDATE auth_config SET ews_global_enabled = 0 WHERE id = 'singleton'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let booking_id = insert_v1_booking(
+        &pool,
+        &et_id,
+        "guest@example.com",
+        Utc::now() + Duration::days(7),
+        30,
+        "confirmed",
+        &[],
+    )
+    .await;
+    let uid = format!("uid-{booking_id}");
+    let (details, _) = writeback::writeback_details(&pool, &uid).await.unwrap();
+    caldav_push_booking(&pool, &[0u8; 32], &host_id, &uid, &details).await;
+    let (error, attempts, copies): (Option<String>, i64, i64) = sqlx::query_as(
+        "SELECT writeback_error, writeback_attempts, \
+                (SELECT COUNT(*) FROM booking_write_copies WHERE booking_uid = ?) \
+         FROM bookings WHERE uid = ?",
+    )
+    .bind(&uid)
+    .bind(&uid)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!((error, attempts, copies), (None, 0, 0));
+    assert!(ews.created().is_empty());
+}

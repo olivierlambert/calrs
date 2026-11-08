@@ -226,6 +226,10 @@ pub(super) struct EventTypeForm {
     pub(super) team_id: Option<String>,
     // Calendar selection (comma-separated IDs)
     calendar_ids: Option<String>,
+    // Where the editor's confirmed bookings of this event type are written
+    // (#47): a calendar id, or empty for the source setting. Absent when the
+    // form did not show the field, which leaves the stored choice alone.
+    pub(super) write_calendar_id: Option<String>,
     pub(super) resource_ids: Option<String>,
     resource_scheduling_mode: Option<String>,
     // Reminder
@@ -588,6 +592,7 @@ pub(super) async fn new_event_type_form(
             teams => groups_ctx,
             calendars => calendars_ctx,
             selected_calendar_ids => "",
+            write_destination => destination_form_ctx(&state.pool, &user.id, auth_user.lang, None, "").await,
             resources_all => resources_all,
             can_manage_resources => auth_user.user.role == "admin",
             can_enable_sms => can_enable_sms(&state.pool, &auth_user.user).await,
@@ -726,6 +731,25 @@ pub(super) async fn create_event_type(
             &state,
             &auth_user,
             &crate::i18n::translate(auth_user.lang, "form-error-location-required", None),
+            &form,
+            FormTarget::NewPersonal,
+        )
+        .await
+        .into_response();
+    }
+
+    if !acceptable_destination(
+        &state.pool,
+        &user.id,
+        None,
+        form.write_calendar_id.as_deref().unwrap_or("").trim(),
+    )
+    .await
+    {
+        return render_event_type_form_error(
+            &state,
+            &auth_user,
+            &crate::i18n::translate(auth_user.lang, "write-destination-not-yours", None),
             &form,
             FormTarget::NewPersonal,
         )
@@ -924,6 +948,12 @@ pub(super) async fn create_event_type(
 
     // Save booking frequency limits
     save_frequency_limits(&state.pool, &et_id, &form.frequency_limits).await;
+
+    // The creator's own destination. On a team event type it only covers
+    // the bookings they host; a creator who is not a member hosts none.
+    if let Some(calendar_id) = form.write_calendar_id.as_deref() {
+        let _ = set_destination(&state.pool, &user.id, &et_id, calendar_id).await;
+    }
 
     save_event_type_resources_authorized(
         &state.pool,
@@ -1187,6 +1217,14 @@ pub(super) async fn edit_event_type_form(
             original_slug => et_slug,
             calendars => calendars_ctx,
             selected_calendar_ids => selected_calendar_ids,
+            write_destination => destination_form_ctx(
+                &state.pool,
+                &user.id,
+                auth_user.lang,
+                Some(&et_id),
+                &stored_destination(&state.pool, &et_id, &user.id).await.unwrap_or_default(),
+            )
+            .await,
             resources_all => resources_all,
             can_manage_resources => auth_user.user.role == "admin",
             can_enable_sms => can_enable_sms(&state.pool, &auth_user.user).await,
@@ -1382,6 +1420,28 @@ pub(super) async fn update_event_type(
         .into_response();
     }
 
+    if !acceptable_destination(
+        &state.pool,
+        &user.id,
+        Some(&et_id),
+        form.write_calendar_id.as_deref().unwrap_or("").trim(),
+    )
+    .await
+    {
+        return render_event_type_form_error(
+            &state,
+            &auth_user,
+            &crate::i18n::translate(auth_user.lang, "write-destination-not-yours", None),
+            &form,
+            FormTarget::EditPersonal {
+                et_id: &et_id,
+                slug: &slug,
+            },
+        )
+        .await
+        .into_response();
+    }
+
     if let Some(err) = google_meet_location_error(
         &state.pool,
         location_type,
@@ -1549,6 +1609,10 @@ pub(super) async fn update_event_type(
         .execute(&state.pool)
         .await;
     save_frequency_limits(&state.pool, &et_id, &form.frequency_limits).await;
+
+    if let Some(calendar_id) = form.write_calendar_id.as_deref() {
+        let _ = set_destination(&state.pool, &user.id, &et_id, calendar_id).await;
+    }
 
     save_event_type_resources_authorized(
         &state.pool,
@@ -2154,6 +2218,30 @@ async fn render_event_type_form_error(
         }
         _ => Vec::new(),
     };
+    // The destination the form posted, so a resubmit keeps it.
+    let write_destination = match target {
+        FormTarget::NewPersonal => {
+            destination_form_ctx(
+                pool,
+                &user.id,
+                auth_user.lang,
+                None,
+                form.write_calendar_id.as_deref().unwrap_or(""),
+            )
+            .await
+        }
+        FormTarget::EditPersonal { et_id, .. } => {
+            destination_form_ctx(
+                pool,
+                &user.id,
+                auth_user.lang,
+                Some(et_id),
+                form.write_calendar_id.as_deref().unwrap_or(""),
+            )
+            .await
+        }
+        _ => None,
+    };
     // The stored slug: what the member priority buttons post to, since they
     // save at once, before the form (and its possibly changed slug) is saved.
     let original_slug = match target {
@@ -2271,6 +2359,7 @@ async fn render_event_type_form_error(
             priority_members => priority_members,
             calendars => calendars,
             selected_calendar_ids => form.calendar_ids.as_deref().unwrap_or(""),
+            write_destination => write_destination,
             owner_username => user.username.as_deref().unwrap_or(""),
             original_slug => original_slug,
             form_member_priorities => form.member_priorities.as_str(),
@@ -3786,7 +3875,7 @@ const SQL_UUID_V4: &str = "lower(hex(randomblob(4))) || '-' || lower(hex(randomb
 
 /// Child tables copied along with an event type: table, the columns after
 /// `event_type_id`, and whether rows carry their own `id` (minted fresh).
-const COPIED_CHILD_TABLES: [(&str, &str, bool); 7] = [
+const COPIED_CHILD_TABLES: [(&str, &str, bool); 8] = [
     (
         "availability_rules",
         "day_of_week, start_time, end_time",
@@ -3806,6 +3895,7 @@ const COPIED_CHILD_TABLES: [(&str, &str, bool); 7] = [
     ("event_type_member_weights", "user_id, weight", false),
     ("event_type_watchers", "team_id", false),
     ("event_type_resources", "resource_id", false),
+    ("event_type_write_targets", "user_id, calendar_id", false),
 ];
 
 type Tx<'a> = sqlx::Transaction<'a, sqlx::Sqlite>;

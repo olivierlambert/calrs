@@ -48,6 +48,8 @@ They support the same options as personal event types:
 - Calendar selection, location, confirmation mode
 - Invite links (for private event types)
 
+Where a team booking is written is each member's own choice: the booking lands in the assigned member's calendar (every member's for collective), so every member picks, under **Calendar sources > Bookings by event type**, which of their calendars receives the bookings of each team event type they belong to. Without a choice, the write calendar of their sources is used. See [CalDAV write-back](./caldav.md#per-event-type-write-confirmed-bookings-to).
+
 Additional team-specific options:
 
 - **Scheduling mode** — round-robin or collective (see below)

@@ -27,7 +27,16 @@
   .source-write-calendar { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
   .source-write-calendar label { font-size: 12.5px; color: var(--text-muted); }
   .source-write-calendar select { flex: 1; min-width: 0; max-width: 300px; height: 1.75rem; padding: 0 0.5rem; border: 1px solid var(--border-hover); border-radius: var(--r-control); font-size: 13px; font-family: inherit; background: var(--surface); color: var(--text); }
+  .dest-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 1rem; padding: 0.6rem 0; border-bottom: 1px solid var(--rule); }
+  .dest-row label { flex: 1 1 14rem; min-width: 0; overflow-wrap: anywhere; font-size: 14px; }
+  .dest-row .dest-team { color: var(--text-muted); font-size: 12.5px; }
+  .dest-row select { flex: 0 1 300px; min-width: 0; height: 1.75rem; padding: 0 0.5rem; border: 1px solid var(--border-hover); border-radius: var(--r-control); font-size: 13px; font-family: inherit; background: var(--surface); color: var(--text); }
+  .dest-refused { flex-basis: 100%; margin: 0; color: var(--error-text); font-size: 12.5px; line-height: 1.5; overflow-wrap: anywhere; }
+  .dest-help { color: var(--text-muted); font-size: 13px; line-height: 1.55; margin: 0 0 0.5rem; max-width: 60rem; }
+  .dest-actions { margin-top: 0.75rem; }
   @media (max-width: 600px) {
+    .dest-row { flex-direction: column; align-items: stretch; }
+    .dest-row select { flex: auto; width: 100%; min-height: 44px; font-size: 1rem; }
     .source-summary { flex-direction: column; align-items: stretch; }
     .source-details { flex-basis: auto; }
     .source-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -120,4 +129,31 @@
     <p class="empty-line">{{ t("sources-empty", link='<a href="/dashboard/sources/new">' ~ (t("sources-empty-link-label") | escape) ~ '</a>') | safe }}</p>
   {% endif %}
 </section>
+{% if destinations %}
+<section class="sec" id="destinations" aria-labelledby="dest-title">
+  <div class="sec-h"><h2 id="dest-title">{{ t("sources-destinations-heading") }}</h2></div>
+  <p class="dest-help">{{ t("sources-destinations-help") }}</p>
+  {% if destinations_status == "saved" %}
+  <div class="notice notice--success" role="status" style="margin-bottom: 0.5rem;">{{ t("sources-destinations-saved") }}</div>
+  {% elif destinations_status == "refused" %}
+  <div class="notice notice--warning" role="alert" style="margin-bottom: 0.5rem;">{{ ic.icon("alert", 14) }}<span>{{ t("write-destination-not-yours") }}</span></div>
+  {% endif %}
+  <form method="post" action="/dashboard/sources/destinations">
+    {% for et in destinations %}
+    <div class="dest-row">
+      <label for="dest-{{ et.id }}">{{ et.title }}{% if et.team %} <span class="dest-team">{{ et.team }}</span>{% endif %}</label>
+      <select id="dest-{{ et.id }}" name="et_{{ et.id }}">
+        <option value="">{{ t("etf-write-destination-default") }}</option>
+        {% if et.unavailable %}<option value="{{ et.unavailable.id }}" selected>{{ et.unavailable.name }}</option>{% endif %}
+        {% for cal in destination_calendars %}
+        <option value="{{ cal.id }}" {% if cal.id == et.selected %}selected{% endif %}>{{ cal.name }}</option>
+        {% endfor %}
+      </select>
+      {% if et.refused %}<p class="dest-refused">{{ ic.icon("alert", 13) }} {{ t("write-destination-refused", error=et.refused) }}</p>{% endif %}
+    </div>
+    {% endfor %}
+    <div class="dest-actions"><button type="submit" class="ui-btn ui-btn--sm ui-btn--primary">{{ t("source-calendars-save") }}</button></div>
+  </form>
+</section>
+{% endif %}
 {% endblock %}
