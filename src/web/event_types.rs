@@ -116,6 +116,17 @@ pub(super) async fn can_manage_event_type(
     if user.role == "admin" {
         return true;
     }
+    owns_or_admins_team_of(pool, &user.id, event_type_id).await
+}
+
+/// The owner of a personal event type, or an admin of its team. No global
+/// admin bypass: MCP tokens use this, so an admin's integration reaches only
+/// what the admin would manage as an ordinary user.
+pub(super) async fn owns_or_admins_team_of(
+    pool: &SqlitePool,
+    user_id: &str,
+    event_type_id: &str,
+) -> bool {
     sqlx::query_scalar::<_, i64>(
         "SELECT COUNT(*) FROM event_types et
          LEFT JOIN accounts a ON a.id = et.account_id
@@ -125,9 +136,9 @@ pub(super) async fn can_manage_event_type(
              (et.team_id IS NOT NULL AND tm.user_id IS NOT NULL)
          )",
     )
-    .bind(&user.id)
+    .bind(user_id)
     .bind(event_type_id)
-    .bind(&user.id)
+    .bind(user_id)
     .fetch_one(pool)
     .await
     .unwrap_or(0)

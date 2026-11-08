@@ -828,3 +828,78 @@ fn user_list_state_reads_its_own_query_string_back() {
     assert!(UserListState::from_query_string("us=last").desc);
     assert!(!UserListState::from_query_string("us=name").desc);
 }
+
+#[tokio::test]
+async fn revoking_connected_apps_from_a_server_side_page_returns_to_it() {
+    let (app, pool, session, _) = setup_test_app().await;
+    add_members(&pool, 120).await;
+    let target: String =
+        sqlx::query_scalar("SELECT id FROM users WHERE email = 'member001@example.com'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    sqlx::query("INSERT INTO oauth_clients (id, name, redirect_uris, created_at) VALUES ('c1', 'Client', '[]', 0)")
+        .execute(&pool)
+        .await
+        .unwrap();
+    for grant in ["g1", "g2"] {
+        sqlx::query("INSERT INTO oauth_grants (id, client_id, user_id, resource, scope, expires_at, created_at) VALUES (?, 'c1', ?, 'https://cal.example/mcp', 'calendar:read', 9999999999, 0)")
+            .bind(grant)
+            .bind(&target)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO oauth_credentials (hash, grant_id, kind, expires_at) VALUES (?, ?, 'refresh', 9999999999)")
+            .bind(format!("hash-{grant}"))
+            .bind(grant)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    // Server mode: the count is shown for the listed user, with the list
+    // state carried by the form.
+    let body = body_string(
+        app.clone()
+            .oneshot(get_authed("/dashboard/admin?uq=member001", &session))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(body.contains("Revoke connected apps (2)"), "count shown");
+    let action = format!(
+        "action=\"/dashboard/admin/users/{target}/revoke-apps\"><input type=\"hidden\" name=\"back\" value=\"uq=member001\">"
+    );
+    assert!(body.replace("&#x2f;", "/").contains(&action), "back field");
+
+    let response = app
+        .clone()
+        .oneshot(post_form(
+            &format!("/dashboard/admin/users/{target}/revoke-apps"),
+            &session,
+            "c",
+            "_csrf=c&back=uq%3Dmember001%26up%3D1",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), axum::http::StatusCode::SEE_OTHER);
+    assert_eq!(
+        response.headers()["location"],
+        "/dashboard/admin?uq=member001#users"
+    );
+    let left: i64 = sqlx::query_scalar(
+        "SELECT (SELECT COUNT(*) FROM oauth_grants) + (SELECT COUNT(*) FROM oauth_credentials)",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(left, 0);
+    let body = body_string(
+        app.clone()
+            .oneshot(get_authed("/dashboard/admin?uq=member001", &session))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(!body.contains("Revoke connected apps"));
+}

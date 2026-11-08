@@ -1881,6 +1881,7 @@ mfa-restart = Retour à la connexion
 mfa-manage = Gérer l’authentification à deux facteurs
 mfa-recovery-help = Conservez ces codes de récupération en lieu sûr. Ils ne sont affichés qu’une fois. Chaque code remplace un code de votre application pour une seule utilisation. Les nouveaux codes remplacent tous les anciens.
 mfa-continue = Continuer vers le tableau de bord
+mfa-continue-consent = Continuer vers la page d'autorisation
 mfa-enabled = L’authentification à deux facteurs est activée.
 mfa-disabled = L’authentification à deux facteurs est désactivée.
 mfa-required-help = Votre administrateur impose l’authentification à deux facteurs aux comptes locaux. Vous ne pouvez pas la désactiver.
@@ -1974,6 +1975,29 @@ pager-previous = Précédent
 pager-next = Suivant
 admin-users-search = Rechercher
 admin-figures-cached = Chiffres des réservations calculés il y a { $seconds } s.
+
+# OAuth connection consent (templates/auth/consent.html)
+oauth-title = Connecter une application
+oauth-intro = Autoriser cette application à accéder à calrs en tant que { $email } ? Le nom de l'application est fourni par son développeur. Vérifiez l'adresse de retour avant d'autoriser l'accès.
+oauth-events = Consulter les types d'événements auxquels vous avez accès
+oauth-blocks = Consulter vos plages occupées
+oauth-invites = Créer des liens d'invitation avec vos autorisations
+oauth-allow = Autoriser l'accès
+oauth-deny = Refuser
+
+# Connected apps (templates/dashboard_apps.html, admin user menu)
+
+apps-page-title = Applications connectées
+apps-heading = Applications connectées
+apps-subtitle = Les applications que vous avez autorisées à agir en votre nom, comme les assistants IA connectés par MCP. En révoquer une coupe son accès immédiatement.
+apps-approved = Autorisée le { $date }
+apps-last-used = Dernière utilisation le { $date }
+apps-never-used = Pas encore utilisée
+apps-revoke = Révoquer
+apps-revoke-confirm = Révoquer l'accès de { $name } ? L'application devra être autorisée à nouveau pour se reconnecter.
+apps-revoked = Accès révoqué.
+apps-empty = Aucune application connectée. Un client MCP demande votre autorisation la première fois qu'il se connecte.
+admin-revoke-apps = Révoquer les applications connectées ({ $count })
 
 # Write destination per event type (#47)
 etf-write-destination = Écrire les réservations confirmées dans

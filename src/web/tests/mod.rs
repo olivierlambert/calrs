@@ -24,6 +24,8 @@ mod guards;
 mod guest_footer;
 mod hosts;
 mod invites;
+mod mcp;
+mod oauth;
 mod organizer;
 mod overview_stats;
 mod page_language;

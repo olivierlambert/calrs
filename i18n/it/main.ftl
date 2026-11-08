@@ -1881,6 +1881,7 @@ mfa-restart = Torna all’accesso
 mfa-manage = Gestisci l’autenticazione a due fattori
 mfa-recovery-help = Conserva questi codici di recupero in un luogo sicuro. Vengono mostrati una sola volta. Ogni codice sostituisce un codice dell’app per un solo utilizzo. I nuovi codici sostituiscono tutti quelli precedenti.
 mfa-continue = Continua alla dashboard
+mfa-continue-consent = Continua alla pagina di approvazione
 mfa-enabled = L’autenticazione a due fattori è attiva.
 mfa-disabled = L’autenticazione a due fattori è disattivata.
 mfa-required-help = Il tuo amministratore richiede l’autenticazione a due fattori per gli account locali. Non puoi disattivarla.
@@ -1974,6 +1975,29 @@ pager-previous = Precedente
 pager-next = Successiva
 admin-users-search = Cerca
 admin-figures-cached = Dati delle prenotazioni calcolati { $seconds } s fa.
+
+# OAuth connection consent (templates/auth/consent.html)
+oauth-title = Collega un’applicazione
+oauth-intro = Consentire a questa applicazione di accedere a calrs come { $email }? Il nome è fornito dallo sviluppatore. Controlla l’indirizzo di callback prima di approvare.
+oauth-events = Leggere i tipi di evento a cui hai accesso
+oauth-blocks = Leggere gli orari occupati del tuo calendario
+oauth-invites = Creare link di invito con i tuoi permessi
+oauth-allow = Consenti accesso
+oauth-deny = Rifiuta
+
+# Connected apps (templates/dashboard_apps.html, admin user menu)
+
+apps-page-title = App collegate
+apps-heading = App collegate
+apps-subtitle = Le applicazioni che hai autorizzato ad agire a tuo nome, come gli assistenti IA collegati tramite MCP. Revocarne una ne blocca subito l'accesso.
+apps-approved = Approvata il { $date }
+apps-last-used = Ultimo utilizzo il { $date }
+apps-never-used = Non ancora utilizzata
+apps-revoke = Revoca
+apps-revoke-confirm = Revocare l'accesso di { $name }? L'applicazione dovrà essere approvata di nuovo per ricollegarsi.
+apps-revoked = Accesso revocato.
+apps-empty = Nessuna applicazione collegata. Un client MCP chiede la tua approvazione la prima volta che si collega.
+admin-revoke-apps = Revoca app collegate ({ $count })
 
 # Write destination per event type (#47)
 etf-write-destination = Scrivi le prenotazioni confermate in
