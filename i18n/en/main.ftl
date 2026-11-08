@@ -508,6 +508,29 @@ bookings-back = Back
 bookings-empty = No upcoming bookings yet.<br>Share your { $link } so people can book time with you.
 bookings-empty-link-label = event type links
 bookings-search-placeholder = Search guests, emails or meetings
+bookings-recent = Last 30 days
+
+# Host notes on a booking (templates/booking_notes.html, bookings page, overview, host emails)
+
+host-notes-title = Host notes
+host-notes-hint = Seen by the hosts of this booking, a team member who claimed it, and an admin while acting as one of its hosts. Never shown to the guest, and never added to the invite or the calendar event.
+host-notes-placeholder = For example: what was said on a call, what to prepare.
+host-notes-save = Save notes
+host-notes-saved = Notes saved.
+host-notes-too-long = Host notes can be at most { $max } characters long.
+host-notes-conflict = These notes were changed after this page was opened. The saved version is shown below; saving again replaces it with the text in the field.
+host-notes-current = Saved version:
+host-notes-last-edit = Last edited by { $name }, { $when }
+host-notes-last-edit-anon = Last edited { $when }
+host-notes-edit = Edit note
+host-notes-marker = Host note
+host-notes-cleared = (cleared)
+host-notes-last-edit-as = Last edited by { $name } (admin, as { $host }), { $when }
+dash-not-found-title = Not found
+dash-not-found-body = This page does not exist, or this account cannot see it.
+host-notes-from-guest = From the guest:
+bookings-host-notes = Host notes:
+email-detail-host-notes = Host notes:
 
 # Dashboard teams listing (templates/dashboard_teams.html)
 
@@ -1049,6 +1072,9 @@ etf-vis-internal = Internal
 etf-reminder = Booking reminder
 etf-reminder-none = No reminder
 etf-reminder-help = Send a reminder email to both you and your guest before the meeting.
+etf-guest-footer = Email footer
+etf-guest-footer-placeholder = e.g. Questions? Phone: +1 555 0100
+etf-guest-footer-help = Added at the end of every email the guest receives about this booking, in every language. Replaces the default footer set by the admin. Bold, italic and links only.
 etf-dynamic-group = Dynamic Group Link
 etf-dynamic-group-help = Create an ad-hoc meeting link that checks availability for you and other users.
 etf-dynamic-group-search = Search for a user to add...
@@ -1324,6 +1350,13 @@ admin-sms-clear-confirm = Delete the database SMS configuration?
 admin-sms-allow-all = Let any user enable SMS on their event types
 admin-sms-allow-all-help = Off by default: SMS spends credit on the account configured here, so only admins may switch an event type into an SMS mode.
 admin-save-policy = Save policy
+admin-guest-footer = Guest email footer
+admin-guest-footer-help = A short text added at the end of every email sent to guests and attendees: confirmations, reminders, cancellations and so on. Emails to the host, and to a team member who claimed the booking, are not changed.
+admin-guest-footer-default = Default footer
+admin-guest-footer-default-help = Used when an event type has no footer of its own. The same text is sent in every language. Bold, italic and links only.
+admin-guest-footer-allow-all = Let all users set a footer on their own event types
+admin-guest-footer-allow-all-help = Off by default: the footer goes out under this instance's name, so only admins may write one. A footer set on an event type replaces the default above.
+admin-save-guest-footer = Save footer
 admin-page-of = Page %1 of %2
 admin-show-more-js = Show %1 more
 admin-show-fewer = Show fewer
@@ -1620,6 +1653,7 @@ validate-email-length = Email must be between 1 and 255 characters.
 validate-email-invalid = Please enter a valid email address.
 validate-notes-length = Notes must be 5000 characters or less.
 validate-date-too-far = Cannot book more than one year in advance.
+validate-guest-footer-too-long = The email footer must be 500 characters or less.
 
 # Additional guests and dynamic group links (src/web/mod.rs)
 
@@ -1895,6 +1929,53 @@ directory-empty = No meetings found. Try another search.
 directory-favorites-empty = No favorites found. Star meetings in the directory to see them here.
 directory-with-hosts = With { $names }
 
+# Time off (templates/time_off.html, src/web/time_off.rs, troubleshoot view)
+
+nav-time-off = Time off
+time-off-page-title = Time off
+time-off-heading = Time off
+time-off-subtitle = Periods when you take no bookings. Every event type you host follows them, personal and team. Guests only see that those times are not available.
+time-off-upcoming = Planned
+time-off-empty = No time off planned.
+time-off-kept-notice = Bookings already made in a period are kept: adding time off cancels nothing. Cancel or reschedule them from Bookings if you need to.
+time-off-pending-notice = Requests waiting for your approval inside a period can no longer be approved: decline them, or delete the time off first.
+time-off-in-progress = In progress
+time-off-entered-in = Entered in { $timezone }
+time-off-delete = Delete
+time-off-delete-confirm = Delete this time off? Its times become bookable again.
+time-off-add-heading = Add time off
+time-off-from = From
+time-off-to = To
+time-off-time-optional = Time (optional)
+time-off-times-help = Leave the times empty to block whole days, both dates included. Times are in your time zone, { $timezone }.
+time-off-label = Note (optional)
+time-off-label-help = Only you see it, here and in Troubleshoot. Guests and teammates never do.
+time-off-add-submit = Add time off
+time-off-added = Time off added.
+time-off-deleted = Time off deleted.
+time-off-range = { $start } to { $end }
+time-off-at = { $date }, { $time }
+time-off-same-day = { $date }, { $start } to { $end }
+time-off-from-time = { $date }, from { $time }
+time-off-until-time = { $date }, until { $time }
+time-off-impersonating = You are viewing this page as { $name }. Time off is read-only for you here, and the notes are hidden.
+time-off-error-date = Enter the dates as YYYY-MM-DD and the times as HH:MM.
+time-off-error-order = The end must be after the start.
+time-off-error-too-long = A period can be at most a year long.
+time-off-error-past = This period has already ended.
+time-off-error-label = The note can be at most 200 characters.
+time-off-error-too-many = You already have 100 periods planned. Delete some before adding more.
+time-off-hint = To block dates on every event type at once, use { $link }.
+troubleshoot-label-time-off = Time off
+troubleshoot-legend-time-off = Time off
+
+directory-all-favorites = All favorites
+pager-label = Pages
+pager-range = { $from } to { $to } of { $total }
+pager-previous = Previous
+pager-next = Next
+admin-users-search = Search
+admin-figures-cached = Booking figures computed { $seconds } s ago.
 # Booking webhooks (templates/webhooks.html, admin card, #168)
 webhooks-title = Webhooks
 webhooks-back = Back to event types

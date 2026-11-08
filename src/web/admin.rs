@@ -18,6 +18,319 @@ pub(crate) fn is_safe_company_link(url: &str) -> bool {
     lower.starts_with("http://") || lower.starts_with("https://")
 }
 
+// --- Users tab: listing ---
+
+/// Up to this many users, the Users tab renders everyone and the browser
+/// filters, sorts and pages them, as it always has. Past it, the server
+/// does all three and renders one page: 2,000 rows with their action menus
+/// were 6.6 MB of HTML (#343).
+pub(super) const USERS_INLINE_MAX: i64 = 100;
+/// Rows per page, the same as the browser-side pages.
+pub(super) const USERS_PAGE_SIZE: i64 = 25;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum UserFilter {
+    All,
+    Admin,
+    Disabled,
+    Local,
+    Oidc,
+    Never,
+}
+
+impl UserFilter {
+    const ALL: [UserFilter; 6] = [
+        UserFilter::All,
+        UserFilter::Admin,
+        UserFilter::Disabled,
+        UserFilter::Local,
+        UserFilter::Oidc,
+        UserFilter::Never,
+    ];
+
+    fn key(self) -> &'static str {
+        match self {
+            UserFilter::All => "all",
+            UserFilter::Admin => "admin",
+            UserFilter::Disabled => "disabled",
+            UserFilter::Local => "local",
+            UserFilter::Oidc => "oidc",
+            UserFilter::Never => "never",
+        }
+    }
+
+    /// The rows it keeps, the same ones as the browser-side chips.
+    fn sql(self) -> &'static str {
+        match self {
+            UserFilter::All => "1",
+            UserFilter::Admin => "role = 'admin'",
+            UserFilter::Disabled => "enabled = 0",
+            UserFilter::Local => "auth_provider = 'local'",
+            UserFilter::Oidc => "auth_provider = 'oidc'",
+            UserFilter::Never => "last_login_at IS NULL",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum UserSort {
+    Created,
+    Name,
+    Role,
+    Provider,
+    Last,
+}
+
+impl UserSort {
+    const ALL: [UserSort; 5] = [
+        UserSort::Created,
+        UserSort::Name,
+        UserSort::Role,
+        UserSort::Provider,
+        UserSort::Last,
+    ];
+
+    fn key(self) -> &'static str {
+        match self {
+            UserSort::Created => "created",
+            UserSort::Name => "name",
+            UserSort::Role => "role",
+            UserSort::Provider => "provider",
+            UserSort::Last => "last",
+        }
+    }
+
+    /// Dates read best newest first; names and roles A to Z.
+    fn default_desc(self) -> bool {
+        matches!(self, UserSort::Created | UserSort::Last)
+    }
+
+    /// `ORDER BY` for this column. Users who never signed in sort last
+    /// whichever the direction, as in the browser.
+    fn order_by(self, desc: bool) -> &'static str {
+        match (self, desc) {
+            (UserSort::Created, false) => "created_at, id",
+            (UserSort::Created, true) => "created_at DESC, id",
+            (UserSort::Name, false) => "name COLLATE NOCASE, created_at, id",
+            (UserSort::Name, true) => "name COLLATE NOCASE DESC, created_at, id",
+            (UserSort::Role, false) => "role = 'admin' DESC, created_at, id",
+            (UserSort::Role, true) => "role = 'admin', created_at, id",
+            (UserSort::Provider, false) => "auth_provider, created_at, id",
+            (UserSort::Provider, true) => "auth_provider DESC, created_at, id",
+            (UserSort::Last, false) => "last_login_at IS NULL, last_login_at, id",
+            (UserSort::Last, true) => "last_login_at IS NULL, last_login_at DESC, id",
+        }
+    }
+}
+
+/// The server-side Users list as carried in the URL: `uq` (search), `uf`
+/// (filter chip), `us` and `ud` (sort column and direction), `up` (page).
+/// Anything unknown falls back to the default, never to an error.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct UserListState {
+    pub q: String,
+    pub filter: UserFilter,
+    /// `None` is the creation order, as the list has always opened.
+    pub sort: Option<UserSort>,
+    pub desc: bool,
+    pub page: i64,
+}
+
+impl UserListState {
+    pub(super) fn from_params<'a>(get: impl Fn(&str) -> Option<&'a str>) -> Self {
+        let filter = get("uf")
+            .and_then(|v| UserFilter::ALL.into_iter().find(|f| f.key() == v))
+            .unwrap_or(UserFilter::All);
+        let sort = get("us").and_then(|v| UserSort::ALL.into_iter().find(|s| s.key() == v));
+        let desc = match get("ud") {
+            Some("desc") => true,
+            Some("asc") => false,
+            _ => sort.is_some_and(UserSort::default_desc),
+        };
+        Self {
+            q: listing::bounded_search(get("uq").unwrap_or_default()),
+            filter,
+            sort,
+            desc: sort.is_some() && desc,
+            page: listing::lenient_page(get("up")),
+        }
+    }
+
+    /// Parse a stored query string (the `back` field of the action forms).
+    pub(super) fn from_query_string(raw: &str) -> Self {
+        let pairs: Vec<(String, String)> = raw
+            .trim_start_matches('?')
+            .split('&')
+            .filter_map(|pair| {
+                let (k, v) = pair.split_once('=').unwrap_or((pair, ""));
+                let decode = |s: &str| {
+                    urlencoding::decode(&s.replace('+', " "))
+                        .map(|c| c.into_owned())
+                        .ok()
+                };
+                Some((decode(k)?, decode(v)?))
+            })
+            .collect();
+        Self::from_params(|key| {
+            pairs
+                .iter()
+                .find(|(k, _)| k == key)
+                .map(|(_, v)| v.as_str())
+        })
+    }
+
+    /// The canonical query string, defaults left out, for `page`.
+    pub(super) fn query_string(&self, page: i64) -> String {
+        let mut params = Vec::new();
+        if !self.q.is_empty() {
+            params.push(format!("uq={}", urlencoding::encode(&self.q)));
+        }
+        if self.filter != UserFilter::All {
+            params.push(format!("uf={}", self.filter.key()));
+        }
+        if let Some(sort) = self.sort {
+            params.push(format!("us={}", sort.key()));
+            params.push(format!("ud={}", if self.desc { "desc" } else { "asc" }));
+        }
+        if page > 1 {
+            params.push(format!("up={page}"));
+        }
+        params.join("&")
+    }
+
+    /// `/dashboard/admin` on this list's page, its Users tab open.
+    pub(super) fn href(&self, page: i64) -> String {
+        let qs = self.query_string(page);
+        if qs.is_empty() {
+            "/dashboard/admin#users".to_string()
+        } else {
+            format!("/dashboard/admin?{qs}#users")
+        }
+    }
+
+    fn with_filter(&self, filter: UserFilter) -> Self {
+        Self {
+            filter,
+            page: 1,
+            ..self.clone()
+        }
+    }
+
+    /// The header link: the same column flips the direction, another one
+    /// starts in its natural direction.
+    fn with_sort(&self, sort: UserSort) -> Self {
+        let desc = if self.sort == Some(sort) {
+            !self.desc
+        } else {
+            sort.default_desc()
+        };
+        Self {
+            sort: Some(sort),
+            desc,
+            page: 1,
+            ..self.clone()
+        }
+    }
+
+    fn aria_sort(&self, sort: UserSort) -> &'static str {
+        match (self.sort == Some(sort), self.desc) {
+            (false, _) => "none",
+            (true, false) => "ascending",
+            (true, true) => "descending",
+        }
+    }
+}
+
+type UserRow = (
+    String,
+    String,
+    String,
+    String,
+    String,
+    bool,
+    Option<String>,
+    String,
+    bool,
+);
+
+const USER_COLUMNS: &str =
+    "SELECT id, name, email, role, auth_provider, enabled, last_login_at, created_at,
+        EXISTS (SELECT 1 FROM user_mfa m WHERE m.user_id = users.id)
+ FROM users";
+
+fn push_user_filter(qb: &mut sqlx::QueryBuilder<'_, sqlx::Sqlite>, state: &UserListState) {
+    qb.push(" WHERE ");
+    qb.push(state.filter.sql());
+    if !state.q.is_empty() {
+        let pattern = listing::ci_glob(&state.q);
+        qb.push(" AND (name GLOB ");
+        qb.push_bind(pattern.clone());
+        qb.push(" OR email GLOB ");
+        qb.push_bind(pattern);
+        qb.push(")");
+    }
+}
+
+/// One page of the server-side Users list and how many users match it.
+async fn user_list_page(
+    pool: &SqlitePool,
+    state: &UserListState,
+) -> Result<(Vec<UserRow>, i64, i64), sqlx::Error> {
+    let mut count = sqlx::QueryBuilder::new("SELECT COUNT(*) FROM users");
+    push_user_filter(&mut count, state);
+    let matched: i64 = count.build_query_scalar().fetch_one(pool).await?;
+    let page = listing::clamp_page(state.page, matched, USERS_PAGE_SIZE);
+    let mut select = sqlx::QueryBuilder::new(USER_COLUMNS);
+    push_user_filter(&mut select, state);
+    select.push(" ORDER BY ");
+    select.push(
+        state
+            .sort
+            .map(|s| s.order_by(state.desc))
+            .unwrap_or("created_at, id"),
+    );
+    select.push(" LIMIT ");
+    select.push_bind(USERS_PAGE_SIZE);
+    select.push(" OFFSET ");
+    select.push_bind((page - 1) * USERS_PAGE_SIZE);
+    let rows: Vec<UserRow> = select.build_query_as().fetch_all(pool).await?;
+    Ok((rows, matched, page))
+}
+
+/// Where a user action returns: the server-side list page it was taken
+/// from (rebuilt from its parsed parameters, never echoed), else the panel.
+fn admin_users_return(back: Option<&str>, error: Option<&str>) -> String {
+    let error = error.map(|e| format!("error={}", urlencoding::encode(e)));
+    // No field at all: the browser-side list, which keeps its own tab. An
+    // empty one is the server-side list in its default state.
+    let Some(back) = back else {
+        return match error {
+            Some(error) => format!("/dashboard/admin?{error}"),
+            None => "/dashboard/admin".to_string(),
+        };
+    };
+    let state = UserListState::from_query_string(back);
+    let qs = [error, Some(state.query_string(state.page))]
+        .into_iter()
+        .flatten()
+        .filter(|p| !p.is_empty())
+        .collect::<Vec<_>>()
+        .join("&");
+    if qs.is_empty() {
+        "/dashboard/admin#users".to_string()
+    } else {
+        format!("/dashboard/admin?{qs}#users")
+    }
+}
+
+#[derive(Deserialize)]
+pub(super) struct UserActionForm {
+    _csrf: Option<String>,
+    /// The server-side list state the action was taken from.
+    #[serde(default)]
+    back: Option<String>,
+}
+
 // --- Admin dashboard ---
 
 pub(super) async fn admin_dashboard(
@@ -162,33 +475,48 @@ pub(super) async fn admin_dashboard(
         });
     }
 
-    // Fetch all users
-    #[allow(clippy::type_complexity)]
-    let users: Vec<(
-        String,
-        String,
-        String,
-        String,
-        String,
-        bool,
-        Option<String>,
-        String,
-        bool,
-    )> = sqlx::query_as(
-        "SELECT id, name, email, role, auth_provider, enabled, last_login_at, created_at,
-                EXISTS (SELECT 1 FROM user_mfa m WHERE m.user_id = users.id)
-         FROM users ORDER BY created_at",
-    )
-    .fetch_all(&state.pool)
-    .await
-    .unwrap_or_default();
+    // Users. A small instance renders all of them for the browser-side
+    // list; a large one renders the requested page only.
+    let user_count: i64 = match sqlx::query_scalar("SELECT COUNT(*) FROM users")
+        .fetch_one(&state.pool)
+        .await
+    {
+        Ok(n) => n,
+        Err(e) => return internal_error_html("count users", &e),
+    };
+    let users_server = user_count > USERS_INLINE_MAX;
+    let mut users_list = UserListState::from_params(|k| query.get(k).map(String::as_str));
+    let (users, users_matched) = if users_server {
+        match user_list_page(&state.pool, &users_list).await {
+            Ok((rows, matched, page)) => {
+                users_list.page = page;
+                (rows, matched)
+            }
+            Err(e) => return internal_error_html("load users page", &e),
+        }
+    } else {
+        let rows: Vec<UserRow> = sqlx::query_as(&format!("{USER_COLUMNS} ORDER BY created_at"))
+            .fetch_all(&state.pool)
+            .await
+            .unwrap_or_default();
+        let matched = rows.len() as i64;
+        (rows, matched)
+    };
+    let users_pager = users_server
+        .then(|| {
+            listing::pager(users_list.page, users_matched, USERS_PAGE_SIZE, |n| {
+                users_list.href(n)
+            })
+        })
+        .flatten();
 
-    let user_count = users.len();
-
-    // Fetch groups per user
+    // Groups of the listed users only.
+    let user_ids: Vec<&str> = users.iter().map(|u| u.0.as_str()).collect();
     let user_groups_rows: Vec<(String, String)> = sqlx::query_as(
-        "SELECT ug.user_id, g.name FROM user_groups ug JOIN groups g ON g.id = ug.group_id ORDER BY g.name",
+        "SELECT ug.user_id, g.name FROM user_groups ug JOIN groups g ON g.id = ug.group_id
+         WHERE ug.user_id IN (SELECT value FROM json_each(?)) ORDER BY g.name",
     )
+    .bind(serde_json::to_string(&user_ids).unwrap_or_else(|_| "[]".to_string()))
     .fetch_all(&state.pool)
     .await
     .unwrap_or_default();
@@ -226,6 +554,32 @@ pub(super) async fn admin_dashboard(
             },
         )
         .collect();
+    let users_filter_hrefs: HashMap<&str, String> = UserFilter::ALL
+        .into_iter()
+        .map(|f| (f.key(), users_list.with_filter(f).href(1)))
+        .collect();
+    let users_sort_links: HashMap<&str, minijinja::Value> = UserSort::ALL
+        .into_iter()
+        .map(|s| {
+            (
+                s.key(),
+                context! {
+                    href => users_list.with_sort(s).href(1),
+                    aria => users_list.aria_sort(s),
+                },
+            )
+        })
+        .collect();
+    let users_list_ctx = context! {
+        q => users_list.q,
+        filter => users_list.filter.key(),
+        sort => users_list.sort.map(UserSort::key).unwrap_or_default(),
+        dir => if users_list.desc { "desc" } else { "asc" },
+        back => users_list.query_string(users_list.page),
+        filter_hrefs => users_filter_hrefs,
+        sort_links => users_sort_links,
+        search_max => listing::MAX_SEARCH_CHARS,
+    };
 
     // Fetch groups with member count
     let groups_rows: Vec<(String, String, i64)> = sqlx::query_as(
@@ -435,6 +789,23 @@ pub(super) async fn admin_dashboard(
         .await
         .unwrap_or(0);
 
+    let guest_footer_default: String = sqlx::query_scalar::<_, Option<String>>(
+        "SELECT guest_email_footer FROM auth_config WHERE id = 'singleton'",
+    )
+    .fetch_optional(&state.pool)
+    .await
+    .ok()
+    .flatten()
+    .flatten()
+    .unwrap_or_default();
+    let guest_footer_allow_all_users: bool = sqlx::query_scalar(
+        "SELECT guest_footer_allow_all_users FROM auth_config WHERE id = 'singleton'",
+    )
+    .fetch_optional(&state.pool)
+    .await
+    .unwrap_or(None)
+    .unwrap_or(false);
+
     // Flash banner after a test round-trip (?sms_test=sent|checked|error).
     let sms_test_result = query.get("sms_test").cloned().unwrap_or_default();
     let sms_test_detail = query.get("sms_test_detail").cloned().unwrap_or_default();
@@ -442,7 +813,14 @@ pub(super) async fn admin_dashboard(
     let week_start = week_start::user(&state.pool, &current_user.id)
         .await
         .effective();
-    let stats = admin_stats::load(&state.pool, Utc::now(), week_start, admin.lang).await;
+    let (stats, figures_age) = admin_stats::load_cached(
+        &state.pool,
+        &state.admin_figures,
+        Utc::now(),
+        week_start,
+        admin.lang,
+    )
+    .await;
     let base_url_set = crate::settings::base_url().is_some_and(|u| !u.is_empty());
     let attention = attention_items(&AttentionInputs {
         stats: &stats,
@@ -527,6 +905,11 @@ pub(super) async fn admin_dashboard(
             current_user_id => current_user.id,
             users => users_ctx,
             user_count => user_count,
+            users_server => users_server,
+            users_matched => users_matched,
+            users_list => users_list_ctx,
+            users_pager => users_pager,
+            figures_age => figures_age.map(|age| age.max(1)),
             groups => groups_ctx,
             group_count => group_count,
             mfa_required => mfa_required,
@@ -571,6 +954,8 @@ pub(super) async fn admin_dashboard(
             sms_allow_all_users => sms_allow_all_users,
             webhooks_allow_all_users => webhooks_allow_all_users,
             webhook_count => webhook_count,
+            guest_footer_default => guest_footer_default,
+            guest_footer_allow_all_users => guest_footer_allow_all_users,
             sms_enabled => sms_enabled,
             sms_from_env => sms_from_env,
             sms_error => sms_error,
@@ -1143,13 +1528,9 @@ pub(super) async fn admin_test_write_resource(
 
 /// Back to the admin panel with the "last enabled admin" refusal, in the
 /// acting admin's language.
-fn admin_last_admin_refusal(lang: &str) -> Response {
+fn admin_last_admin_refusal(lang: &str, back: Option<&str>) -> Response {
     let message = crate::i18n::translate(lang, "admin-error-last-admin", None);
-    Redirect::to(&format!(
-        "/dashboard/admin?error={}",
-        urlencoding::encode(&message)
-    ))
-    .into_response()
+    Redirect::to(&admin_users_return(back, Some(&message))).into_response()
 }
 
 pub(super) async fn admin_toggle_role(
@@ -1157,9 +1538,9 @@ pub(super) async fn admin_toggle_role(
     admin: crate::auth::AdminUser,
     headers: HeaderMap,
     Path(user_id): Path<String>,
-    Form(csrf): Form<CsrfForm>,
+    Form(form): Form<UserActionForm>,
 ) -> impl IntoResponse {
-    if let Err(resp) = verify_csrf_token(&headers, &csrf._csrf) {
+    if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
         return resp;
     }
     let current_role: Option<String> = sqlx::query_scalar("SELECT role FROM users WHERE id = ?")
@@ -1168,7 +1549,7 @@ pub(super) async fn admin_toggle_role(
         .await
         .unwrap_or(None);
     let Some(role) = current_role else {
-        return Redirect::to("/dashboard/admin").into_response();
+        return Redirect::to(&admin_users_return(form.back.as_deref(), None)).into_response();
     };
     let make_admin = role != "admin";
     // The guard is part of the UPDATE, so two admins demoting each other at
@@ -1179,13 +1560,13 @@ pub(super) async fn admin_toggle_role(
         }
         Ok(crate::auth::AdminChange::LastAdmin) => {
             tracing::warn!(target_user = %user_id, admin = %admin.user.email, "admin: refused to demote the last enabled admin");
-            return admin_last_admin_refusal(admin.lang);
+            return admin_last_admin_refusal(admin.lang, form.back.as_deref());
         }
         Ok(crate::auth::AdminChange::NotFound) => {}
         Err(e) => return internal_error_response("admin role change", &e),
     }
 
-    Redirect::to("/dashboard/admin").into_response()
+    Redirect::to(&admin_users_return(form.back.as_deref(), None)).into_response()
 }
 
 pub(super) async fn admin_toggle_enabled(
@@ -1193,9 +1574,9 @@ pub(super) async fn admin_toggle_enabled(
     admin: crate::auth::AdminUser,
     headers: HeaderMap,
     Path(user_id): Path<String>,
-    Form(csrf): Form<CsrfForm>,
+    Form(form): Form<UserActionForm>,
 ) -> impl IntoResponse {
-    if let Err(resp) = verify_csrf_token(&headers, &csrf._csrf) {
+    if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
         return resp;
     }
     let current: Option<bool> = sqlx::query_scalar("SELECT enabled FROM users WHERE id = ?")
@@ -1204,7 +1585,7 @@ pub(super) async fn admin_toggle_enabled(
         .await
         .unwrap_or(None);
     let Some(enabled) = current else {
-        return Redirect::to("/dashboard/admin").into_response();
+        return Redirect::to(&admin_users_return(form.back.as_deref(), None)).into_response();
     };
     let new_enabled = !enabled;
     match crate::auth::set_user_enabled(&state.pool, &user_id, new_enabled).await {
@@ -1213,13 +1594,13 @@ pub(super) async fn admin_toggle_enabled(
         }
         Ok(crate::auth::AdminChange::LastAdmin) => {
             tracing::warn!(target_user = %user_id, admin = %admin.user.email, "admin: refused to disable the last enabled admin");
-            return admin_last_admin_refusal(admin.lang);
+            return admin_last_admin_refusal(admin.lang, form.back.as_deref());
         }
         Ok(crate::auth::AdminChange::NotFound) => {}
         Err(e) => return internal_error_response("admin user toggle", &e),
     }
 
-    Redirect::to("/dashboard/admin").into_response()
+    Redirect::to(&admin_users_return(form.back.as_deref(), None)).into_response()
 }
 
 pub(super) async fn admin_delete_user(
@@ -1227,9 +1608,9 @@ pub(super) async fn admin_delete_user(
     admin: crate::auth::AdminUser,
     headers: HeaderMap,
     Path(user_id): Path<String>,
-    Form(csrf): Form<CsrfForm>,
+    Form(form): Form<UserActionForm>,
 ) -> impl IntoResponse {
-    if let Err(resp) = verify_csrf_token(&headers, &csrf._csrf) {
+    if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
         return resp;
     }
     let admin_user = &admin.user;
@@ -1244,16 +1625,19 @@ pub(super) async fn admin_delete_user(
     {
         Ok(()) => {
             tracing::info!(target_user = %user_id, admin = %admin_user.email, "admin: user deleted");
-            Redirect::to("/dashboard/admin").into_response()
+            Redirect::to(&admin_users_return(form.back.as_deref(), None)).into_response()
         }
         Err(crate::auth::DeleteUserError::LastAdmin) => {
             tracing::warn!(target_user = %user_id, admin = %admin_user.email, "admin: refused to delete the last enabled admin");
-            admin_last_admin_refusal(admin.lang)
+            admin_last_admin_refusal(admin.lang, form.back.as_deref())
         }
         Err(e) => {
             tracing::warn!(target_user = %user_id, admin = %admin_user.email, error = %e, "admin: user delete refused");
-            let encoded = urlencoding::encode(&e.to_string()).into_owned();
-            Redirect::to(&format!("/dashboard/admin?error={}", encoded)).into_response()
+            Redirect::to(&admin_users_return(
+                form.back.as_deref(),
+                Some(&e.to_string()),
+            ))
+            .into_response()
         }
     }
 }
@@ -2309,6 +2693,59 @@ pub(super) async fn admin_update_sms_policy(
     }
 
     tracing::info!(admin = %_admin.user.email, allow_all, "admin: sms event-type policy updated");
+    Redirect::to("/dashboard/admin").into_response()
+}
+
+#[derive(Deserialize)]
+pub(super) struct AdminGuestFooterForm {
+    _csrf: Option<String>,
+    guest_email_footer: Option<String>,
+    /// HTML checkbox: present when every user may write footers on their own
+    /// event types, absent for admins only.
+    allow_all_users: Option<String>,
+}
+
+/// The instance default for the footer added to guest emails (#223), and who
+/// may write footers of their own. An event type's own footer replaces the
+/// default.
+pub(super) async fn admin_update_guest_footer(
+    State(state): State<Arc<AppState>>,
+    _admin: crate::auth::AdminUser,
+    headers: HeaderMap,
+    Form(form): Form<AdminGuestFooterForm>,
+) -> impl IntoResponse {
+    if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
+        return resp;
+    }
+
+    let footer = match crate::email::normalize_guest_footer(
+        form.guest_email_footer.as_deref().unwrap_or(""),
+    ) {
+        Ok(footer) => footer,
+        Err(e) => {
+            let msg = crate::i18n::translate(_admin.lang, e.message_key(), None);
+            let encoded = urlencoding::encode(&msg).into_owned();
+            return Redirect::to(&format!("/dashboard/admin?error={}", encoded)).into_response();
+        }
+    };
+    let allow_all = form.allow_all_users.is_some();
+    if let Err(e) = sqlx::query(
+        "UPDATE auth_config SET guest_email_footer = ?, guest_footer_allow_all_users = ? WHERE id = 'singleton'",
+    )
+    .bind(&footer)
+    .bind(allow_all)
+    .execute(&state.pool)
+    .await
+    {
+        return internal_error_response("save guest footer", &e);
+    }
+
+    tracing::info!(
+        admin = %_admin.user.email,
+        allow_all,
+        set = footer.is_some(),
+        "admin: guest email footer updated"
+    );
     Redirect::to("/dashboard/admin").into_response()
 }
 

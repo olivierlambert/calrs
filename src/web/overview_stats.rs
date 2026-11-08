@@ -36,7 +36,9 @@ const RULER_TO_HOUR: i64 = 20;
 
 /// Scope predicate, see the module documentation. Alias `b`. Binds the user
 /// id four times. A team member excluded from the event type (weight 0, as
-/// `hosts.rs` reads it) is not one of its hosts.
+/// `hosts.rs` reads it) is not one of its hosts, and an unassigned booking is
+/// every member's only on a collective event type: a round-robin booking that
+/// lost its assigned member (deleted user, legacy row) is the owner's alone.
 ///
 /// The rule is the one of `user_busy_bookings`, written so that every branch
 /// of the OR reads an index of `bookings` (assigned user, event type,
@@ -51,7 +53,7 @@ const HOST_SCOPE: &str = "(b.assigned_user_id = ?
           WHERE oa.user_id = ?
           UNION ALL
           SELECT tt.id FROM event_types tt JOIN team_members tm ON tm.team_id = tt.team_id
-          WHERE tm.user_id = ?
+          WHERE tm.user_id = ? AND tt.scheduling_mode = 'collective'
             AND NOT EXISTS (SELECT 1 FROM event_type_member_weights etw
                 WHERE etw.event_type_id = tt.id AND etw.user_id = tm.user_id AND etw.weight <= 0)))
     OR b.claimed_by_user_id = ?)";
@@ -911,6 +913,37 @@ pub(super) fn open_minutes(
     merge(windows)
 }
 
+/// Take time off (#46) out of a day's open hours, both in minutes from the
+/// viewer's midnight: the user takes no bookings then, so the day is not
+/// open. A day off entirely comes back empty, and reads as closed.
+pub(super) fn without_time_off(
+    open: Vec<(i64, i64)>,
+    day: NaiveDate,
+    time_off: &[(NaiveDateTime, NaiveDateTime)],
+) -> Vec<(i64, i64)> {
+    let mut out = open;
+    for (s, e) in time_off {
+        let (cs, ce) = (minute_of(day, *s), minute_of(day, *e));
+        if ce <= cs {
+            continue;
+        }
+        out = out
+            .into_iter()
+            .flat_map(|(os, oe)| {
+                if cs >= oe || ce <= os {
+                    vec![(os, oe)]
+                } else {
+                    [(os, cs), (ce, oe)]
+                        .into_iter()
+                        .filter(|(a, b)| b > a)
+                        .collect()
+                }
+            })
+            .collect();
+    }
+    out
+}
+
 // --- The day ruler ---
 
 /// A block on the ruler, in minutes from the viewer's midnight.
@@ -1179,6 +1212,7 @@ pub(super) fn week_context(
     hours: &[EventTypeHours],
     bookings: &[DayBooking],
     busy: &[(NaiveDateTime, NaiveDateTime)],
+    time_off: &[(NaiveDateTime, NaiveDateTime)],
     viewer: Tz,
     now: NaiveDateTime,
     week_start: WeekStart,
@@ -1191,7 +1225,7 @@ pub(super) fn week_context(
             let day = first + Duration::days(i);
             (
                 day,
-                open_minutes(hours, day, viewer),
+                without_time_off(open_minutes(hours, day, viewer), day, time_off),
                 day_blocks(lang, day, bookings, busy),
             )
         })
@@ -1393,7 +1427,7 @@ pub(super) async fn agenda(
         "SELECT {START_AT}, {END_AT}, {STORED_TZ}, et.title, b.guest_name, b.guest_email,
                 COALESCE(NULLIF(b.meeting_url, ''), et.location_value, ''),
                 (SELECT COUNT(*) FROM booking_attendees ba WHERE ba.booking_id = b.id),
-                b.id
+                b.id, b.host_notes IS NOT NULL
          {FROM_SCOPED}
          WHERE {HOST_SCOPE} AND b.status = 'confirmed' AND b.end_at >= ? AND b.start_at < ?
          ORDER BY b.start_at
@@ -1409,6 +1443,7 @@ pub(super) async fn agenda(
         String,
         i64,
         String,
+        bool,
     )> = sqlx::query_as(&sql)
         .bind(user_id)
         .bind(user_id)
@@ -1426,7 +1461,7 @@ pub(super) async fn agenda(
     let mut items: Vec<(NaiveDateTime, minijinja::Value)> = rows
         .into_iter()
         .filter_map(
-            |(start, end, stored, title, guest, email, location, extra, id)| {
+            |(start, end, stored, title, guest, email, location, extra, id, has_host_notes)| {
                 let stored = stored.parse::<Tz>().unwrap_or(Tz::UTC);
                 let s = crate::booking_time::local(&start, stored, host_tz)?;
                 let e = crate::booking_time::local(&end, stored, host_tz)?;
@@ -1470,6 +1505,9 @@ pub(super) async fn agenda(
                         end_utc => e_utc.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
                         ongoing => s <= now_local,
                         join_url => join,
+                        // Every host in scope may read the booking's host
+                        // notes (`booking_notes.rs`), so the row links to them.
+                        has_host_notes => has_host_notes,
                     },
                 ))
             },

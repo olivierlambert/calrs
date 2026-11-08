@@ -206,7 +206,9 @@ pub(super) struct EventTypeForm {
     pub(super) min_notice_min: String,
     pub(super) requires_confirmation: Option<String>, // checkbox: "on" or absent
     pub(super) sms_phone_mode: Option<String>,        // checkbox: "on" or absent
-    pub(super) visibility: Option<String>,            // "public", "internal", or "private"
+    // Guest email footer (#223); only honoured for users who may edit it.
+    pub(super) guest_email_footer: Option<String>,
+    pub(super) visibility: Option<String>, // "public", "internal", or "private"
     pub(super) location_type: Option<String>, // "link", "phone", "in_person", "custom", "jitsi_auto", "webhook_auto", "google_meet"
     pub(super) location_value: Option<String>,
     // Optional per-event-type pattern override for the jitsi_auto provider.
@@ -301,6 +303,11 @@ pub(super) fn validate_event_type_form(form: &EventTypeForm) -> Result<String, &
     }
     if title.chars().count() > MAX_EVENT_TYPE_TITLE {
         return Err("form-error-event-type-title-length");
+    }
+    if let Some(footer) = form.guest_email_footer.as_deref() {
+        if let Err(e) = crate::email::normalize_guest_footer(footer) {
+            return Err(e.message_key());
+        }
     }
 
     let optional_number = |s: &str| -> Result<Option<i32>, ()> {
@@ -584,6 +591,8 @@ pub(super) async fn new_event_type_form(
             resources_all => resources_all,
             can_manage_resources => auth_user.user.role == "admin",
             can_enable_sms => can_enable_sms(&state.pool, &auth_user.user).await,
+            can_edit_guest_footer => can_edit_guest_footer(&state.pool, &auth_user.user).await,
+            form_guest_email_footer => "",
             selected_resource_ids => selected_resource_ids,
             resource_scheduling_mode => resource_scheduling_mode,
             form_title => "",
@@ -624,7 +633,7 @@ pub(super) async fn create_event_type(
     State(state): State<Arc<AppState>>,
     auth_user: crate::auth::AuthUser,
     headers: HeaderMap,
-    Form(form): Form<EventTypeForm>,
+    Form(mut form): Form<EventTypeForm>,
 ) -> impl IntoResponse {
     if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
         return resp;
@@ -644,6 +653,12 @@ pub(super) async fn create_event_type(
         None => return Redirect::to("/dashboard/event-types").into_response(),
     };
 
+    // A user who may not edit the footer has any posted value ignored before
+    // it is validated, so an over-long one cannot refuse a save that never
+    // touches the footer.
+    if !can_edit_guest_footer(&state.pool, user).await {
+        form.guest_email_footer = None;
+    }
     let slug = match validate_event_type_form(&form) {
         Ok(slug) => slug,
         Err(key) => {
@@ -678,6 +693,11 @@ pub(super) async fn create_event_type(
     let requires_confirmation = form.requires_confirmation.as_deref() == Some("on");
     let sms_phone_mode =
         resolve_phone_mode(&state.pool, user, form.sms_phone_mode.as_deref(), None).await;
+    // A footer that is not set is none on create.
+    let guest_email_footer =
+        resolve_guest_footer(&state.pool, user, form.guest_email_footer.as_deref())
+            .await
+            .flatten();
 
     let location_type = form.location_type.as_deref().unwrap_or("link");
     let location_value = form
@@ -780,8 +800,8 @@ pub(super) async fn create_event_type(
         .map(str::to_string);
 
     let written = sqlx::query(
-        "INSERT INTO event_types (id, account_id, slug, title, description, duration_min, slot_interval_min, buffer_before, buffer_after, min_notice_min, requires_confirmation, location_type, location_value, team_id, created_by_user_id, reminder_minutes, visibility, max_additional_guests, default_calendar_view, first_slot_only, timezone, cancel_notice_min, reschedule_notice_min, meeting_pattern_override, sms_phone_mode, booking_horizon_days, bookable_from, bookable_until, week_start)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO event_types (id, account_id, slug, title, description, duration_min, slot_interval_min, buffer_before, buffer_after, min_notice_min, requires_confirmation, location_type, location_value, team_id, created_by_user_id, reminder_minutes, visibility, max_additional_guests, default_calendar_view, first_slot_only, timezone, cancel_notice_min, reschedule_notice_min, meeting_pattern_override, sms_phone_mode, guest_email_footer, booking_horizon_days, bookable_from, bookable_until, week_start)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&et_id)
     .bind(&account_id)
@@ -808,6 +828,7 @@ pub(super) async fn create_event_type(
     .bind(reschedule_notice_min)
     .bind(&meeting_pattern_override)
     .bind(&sms_phone_mode)
+    .bind(&guest_email_footer)
     .bind(booking_horizon_days)
     .bind(bookable_from)
     .bind(bookable_until)
@@ -1138,6 +1159,11 @@ pub(super) async fn edit_event_type_form(
         Err(e) => return internal_error_html("template render", &e),
     };
 
+    // Never shown blank when it cannot be read: saving that form would erase it.
+    let form_guest_email_footer = match stored_guest_footer(&state.pool, &et_id).await {
+        Ok(footer) => footer,
+        Err(e) => return internal_error_html("read stored guest footer", &e),
+    };
     let (impersonating, impersonating_name, _) = impersonation_ctx(&auth_user);
 
     let dg_eligible_ctx = form_dg_eligible_users(&state.pool, &user.id).await;
@@ -1164,6 +1190,8 @@ pub(super) async fn edit_event_type_form(
             resources_all => resources_all,
             can_manage_resources => auth_user.user.role == "admin",
             can_enable_sms => can_enable_sms(&state.pool, &auth_user.user).await,
+            can_edit_guest_footer => can_edit_guest_footer(&state.pool, &auth_user.user).await,
+            form_guest_email_footer => form_guest_email_footer,
             selected_resource_ids => selected_resource_ids2,
             resource_scheduling_mode => resource_scheduling_mode,
             form_title => et_title,
@@ -1225,7 +1253,7 @@ pub(super) async fn update_event_type(
     auth_user: crate::auth::AuthUser,
     headers: HeaderMap,
     Path(slug): Path<String>,
-    Form(form): Form<EventTypeForm>,
+    Form(mut form): Form<EventTypeForm>,
 ) -> impl IntoResponse {
     if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
         return resp;
@@ -1249,6 +1277,12 @@ pub(super) async fn update_event_type(
         None => return Redirect::to("/dashboard/event-types").into_response(),
     };
 
+    // A user who may not edit the footer has any posted value ignored before
+    // it is validated, so an over-long one cannot refuse a save that never
+    // touches the footer.
+    if !can_edit_guest_footer(&state.pool, user).await {
+        form.guest_email_footer = None;
+    }
     let new_slug = match validate_event_type_form(&form) {
         Ok(slug) => slug,
         Err(key) => {
@@ -1274,6 +1308,9 @@ pub(super) async fn update_event_type(
         Some(&et_id),
     )
     .await;
+    // `None` keeps the stored footer: the update below leaves the column.
+    let guest_email_footer =
+        resolve_guest_footer(&state.pool, user, form.guest_email_footer.as_deref()).await;
     let visibility = match form.visibility.as_deref().unwrap_or("public") {
         v @ ("public" | "internal" | "private") => v.to_string(),
         _ => "public".to_string(),
@@ -1401,7 +1438,7 @@ pub(super) async fn update_event_type(
         .map(str::to_string);
 
     let written = sqlx::query(
-        "UPDATE event_types SET slug = ?, title = ?, description = ?, duration_min = ?, slot_interval_min = ?, buffer_before = ?, buffer_after = ?, min_notice_min = ?, requires_confirmation = ?, location_type = ?, location_value = ?, reminder_minutes = ?, visibility = ?, max_additional_guests = ?, scheduling_mode = ?, default_calendar_view = ?, first_slot_only = ?, timezone = ?, cancel_notice_min = ?, reschedule_notice_min = ?, meeting_pattern_override = ?, sms_phone_mode = ?, booking_horizon_days = ?, bookable_from = ?, bookable_until = ?, week_start = CASE WHEN ? THEN ? ELSE week_start END WHERE id = ?",
+        "UPDATE event_types SET slug = ?, title = ?, description = ?, duration_min = ?, slot_interval_min = ?, buffer_before = ?, buffer_after = ?, min_notice_min = ?, requires_confirmation = ?, location_type = ?, location_value = ?, reminder_minutes = ?, visibility = ?, max_additional_guests = ?, scheduling_mode = ?, default_calendar_view = ?, first_slot_only = ?, timezone = ?, cancel_notice_min = ?, reschedule_notice_min = ?, meeting_pattern_override = ?, sms_phone_mode = ?, guest_email_footer = CASE WHEN ? THEN ? ELSE guest_email_footer END, booking_horizon_days = ?, bookable_from = ?, bookable_until = ?, week_start = CASE WHEN ? THEN ? ELSE week_start END WHERE id = ?",
     )
     .bind(&new_slug)
     .bind(form.title.trim())
@@ -1425,6 +1462,8 @@ pub(super) async fn update_event_type(
     .bind(reschedule_notice_min)
     .bind(&meeting_pattern_override)
     .bind(&sms_phone_mode)
+    .bind(guest_email_footer.is_some())
+    .bind(guest_email_footer.flatten())
     .bind(booking_horizon_days)
     .bind(bookable_from)
     .bind(bookable_until)
@@ -2149,12 +2188,29 @@ async fn render_event_type_form_error(
         .map(|(id, name)| context! { id => id, name => name })
         .collect();
 
+    // A form opened before the footer policy let this user edit footers has
+    // no footer field: show the stored footer, so a resubmit from this page
+    // posts it back rather than a blank that would clear it. A blank that was
+    // posted stays blank.
+    let form_guest_email_footer = match (&form.guest_email_footer, target) {
+        (Some(posted), _) => posted.clone(),
+        (None, FormTarget::EditPersonal { et_id, .. } | FormTarget::EditTeam { et_id, .. }) => {
+            match stored_guest_footer(pool, et_id).await {
+                Ok(footer) => footer,
+                Err(e) => return internal_error_html("read stored guest footer", &e),
+            }
+        }
+        (None, _) => String::new(),
+    };
+
     let (impersonating, impersonating_name, _) = impersonation_ctx(auth_user);
     Html(
         tmpl.render(context! {
             resources_all => resources_all,
             can_manage_resources => auth_user.user.role == "admin",
             can_enable_sms => can_enable_sms(&state.pool, &auth_user.user).await,
+            can_edit_guest_footer => can_edit_guest_footer(&state.pool, &auth_user.user).await,
+            form_guest_email_footer => form_guest_email_footer,
             selected_resource_ids => form.resource_ids.clone().unwrap_or_default(),
             resource_scheduling_mode => form.resource_scheduling_mode.as_deref().unwrap_or("all"),
             editing => editing,
@@ -2482,6 +2538,8 @@ pub(super) async fn new_group_event_type_form(
             resources_all => resources_all,
             can_manage_resources => auth_user.user.role == "admin",
             can_enable_sms => can_enable_sms(&state.pool, &auth_user.user).await,
+            can_edit_guest_footer => can_edit_guest_footer(&state.pool, &auth_user.user).await,
+            form_guest_email_footer => "",
             selected_resource_ids => selected_resource_ids,
             resource_scheduling_mode => resource_scheduling_mode,
             form_team_id => groups.first().map(|(id, _)| id.as_str()).unwrap_or(""),
@@ -2522,7 +2580,7 @@ pub(super) async fn create_group_event_type(
     State(state): State<Arc<AppState>>,
     auth_user: crate::auth::AuthUser,
     headers: HeaderMap,
-    Form(form): Form<EventTypeForm>,
+    Form(mut form): Form<EventTypeForm>,
 ) -> impl IntoResponse {
     if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
         return resp;
@@ -2559,6 +2617,12 @@ pub(super) async fn create_group_event_type(
         None => return Redirect::to("/dashboard/event-types").into_response(),
     };
 
+    // A user who may not edit the footer has any posted value ignored before
+    // it is validated, so an over-long one cannot refuse a save that never
+    // touches the footer.
+    if !can_edit_guest_footer(&state.pool, user).await {
+        form.guest_email_footer = None;
+    }
     let slug = match validate_event_type_form(&form) {
         Ok(slug) => slug,
         Err(key) => {
@@ -2590,6 +2654,11 @@ pub(super) async fn create_group_event_type(
     let requires_confirmation = form.requires_confirmation.as_deref() == Some("on");
     let sms_phone_mode =
         resolve_phone_mode(&state.pool, user, form.sms_phone_mode.as_deref(), None).await;
+    // A footer that is not set is none on create.
+    let guest_email_footer =
+        resolve_guest_footer(&state.pool, user, form.guest_email_footer.as_deref())
+            .await
+            .flatten();
     let location_type = form.location_type.as_deref().unwrap_or("link");
     let location_value = form
         .location_value
@@ -2661,8 +2730,8 @@ pub(super) async fn create_group_event_type(
         .map(str::to_string);
 
     let written = sqlx::query(
-        "INSERT INTO event_types (id, account_id, slug, title, description, duration_min, slot_interval_min, buffer_before, buffer_after, min_notice_min, requires_confirmation, location_type, location_value, team_id, created_by_user_id, default_calendar_view, first_slot_only, timezone, cancel_notice_min, reschedule_notice_min, meeting_pattern_override, sms_phone_mode, booking_horizon_days, bookable_from, bookable_until, week_start)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO event_types (id, account_id, slug, title, description, duration_min, slot_interval_min, buffer_before, buffer_after, min_notice_min, requires_confirmation, location_type, location_value, team_id, created_by_user_id, default_calendar_view, first_slot_only, timezone, cancel_notice_min, reschedule_notice_min, meeting_pattern_override, sms_phone_mode, guest_email_footer, booking_horizon_days, bookable_from, bookable_until, week_start)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&et_id)
     .bind(&account_id)
@@ -2686,6 +2755,7 @@ pub(super) async fn create_group_event_type(
     .bind(reschedule_notice_min)
     .bind(&meeting_pattern_override)
     .bind(&sms_phone_mode)
+    .bind(&guest_email_footer)
     .bind(booking_horizon_days)
     .bind(bookable_from)
     .bind(bookable_until)
@@ -3023,6 +3093,11 @@ pub(super) async fn edit_group_event_type_form(
     .await;
     let (resources_all, selected_resource_ids, resource_scheduling_mode) =
         resources_form_ctx(&state.pool, Some(&et_id), &attachable).await;
+    // Never shown blank when it cannot be read: saving that form would erase it.
+    let form_guest_email_footer = match stored_guest_footer(&state.pool, &et_id).await {
+        Ok(footer) => footer,
+        Err(e) => return internal_error_html("read stored guest footer", &e),
+    };
     let (impersonating, impersonating_name, _) = impersonation_ctx(&auth_user);
     Html(
         tmpl.render(context! {
@@ -3035,6 +3110,8 @@ pub(super) async fn edit_group_event_type_form(
             resources_all => resources_all,
             can_manage_resources => auth_user.user.role == "admin",
             can_enable_sms => can_enable_sms(&state.pool, &auth_user.user).await,
+            can_edit_guest_footer => can_edit_guest_footer(&state.pool, &auth_user.user).await,
+            form_guest_email_footer => form_guest_email_footer,
             selected_resource_ids => selected_resource_ids,
             resource_scheduling_mode => resource_scheduling_mode,
             form_title => et_title,
@@ -3095,7 +3172,7 @@ pub(super) async fn update_group_event_type(
     auth_user: crate::auth::AuthUser,
     headers: HeaderMap,
     Path((team_id, slug)): Path<(String, String)>,
-    Form(form): Form<EventTypeForm>,
+    Form(mut form): Form<EventTypeForm>,
 ) -> impl IntoResponse {
     if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
         return resp;
@@ -3135,6 +3212,12 @@ pub(super) async fn update_group_event_type(
         None => return Redirect::to("/dashboard/event-types").into_response(),
     };
 
+    // A user who may not edit the footer has any posted value ignored before
+    // it is validated, so an over-long one cannot refuse a save that never
+    // touches the footer.
+    if !can_edit_guest_footer(&state.pool, user).await {
+        form.guest_email_footer = None;
+    }
     let new_slug = match validate_event_type_form(&form) {
         Ok(slug) => slug,
         Err(key) => {
@@ -3161,6 +3244,9 @@ pub(super) async fn update_group_event_type(
         Some(&et_id),
     )
     .await;
+    // `None` keeps the stored footer: the update below leaves the column.
+    let guest_email_footer =
+        resolve_guest_footer(&state.pool, user, form.guest_email_footer.as_deref()).await;
     let visibility = form.visibility.as_deref().unwrap_or("public").to_string();
 
     // Check slug uniqueness if changed: within the team, and within the
@@ -3296,7 +3382,7 @@ pub(super) async fn update_group_event_type(
         .map(str::to_string);
 
     let written = sqlx::query(
-        "UPDATE event_types SET slug = ?, title = ?, description = ?, duration_min = ?, slot_interval_min = ?, buffer_before = ?, buffer_after = ?, min_notice_min = ?, requires_confirmation = ?, location_type = ?, location_value = ?, reminder_minutes = ?, visibility = ?, max_additional_guests = ?, scheduling_mode = ?, default_calendar_view = ?, first_slot_only = ?, timezone = ?, cancel_notice_min = ?, reschedule_notice_min = ?, meeting_pattern_override = ?, sms_phone_mode = ?, booking_horizon_days = ?, bookable_from = ?, bookable_until = ?, week_start = CASE WHEN ? THEN ? ELSE week_start END WHERE id = ?",
+        "UPDATE event_types SET slug = ?, title = ?, description = ?, duration_min = ?, slot_interval_min = ?, buffer_before = ?, buffer_after = ?, min_notice_min = ?, requires_confirmation = ?, location_type = ?, location_value = ?, reminder_minutes = ?, visibility = ?, max_additional_guests = ?, scheduling_mode = ?, default_calendar_view = ?, first_slot_only = ?, timezone = ?, cancel_notice_min = ?, reschedule_notice_min = ?, meeting_pattern_override = ?, sms_phone_mode = ?, guest_email_footer = CASE WHEN ? THEN ? ELSE guest_email_footer END, booking_horizon_days = ?, bookable_from = ?, bookable_until = ?, week_start = CASE WHEN ? THEN ? ELSE week_start END WHERE id = ?",
     )
     .bind(&new_slug)
     .bind(form.title.trim())
@@ -3320,6 +3406,8 @@ pub(super) async fn update_group_event_type(
     .bind(reschedule_notice_min)
     .bind(&meeting_pattern_override)
     .bind(&sms_phone_mode)
+    .bind(guest_email_footer.is_some())
+    .bind(guest_email_footer.flatten())
     .bind(booking_horizon_days)
     .bind(bookable_from)
     .bind(bookable_until)
@@ -3667,8 +3755,11 @@ pub(super) async fn duplicate_event_type_rows(
     lang: &str,
 ) -> Option<String> {
     let keep_sms = can_enable_sms(pool, user).await;
+    let keep_footer = can_edit_guest_footer(pool, user).await;
     for _ in 0..DUPLICATE_ATTEMPTS {
-        if let Some(slug) = duplicate_event_type_once(pool, et_id, &user.id, keep_sms, lang).await {
+        if let Some(slug) =
+            duplicate_event_type_once(pool, et_id, &user.id, keep_sms, keep_footer, lang).await
+        {
             return Some(slug);
         }
     }
@@ -3678,7 +3769,7 @@ pub(super) async fn duplicate_event_type_rows(
 const DUPLICATE_ATTEMPTS: u32 = 3;
 
 /// `event_types` columns a copy gets of its own rather than from the source.
-const COPY_OWN_COLUMNS: [&str; 7] = [
+const COPY_OWN_COLUMNS: [&str; 8] = [
     "id",
     "slug",
     "title",
@@ -3686,6 +3777,7 @@ const COPY_OWN_COLUMNS: [&str; 7] = [
     "created_at",
     "created_by_user_id",
     "sms_phone_mode",
+    "guest_email_footer",
 ];
 
 /// A UUID v4 minted by SQLite, one per row, so copied child rows get ids of
@@ -3723,6 +3815,7 @@ async fn duplicate_event_type_once(
     et_id: &str,
     user_id: &str,
     keep_sms: bool,
+    keep_footer: bool,
     lang: &str,
 ) -> Option<String> {
     let (account_id, team_id, slug, title): (String, Option<String>, String, String) =
@@ -3738,8 +3831,8 @@ async fn duplicate_event_type_once(
     let mut tx = pool.begin().await.ok()?;
     let columns = copied_columns(&mut tx).await.ok()?;
     sqlx::query(&format!(
-        "INSERT INTO event_types (id, slug, title, enabled, created_by_user_id, sms_phone_mode, {columns})
-         SELECT ?, ?, ?, 0, ?, CASE WHEN ? THEN sms_phone_mode ELSE 'off' END, {columns}
+        "INSERT INTO event_types (id, slug, title, enabled, created_by_user_id, sms_phone_mode, guest_email_footer, {columns})
+         SELECT ?, ?, ?, 0, ?, CASE WHEN ? THEN sms_phone_mode ELSE 'off' END, CASE WHEN ? THEN guest_email_footer ELSE NULL END, {columns}
          FROM event_types WHERE id = ?"
     ))
     .bind(&new_id)
@@ -3747,6 +3840,7 @@ async fn duplicate_event_type_once(
     .bind(&new_title)
     .bind(user_id)
     .bind(keep_sms)
+    .bind(keep_footer)
     .bind(et_id)
     .execute(&mut *tx)
     .await

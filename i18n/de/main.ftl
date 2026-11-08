@@ -507,6 +507,29 @@ bookings-back = Zurück
 bookings-empty = Noch keine anstehenden Buchungen.<br>Teile deine { $link }, damit andere Zeit mit dir buchen können.
 bookings-empty-link-label = Terminart-Links
 bookings-search-placeholder = Gäste, E-Mails oder Termine suchen
+bookings-recent = Letzte 30 Tage
+
+# Host notes on a booking (templates/booking_notes.html, bookings page, overview, host emails)
+
+host-notes-title = Notizen der Gastgeber
+host-notes-hint = Sichtbar für die Gastgeber dieser Buchung, ein Teammitglied, das sie übernommen hat, und einen Admin, der als einer ihrer Gastgeber handelt. Dem Gast werden sie nie angezeigt, und sie landen nie in der Einladung oder im Kalendertermin.
+host-notes-placeholder = Zum Beispiel: was in einem Telefonat gesagt wurde, was vorzubereiten ist.
+host-notes-save = Notizen speichern
+host-notes-saved = Notizen gespeichert.
+host-notes-too-long = Notizen der Gastgeber dürfen höchstens { $max } Zeichen lang sein.
+host-notes-conflict = Diese Notizen wurden geändert, nachdem diese Seite geöffnet wurde. Die gespeicherte Fassung steht unten; erneutes Speichern ersetzt sie durch den Text im Feld.
+host-notes-current = Gespeicherte Fassung:
+host-notes-last-edit = Zuletzt bearbeitet von { $name }, { $when }
+host-notes-last-edit-anon = Zuletzt bearbeitet am { $when }
+host-notes-edit = Notiz bearbeiten
+host-notes-marker = Notiz der Gastgeber
+host-notes-cleared = (gelöscht)
+host-notes-last-edit-as = Zuletzt bearbeitet von { $name } (Admin, als { $host }), { $when }
+dash-not-found-title = Nicht gefunden
+dash-not-found-body = Diese Seite existiert nicht, oder dieses Konto hat keinen Zugriff darauf.
+host-notes-from-guest = Vom Gast:
+bookings-host-notes = Notizen der Gastgeber:
+email-detail-host-notes = Notizen der Gastgeber:
 
 # Dashboard teams listing (templates/dashboard_teams.html)
 
@@ -1048,6 +1071,9 @@ etf-vis-internal = Intern
 etf-reminder = Buchungserinnerung
 etf-reminder-none = Keine Erinnerung
 etf-reminder-help = Vor dem Termin eine Erinnerungs-E-Mail an dich und deinen Gast senden.
+etf-guest-footer = E-Mail-Fußzeile
+etf-guest-footer-placeholder = z. B. Fragen? Telefon: +49 30 1234567
+etf-guest-footer-help = Wird am Ende jeder E-Mail eingefügt, die der Gast zu dieser Buchung erhält, in jeder Sprache. Ersetzt die vom Administrator festgelegte Standard-Fußzeile. Nur fett, kursiv und Links.
 etf-dynamic-group = Dynamischer Gruppenlink
 etf-dynamic-group-help = Erstelle einen spontanen Terminlink, der die Verfügbarkeit von dir und anderen Benutzern prüft.
 etf-dynamic-group-search = Nach einem Benutzer zum Hinzufügen suchen...
@@ -1323,6 +1349,13 @@ admin-sms-clear-confirm = Die in der Datenbank gespeicherte SMS-Konfiguration l�
 admin-sms-allow-all = Allen Benutzern erlauben, SMS für ihre Terminarten zu aktivieren
 admin-sms-allow-all-help = Standardmäßig aus: SMS verbrauchen Guthaben des hier konfigurierten Kontos, daher dürfen nur Administratoren eine Terminart in einen SMS-Modus schalten.
 admin-save-policy = Richtlinie speichern
+admin-guest-footer = Fußzeile der E-Mails an Gäste
+admin-guest-footer-help = Ein kurzer Text am Ende jeder E-Mail an Gäste und Teilnehmer: Bestätigungen, Erinnerungen, Absagen und so weiter. E-Mails an den Gastgeber und an das Teammitglied, das die Buchung übernommen hat, bleiben unverändert.
+admin-guest-footer-default = Standard-Fußzeile
+admin-guest-footer-default-help = Wird verwendet, wenn eine Terminart keine eigene Fußzeile hat. Derselbe Text geht in jeder Sprache hinaus. Nur fett, kursiv und Links.
+admin-guest-footer-allow-all = Allen Benutzern erlauben, eine Fußzeile für ihre Terminarten festzulegen
+admin-guest-footer-allow-all-help = Standardmäßig aus: Die Fußzeile geht im Namen dieser Instanz hinaus, daher dürfen nur Administratoren eine schreiben. Eine an einer Terminart festgelegte Fußzeile ersetzt die Standard-Fußzeile oben.
+admin-save-guest-footer = Fußzeile speichern
 admin-page-of = Seite %1 von %2
 admin-show-more-js = %1 weitere anzeigen
 admin-show-fewer = Weniger anzeigen
@@ -1619,6 +1652,7 @@ validate-email-length = Die E-Mail-Adresse muss zwischen 1 und 255 Zeichen lang 
 validate-email-invalid = Bitte gib eine gültige E-Mail-Adresse ein.
 validate-notes-length = Die Notizen dürfen höchstens 5000 Zeichen lang sein.
 validate-date-too-far = Es kann nicht mehr als ein Jahr im Voraus gebucht werden.
+validate-guest-footer-too-long = Die E-Mail-Fußzeile darf höchstens 500 Zeichen lang sein.
 
 # Additional guests and dynamic group links (src/web/mod.rs)
 
@@ -1893,6 +1927,53 @@ directory-empty = Keine Termine gefunden. Versuche eine andere Suche.
 directory-favorites-empty = Keine Favoriten gefunden. Markiere Termine im Verzeichnis als Favoriten, um sie hier zu sehen.
 directory-with-hosts = Mit { $names }
 
+# Time off (templates/time_off.html, src/web/time_off.rs, troubleshoot view)
+
+nav-time-off = Abwesenheit
+time-off-page-title = Abwesenheit
+time-off-heading = Abwesenheit
+time-off-subtitle = Zeiträume, in denen du keine Buchungen annimmst. Alle Terminarten, die du anbietest, persönliche wie die deiner Teams, richten sich danach. Gäste sehen nur, dass diese Zeiten nicht verfügbar sind.
+time-off-upcoming = Geplant
+time-off-empty = Keine Abwesenheit geplant.
+time-off-kept-notice = Termine, die in einem Zeitraum bereits gebucht sind, bleiben bestehen: Eine Abwesenheit sagt nichts ab. Sage sie bei Bedarf unter Buchungen ab oder verschiebe sie.
+time-off-pending-notice = Anfragen, die in einem Zeitraum auf deine Bestätigung warten, lassen sich nicht mehr annehmen: Lehne sie ab oder lösche zuerst die Abwesenheit.
+time-off-in-progress = Läuft gerade
+time-off-entered-in = Eingegeben in { $timezone }
+time-off-delete = Löschen
+time-off-delete-confirm = Diese Abwesenheit löschen? Der Zeitraum wird wieder buchbar.
+time-off-add-heading = Abwesenheit hinzufügen
+time-off-from = Von
+time-off-to = Bis
+time-off-time-optional = Uhrzeit (optional)
+time-off-times-help = Lass die Uhrzeiten leer, um ganze Tage zu sperren, beide Daten eingeschlossen. Die Uhrzeiten gelten in deiner Zeitzone, { $timezone }.
+time-off-label = Notiz (optional)
+time-off-label-help = Nur du siehst sie, hier und unter Diagnose. Gäste und Teammitglieder sehen sie nie.
+time-off-add-submit = Abwesenheit hinzufügen
+time-off-added = Abwesenheit hinzugefügt.
+time-off-deleted = Abwesenheit gelöscht.
+time-off-range = { $start } bis { $end }
+time-off-at = { $date }, { $time }
+time-off-same-day = { $date }, { $start } bis { $end }
+time-off-from-time = { $date }, ab { $time }
+time-off-until-time = { $date }, bis { $time }
+time-off-impersonating = Du siehst diese Seite als { $name }. Die Abwesenheiten sind für dich hier nur lesbar, die Notizen sind ausgeblendet.
+time-off-error-date = Gib die Daten als JJJJ-MM-TT und die Uhrzeiten als HH:MM ein.
+time-off-error-order = Das Ende muss nach dem Beginn liegen.
+time-off-error-too-long = Ein Zeitraum darf höchstens ein Jahr lang sein.
+time-off-error-past = Dieser Zeitraum ist bereits vorbei.
+time-off-error-label = Die Notiz darf höchstens 200 Zeichen lang sein.
+time-off-error-too-many = Du hast bereits 100 Zeiträume geplant. Lösche einige, bevor du weitere hinzufügst.
+time-off-hint = Um Daten für alle Terminarten auf einmal zu sperren, nutze { $link }.
+troubleshoot-label-time-off = Abwesenheit
+troubleshoot-legend-time-off = Abwesenheit
+
+directory-all-favorites = Alle Favoriten
+pager-label = Seiten
+pager-range = { $from } bis { $to } von { $total }
+pager-previous = Zurück
+pager-next = Weiter
+admin-users-search = Suchen
+admin-figures-cached = Buchungszahlen vor { $seconds } s berechnet.
 # Booking webhooks (templates/webhooks.html, admin card, #168)
 webhooks-title = Webhooks
 webhooks-back = Zurück zu den Terminarten

@@ -123,7 +123,7 @@
 
 - **Web booking page** — public slot picker, booking form, and confirmation page
 - **User dashboard** — manage event types, calendar sources, pending approvals, and upcoming bookings
-- **Admin dashboard** — user management, auth settings, OIDC config, SMTP status, user impersonation
+- **Admin dashboard** — user management, auth settings, OIDC config, SMTP status, default guest email footer, user impersonation
 - **Event type management** — create/edit from the dashboard with availability schedule, location, and confirmation toggle
 - **Location support** — video link, phone, in-person, or custom — displayed on booking pages, emails, and `.ics` invites
 - **Dark/light theme** — automatic via system preference, with manual toggle (System/Light/Dark) on public pages and dashboard settings
@@ -193,6 +193,7 @@ Each team member's CalDAV calendars are checked for conflicts. The availability 
 - **Reschedule notifications** — rescheduled booking emails include old and new times, updated `.ics` invites, and reschedule/cancel action buttons
 - **Additional attendees** — guests can invite additional people to bookings (configurable per event type: 0/1/3/5/10 max). Additional guests receive ICS invites and appear on the confirmation page
 - **Booking reminders** — automated email reminders before meetings, configurable per event type (1h / 4h / 1 day / 2 days)
+- **Guest email footer**: a short note (bold, italic, links) added to every email guests receive, such as contact details or directions. Set per event type with an admin-set instance default; one text for all languages
 - **SMTP configuration** — configure from CLI or admin dashboard
 
 ### Security
@@ -654,7 +655,7 @@ calrs ships with nine complete translations: English, French, Spanish, Polish, G
 
 German comes in two registers: **Deutsch** addresses the reader as "du", **Deutsch (Sie)** as "Sie", as most businesses in Germany, Austria and Switzerland address their customers. Browsers only ask for "German", so visitors get "du" unless the instance chooses otherwise. An admin can set **German form of address** to *Formal (Sie)* under System settings, after which every visitor whose browser asks for German is addressed as "Sie": on all public pages, in the bookings they make, and in every email they receive. A single user can also pick *Deutsch (Sie)* as their language in Profile & Settings and set their public booking pages to *Always my language*.
 
-Each of these nine locales carries all 1325 message ids. A test holds them there, so a release cannot ship a half-translated language. Formal German is the exception by design: `i18n/de-formal/` is an overlay on `de` that only carries the messages addressing the reader and reads every other message from `de`. Do not copy unchanged German messages into it; a test rejects an override identical to `de`.
+Each of these nine locales carries all 1336 message ids. A test holds them there, so a release cannot ship a half-translated language. Formal German is the exception by design: `i18n/de-formal/` is an overlay on `de` that only carries the messages addressing the reader and reads every other message from `de`. Do not copy unchanged German messages into it; a test rejects an override identical to `de`.
 
 ### Translation quality
 
@@ -701,7 +702,7 @@ Four steps, and the order matters. Doing them out of order fails the build in a 
 3. **Declare its plural categories.** Add the locale to the `required` table in `plural_messages_carry_the_locale_categories` in `src/i18n.rs`. Most languages need `one, other`; Polish needs `one, few, many`. The [CLDR plural rules chart](https://www.unicode.org/cldr/charts/47/supplemental/language_plural_rules.html) is the reference.
 4. Run `cargo test i18n::`
 
-Step 1 comes before step 2 for a reason: the coverage test demands every key the moment a locale appears in `SUPPORTED_LANGS`, so registering an empty file fails with 1325 errors at once.
+Step 1 comes before step 2 for a reason: the coverage test demands every key the moment a locale appears in `SUPPORTED_LANGS`, so registering an empty file fails with 1336 errors at once.
 
 That is the whole change on the calrs side. The language then appears in the **Profile & Settings** dropdown and is matched against `Accept-Language` automatically.
 

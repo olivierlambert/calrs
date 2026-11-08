@@ -1668,3 +1668,29 @@ async fn a_refused_delivery_does_not_say_why_in_detail() {
     assert!(error.starts_with("refused"), "{error}");
     assert!(!error.contains("10.9.8.7"), "{error}");
 }
+
+#[tokio::test]
+async fn host_notes_never_reach_a_webhook() {
+    let pool = setup_test_db().await;
+    let (user_id, _, et_id) = seed_test_data(&pool).await;
+    insert_webhook(&pool, &user_id, None, "https://93.184.215.14/hook").await;
+    let start = Utc::now() + Duration::days(10);
+    let booking_id = insert_v1_booking(
+        &pool,
+        &et_id,
+        "n@example.com",
+        start,
+        30,
+        "confirmed",
+        &[
+            ("notes", Some("Guest wrote this".to_string())),
+            ("host_notes", Some("HOST-ONLY-NOTE".to_string())),
+        ],
+    )
+    .await;
+    wh::enqueue(&pool, &booking_id, Event::Created, Context::default()).await;
+    let rows = deliveries(&pool).await;
+    assert_eq!(rows.len(), 1);
+    assert!(rows[0].1.contains("Guest wrote this"));
+    assert!(!rows[0].1.contains("HOST-ONLY-NOTE"));
+}
