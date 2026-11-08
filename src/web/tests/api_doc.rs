@@ -806,3 +806,24 @@ fn vendored_swagger_ui_keeps_its_licences_and_pinned_contents() {
         assert!(readme.contains(expected));
     }
 }
+
+/// A booking refused because a busy time could not be read (it fails
+/// closed) answers the documented 500 error envelope.
+#[tokio::test]
+async fn a_fail_closed_booking_answers_the_documented_error() {
+    let _lock = crate::test_support::ENV_LOCK.lock().await;
+    let _env = super::oauth::environment();
+    let (app, pool, _, et_id) = setup_test_app().await;
+    let doc = document(&app).await;
+    let owner = user_id(&pool, "testuser").await;
+    let token = pat(&pool, &owner, ALL).await;
+    sqlx::query("ALTER TABLE events RENAME TO events_gone")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let create = create_body(&et_id, &monday_at("10:00"), "closed@test.com");
+    let (status, body) = send(&app, api_post("/api/v1/bookings", &token, &create)).await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+    assert_eq!(body["error"]["code"], "internal_error");
+    check(&doc, "/bookings", "post", status, &body);
+}
