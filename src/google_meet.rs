@@ -705,7 +705,12 @@ pub async fn create_meet_for_booking_with_config(
     let details = booking_details_for_meet(pool, booking_id, &owner_id).await?;
     // Attendees and organizer go to Google through the Calendar API, with
     // `sendUpdates=none` (see `google_calendar::put_event_without_invitations`).
-    let ics = crate::email::generate_ics_caldav(&details);
+    // Google shares the event with its attendees, description included:
+    // no guest phone on it (#261).
+    let ics = crate::email::generate_ics_caldav(&crate::email::BookingDetails {
+        guest_phone: None,
+        ..details.clone()
+    });
 
     if let Err(e) = api
         .put_ics(
@@ -2138,6 +2143,18 @@ mod tests {
         let source_id = insert_google_source(&pool, &alice, true).await;
         let et = insert_event_type(&pool, &alice, None, "round_robin", "google_meet").await;
         let (bid, _) = insert_booking(&pool, &et, None, None).await;
+        // A phone the event type collects: Google would share it with the
+        // attendees, so the Meet event leaves it out.
+        sqlx::query("UPDATE event_types SET sms_phone_mode = 'optional' WHERE id = ?")
+            .bind(&et)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE bookings SET guest_phone = '+33612345678' WHERE id = ?")
+            .bind(&bid)
+            .execute(&pool)
+            .await
+            .unwrap();
         let api = FakeApi::new("https://meet.google.com/created-room");
         let key = [0u8; 32];
         // access_token_enc is plaintext "tok"; get_valid_access_token will try
@@ -2172,6 +2189,8 @@ mod tests {
         // The guests stay on the event: the CalDAV client moves them to the
         // Calendar API with `sendUpdates=none` (google_calendar tests).
         assert!(ics.contains("\r\nATTENDEE"), "{ics}");
+        let unfolded = crate::utils::unfold_ical(ics);
+        assert!(!unfolded.contains("612345678"), "{ics}");
     }
 
     /// Seed a decryptable access token so the retry tests reach the fake API

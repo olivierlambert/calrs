@@ -467,3 +467,50 @@ async fn a_meet_copy_without_its_guests_gets_them_without_a_rewrite() {
     assert_nothing_announced(&log);
     assert!(!log.iter().any(|e| e.starts_with("PUT ")), "{log:#?}");
 }
+
+/// Google shares the attendee copy, description included, with every
+/// attendee: it carries no guest phone, which additional attendees never
+/// see. The copies without attendees keep it for their host.
+#[tokio::test]
+async fn the_attendee_copy_carries_no_guest_phone() {
+    let pool = setup_test_db().await;
+    let alice = insert_role_user(&pool, "alice@google.test", "user").await;
+    let bob = insert_role_user(&pool, "bob@google.test", "user").await;
+    let (_, et_id) = insert_team_with_et(
+        &pool,
+        "g237phone",
+        "g237phone-et",
+        &[(&alice, "member"), (&bob, "member")],
+    )
+    .await;
+    sqlx::query("UPDATE event_types SET scheduling_mode = 'collective' WHERE id = ?")
+        .bind(&et_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let google = Arc::new(FakeGoogle::default());
+    let (base, server) = fake::serve(google.clone()).await;
+    google_source(&pool, "src-a", &alice, &base, "alice@google.test").await;
+    google_source(&pool, "src-b", &bob, &base, "bob@google.test").await;
+    insert_booking(&pool, &et_id, None, start(), "confirmed").await;
+    let uid = only_booking_uid(&pool, &et_id).await;
+    let details = crate::email::BookingDetails {
+        guest_phone: Some("+33612345678".to_string()),
+        ..details(&uid)
+    };
+
+    caldav_push_booking(&pool, &KEY, &alice, &uid, &details).await;
+    server.abort();
+
+    let put_to = |calendar: &str| {
+        google
+            .log()
+            .into_iter()
+            .find(|e| e.starts_with(&format!("PUT /caldav/v2/{calendar}/")))
+            .map(|e| crate::utils::unfold_ical(&e).into_owned())
+            .unwrap()
+    };
+    assert_eq!(google.attendees("alice@google.test", &uid), Some(guests()));
+    assert!(!put_to("alice%40google.test").contains("612345678"));
+    assert!(put_to("bob%40google.test").contains("612345678"));
+}

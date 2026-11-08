@@ -174,21 +174,28 @@ pub(super) async fn caldav_push_booking_for_user(
         _ => None,
     };
     let without_attendees = crate::google_calendar::split_scheduling(&ics).0;
-    // A claimant listed on that copy would get it on their Google Calendar
-    // from Google, beside the copy calrs writes for them (#269): when they
-    // have one, they are left off. Without one they stay, and rely on it.
+    // Google shares that copy with every attendee, description included,
+    // so it leaves out the guest's phone, which additional attendees never
+    // see (#261); the copies without attendees keep it for the host. A
+    // claimant listed on it would get it on their Google Calendar from
+    // Google, beside the copy calrs writes for them (#269): when they have
+    // one, they are left off. Without one they stay, and rely on it.
     let attendee_ics = match &attendee_source {
         Some(_) => {
+            let shared = crate::email::generate_ics_caldav(&crate::email::BookingDetails {
+                guest_phone: None,
+                ..details.clone()
+            });
             let targets = booking_write_targets(pool, booking_uid, user_id).await;
             match claimant_with_own_copy(pool, booking_uid, &targets).await {
                 Some((claimant, _)) => crate::google_calendar::without_attendees_named(
-                    &ics,
+                    &shared,
                     &claimant_attendee_addresses(pool, booking_uid, &claimant).await,
                 ),
-                None => ics.clone(),
+                None => shared,
             }
         }
-        None => ics.clone(),
+        None => String::new(),
     };
     let mut preserved_meet_href = false;
 
