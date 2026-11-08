@@ -12,6 +12,7 @@ mod event_types;
 mod format;
 mod hosts;
 mod invites;
+mod listing;
 pub mod meeting;
 mod notify;
 mod overview_stats;
@@ -19,6 +20,7 @@ mod pending;
 mod public_pages;
 mod sources;
 mod teams;
+mod time_off;
 mod week_start;
 pub(crate) mod writeback;
 
@@ -77,6 +79,7 @@ use pending::*;
 use public_pages::*;
 use sources::*;
 use teams::*;
+use time_off::*;
 
 /// Simple per-IP rate limiter for login attempts.
 /// Tracks (attempt_count, window_start) per IP.
@@ -162,6 +165,9 @@ pub struct AppState {
     /// than "du" (`auth_config.german_formal`). Applied to each request by
     /// `german_formal_middleware`; updated on admin save.
     pub german_formal: std::sync::atomic::AtomicBool,
+    /// The admin overview's booking-wide figures, kept for a minute on
+    /// instances where they are slow to compute (#343).
+    pub(crate) admin_figures: admin_stats::FiguresCache,
 }
 
 // --- CSRF protection (double-submit cookie pattern) ---
@@ -673,6 +679,7 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
         csp: tokio::sync::RwLock::new(initial_csp),
         csp_baseline: build_csp(&None),
         german_formal: std::sync::atomic::AtomicBool::new(initial_german_formal),
+        admin_figures: admin_stats::FiguresCache::default(),
     });
 
     Router::new()
@@ -815,6 +822,9 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
         .route("/team-avatar/{team_id}", get(serve_team_avatar))
         // Troubleshoot
         .route("/dashboard/troubleshoot", get(troubleshoot))
+        // Time off (#46)
+        .route("/dashboard/time-off", get(time_off_page).post(add_time_off))
+        .route("/dashboard/time-off/{id}/delete", post(delete_time_off))
         // Admin routes
         .route("/dashboard/admin", get(admin_dashboard))
         .route(
@@ -862,6 +872,10 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
         .route("/dashboard/admin/sms/test", post(admin_update_sms_test))
         .route("/dashboard/admin/sms/clear", post(admin_update_sms_clear))
         .route("/dashboard/admin/sms/policy", post(admin_update_sms_policy))
+        .route(
+            "/dashboard/admin/guest-footer",
+            post(admin_update_guest_footer),
+        )
         .route("/dashboard/admin/jitsi", post(admin_update_jitsi))
         .route(
             "/dashboard/admin/meeting-webhook",

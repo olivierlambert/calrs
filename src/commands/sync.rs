@@ -1363,6 +1363,7 @@ async fn cancel_orphaned_booking(
         guest_language,
         host_timezone: host_timezone.unwrap_or_default(),
         sequence,
+        guest_footer: crate::email::guest_footer_for_booking(pool, &booking_id).await,
         ..Default::default()
     };
     let host_details = crate::email::CancellationDetails {
