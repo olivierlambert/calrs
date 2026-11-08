@@ -219,6 +219,18 @@ base-powered-by = Töötab platvormil
 profile-pick-event-type-invite = Aja broneerimiseks vali sündmuse tüüp.
 profile-no-event-type = Sündmuse tüüpe pole veel saadaval.
 
+# Public landing pages (/u/{username}, /team/{slug}). In landing-next-free,
+# %1 is the time, filled in by the page itself.
+landing-duration-h = { $hours } h
+landing-duration-aria =
+    { $minutes ->
+        [one] { $minutes } minut
+       *[other] { $minutes } minutit
+    }
+landing-next-free = Järgmine: %1
+landing-with-one-of = ühega neist
+landing-with-everyone = kõigiga
+
 # Month and weekday names + per-locale date format patterns.
 # Used by server-side date formatters in src/i18n.rs.
 

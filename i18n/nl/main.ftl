@@ -219,6 +219,18 @@ base-powered-by = Mogelijk gemaakt door
 profile-pick-event-type-invite = Kies een afspraaktype om een tijd te boeken.
 profile-no-event-type = Nog geen afspraaktypes beschikbaar.
 
+# Public landing pages (/u/{username}, /team/{slug}). In landing-next-free,
+# %1 is the time, filled in by the page itself.
+landing-duration-h = { $hours } u
+landing-duration-aria =
+    { $minutes ->
+        [one] { $minutes } minuut
+       *[other] { $minutes } minuten
+    }
+landing-next-free = Volgende: %1
+landing-with-one-of = met een van
+landing-with-everyone = met iedereen
+
 # Month and weekday names + per-locale date format patterns.
 # Used by server-side date formatters in src/i18n.rs.
 

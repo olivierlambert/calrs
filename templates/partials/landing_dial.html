@@ -1,0 +1,22 @@
+{#- A meeting's length as a small clock dial, for `d` minutes: the wedge
+    fills in proportion to an hour (15 min a quarter, 60 a full disc) and,
+    past an hour, an outer arc draws the rest, capped at two hours; the
+    label under it says the exact length. Pure arithmetic: each circle is
+    drawn as a dash of `pathLength` 100 starting at twelve o'clock.
+    Include with `{% with d = et.duration_min %}`. -#}
+{%- set capped = [d, 120] | min -%}
+{%- set inner = ([capped, 60] | min) * 100 / 60 -%}
+{%- set outer = ([capped - 60, 0] | max) * 100 / 60 -%}
+<span class="lp-dur">
+  <svg class="lp-dial" viewBox="0 0 48 48" role="img" aria-label="{{ t('landing-duration-aria', minutes=d) }}">
+    <circle class="lp-dial-face" cx="24" cy="24" r="17"/>
+    {%- if inner > 0 %}
+    <circle class="lp-dial-wedge" cx="24" cy="24" r="8.5" pathLength="100" stroke-dasharray="{{ inner }} 100" transform="rotate(-90 24 24)"/>
+    {%- endif %}
+    <circle class="lp-dial-rim" cx="24" cy="24" r="17"/>
+    {%- if outer > 0 %}
+    <circle class="lp-dial-over" cx="24" cy="24" r="22" pathLength="100" stroke-dasharray="{{ outer }} 100" transform="rotate(-90 24 24)"/>
+    {%- endif %}
+  </svg>
+  <span class="lp-dur-label lp-num" aria-hidden="true">{% if d < 60 %}{{ t("overview-duration-m", minutes=d) }}{% elif d % 60 == 0 %}{{ t("landing-duration-h", hours=d // 60) }}{% else %}{{ t("overview-duration-hm", hours=d // 60, minutes=d % 60) }}{% endif %}</span>
+</span>

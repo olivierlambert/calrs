@@ -219,6 +219,18 @@ base-powered-by = Desenvolvido com
 profile-pick-event-type-invite = Escolha um tipo de evento para agendar um horário.
 profile-no-event-type = Ainda não há tipos de evento disponíveis.
 
+# Public landing pages (/u/{username}, /team/{slug}). In landing-next-free,
+# %1 is the time, filled in by the page itself.
+landing-duration-h = { $hours } h
+landing-duration-aria =
+    { $minutes ->
+        [one] { $minutes } minuto
+       *[other] { $minutes } minutos
+    }
+landing-next-free = Próximo: %1
+landing-with-one-of = com um de
+landing-with-everyone = com todos
+
 # Month and weekday names + per-locale date format patterns.
 # Used by server-side date formatters in src/i18n.rs.
 
