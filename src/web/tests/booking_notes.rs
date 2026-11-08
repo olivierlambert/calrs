@@ -1186,9 +1186,9 @@ async fn the_write_rechecks_access() {
 }
 
 /// Past bookings stay reachable for post-call notes: the "Last 30 days"
-/// section lists the meetings due over that time, held or cancelled, for
-/// every host of them, each with its title link. A future cancellation
-/// stays off the page.
+/// section lists the meetings held over that time, and "Cancelled and
+/// declined" the bookings that ended from 30 days ago on, for every host of
+/// them, each with its title link.
 #[tokio::test]
 async fn recent_bookings_lead_to_their_notes() {
     let (app, pool, session, et_id) = setup_test_app().await;
@@ -1222,16 +1222,6 @@ async fn recent_bookings_lead_to_their_notes() {
         &[],
     )
     .await;
-    insert_v1_booking(
-        &pool,
-        &et_id,
-        "later@test.com",
-        Utc::now() + Duration::days(5),
-        30,
-        "cancelled",
-        &[],
-    )
-    .await;
     set_host_notes(&pool, &past, SECRET).await;
 
     let body = body_string(
@@ -1252,12 +1242,8 @@ async fn recent_bookings_lead_to_their_notes() {
         !body.contains(&format!("/dashboard/bookings/{old}/notes")),
         "older than 30 days"
     );
-    assert!(
-        !body.contains("later@test.com"),
-        "a future cancellation stays off"
-    );
     assert!(body.contains(SECRET), "the past booking's notes show");
-    assert!(body.contains("Cancelled"));
+    assert!(body.contains("Cancelled and declined"));
 
     // An assigned member, whose bookings page lists none of the owner's
     // bookings, reaches their own past booking there.
@@ -1305,4 +1291,132 @@ async fn recent_bookings_lead_to_their_notes() {
     )
     .await;
     assert!(!body.contains("Last 30 days"), "nothing hosted, no section");
+}
+
+/// The part of the bookings page inside the section labelled `id`, empty
+/// when the page has no such section.
+fn bookings_section<'a>(body: &'a str, id: &str) -> &'a str {
+    let marker = format!("aria-labelledby=\"{id}\"");
+    match body.find(&marker) {
+        Some(at) => {
+            let rest = &body[at..];
+            &rest[..rest.find("</section>").unwrap_or(rest.len())]
+        }
+        None => "",
+    }
+}
+
+/// "Cancelled and declined" lists the bookings that ended, future ones
+/// included and back to 30 days, each with its title link to the notes;
+/// the notes of a meeting cancelled for a later date open from there.
+/// Nothing still on, and nothing older, is in it, and the meetings held in
+/// the last 30 days stay under "Last 30 days".
+#[tokio::test]
+async fn cancelled_bookings_lead_to_their_notes() {
+    let (app, pool, session, et_id) = setup_test_app().await;
+    let at = |days: i64| Utc::now() + Duration::days(days);
+    let later = insert_v1_booking(&pool, &et_id, "later@t.com", at(5), 30, "cancelled", &[]).await;
+    let declined = insert_v1_booking(&pool, &et_id, "no@t.com", at(9), 30, "declined", &[]).await;
+    let gone = insert_v1_booking(&pool, &et_id, "gone@t.com", at(-3), 30, "cancelled", &[]).await;
+    let old = insert_v1_booking(&pool, &et_id, "old@t.com", at(-40), 30, "cancelled", &[]).await;
+    let held = insert_v1_booking(&pool, &et_id, "held@t.com", at(-2), 30, "confirmed", &[]).await;
+    let on = insert_v1_booking(&pool, &et_id, "on@t.com", at(3), 30, "confirmed", &[]).await;
+    set_host_notes(&pool, &later, SECRET).await;
+
+    let body = body_string(
+        app.clone()
+            .oneshot(get_authed("/dashboard/bookings", &session))
+            .await
+            .unwrap(),
+    )
+    .await;
+    let cancelled = bookings_section(&body, "bk-cancelled");
+    assert!(cancelled.contains("Cancelled and declined"), "{body}");
+    for id in [&later, &declined, &gone] {
+        assert!(
+            cancelled.contains(&format!(
+                "class=\"tt-link\" href=\"/dashboard/bookings/{id}/notes?back=bookings\""
+            )),
+            "{id}: {cancelled}"
+        );
+    }
+    for id in [&old, &held, &on] {
+        assert!(!cancelled.contains(id.as_str()), "{id}");
+    }
+    assert!(cancelled.contains("Declined") && cancelled.contains(SECRET));
+    let recent = bookings_section(&body, "bk-recent");
+    assert!(recent.contains(held.as_str()), "{recent}");
+    assert!(
+        !recent.contains(gone.as_str()),
+        "listed once, under Cancelled"
+    );
+
+    let notes = app
+        .oneshot(get_authed(
+            &format!("/dashboard/bookings/{later}/notes?back=bookings"),
+            &session,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(notes.status(), 200);
+    assert!(body_string(notes).await.contains(SECRET));
+}
+
+/// The section follows the host-notes rule: the member a round-robin
+/// booking is assigned to sees its cancellation, the team's other members
+/// and a stranger do not, and someone with nothing cancelled gets no
+/// section at all.
+#[tokio::test]
+async fn cancelled_bookings_are_listed_for_their_hosts_only() {
+    let (app, pool, session, _) = setup_test_app().await;
+    let owner = owner_id(&pool).await;
+    let (alice, alice_session) =
+        insert_test_user_with_session(&pool, "Alice", "alice@test.com", "alice").await;
+    let (bob, bob_session) =
+        insert_test_user_with_session(&pool, "Bob", "bob@test.com", "bob").await;
+    let (_, eve_session) = insert_test_user_with_session(&pool, "Eve", "eve@test.com", "eve").await;
+    let (_, team_et) = insert_team_with_et(
+        &pool,
+        "t-cancel",
+        "rr",
+        &[(&owner, "admin"), (&alice, "member"), (&bob, "member")],
+    )
+    .await;
+    let hers = insert_v1_booking(
+        &pool,
+        &team_et,
+        "g@t.com",
+        Utc::now() + Duration::days(4),
+        30,
+        "cancelled",
+        &[("assigned_user_id", Some(alice.clone()))],
+    )
+    .await;
+
+    let page = |s: String| {
+        let app = app.clone();
+        async move {
+            body_string(
+                app.oneshot(get_authed("/dashboard/bookings", &s))
+                    .await
+                    .unwrap(),
+            )
+            .await
+        }
+    };
+    let body = page(alice_session).await;
+    assert!(
+        bookings_section(&body, "bk-cancelled")
+            .contains(&format!("/dashboard/bookings/{hers}/notes?back=bookings")),
+        "{body}"
+    );
+    for (who, s) in [
+        ("bob", bob_session),
+        ("eve", eve_session),
+        ("owner", session),
+    ] {
+        let body = page(s).await;
+        assert!(!body.contains(hers.as_str()), "{who} sees it");
+        assert!(!body.contains("bk-cancelled"), "{who} gets a section");
+    }
 }

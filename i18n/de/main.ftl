@@ -508,6 +508,7 @@ bookings-empty = Noch keine anstehenden Buchungen.<br>Teile deine { $link }, dam
 bookings-empty-link-label = Terminart-Links
 bookings-search-placeholder = Gäste, E-Mails oder Termine suchen
 bookings-recent = Letzte 30 Tage
+bookings-cancelled = Abgesagt und abgelehnt
 
 # Host notes on a booking (templates/booking_notes.html, bookings page, overview, host emails)
 

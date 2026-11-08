@@ -509,6 +509,7 @@ bookings-empty = Nog geen komende boekingen.<br>Deel je { $link } zodat mensen e
 bookings-empty-link-label = links naar afspraaktypes
 bookings-search-placeholder = Zoek gasten, e-mails of afspraken
 bookings-recent = Afgelopen 30 dagen
+bookings-cancelled = Geannuleerd en afgewezen
 
 # Host notes on a booking (templates/booking_notes.html, bookings page, overview, host emails)
 

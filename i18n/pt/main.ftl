@@ -508,6 +508,7 @@ bookings-empty = Ainda não há agendamentos futuros.<br>Compartilhe seus { $lin
 bookings-empty-link-label = links de tipos de evento
 bookings-search-placeholder = Buscar convidados, e-mails ou reuniões
 bookings-recent = Últimos 30 dias
+bookings-cancelled = Cancelados e recusados
 
 # Host notes on a booking (templates/booking_notes.html, bookings page, overview, host emails)
 

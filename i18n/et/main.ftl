@@ -508,6 +508,7 @@ bookings-empty = Tulevasi broneeringuid veel pole.<br>Jaga oma { $link }, et tei
 bookings-empty-link-label = sündmuse tüüpide linke
 bookings-search-placeholder = Otsi külalisi, e-posti või kohtumisi
 bookings-recent = Viimased 30 päeva
+bookings-cancelled = Tühistatud ja tagasi lükatud
 
 # Host notes on a booking (templates/booking_notes.html, bookings page, overview, host emails)
 

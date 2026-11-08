@@ -518,6 +518,7 @@ bookings-empty = No upcoming bookings yet.<br>Share your { $link } so people can
 bookings-empty-link-label = event type links
 bookings-search-placeholder = Search guests, emails or meetings
 bookings-recent = Last 30 days
+bookings-cancelled = Cancelled and declined
 
 # Host notes on a booking (templates/booking_notes.html, bookings page, overview, host emails)
 

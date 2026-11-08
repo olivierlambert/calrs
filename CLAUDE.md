@@ -151,7 +151,7 @@ Files: `src/web/` (see `ARCHITECTURE.md` for which file owns which page), templa
 **Dashboard** — split into focused pages, each extending `dashboard_base.html`:
 - `/dashboard` — Overview with stat tiles and pending bookings
 - `/dashboard/event-types` — Personal + team event types (create/edit/toggle/delete/view)
-- `/dashboard/bookings` — Pending approval + upcoming bookings (cancel with optional reason)
+- `/dashboard/bookings` — Pending approval + upcoming bookings (cancel with optional reason), "Last 30 days" (meetings held) and "Cancelled and declined" (future ones and the last 30 days); both are scoped by `NOTE_HOSTS` (`booking_notes.rs`) and their titles open the host notes page (`hosted_bookings()` in `dashboard.rs`)
 - `/dashboard/sources` — Calendar sources (add/test/sync/remove/write-back)
 - `/dashboard/teams` — Teams listing (create/edit/manage members/delete)
 - `/dashboard/invite-links` — Internal event types (personal + team) visible to authenticated users, with quick invite link generation (renamed from `/dashboard/organization`)

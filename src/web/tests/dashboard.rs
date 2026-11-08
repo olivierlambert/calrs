@@ -609,7 +609,7 @@ fn compute_initials_empty() {
     assert_eq!(compute_initials(""), "?");
 }
 
-// --- Dashboard with cancelled bookings (shouldn't show) ---
+// --- Dashboard with cancelled bookings (not among the upcoming ones) ---
 
 #[tokio::test]
 async fn dashboard_bookings_hides_cancelled() {
@@ -632,10 +632,15 @@ async fn dashboard_bookings_hides_cancelled() {
         .await
         .unwrap();
     let body = body_string(response).await;
+    // Listed under "Cancelled and declined", never under the upcoming ones.
+    let upcoming = body.find("aria-labelledby=\"bk-upcoming\"").unwrap();
+    let cancelled = body.find("aria-labelledby=\"bk-cancelled\"").unwrap();
+    assert!(upcoming < cancelled);
     assert!(
-        !body.contains("Cancelled Guest"),
+        !body[upcoming..cancelled].contains("Cancelled Guest"),
         "Cancelled bookings should not appear in upcoming"
     );
+    assert!(body[cancelled..].contains("Cancelled Guest"));
 }
 
 // --- Pending bookings show on dashboard ---
