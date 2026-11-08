@@ -242,3 +242,219 @@ async fn an_unreadable_resource_calendar_is_an_error_at_booking_time() {
     .await
     .is_err());
 }
+
+/// The submit-time slot check runs under the booking lock, so it reads
+/// resource feeds from the cache and never fetches one, even a stale one;
+/// the slot grid still refreshes it. A fetch, failed or not, stamps
+/// `last_synced_at`, which is how this tells the two apart.
+#[tokio::test]
+async fn the_submit_time_slot_check_never_fetches_a_resource_feed() {
+    // No test may allowlist the loopback feed below meanwhile.
+    let _lock = crate::test_support::ENV_LOCK.lock().await;
+    let pool = setup_test_db().await;
+    let (_, _, et_id) = seed_test_data(&pool).await;
+    let resource = insert_resource(&pool, "Lab").await;
+    attach_resource(&pool, &et_id, &resource).await;
+    let make_stale = || async {
+        sqlx::query("UPDATE resources SET last_synced_at = NULL, feed_url = 'http://127.0.0.1:9/feed.ics' WHERE id = ?")
+            .bind(&resource)
+            .execute(&pool)
+            .await
+            .unwrap();
+    };
+    let synced = || async {
+        sqlx::query_scalar::<_, Option<String>>("SELECT last_synced_at FROM resources WHERE id = ?")
+            .bind(&resource)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+            .is_some()
+    };
+    let utc = chrono_tz::Tz::UTC;
+    let slot = NaiveDate::parse_from_str(&far_future_monday(), "%Y-%m-%d")
+        .unwrap()
+        .and_hms_opt(10, 0, 0)
+        .unwrap();
+    let window = offered_slot_window(utc, slot);
+
+    make_stale().await;
+    let offered = is_offered_slot(
+        &pool,
+        &et_id,
+        30,
+        0,
+        0,
+        0,
+        utc,
+        utc,
+        &window,
+        BusySource::Individual(Vec::new()),
+        None,
+        slot,
+    )
+    .await
+    .unwrap();
+    assert!(offered, "the cached feed is empty, so the slot is free");
+    assert!(!synced().await, "no fetch under the booking lock");
+
+    compute_slots(
+        &pool,
+        &et_id,
+        30,
+        0,
+        0,
+        0,
+        window.start_offset,
+        window.days_ahead,
+        BookingWindow::default(),
+        utc,
+        utc,
+        BusySource::Individual(Vec::new()),
+        None,
+    )
+    .await;
+    assert!(synced().await, "the slot grid refreshes a stale feed");
+}
+
+/// Blocked days, the slot interval and first-slot-only are part of what the
+/// page offers: unreadable at submit time, the booking is refused, while the
+/// grid degrades and keeps showing slots.
+#[tokio::test]
+async fn unreadable_slot_settings_refuse_the_booking() {
+    let (app, pool, _session, et_id) = setup_test_app().await;
+    sqlx::query("ALTER TABLE availability_overrides RENAME TO availability_overrides_gone")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let utc = chrono_tz::Tz::UTC;
+    let day = far_future_monday();
+    let slot = NaiveDate::parse_from_str(&day, "%Y-%m-%d")
+        .unwrap()
+        .and_hms_opt(10, 0, 0)
+        .unwrap();
+    let window = offered_slot_window(utc, slot);
+    let grid = compute_slots(
+        &pool,
+        &et_id,
+        30,
+        0,
+        0,
+        0,
+        window.start_offset,
+        window.days_ahead,
+        BookingWindow::default(),
+        utc,
+        utc,
+        BusySource::Individual(Vec::new()),
+        None,
+    )
+    .await;
+    assert!(
+        grid.iter().any(|d| !d.slots.is_empty()),
+        "the grid degrades"
+    );
+    assert!(is_offered_slot(
+        &pool,
+        &et_id,
+        30,
+        0,
+        0,
+        0,
+        utc,
+        utc,
+        &window,
+        BusySource::Individual(Vec::new()),
+        None,
+        slot,
+    )
+    .await
+    .is_err());
+
+    let response = app
+        .oneshot(booking_post(
+            "/u/testuser/test-meeting/book",
+            2,
+            &day,
+            "10:00",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        response.status(),
+        axum::http::StatusCode::INTERNAL_SERVER_ERROR
+    );
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM bookings")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 0);
+}
+
+/// An unreadable resource attachment list blocks the slot grid, as an
+/// unreadable resource calendar does, and is an error at booking time:
+/// never "this event type needs no resource".
+#[tokio::test]
+async fn an_unreadable_resource_list_blocks_and_refuses() {
+    let pool = setup_test_db().await;
+    let (_, _, et_id) = seed_test_data(&pool).await;
+    sqlx::query("ALTER TABLE event_type_resources RENAME TO event_type_resources_gone")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let start = NaiveDate::parse_from_str(&far_future_monday(), "%Y-%m-%d")
+        .unwrap()
+        .and_hms_opt(10, 0, 0)
+        .unwrap();
+    let end = start + Duration::minutes(30);
+    let utc = chrono_tz::Tz::UTC;
+    assert_eq!(
+        crate::resources::blocking_intervals_for_event_type(&pool, &et_id, start, end, utc, None)
+            .await,
+        vec![(start, end)]
+    );
+    assert!(
+        crate::resources::try_cached_blocking_intervals_for_event_type(
+            &pool, &et_id, start, end, utc, None
+        )
+        .await
+        .is_err()
+    );
+    assert!(
+        crate::resources::check_and_pick(&pool, &et_id, start, end, utc, None)
+            .await
+            .is_err()
+    );
+}
+
+/// A reschedule or an approval checks the booking's real hosts: when they
+/// cannot be read, it is an error, not a check of the event type owner
+/// without the co-hosts.
+#[tokio::test]
+async fn unreadable_reschedule_hosts_are_an_error() {
+    let pool = setup_test_db().await;
+    let (_, _, et_id) = seed_test_data(&pool).await;
+    let day = far_future_monday();
+    let (booking_id, _, _) = insert_test_booking(
+        &pool,
+        &et_id,
+        &format!("{day}T10:00:00"),
+        &format!("{day}T10:30:00"),
+        "confirmed",
+    )
+    .await;
+    let uid: String = sqlx::query_scalar("SELECT uid FROM bookings WHERE id = ?")
+        .bind(&booking_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let owner: String = sqlx::query_scalar("SELECT id FROM users WHERE username = 'testuser'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(reschedule_hosts(&pool, &uid, &owner).await.is_ok());
+    sqlx::query("ALTER TABLE booking_participants RENAME TO booking_participants_gone")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert!(reschedule_hosts(&pool, &uid, &owner).await.is_err());
+}

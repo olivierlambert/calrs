@@ -239,8 +239,14 @@ pub(super) async fn pending_host_recipients(
     uid: &str,
     owner_user_id: &str,
 ) -> Vec<(String, String, String, Option<String>)> {
-    let hosts = reschedule_hosts(pool, uid, owner_user_id).await;
-    let mut ids = hosts.user_ids;
+    // Who to email: on a failed read, the owner (below) rather than nobody.
+    let mut ids = match reschedule_hosts(pool, uid, owner_user_id).await {
+        Ok(hosts) => hosts.user_ids,
+        Err(error) => {
+            tracing::error!(%error, %uid, "cannot resolve the pending booking's hosts; emailing the owner");
+            Vec::new()
+        }
+    };
     if ids.is_empty() {
         ids.push(owner_user_id.to_string());
     }

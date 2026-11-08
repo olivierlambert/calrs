@@ -37,6 +37,12 @@ pub const SYNC_STALE_MINUTES: i64 = 5;
 /// (a transaction or an `acquire`d connection). Holders read through the
 /// pool, so a request parked on the lock with a connection in hand could
 /// starve the holder. The booking cores take it before their transaction.
+///
+/// No network under the lock: no feed fetch, CalDAV sync, SMTP, DNS or
+/// sleep while holding it, or one slow server holds up every booking on
+/// the instance. Feeds and calendars are refreshed before it is taken, and
+/// the checks under it read cached data only (`check_and_pick`,
+/// `try_cached_blocking_intervals_for_event_type`).
 static BOOKING_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 /// Acquire the process-wide booking lock. Hold it from before the first
@@ -533,7 +539,10 @@ pub fn merge_mode_busy(
 }
 
 /// Busy intervals that block slots of this event type, given its attached
-/// resources and mode. Empty when no resources are attached.
+/// resources and mode. Empty when no resources are attached. For slot
+/// grids: stale feeds are refreshed first, and a read that fails blocks
+/// (an unreadable attachment list blocks the whole window, as an unreadable
+/// resource does), never reads as free.
 pub async fn blocking_intervals_for_event_type(
     pool: &SqlitePool,
     event_type_id: &str,
@@ -542,7 +551,13 @@ pub async fn blocking_intervals_for_event_type(
     host_tz: Tz,
     exclude_booking_id: Option<&str>,
 ) -> Vec<(NaiveDateTime, NaiveDateTime)> {
-    let refs = resources_for_event_type(pool, event_type_id).await;
+    let refs = match try_resources_for_event_type(pool, event_type_id).await {
+        Ok(refs) => refs,
+        Err(error) => {
+            tracing::error!(%error, %event_type_id, "cannot read the event type's resources; treating the window as busy");
+            return vec![(window_start, window_end)];
+        }
+    };
     if refs.is_empty() {
         return Vec::new();
     }
@@ -573,11 +588,51 @@ pub async fn blocking_intervals_for_event_type(
     merge_mode_busy(&per_resource, &mode)
 }
 
+/// [`blocking_intervals_for_event_type`] for the submit-time slot check,
+/// which runs under [`booking_lock`]: reads the cached feed events only and
+/// never fetches a feed (the booking paths refresh feeds before taking the
+/// lock), and any failing read is an error.
+pub async fn try_cached_blocking_intervals_for_event_type(
+    pool: &SqlitePool,
+    event_type_id: &str,
+    window_start: NaiveDateTime,
+    window_end: NaiveDateTime,
+    host_tz: Tz,
+    exclude_booking_id: Option<&str>,
+) -> Result<Vec<(NaiveDateTime, NaiveDateTime)>, sqlx::Error> {
+    let refs = try_resources_for_event_type(pool, event_type_id).await?;
+    if refs.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mode: String =
+        sqlx::query_scalar("SELECT resource_scheduling_mode FROM event_types WHERE id = ?")
+            .bind(event_type_id)
+            .fetch_optional(pool)
+            .await?
+            .unwrap_or_else(|| "all".to_string());
+    let mut per_resource = Vec::with_capacity(refs.len());
+    for r in &refs {
+        per_resource.push(
+            try_busy_for_resource(
+                pool,
+                &r.id,
+                window_start,
+                window_end,
+                host_tz,
+                exclude_booking_id,
+            )
+            .await?,
+        );
+    }
+    Ok(merge_mode_busy(&per_resource, &mode))
+}
+
 /// Booking-time check: verify resource availability for `[start, end)` and,
 /// in round-robin mode, pick the free resource with the fewest upcoming
 /// assignments (stable tie-break by name via the resource listing order).
 /// A read that decides availability failing is an error, which the callers
-/// turn into a refusal: never a resource that looks free.
+/// turn into a refusal: never a resource that looks free. Reads the cached
+/// feed events only (it runs under [`booking_lock`]).
 pub async fn check_and_pick(
     pool: &SqlitePool,
     event_type_id: &str,

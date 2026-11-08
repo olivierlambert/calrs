@@ -382,7 +382,7 @@ async fn reschedule_hosts_follows_the_booking_not_the_owner() {
             .fetch_one(&pool)
             .await
             .unwrap();
-    let hosts = reschedule_hosts(&pool, &uid, "owner-id").await;
+    let hosts = reschedule_hosts(&pool, &uid, "owner-id").await.unwrap();
     assert_eq!(hosts.user_ids, vec![bob.clone()]);
     assert_eq!(hosts.team_id.as_deref(), Some(team.as_str()));
     assert!(
@@ -405,7 +405,7 @@ async fn reschedule_hosts_follows_the_booking_not_the_owner() {
     .fetch_one(&pool)
     .await
     .unwrap();
-    let collective_hosts = reschedule_hosts(&pool, &uid2, "owner-id").await;
+    let collective_hosts = reschedule_hosts(&pool, &uid2, "owner-id").await.unwrap();
     let mut members = collective_hosts.user_ids.clone();
     members.sort();
     let mut expected = vec![alice.clone(), bob.clone()];
@@ -422,7 +422,7 @@ async fn reschedule_hosts_follows_the_booking_not_the_owner() {
             .fetch_one(&pool)
             .await
             .unwrap();
-    let personal_hosts = reschedule_hosts(&pool, &uid3, &owner).await;
+    let personal_hosts = reschedule_hosts(&pool, &uid3, &owner).await.unwrap();
     assert_eq!(personal_hosts.user_ids, vec![owner]);
     assert_eq!(personal_hosts.team_id, None);
     assert!(!personal_hosts.collective);
@@ -480,7 +480,7 @@ async fn reschedule_collective_without_eligible_members_has_no_available_slot() 
         "CalDAV write-back keeps its legacy owner fallback"
     );
 
-    let hosts = reschedule_hosts(&pool, &uid, owner_fallback).await;
+    let hosts = reschedule_hosts(&pool, &uid, owner_fallback).await.unwrap();
     assert!(hosts.collective);
     assert!(
         hosts.user_ids.is_empty(),
@@ -544,7 +544,7 @@ async fn reschedule_hosts_unassigned_round_robin_falls_back_to_the_owner() {
             .await
             .unwrap();
 
-    let hosts = reschedule_hosts(&pool, &uid, &owner).await;
+    let hosts = reschedule_hosts(&pool, &uid, &owner).await.unwrap();
     assert_eq!(
         hosts.user_ids,
         vec![owner.clone()],
@@ -637,7 +637,7 @@ async fn reschedule_busy_source_uses_the_assigned_member_calendar() {
         "the event type owner is free at 10:00; only Bob is busy"
     );
 
-    let hosts = reschedule_hosts(&pool, &uid, &owner).await;
+    let hosts = reschedule_hosts(&pool, &uid, &owner).await.unwrap();
     let busy = reschedule_busy_source(
         &pool,
         &hosts,
@@ -688,7 +688,7 @@ async fn reschedule_host_profile_shows_the_booking_host() {
             .fetch_one(&pool)
             .await
             .unwrap();
-    let assigned_hosts = reschedule_hosts(&pool, &uid, &owner).await;
+    let assigned_hosts = reschedule_hosts(&pool, &uid, &owner).await.unwrap();
     let profile = reschedule_host_profile(&pool, &assigned_hosts, &et_id).await;
     assert_eq!(profile.name, "bob@profile166.test");
     assert_eq!(profile.user_id.as_deref(), Some(bob.as_str()));
@@ -711,7 +711,7 @@ async fn reschedule_host_profile_shows_the_booking_host() {
     .fetch_one(&pool)
     .await
     .unwrap();
-    let collective_hosts = reschedule_hosts(&pool, &uid2, &owner).await;
+    let collective_hosts = reschedule_hosts(&pool, &uid2, &owner).await.unwrap();
     let team_profile = reschedule_host_profile(&pool, &collective_hosts, &et_id).await;
     assert_eq!(team_profile.name, "Support");
     assert_eq!(team_profile.user_id, None);

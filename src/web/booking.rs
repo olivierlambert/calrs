@@ -727,6 +727,7 @@ pub(super) async fn book_team(
         slot_start,
     )
     .await
+    .map_err(busy_check_failed)?
     {
         return Err(BookingRefusal::Plain("error-slot-unavailable"));
     }
@@ -1314,7 +1315,7 @@ async fn handle_dynamic_group_booking(
         Ok(busy) => busy,
         Err(e) => return internal_error_response("availability check", &e),
     };
-    if !is_offered_slot(
+    let offered = match is_offered_slot(
         &state.pool,
         &et_id,
         duration,
@@ -1330,6 +1331,10 @@ async fn handle_dynamic_group_booking(
     )
     .await
     {
+        Ok(offered) => offered,
+        Err(e) => return internal_error_response("availability check", &e),
+    };
+    if !offered {
         return Html(crate::i18n::translate(lang, "error-slot-unavailable", None)).into_response();
     }
 
@@ -2006,6 +2011,7 @@ pub(super) async fn book_personal(
         slot_start,
     )
     .await
+    .map_err(busy_check_failed)?
     {
         return Err(BookingRefusal::Plain("error-slot-unavailable"));
     }
@@ -2820,7 +2826,7 @@ pub(super) async fn handle_booking(
         Ok(busy) => BusySource::Individual(busy),
         Err(e) => return internal_error_response("availability check", &e),
     };
-    if !is_offered_slot(
+    let offered = match is_offered_slot(
         &state.pool,
         &et_id,
         duration,
@@ -2836,6 +2842,10 @@ pub(super) async fn handle_booking(
     )
     .await
     {
+        Ok(offered) => offered,
+        Err(e) => return internal_error_response("availability check", &e),
+    };
+    if !offered {
         return Html(crate::i18n::translate(lang, "error-slot-unavailable", None)).into_response();
     }
 

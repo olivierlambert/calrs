@@ -217,7 +217,10 @@ pub(super) async fn approve_booking_by_token(
 
     // Refresh the hosts' calendars before taking the lock below (bounded,
     // see `prepare_approval_hosts`).
-    let approval_hosts = prepare_approval_hosts(&state, &uid, &user_id).await;
+    let approval_hosts = match prepare_approval_hosts(&state, &uid, &user_id).await {
+        Ok(hosts) => hosts,
+        Err(e) => return internal_error_response("approval hosts", &e),
+    };
 
     // Pending bookings do not block shared resources, so re-verify them at
     // approval time under the process-wide lock taken below; in round-robin
@@ -1530,7 +1533,10 @@ pub(super) async fn guest_reschedule_slots(
     // booking belongs to its assigned member, or to the whole eligible roster
     // on a collective event type. Availability and the profile shown to the
     // guest both have to follow the booking.
-    let hosts = reschedule_hosts(&state.pool, &uid, &owner_user_id).await;
+    let hosts = match reschedule_hosts(&state.pool, &uid, &owner_user_id).await {
+        Ok(hosts) => hosts,
+        Err(e) => return internal_error_response("reschedule hosts", &e),
+    };
     let host = reschedule_host_profile(&state.pool, &hosts, &et_id).await;
 
     let old_guest_tz: String =
@@ -1635,8 +1641,9 @@ pub(super) async fn guest_reschedule_slots(
     let now_host = Utc::now().with_timezone(&host_tz).naive_local();
     let end_date = now_host.date() + Duration::days((start_offset + days_ahead) as i64);
     let window_end = end_date.and_hms_opt(23, 59, 59).unwrap_or(now_host);
-    // Lenient: unreadable rows are logged and skipped, as on every slot page.
-    let busy = reschedule_busy_source(
+    // Lenient, as on every slot page: unreadable rows are logged and
+    // skipped, so with `strict: false` this never returns an error.
+    let busy = match reschedule_busy_source(
         &state.pool,
         &hosts,
         &et_id,
@@ -1648,7 +1655,10 @@ pub(super) async fn guest_reschedule_slots(
         false,
     )
     .await
-    .unwrap_or_else(|_| BusySource::Team(HashMap::new()));
+    {
+        Ok(busy) => busy,
+        Err(e) => return internal_error_response("reschedule slots", &e),
+    };
     let slot_days = compute_slots(
         &state.pool,
         &et_id,
@@ -1927,7 +1937,10 @@ pub(super) async fn guest_reschedule_booking(
     // every eligible member for collective, the owner for personal event types.
     // Resolving through the event type owner let a guest move a team booking
     // onto a slot the assigned member was already busy for (#166).
-    let hosts = reschedule_hosts(&state.pool, &uid, &host_user_id).await;
+    let hosts = match reschedule_hosts(&state.pool, &uid, &host_user_id).await {
+        Ok(hosts) => hosts,
+        Err(e) => return internal_error_response("reschedule hosts", &e),
+    };
 
     // Required shared resources' feeds are refreshed first, outside the
     // lock (network). Every check below, through the update of the booking
@@ -1993,7 +2006,7 @@ pub(super) async fn guest_reschedule_booking(
         Ok(busy) => busy,
         Err(e) => return internal_error_response("availability check", &e),
     };
-    if !is_offered_slot(
+    let offered = match is_offered_slot(
         &state.pool,
         &et_id,
         duration,
@@ -2009,6 +2022,10 @@ pub(super) async fn guest_reschedule_booking(
     )
     .await
     {
+        Ok(offered) => offered,
+        Err(e) => return internal_error_response("availability check", &e),
+    };
+    if !offered {
         return Html(crate::i18n::translate(lang, "error-slot-unavailable", None)).into_response();
     }
 

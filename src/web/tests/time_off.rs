@@ -747,7 +747,7 @@ async fn dynamic_group_reschedule_and_approval_check_every_participant() {
     .fetch_one(&pool)
     .await
     .unwrap();
-    let hosts = reschedule_hosts(&pool, &uid, &owner).await;
+    let hosts = reschedule_hosts(&pool, &uid, &owner).await.unwrap();
     assert_eq!(hosts.participants, vec![second.clone()]);
 
     // The co-host is busy during their own group booking (10:00 Monday).

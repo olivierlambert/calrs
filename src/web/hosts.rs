@@ -158,6 +158,18 @@ async fn eligible_collective_booking_members(
     booking_uid: &str,
     team_id: &str,
 ) -> Vec<String> {
+    try_eligible_collective_booking_members(pool, booking_uid, team_id)
+        .await
+        .unwrap_or_default()
+}
+
+/// [`eligible_collective_booking_members`], with an unreadable roster as an
+/// error rather than an empty one.
+async fn try_eligible_collective_booking_members(
+    pool: &SqlitePool,
+    booking_uid: &str,
+    team_id: &str,
+) -> Result<Vec<String>, sqlx::Error> {
     let members: Vec<(String,)> = sqlx::query_as(
         "SELECT u.id FROM users u
          JOIN team_members tm ON tm.user_id = u.id
@@ -170,9 +182,8 @@ async fn eligible_collective_booking_members(
     .bind(booking_uid)
     .bind(team_id)
     .fetch_all(pool)
-    .await
-    .unwrap_or_default();
-    members.into_iter().map(|(id,)| id).collect()
+    .await?;
+    Ok(members.into_iter().map(|(id,)| id).collect())
 }
 
 /// Users whose calendars this booking's write-back targets (#147): the
@@ -186,6 +197,22 @@ pub(super) async fn booking_write_targets(
     booking_uid: &str,
     fallback_user_id: &str,
 ) -> Vec<String> {
+    try_booking_write_targets(pool, booking_uid, fallback_user_id)
+        .await
+        .unwrap_or_else(|error| {
+            tracing::error!(%error, uid = %booking_uid, "cannot resolve the booking's hosts; using the fallback user");
+            vec![fallback_user_id.to_string()]
+        })
+}
+
+/// [`booking_write_targets`], with a failed read as an error rather than
+/// the fallback user: the reschedule and approval checks must not check
+/// the wrong person.
+async fn try_booking_write_targets(
+    pool: &SqlitePool,
+    booking_uid: &str,
+    fallback_user_id: &str,
+) -> Result<Vec<String>, sqlx::Error> {
     let row: Option<(Option<String>, Option<String>, String, Option<String>)> = sqlx::query_as(
         "SELECT b.assigned_user_id, et.team_id, et.scheduling_mode, a.user_id
          FROM bookings b
@@ -195,14 +222,14 @@ pub(super) async fn booking_write_targets(
     )
     .bind(booking_uid)
     .fetch_optional(pool)
-    .await
-    .unwrap_or(None);
-    match row {
+    .await?;
+    Ok(match row {
         Some((Some(assigned), _, _, _)) => vec![assigned],
         Some((None, Some(team_id), mode, owner)) if mode == "collective" => {
             // Same eligibility as the slot grid: enabled members with a
             // non-zero per-event-type weight.
-            let members = eligible_collective_booking_members(pool, booking_uid, &team_id).await;
+            let members =
+                try_eligible_collective_booking_members(pool, booking_uid, &team_id).await?;
             if members.is_empty() {
                 vec![owner.unwrap_or_else(|| fallback_user_id.to_string())]
             } else {
@@ -214,7 +241,7 @@ pub(super) async fn booking_write_targets(
         // must not mint Meet on the owner then write ICS elsewhere.
         Some((None, _, _, Some(owner))) => vec![owner],
         _ => vec![fallback_user_id.to_string()],
-    }
+    })
 }
 
 /// Who a reschedule has to be free for (#166). The guest reschedule flow used
@@ -245,6 +272,17 @@ pub(super) struct RescheduleHosts {
 
 /// The enabled co-hosts stored for a dynamic group booking.
 pub(super) async fn booking_participants(pool: &SqlitePool, booking_uid: &str) -> Vec<String> {
+    try_booking_participants(pool, booking_uid)
+        .await
+        .unwrap_or_default()
+}
+
+/// [`booking_participants`], with an unreadable list as an error rather than
+/// "no co-hosts".
+async fn try_booking_participants(
+    pool: &SqlitePool,
+    booking_uid: &str,
+) -> Result<Vec<String>, sqlx::Error> {
     sqlx::query_scalar(
         "SELECT bp.user_id FROM booking_participants bp
          JOIN bookings b ON b.id = bp.booking_id
@@ -255,14 +293,16 @@ pub(super) async fn booking_participants(pool: &SqlitePool, booking_uid: &str) -
     .bind(booking_uid)
     .fetch_all(pool)
     .await
-    .unwrap_or_default()
 }
 
+/// The [`RescheduleHosts`] of a booking. Any read that fails is an error:
+/// falling back would check the owner instead of the assigned member, or
+/// skip a dynamic group booking's co-hosts.
 pub(super) async fn reschedule_hosts(
     pool: &SqlitePool,
     booking_uid: &str,
     owner_user_id: &str,
-) -> RescheduleHosts {
+) -> Result<RescheduleHosts, sqlx::Error> {
     let row: Option<(Option<String>, Option<String>, String)> = sqlx::query_as(
         "SELECT b.assigned_user_id, et.team_id, et.scheduling_mode
          FROM bookings b JOIN event_types et ON et.id = b.event_type_id
@@ -270,8 +310,7 @@ pub(super) async fn reschedule_hosts(
     )
     .bind(booking_uid)
     .fetch_optional(pool)
-    .await
-    .unwrap_or(None);
+    .await?;
     // No row means the caller's own lookup raced a delete; treat it as a
     // personal booking on the owner, which is what happened before #166.
     let (assigned, team_id, mode) = row.unwrap_or_default();
@@ -282,26 +321,26 @@ pub(super) async fn reschedule_hosts(
         // Do not inherit booking_write_targets' CalDAV fallback here. An empty
         // collective roster must produce BusySource::Team(empty), which makes
         // every slot unavailable rather than treating the owner as the host.
-        eligible_collective_booking_members(
+        try_eligible_collective_booking_members(
             pool,
             booking_uid,
             team_id.as_deref().unwrap_or_default(),
         )
-        .await
+        .await?
     } else {
-        booking_write_targets(pool, booking_uid, owner_user_id).await
+        try_booking_write_targets(pool, booking_uid, owner_user_id).await?
     };
     let participants = if team_id.is_none() {
-        booking_participants(pool, booking_uid).await
+        try_booking_participants(pool, booking_uid).await?
     } else {
         Vec::new()
     };
-    RescheduleHosts {
+    Ok(RescheduleHosts {
         user_ids,
         collective,
         team_id,
         participants,
-    }
+    })
 }
 
 /// Refresh the calendars of every user a reschedule depends on. `sync_if_stale`
@@ -450,8 +489,8 @@ pub(super) async fn prepare_approval_hosts(
     state: &Arc<AppState>,
     booking_uid: &str,
     owner_user_id: &str,
-) -> RescheduleHosts {
-    let hosts = reschedule_hosts(&state.pool, booking_uid, owner_user_id).await;
+) -> Result<RescheduleHosts, sqlx::Error> {
+    let hosts = reschedule_hosts(&state.pool, booking_uid, owner_user_id).await?;
     if tokio::time::timeout(APPROVAL_SYNC_TIMEOUT, sync_reschedule_hosts(state, &hosts))
         .await
         .is_err()
@@ -461,7 +500,7 @@ pub(super) async fn prepare_approval_hosts(
             "calendar refresh before approval timed out; checking cached events"
         );
     }
-    hosts
+    Ok(hosts)
 }
 
 /// Whether a host an approval needs has a Microsoft calendar that has not

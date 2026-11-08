@@ -1816,7 +1816,10 @@ pub(super) async fn confirm_booking(
 
     // Refresh the hosts' calendars before taking the lock below (bounded,
     // see `prepare_approval_hosts`).
-    let approval_hosts = prepare_approval_hosts(&state, &uid, &user.id).await;
+    let approval_hosts = match prepare_approval_hosts(&state, &uid, &user.id).await {
+        Ok(hosts) => hosts,
+        Err(e) => return internal_error_response("approval hosts", &e),
+    };
 
     // Pending bookings do not block shared resources, so re-verify them at
     // approval time under the process-wide lock taken below; in round-robin
