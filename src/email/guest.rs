@@ -2,6 +2,21 @@
 
 use super::*;
 
+/// The guest's own answers (#210) as plain-text lines, for the two guest
+/// emails whose plain body is written by hand (confirmation, pending).
+fn answer_plain_lines(lang: &str, answers: &[BookingAnswer]) -> String {
+    answers
+        .iter()
+        .map(|a| {
+            format!(
+                "{} {}\n",
+                answer_heading(&a.label),
+                answer_display(a, lang, AnswerReader::Guest)
+            )
+        })
+        .collect()
+}
+
 // --- Email senders ---
 
 /// Send booking confirmation to the guest
@@ -72,7 +87,7 @@ pub async fn send_guest_confirmation_ex(
          {} {}\n\
          {} {}\n\
          {} {}\n\
-         {}{}\
+         {}{}{}\
          {}\n\
          {}{}{}\
          {}",
@@ -96,6 +111,7 @@ pub async fn send_guest_confirmation_ex(
             .as_ref()
             .map(|n| format!("{} {}\n", label_notes, n))
             .unwrap_or_default(),
+        answer_plain_lines(lang, &details.answers),
         ics_attached_plain,
         reschedule_notice_line
             .as_ref()
@@ -144,6 +160,7 @@ pub async fn send_guest_confirmation_ex(
             value: notes.clone(),
         });
     }
+    push_answer_rows(&mut rows, lang, &details.answers, AnswerReader::Guest);
 
     let mut actions: Vec<EmailAction> = Vec::new();
     if let Some(u) = reschedule_url {
@@ -835,6 +852,7 @@ pub(super) fn compose_guest_pending_notice(
     if let Some(n) = &details.notes {
         plain.push_str(&format!("{} {}\n", label_notes, n));
     }
+    plain.push_str(&answer_plain_lines(lang, &details.answers));
     if let Some(u) = cancel_url {
         plain.push_str(&format!(
             "\n{}\n",
@@ -868,6 +886,7 @@ pub(super) fn compose_guest_pending_notice(
             value: notes.clone(),
         });
     }
+    push_answer_rows(&mut rows, lang, &details.answers, AnswerReader::Guest);
 
     let mut actions: Vec<EmailAction> = Vec::new();
     if let Some(u) = reschedule_url {

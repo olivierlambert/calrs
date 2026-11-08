@@ -226,8 +226,10 @@ pub(super) async fn push_to_sources(
     // one, they are left off. Without one they stay, and rely on it.
     let attendee_ics = match &attendee_source {
         Some(_) => {
+            // Nor the answers to the booking questions (#210).
             let shared = crate::email::generate_ics_caldav(&crate::email::BookingDetails {
                 guest_phone: None,
+                answers: Vec::new(),
                 ..details.clone()
             });
             let targets = booking_write_targets(pool, booking_uid, user_id).await;
@@ -1013,6 +1015,7 @@ pub(super) async fn resource_push_booking(
     let ics = crate::email::generate_ics_caldav(&crate::email::BookingDetails {
         notes: None,
         guest_phone: None,
+        answers: Vec::new(),
         ..details.clone()
     });
 
@@ -1101,18 +1104,27 @@ pub(super) async fn booking_resource_label(pool: &SqlitePool, booking_uid: &str)
     }
 }
 
+/// What the guest typed into the booking form that the host should keep.
+/// See `booking_guest_input`.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct GuestInput {
+    pub(crate) notes: Option<String>,
+    /// Only when the event type still collects one.
+    pub(crate) phone: Option<String>,
+    /// The answers to the booking questions (#210), in form order.
+    pub(crate) answers: Vec<crate::email::BookingAnswer>,
+}
+
 /// What the guest typed into the booking form that the host should keep:
-/// the notes, and the phone number when the event type collects one (a phone
-/// stored before the mode was switched off is not shown). Paths that rebuild
-/// `BookingDetails` from the row (approval, reschedule, claim, reminders) use
-/// this so the host emails and the calendar event carry what the booking
-/// form's own emails did (#261). The write-back retry, the Meet path and the
-/// pending sweep read them here too rather than from their own row queries,
-/// whose copies had already drifted (#266).
-pub(crate) async fn booking_guest_input(
-    pool: &SqlitePool,
-    booking_uid: &str,
-) -> (Option<String>, Option<String>) {
+/// the notes, the phone number when the event type collects one (a phone
+/// stored before the mode was switched off is not shown), and the answers
+/// to the booking questions (#210). Paths that rebuild `BookingDetails`
+/// from the row (approval, reschedule, claim, reminders) use this so the
+/// host emails and the calendar event carry what the booking form's own
+/// emails did (#261). The write-back retry, the Meet path and the pending
+/// sweep read them here too rather than from their own row queries, whose
+/// copies had already drifted (#266).
+pub(crate) async fn booking_guest_input(pool: &SqlitePool, booking_uid: &str) -> GuestInput {
     let row: Option<(Option<String>, Option<String>, String)> = sqlx::query_as(
         "SELECT b.notes, b.guest_phone, et.sms_phone_mode
          FROM bookings b JOIN event_types et ON et.id = b.event_type_id
@@ -1123,13 +1135,17 @@ pub(crate) async fn booking_guest_input(
     .await
     .unwrap_or(None);
     let Some((notes, phone, phone_mode)) = row else {
-        return (None, None);
+        return GuestInput::default();
     };
     let notes = notes.filter(|n| !n.trim().is_empty());
     let phone = phone
         .filter(|p| !p.trim().is_empty())
         .filter(|_| crate::sms::collects_phone(&phone_mode));
-    (notes, phone)
+    GuestInput {
+        notes,
+        phone,
+        answers: super::questions::booking_answers(pool, booking_uid).await,
+    }
 }
 
 /// The additional attendees the guest invited, for paths that rebuild

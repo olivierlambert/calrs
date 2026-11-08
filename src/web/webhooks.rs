@@ -288,6 +288,37 @@ struct Guest {
     timezone: String,
 }
 
+/// An answer to a booking question (#210): the question's key and label as
+/// the guest read them, and the answer. `value` is the display text ("yes"
+/// or "no" for a checkbox, the chosen labels joined by ", " for a choice),
+/// `option_ids` the chosen options' stable ids.
+#[derive(Serialize, Clone, Debug)]
+struct Answer {
+    key: String,
+    label: String,
+    kind: String,
+    value: String,
+    option_ids: Vec<String>,
+    consent: bool,
+    link_url: Option<String>,
+    answered_at: String,
+}
+
+impl From<crate::email::BookingAnswer> for Answer {
+    fn from(a: crate::email::BookingAnswer) -> Self {
+        Answer {
+            key: a.key,
+            label: a.label,
+            kind: a.kind,
+            value: a.value,
+            option_ids: a.option_ids,
+            consent: a.consent,
+            link_url: a.link_url,
+            answered_at: a.answered_at,
+        }
+    }
+}
+
 #[derive(Serialize, Clone, Debug)]
 struct Host {
     name: String,
@@ -310,6 +341,7 @@ struct BookingPayload {
     language: Option<String>,
     created_at: String,
     guest: Guest,
+    answers: Vec<Answer>,
     attendees: Vec<String>,
     hosts: Vec<Host>,
     claimed_by: Option<Host>,
@@ -420,7 +452,11 @@ async fn snapshot(pool: &SqlitePool, booking_key: &str) -> Result<Option<Snapsho
     let tz = crate::booking_time::event_timezone(pool, &row.et_id)
         .await
         .unwrap_or(Tz::UTC);
-    let (notes, phone) = super::booking_guest_input(pool, &row.uid).await;
+    let super::GuestInput {
+        notes,
+        phone,
+        answers,
+    } = super::booking_guest_input(pool, &row.uid).await;
     let attendees = super::booking_additional_attendees(pool, &row.uid).await;
     let fallback = row.owner_id.clone().unwrap_or_default();
     let mut hosts = Vec::new();
@@ -454,6 +490,7 @@ async fn snapshot(pool: &SqlitePool, booking_key: &str) -> Result<Option<Snapsho
                 notes,
                 timezone: row.guest_timezone,
             },
+            answers: answers.into_iter().map(Answer::from).collect(),
             attendees,
             hosts,
             claimed_by,
@@ -533,6 +570,16 @@ fn ping_snapshot(event_type: Option<(String, String, String, Tz)>) -> Snapshot {
                 notes: Some("This is a test delivery.".to_string()),
                 timezone: "UTC".to_string(),
             },
+            answers: vec![Answer {
+                key: "company".to_string(),
+                label: "Company".to_string(),
+                kind: "short_text".to_string(),
+                value: "Example Ltd".to_string(),
+                option_ids: Vec::new(),
+                consent: false,
+                link_url: None,
+                answered_at: iso(Utc::now()),
+            }],
             attendees: vec!["colleague@example.com".to_string()],
             hosts: vec![Host {
                 name: "Test Host".to_string(),

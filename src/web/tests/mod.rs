@@ -35,6 +35,7 @@ mod overview_stats;
 mod page_language;
 mod pending_hold;
 mod public_pages;
+mod questions;
 mod resources;
 mod security;
 mod sources;

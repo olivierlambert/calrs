@@ -239,10 +239,94 @@
     })();
     </script>
 
+    {#- The host's booking questions (#210), in their order. Every field name
+        is unique (q_<id>, and q_<id>__<option id> per multiple-choice box),
+        so the form posts with no script. #}
+    {% if questions is defined and questions %}
+    <style>
+      .q-group { border: 0; padding: 0; margin: 0 0 1.25rem; min-width: 0; }
+      .q-group legend { display: block; font-weight: 500; margin-bottom: 0.375rem; font-size: 0.875rem; color: var(--text); padding: 0; }
+      .q-help { display: block; color: var(--text-muted); font-size: 0.8rem; margin-top: 0.25rem; }
+      .q-group legend + .q-help { margin: -0.125rem 0 0.375rem; }
+      .q-choice, .form-group label.q-choice { display: flex; align-items: flex-start; gap: 0.5rem; font-size: 0.9rem; color: var(--text); margin: 0.25rem 0; cursor: pointer; font-weight: 400; }
+      .form-group .q-choice input, .q-choice input { width: auto; flex: 0 0 auto; margin: 0.2rem 0 0; accent-color: var(--accent); }
+      .q-group select, .form-group select.q-select { width: 100%; padding: 0.625rem 0.875rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.925rem; font-family: inherit; background: var(--surface); color: var(--text); }
+      .q-consent a { color: var(--accent); }
+      .q-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+    </style>
+    {% for q in questions %}
+    {% set help_id = q.html_id ~ "-help" %}
+    {% if q.kind == "short_text" or q.kind == "long_text" %}
     <div class="form-group">
-      <label for="notes">{{ t("book-notes-label") }} <span class="hint">{{ t("book-notes-optional") }}</span></label>
-      <textarea id="notes" name="notes" maxlength="5000" placeholder="{{ t('book-notes-placeholder') }}">{{ form_notes }}</textarea>
+      <label for="{{ q.html_id }}">{{ q.label }}{% if not q.required %} <span class="hint">{{ t("book-notes-optional") }}</span>{% endif %}</label>
+      {% if q.kind == "long_text" %}
+      <textarea id="{{ q.html_id }}" name="{{ q.name }}" maxlength="{{ q.max_len }}"{% if q.required %} required{% endif %}{% if q.help %} aria-describedby="{{ help_id }}"{% endif %}></textarea>
+      {% else %}
+      <input type="text" id="{{ q.html_id }}" name="{{ q.name }}" maxlength="{{ q.max_len }}"{% if q.required %} required{% endif %}{% if q.help %} aria-describedby="{{ help_id }}"{% endif %}>
+      {% endif %}
+      {% if q.help %}<span class="q-help" id="{{ help_id }}">{{ q.help }}</span>{% endif %}
     </div>
+    {% elif q.kind == "single_choice" and q.as_select %}
+    <div class="form-group">
+      <label for="{{ q.html_id }}">{{ q.label }}{% if not q.required %} <span class="hint">{{ t("book-notes-optional") }}</span>{% endif %}</label>
+      <select class="q-select" id="{{ q.html_id }}" name="{{ q.name }}"{% if q.required %} required{% endif %}{% if q.help %} aria-describedby="{{ help_id }}"{% endif %}>
+        <option value="">{{ t("book-question-choose") }}</option>
+        {% for o in q.options %}<option value="{{ o.id }}">{{ o.label }}</option>{% endfor %}
+      </select>
+      {% if q.help %}<span class="q-help" id="{{ help_id }}">{{ q.help }}</span>{% endif %}
+    </div>
+    {% elif q.kind == "single_choice" or q.kind == "multiple_choice" %}
+    <fieldset class="q-group"{% if q.help %} aria-describedby="{{ help_id }}"{% endif %}>
+      <legend>{{ q.label }}{% if not q.required %} <span class="hint" style="color: var(--text-muted); font-weight: 400;">{{ t("book-notes-optional") }}</span>{% endif %}</legend>
+      {% if q.help %}<span class="q-help" id="{{ help_id }}">{{ q.help }}</span>{% endif %}
+      {% for o in q.options %}
+      <label class="q-choice" for="{{ o.html_id }}">
+        {% if q.kind == "single_choice" %}
+        <input type="radio" id="{{ o.html_id }}" name="{{ q.name }}" value="{{ o.id }}"{% if q.required %} required{% endif %}>
+        {% else %}
+        <input type="checkbox" id="{{ o.html_id }}" name="{{ o.name }}" value="1" data-q-group="{{ q.html_id }}">
+        {% endif %}
+        <span>{{ o.label }}</span>
+      </label>
+      {% endfor %}
+    </fieldset>
+    {% if q.kind == "multiple_choice" and q.required %}
+    <script>
+    (function() {
+      // A required multiple choice: at least one box. Native `required` on a
+      // checkbox would demand every box, so the first box carries the check.
+      var boxes = document.querySelectorAll('input[data-q-group="{{ q.html_id }}"]');
+      if (!boxes.length) return;
+      var msg = {{ t("book-question-pick-one") | tojson }};
+      function update() {
+        var any = Array.prototype.some.call(boxes, function(b) { return b.checked; });
+        boxes[0].setCustomValidity(any ? '' : msg);
+      }
+      Array.prototype.forEach.call(boxes, function(b) { b.addEventListener('change', update); });
+      update();
+    })();
+    </script>
+    {% endif %}
+    {% else %}
+    <div class="form-group">
+      <label class="q-choice q-consent" for="{{ q.html_id }}">
+        <input type="checkbox" id="{{ q.html_id }}" name="{{ q.name }}" value="1"{% if q.required %} required{% endif %}{% if q.help %} aria-describedby="{{ help_id }}"{% endif %}>
+        <span>{{ q.label }}{% if not q.required %} <span class="hint">{{ t("book-notes-optional") }}</span>{% endif %}</span>
+      </label>
+      {% if q.link_url %}<span class="q-help q-consent"><a href="{{ q.link_url }}" target="_blank" rel="noopener noreferrer">{{ t("book-question-read-policy") }}<span class="q-sr"> {{ t("book-question-new-tab") }}</span></a></span>{% endif %}
+      {% if q.help %}<span class="q-help" id="{{ help_id }}">{{ q.help }}</span>{% endif %}
+    </div>
+    {% endif %}
+    {% endfor %}
+    {% endif %}
+
+    {% set notes_mode = notes_mode | default("optional") %}
+    {% if notes_mode != "off" %}
+    <div class="form-group">
+      <label for="notes">{{ t("book-notes-label") }}{% if notes_mode != "required" %} <span class="hint">{{ t("book-notes-optional") }}</span>{% endif %}</label>
+      <textarea id="notes" name="notes" maxlength="5000" placeholder="{{ t('book-notes-placeholder') }}"{% if notes_mode == "required" %} required{% endif %}>{{ form_notes }}</textarea>
+    </div>
+    {% endif %}
 
     {% if max_additional_guests is defined and max_additional_guests > 0 %}
     <div class="form-group">

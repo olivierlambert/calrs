@@ -383,7 +383,11 @@ pub(super) async fn approve_booking_by_token(
 
     let guest_language = crate::email::stored_booking_language(&state.pool, &bid).await;
 
-    let (guest_notes, guest_phone_shown) = booking_guest_input(&state.pool, &uid).await;
+    let GuestInput {
+        notes: guest_notes,
+        phone: guest_phone_shown,
+        answers: guest_answers,
+    } = booking_guest_input(&state.pool, &uid).await;
     let additional_attendees = booking_additional_attendees(&state.pool, &uid).await;
     let attendee_languages =
         booking_attendee_languages(&state.pool, &uid, &additional_attendees).await;
@@ -401,6 +405,7 @@ pub(super) async fn approve_booking_by_token(
         uid: uid.clone(),
         notes: guest_notes,
         guest_phone: guest_phone_shown,
+        answers: guest_answers,
         location: location_display,
         reminder_minutes: None,
         additional_attendees,
@@ -945,6 +950,9 @@ pub(super) async fn booking_ics(
         sequence: booking_ics_sequence(&state.pool, &uid).await,
         // A calendar download, not an email.
         guest_footer: None,
+        // It reaches the guest's own calendar, and whoever they forward it
+        // to: the answers stay in the emails (#210).
+        answers: Vec::new(),
         ..Default::default()
     };
 
@@ -2197,7 +2205,11 @@ pub(super) async fn guest_reschedule_booking(
 
     // Both branches carry what the guest typed: the host approving the new
     // time sees it as they did the first time (#266).
-    let (guest_notes, guest_phone_shown) = booking_guest_input(&state.pool, &uid).await;
+    let GuestInput {
+        notes: guest_notes,
+        phone: guest_phone_shown,
+        answers: guest_answers,
+    } = booking_guest_input(&state.pool, &uid).await;
 
     if needs_approval {
         // Guest-initiated reschedule on requires_confirmation event → pending.
@@ -2249,6 +2261,7 @@ pub(super) async fn guest_reschedule_booking(
                 location: loc_value.clone(),
                 notes: guest_notes.clone(),
                 guest_phone: guest_phone_shown,
+                answers: guest_answers,
                 host_timezone: host_tz.name().to_string(),
                 guest_language: booking_language.clone(),
                 host_language: host_language.clone(),
@@ -2294,6 +2307,9 @@ pub(super) async fn guest_reschedule_booking(
                 resource_name: booking_resource_label(&state.pool, &uid).await,
                 guest_footer: crate::email::guest_footer_for_booking(&state.pool, &booking_id)
                     .await,
+                // A reschedule request: the guest's answers were in the
+                // first one (#210).
+                answers: Vec::new(),
                 ..Default::default()
             };
             let new_confirm_token = new_confirm_token.clone();
@@ -2345,6 +2361,7 @@ pub(super) async fn guest_reschedule_booking(
             uid: uid.clone(),
             notes: guest_notes,
             guest_phone: guest_phone_shown,
+            answers: guest_answers,
             location: loc_value.clone(),
             reminder_minutes: None,
             additional_attendees,
@@ -2411,6 +2428,9 @@ pub(super) async fn guest_reschedule_booking(
                 // whole, so it keeps its attendees and notes (#267).
                 notes: push_details.notes.clone(),
                 additional_attendees: push_details.additional_attendees.clone(),
+                // The moved invite carries no answers, as the first one did
+                // not (#210).
+                answers: Vec::new(),
                 ..Default::default()
             };
             let host_notes =
@@ -2835,6 +2855,8 @@ pub(super) async fn host_request_reschedule(
             guest_language: crate::email::stored_booking_language(&state.pool, &bid).await,
             host_timezone: host_tz.name().to_string(),
             guest_footer: crate::email::guest_footer(&state.pool, &et_id).await,
+            // "Pick a new time": a guest email that is not a confirmation.
+            answers: Vec::new(),
             ..Default::default()
         };
 
@@ -3248,7 +3270,11 @@ pub(super) async fn claim_booking(
     let claim_host_tz = get_host_tz(&state.pool, &event_type_id).await;
 
     // Build details with claimant as additional attendee for CalDAV push
-    let (guest_notes, guest_phone_shown) = booking_guest_input(&state.pool, &uid).await;
+    let GuestInput {
+        notes: guest_notes,
+        phone: guest_phone_shown,
+        answers: guest_answers,
+    } = booking_guest_input(&state.pool, &uid).await;
     let mut details = crate::email::BookingDetails {
         utc_times: claim_utc_times.clone(),
         event_title: event_title.clone(),
@@ -3263,6 +3289,7 @@ pub(super) async fn claim_booking(
         uid: uid.clone(),
         notes: guest_notes,
         guest_phone: guest_phone_shown,
+        answers: guest_answers,
         location,
         reminder_minutes: None,
         // Read like every other push, so the ATTENDEE lines keep the order

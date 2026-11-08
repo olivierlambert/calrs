@@ -529,6 +529,45 @@ async fn answers_match_the_documented_schemas() {
     assert_eq!(status, StatusCode::CREATED, "{body}");
     check(&doc, "/bookings", "post", status, &body);
     let id = body["booking"]["id"].as_str().unwrap().to_string();
+    // Answers to booking questions (#210), of every shape the API shows: a
+    // choice with its option ids, a consent with its policy link, a text
+    // with no link.
+    for (position, kind, value, ids, consent, link) in [
+        (
+            0,
+            "single_choice",
+            "I bring them",
+            Some(r#"["o2"]"#),
+            0,
+            None,
+        ),
+        (
+            1,
+            "checkbox",
+            "yes",
+            None,
+            1,
+            Some("https://example.com/privacy"),
+        ),
+        (2, "short_text", "AB-123", None, 0, None),
+    ] {
+        sqlx::query(
+            "INSERT INTO booking_answers (id, booking_id, position, key, kind, label, value, value_ids, consent, link_url, in_calendar, answered_at)
+             VALUES (?, ?, ?, ?, ?, 'Question', ?, ?, ?, ?, 1, '2026-11-08T10:00:00Z')",
+        )
+        .bind(uuid::Uuid::new_v4().to_string())
+        .bind(&id)
+        .bind(position)
+        .bind(format!("q{position}"))
+        .bind(kind)
+        .bind(value)
+        .bind(ids)
+        .bind(consent)
+        .bind(link)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
     let (status, body) = send(&app, api_get("/api/v1/bookings", &token)).await;
     assert_eq!(status, StatusCode::OK);
     assert!(!body["bookings"].as_array().unwrap().is_empty());
@@ -536,6 +575,12 @@ async fn answers_match_the_documented_schemas() {
     let (status, body) = send(&app, api_get(&format!("/api/v1/bookings/{id}"), &token)).await;
     assert_eq!(status, StatusCode::OK);
     check(&doc, "/bookings/{id}", "get", status, &body);
+    assert_eq!(body["booking"]["answers"][0]["option_ids"], json!(["o2"]));
+    assert_eq!(
+        body["booking"]["answers"][1]["link_url"],
+        "https://example.com/privacy"
+    );
+    assert_eq!(body["booking"]["answers"][2]["link_url"], Value::Null);
 
     // A write-only token gets the booking's id and status only.
     let uri = format!("/api/v1/bookings/{id}/request-reschedule");

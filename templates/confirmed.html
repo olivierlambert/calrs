@@ -36,6 +36,11 @@
   {% if notes %}
     <div class="detail"><strong>{{ t("confirmed-detail-notes") }}</strong> {{ notes }}</div>
   {% endif %}
+  {% if answers is defined and answers %}
+    {% for a in answers %}
+    <div class="detail"><strong>{{ a.heading }}</strong> {{ a.value }}</div>
+    {% endfor %}
+  {% endif %}
   {% if additional_attendees is defined and additional_attendees %}
     <div class="detail"><strong>{{ t("confirmed-detail-additional-guests") }}</strong> {{ additional_attendees | join(", ") }}</div>
   {% endif %}

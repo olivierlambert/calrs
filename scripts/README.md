@@ -102,3 +102,15 @@ local authorization boundaries, not Microsoft consent, token exchange, or
 authenticated calendar interoperability. Use the provider guides for live
 account verification. `CALRS_BINARY` selects another executable. The script
 removes its temporary database and logs and stops its server on exit.
+
+# Booking questions browser test
+
+Run `cargo build`, then `node scripts/test-questions-browser.mjs` with Node.js
+22+ and Chrome installed (`CHROME_BINARY=/usr/bin/chromium` for Chromium). It
+uses an isolated server and browser profile to add, edit, reorder (with the
+Move up and Move down buttons, checking where the focus goes), remove and save
+booking questions in the event type form, checks that a saved question keeps
+its kind, then books through the public form (fieldsets, a natively required
+consent box) and reads the answers back on the confirmation and bookings
+pages. No npm packages are required; the printed temporary directory holds the
+logs and screenshots.

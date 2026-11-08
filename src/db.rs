@@ -673,6 +673,8 @@ mod tests {
             "booking_attendees",
             "event_type_watchers",
             "booking_claim_tokens",
+            "event_type_questions",
+            "booking_answers",
         ];
 
         for table in &expected_tables {

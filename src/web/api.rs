@@ -695,6 +695,61 @@ pub(super) struct BookingLocation {
     value: Option<String>,
 }
 
+fn answer_kind_schema() -> utoipa::openapi::Object {
+    string_enum(
+        &[
+            "short_text",
+            "long_text",
+            "single_choice",
+            "multiple_choice",
+            "checkbox",
+        ],
+        false,
+        "The kind of question.",
+    )
+}
+
+/// A guest's answer to one of the event type's booking questions, as the
+/// guest read it (the same object booking webhooks carry).
+#[derive(Serialize, ToSchema)]
+pub(super) struct QuestionAnswer {
+    /// The question's stable key: it survives a rename of the question.
+    key: String,
+    /// The question as the guest read it.
+    label: String,
+    #[schema(schema_with = answer_kind_schema)]
+    kind: String,
+    /// For display: the text typed, the chosen labels joined by ", " for a
+    /// choice, `yes` or `no` for a checkbox. Match choices on `option_ids`.
+    value: String,
+    /// The chosen options' stable ids; empty for other kinds.
+    option_ids: Vec<String>,
+    /// A consent checkbox (a policy, a recording).
+    consent: bool,
+    /// The policy a consent checkbox linked to.
+    #[schema(required = true)]
+    link_url: Option<String>,
+    /// When the guest sent the booking form, in UTC.
+    #[schema(format = DateTime)]
+    answered_at: String,
+}
+
+fn api_answers(answers: Vec<crate::email::BookingAnswer>) -> Vec<QuestionAnswer> {
+    answers
+        .into_iter()
+        .map(|a| QuestionAnswer {
+            key: a.key,
+            label: a.label,
+            kind: a.kind,
+            value: a.value,
+            option_ids: a.option_ids,
+            consent: a.consent,
+            link_url: a.link_url,
+            answered_at: a.answered_at,
+        })
+        .collect()
+}
+
 /// A booking, as its hosts see it. Never its guest's cancel, reschedule or
 /// approval links, nor anything about calendars.
 #[derive(Serialize, ToSchema)]
@@ -715,6 +770,10 @@ pub(super) struct Booking {
     created_at: Option<String>,
     event_type: BookingEventType,
     guest: BookingGuest,
+    /// The guest's answers to the event type's booking questions, in form
+    /// order. Empty when it asks none, and for a booking made through the
+    /// API, which asks none.
+    answers: Vec<QuestionAnswer>,
     /// Email addresses of the additional attendees.
     attendees: Vec<String>,
     location: BookingLocation,
@@ -1179,7 +1238,7 @@ struct BookingRow {
 
 /// A booking as the API shows it to one of its hosts. Never its cancel,
 /// reschedule or approval tokens, nor anything about calendars.
-fn booking_json(row: BookingRow, with_host_notes: bool) -> Booking {
+fn booking_json(row: BookingRow, with_host_notes: bool, answers: Vec<QuestionAnswer>) -> Booking {
     let stored_tz: Tz = row.stored_tz.parse().unwrap_or(Tz::UTC);
     let instant = |value: &str| {
         crate::booking_time::local(value, stored_tz, Tz::UTC)
@@ -1217,6 +1276,7 @@ fn booking_json(row: BookingRow, with_host_notes: bool) -> Booking {
             language: row.language,
             notes: row.notes,
         },
+        answers,
         attendees,
         location: BookingLocation {
             kind: row.location_type,
@@ -1242,7 +1302,15 @@ async fn hosted_booking(
     .bind(user_id)
     .fetch_optional(pool)
     .await?;
-    Ok(row.map(|r| booking_json(r, true)))
+    let Some(row) = row else {
+        return Ok(None);
+    };
+    // The guest's answers to the booking questions (#210), as webhooks carry them.
+    let answers = super::questions::answers_by_booking(pool, &[row.id.as_str()])
+        .await
+        .remove(&row.id)
+        .unwrap_or_default();
+    Ok(Some(booking_json(row, true, api_answers(answers))))
 }
 
 fn encode_cursor(start_at: &str, id: &str) -> String {
@@ -1360,9 +1428,12 @@ pub(super) async fn list_bookings(
     .await?;
     let next =
         (rows.len() > PAGE).then(|| encode_cursor(&rows[PAGE - 1].raw_start, &rows[PAGE - 1].id));
+    let ids: Vec<&str> = rows.iter().take(PAGE).map(|r| r.id.as_str()).collect();
+    let mut answers = super::questions::answers_by_booking(&state.pool, &ids).await;
     let mut bookings = Vec::new();
     for row in rows.into_iter().take(PAGE) {
-        let booking = booking_json(row, true);
+        let row_answers = answers.remove(&row.id).unwrap_or_default();
+        let booking = booking_json(row, true, api_answers(row_answers));
         let start = booking
             .start
             .as_deref()
@@ -1659,6 +1730,8 @@ async fn create_booking_inner(
         additional_guests: &additional_guests,
         date: &date,
         time: &time,
+        // A manager booking for a guest: no booking questions (#210).
+        fields: None,
     };
     let resolve_tz = move |_: Tz| guest_tz;
     let team: Option<Option<String>> =
@@ -1738,7 +1811,8 @@ async fn create_booking_inner(
         .bind(&booked.id)
         .fetch_one(&state.pool)
         .await?;
-    let booking = booking_json(row, false);
+    // A manager's booking asks no booking questions (#210).
+    let booking = booking_json(row, false, Vec::new());
     Ok((StatusCode::CREATED, to_json(&BookingAnswer { booking })))
 }
 
