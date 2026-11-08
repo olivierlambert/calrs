@@ -1595,13 +1595,26 @@ async fn find_or_create_oidc_user(
     // 2. Link to existing local user by email — only if the IdP asserts the
     //    email is verified. Otherwise an attacker could register at the IdP
     //    with the target's email and silently take over their local account.
-    if let Some((id, _existing_provider)) = sqlx::query_as::<_, (String, String)>(
-        "SELECT id, auth_provider FROM users WHERE email = ? AND enabled = 1",
+    //    Only an account no identity is linked to yet: one that already has
+    //    an `oidc_subject` belongs to another IdP identity (an address the
+    //    IdP recycled to a newcomer), and linking would hand that whole
+    //    account to the newcomer.
+    if let Some((id, existing_subject)) = sqlx::query_as::<_, (String, Option<String>)>(
+        "SELECT id, oidc_subject FROM users WHERE email = ? AND enabled = 1",
     )
     .bind(email)
     .fetch_optional(pool)
     .await?
     {
+        if existing_subject.is_some() {
+            tracing::warn!(
+                email = %email, subject = %subject,
+                "OIDC login refused: the address belongs to an account linked to another identity"
+            );
+            anyhow::bail!(
+                "An account with this email is already linked to another single sign-on identity. Contact an administrator."
+            );
+        }
         if !email_verified {
             tracing::warn!(
                 email = %email, subject = %subject,
@@ -1634,7 +1647,7 @@ async fn find_or_create_oidc_user(
         // MFA policy exemption or skip reauthentication for policy changes.
         let mut tx = pool.begin().await?;
         let linked = sqlx::query(
-            "UPDATE users SET oidc_subject = ?, auth_provider = 'oidc', updated_at = datetime('now') WHERE id = ? AND enabled = 1",
+            "UPDATE users SET oidc_subject = ?, auth_provider = 'oidc', updated_at = datetime('now') WHERE id = ? AND enabled = 1 AND oidc_subject IS NULL",
         )
         .bind(subject)
         .bind(&id)
@@ -3324,6 +3337,38 @@ mod tests {
                 .unwrap();
         assert_eq!(provider, "oidc");
         assert_eq!(oidc_subject.as_deref(), Some("alice-sub-123"));
+    }
+
+    /// An address the IdP recycled: a newcomer with a new subject and the
+    /// previous holder's (verified) address must not take over the account
+    /// already linked to the previous holder's subject. Refused, whatever
+    /// auto-register says, and the account keeps its subject.
+    #[tokio::test]
+    async fn oidc_recycled_address_does_not_take_over_a_linked_account() {
+        let pool = setup_db().await;
+        let cfg = auth_config_with_oidc(&pool, true).await;
+        let first =
+            find_or_create_oidc_user(&pool, "sub-old", "pat@company.com", true, "Pat", &cfg)
+                .await
+                .unwrap();
+        let err = find_or_create_oidc_user(&pool, "sub-new", "pat@company.com", true, "New", &cfg)
+            .await
+            .expect_err("a recycled address must not link to the linked account");
+        assert!(err.to_string().contains("already linked"), "{err}");
+        let (subject, users): (Option<String>, i64) = sqlx::query_as(
+            "SELECT oidc_subject, (SELECT COUNT(*) FROM users) FROM users WHERE id = ?",
+        )
+        .bind(&first)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!((subject.as_deref(), users), (Some("sub-old"), 1));
+        // The previous holder still signs in with their own subject.
+        let again =
+            find_or_create_oidc_user(&pool, "sub-old", "pat@company.com", true, "Pat", &cfg)
+                .await
+                .unwrap();
+        assert_eq!(again, first);
     }
 
     #[tokio::test]
