@@ -2046,7 +2046,9 @@ admin-ews-row-conflict = Not provisioned: another user's source already reads th
 admin-ews-trust-title = Addresses to confirm
 admin-ews-trust-help = These enabled accounts in the allowed email domains have an address nobody vouched for (self-registered, or created before this check existed), so they get no managed Exchange source. Confirm one only when you know the address belongs to that person: confirming lets calrs read that mailbox's calendar for them.
 admin-ews-trust-confirm = Confirm
-admin-ews-trust-more = Showing { $shown } of { $total }.
+admin-ews-search = Search by user or mailbox
+admin-ews-no-match = No managed mailbox or address to confirm matches this search.
+admin-ews-conflicts-more = Mailbox already used by another user: showing { $shown } of { $total }.
 admin-ews-http-warning = The endpoint uses http://: the service account password is sent unencrypted. Prefer https://.
 # Time off (templates/time_off.html, src/web/time_off.rs, troubleshoot view)
 

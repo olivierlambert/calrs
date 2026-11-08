@@ -734,12 +734,23 @@
   </form>
   {% endif %}
 
+  {% if ews_search_shown %}
+  <form method="get" action="/dashboard/admin#ews-global" class="adm-toolbar" role="search" style="margin-top: 1.5rem;">
+    <input type="search" name="ewsq" value="{{ ews_q }}" maxlength="{{ ews_search_max }}" class="adm-search" placeholder="{{ t('admin-ews-search') }}" aria-label="{{ t('admin-ews-search') }}" autocomplete="off">
+    <button type="submit" class="adm-btn adm-btn-sm">{{ t("admin-users-search") }}</button>
+  </form>
+  {% if ews_q and not ews_managed_sources and not ews_untrusted_users %}<div class="adm-empty">{{ t("admin-ews-no-match") }}</div>{% endif %}
+  {% endif %}
+
   {% if ews_managed_sources %}
   <div style="margin-top: 1.5rem;">
     <h3 style="margin-bottom: 0.5rem; font-size: 1rem;">{{ t("admin-ews-status-title") }}</h3>
     <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.75rem;">
       {{ t("admin-ews-status-summary", ok=ews_managed_ok_count, total=ews_managed_source_count) }}
     </p>
+    {% if ews_conflicts_truncated %}
+    <p class="adm-error-text" style="font-size: 0.8rem; margin-bottom: 0.75rem;">{{ t("admin-ews-conflicts-more", shown=ews_conflicts_shown, total=ews_conflict_count) }}</p>
+    {% endif %}
     <div class="adm-table-wrap">
       <table class="adm-table">
         <thead><tr><th>{{ t("admin-ews-col-user") }}</th><th>{{ t("admin-ews-col-mailbox") }}</th><th>{{ t("admin-ews-col-last-sync") }}</th><th>{{ t("admin-ews-col-status") }}</th><th></th></tr></thead>
@@ -778,6 +789,7 @@
         </tbody>
       </table>
     </div>
+    {% if ews_managed_pager %}<div class="adm-table-foot">{% with pager=ews_managed_pager %}{% include "partials/pager.html" %}{% endwith %}</div>{% endif %}
   </div>
   {% endif %}
 
@@ -806,9 +818,7 @@
         </tbody>
       </table>
     </div>
-    {% if ews_untrusted_count > ews_untrusted_users | length %}
-    <p class="adm-muted" style="font-size: 0.8rem; margin-top: 0.5rem;">{{ t("admin-ews-trust-more", shown=ews_untrusted_users | length, total=ews_untrusted_count) }}</p>
-    {% endif %}
+    {% if ews_untrusted_pager %}<div class="adm-table-foot">{% with pager=ews_untrusted_pager %}{% include "partials/pager.html" %}{% endwith %}</div>{% endif %}
   </div>
   {% endif %}
 </div>

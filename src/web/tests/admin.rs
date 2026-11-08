@@ -646,6 +646,13 @@ async fn add_members(pool: &SqlitePool, n: usize) {
     }
 }
 
+/// The Users tab alone: other cards (the Exchange one) have pagers too.
+fn users_panel(body: &str) -> &str {
+    let start = body.find("id=\"panel-users\"").unwrap();
+    let end = start + body[start..].find("id=\"panel-access\"").unwrap();
+    &body[start..end]
+}
+
 fn user_rows(body: &str) -> usize {
     body.matches("<tr class=\"user-item").count()
 }
@@ -666,7 +673,7 @@ async fn small_instances_keep_the_browser_side_users_list() {
     assert!(body.contains("id=\"user-search\""));
     assert!(!body.contains("user-list-server"));
     assert!(!body.contains("name=\"back\""));
-    assert!(!body.contains("class=\"ui-pager\""));
+    assert!(!users_panel(&body).contains("class=\"ui-pager\""));
 }
 
 #[tokio::test]
@@ -698,7 +705,7 @@ async fn large_instances_page_search_filter_and_sort_users_on_the_server() {
     // Search is literal and case blind, on name or email.
     let body = page("/dashboard/admin?uq=MEMBER%2012").await;
     assert_eq!(user_rows(&body), 10);
-    assert!(!body.contains("class=\"ui-pager\""));
+    assert!(!users_panel(&body).contains("class=\"ui-pager\""));
     assert!(body.contains("10 of 131 users"));
     let body = page("/dashboard/admin?uq=member007%40").await;
     assert_eq!(user_rows(&body), 1);

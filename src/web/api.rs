@@ -670,7 +670,9 @@ pub(super) struct BookingEventType {
 pub(super) struct BookingGuest {
     name: String,
     email: String,
-    /// E.164, when the guest gave one.
+    /// E.164, when the guest gave one. Null once the event type no longer
+    /// asks for a phone number (its `phone` setting is `off`), as in every
+    /// email, webhook and calendar copy.
     #[schema(required = true)]
     phone: Option<String>,
     /// IANA timezone of the guest's emails.
@@ -1201,7 +1203,7 @@ const BOOKING_COLUMNS: &str = "SELECT b.id, b.uid, b.status,
         COALESCE(NULLIF(b.guest_timezone, ''), 'UTC') AS guest_tz, b.notes, b.language,
         b.host_notes, et.id AS et_id, et.slug AS et_slug, et.title AS et_title, et.team_id,
         et.location_type, COALESCE(NULLIF(b.meeting_url, ''), et.location_value) AS location_value,
-        COALESCE(NULLIF(et.timezone, ''), u.timezone, 'UTC') AS stored_tz,
+        et.sms_phone_mode, COALESCE(NULLIF(et.timezone, ''), u.timezone, 'UTC') AS stored_tz,
         (SELECT json_group_array(ba.email) FROM booking_attendees ba WHERE ba.booking_id = b.id) AS attendees,
         b.start_at AS raw_start
      FROM bookings b
@@ -1230,6 +1232,7 @@ struct BookingRow {
     team_id: Option<String>,
     location_type: String,
     location_value: Option<String>,
+    sms_phone_mode: String,
     stored_tz: String,
     attendees: Option<String>,
     /// The stored `start_at`, which the list's cursor pages on.
@@ -1248,6 +1251,12 @@ fn booking_json(row: BookingRow, with_host_notes: bool, answers: Vec<QuestionAns
         .attendees
         .and_then(|a| serde_json::from_str(&a).ok())
         .unwrap_or_default();
+    // The rule every other channel follows (`booking_guest_input`): a phone
+    // stored before the event type stopped collecting one is not shown.
+    let phone = row
+        .guest_phone
+        .filter(|p| !p.trim().is_empty())
+        .filter(|_| crate::sms::collects_phone(&row.sms_phone_mode));
     let host_notes = if with_host_notes {
         row.host_notes
             .map(|n| n.trim().to_string())
@@ -1271,7 +1280,7 @@ fn booking_json(row: BookingRow, with_host_notes: bool, answers: Vec<QuestionAns
         guest: BookingGuest {
             name: row.guest_name,
             email: row.guest_email,
-            phone: row.guest_phone,
+            phone,
             timezone: row.guest_tz,
             language: row.language,
             notes: row.notes,

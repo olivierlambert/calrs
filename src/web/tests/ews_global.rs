@@ -2620,3 +2620,178 @@ async fn editing_an_own_ews_source_to_another_account_drops_its_calendars() {
             .unwrap();
     assert_eq!(write, None);
 }
+
+/// Insert a user with an account, trusted or not, and return (user id,
+/// account id). Bulk fixtures for the paging test.
+async fn bulk_user(pool: &SqlitePool, email: &str, trusted: bool) -> (String, String) {
+    let user_id = uuid::Uuid::new_v4().to_string();
+    let account_id = uuid::Uuid::new_v4().to_string();
+    sqlx::query(
+        "INSERT INTO users (id, email, name, role, auth_provider, username, enabled, email_trusted) \
+         VALUES (?, ?, ?, 'user', 'local', ?, 1, ?)",
+    )
+    .bind(&user_id)
+    .bind(email)
+    .bind(format!("Name {email}"))
+    .bind(email.replace(['@', '.'], "-"))
+    .bind(trusted)
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO accounts (id, name, email, timezone, user_id) VALUES (?, 'U', ?, 'UTC', ?)",
+    )
+    .bind(&account_id)
+    .bind(email)
+    .bind(&user_id)
+    .execute(pool)
+    .await
+    .unwrap();
+    (user_id, account_id)
+}
+
+/// A large instance (#138 provisions one source per user) renders one page
+/// of each list on the Exchange card: failing sources first, a page of
+/// fifty, page links and a search, and a page of addresses to confirm, all
+/// counted in SQL with the allowed-domains rule applied there.
+#[tokio::test]
+async fn the_exchange_card_pages_its_lists() {
+    let pool = setup_test_db().await;
+    let (admin_id, _, _) = seed_test_data(&pool).await;
+    store_config_for(&pool, EWS_URL, None).await;
+    trust(&pool, &admin_id).await;
+    sqlx::query("UPDATE auth_config SET allowed_email_domains = 'example.com, Other.ORG'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    for i in 0..130 {
+        let email = format!("user{i:03}@example.com");
+        let (_, account) = bulk_user(&pool, &email, true).await;
+        let error = (i % 40 == 7).then(|| "ErrorAccessDenied: no".to_string());
+        sqlx::query(
+            "INSERT INTO caldav_sources (id, account_id, name, url, username, provider_type, \
+                 managed, impersonate_email, enabled, auth_type, last_synced, last_sync_error) \
+             VALUES (?, ?, 'Exchange (managed)', ?, '', 'ews', 1, ?, 1, 'basic', \
+                     '2026-11-01T10:00:00', ?)",
+        )
+        .bind(uuid::Uuid::new_v4().to_string())
+        .bind(&account)
+        .bind(EWS_URL)
+        .bind(&email)
+        .bind(error)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    for i in 0..30 {
+        bulk_user(&pool, &format!("new{i:02}@other.org"), false).await;
+    }
+    // Outside the allowed domains, or with the domain only before the last
+    // `@`: never listed nor counted.
+    bulk_user(&pool, "stranger@elsewhere.net", false).await;
+    bulk_user(&pool, "trick@example.com@elsewhere.net", false).await;
+    for email in ["stranger@elsewhere.net", "trick@example.com@elsewhere.net"] {
+        assert!(!crate::auth::is_email_allowed(
+            email,
+            &Some("example.com, Other.ORG".into())
+        ));
+    }
+
+    let (app, session) = admin_app(&pool, &admin_id).await;
+    let page = |uri: &str| {
+        let app = app.clone();
+        let request = get_authed(uri, &session);
+        // The Exchange card alone (other tabs list users too), with `/`
+        // unescaped (the template writes `&#x2f;`).
+        async move {
+            let html = body_string(app.oneshot(request).await.unwrap())
+                .await
+                .replace("&#x2f;", "/");
+            let start = html.find("id=\"ews-global\"").unwrap();
+            let end = start + html[start..].find("<!-- Captcha settings -->").unwrap();
+            html[start..end].to_string()
+        }
+    };
+    let remove_rows = |html: &str| html.matches("/dashboard/admin/ews/remove-user").count();
+    let trust_rows = |html: &str| {
+        html.matches("action=\"/dashboard/admin/ews/trust\"")
+            .count()
+    };
+
+    let first = page("/dashboard/admin").await;
+    assert_eq!(remove_rows(&first), 50);
+    assert_eq!(trust_rows(&first), 20);
+    // The four failing sources lead the first page.
+    let failing = first.find("user007@example.com").unwrap();
+    let healthy = first.find("user000@example.com").unwrap();
+    assert!(failing < healthy);
+    assert!(first.contains("href=\"/dashboard/admin?ewsp=2#ews-global\""));
+    assert!(first.contains("href=\"/dashboard/admin?ewsu=2#ews-global\""));
+    assert!(first.contains("name=\"ewsq\""));
+    assert!(!first.contains("stranger@elsewhere.net"));
+    assert!(!first.contains("trick@example.com@elsewhere.net"));
+    assert!(first.contains("1 to 50 of 130"));
+    assert!(first.contains("1 to 20 of 30"));
+
+    let last = page("/dashboard/admin?ewsp=3&ewsu=2").await;
+    assert_eq!(remove_rows(&last), 30);
+    assert_eq!(trust_rows(&last), 10);
+    // A page past the end lands on the last one.
+    assert_eq!(remove_rows(&page("/dashboard/admin?ewsp=99").await), 30);
+
+    let found = page("/dashboard/admin?ewsq=USER129").await;
+    assert_eq!(remove_rows(&found), 1);
+    assert_eq!(trust_rows(&found), 0);
+    assert!(found.contains("user129@example.com"));
+    let found = page("/dashboard/admin?ewsq=new0").await;
+    assert_eq!(remove_rows(&found), 0);
+    assert_eq!(trust_rows(&found), 10);
+    let none = page("/dashboard/admin?ewsq=nobody").await;
+    assert!(none.contains(&crate::i18n::translate("en", "admin-ews-no-match", None)));
+}
+
+/// More users whose mailbox is already taken than the card lists: the first
+/// ones are shown above the first page with how many there are.
+#[tokio::test]
+async fn the_exchange_card_caps_its_mailbox_conflicts() {
+    let pool = setup_test_db().await;
+    let (admin_id, _, _) = seed_test_data(&pool).await;
+    store_config_for(&pool, EWS_URL, Some(("example.local", "example.com"))).await;
+    for i in 0..55 {
+        let email = format!("dup{i:02}@example.com");
+        let (_, account) = bulk_user(&pool, &email, true).await;
+        sqlx::query(
+            "INSERT INTO caldav_sources (id, account_id, name, url, username, provider_type, \
+                 managed, impersonate_email, enabled, auth_type) \
+             VALUES (?, ?, 'Exchange (managed)', ?, '', 'ews', 1, ?, 1, 'basic')",
+        )
+        .bind(uuid::Uuid::new_v4().to_string())
+        .bind(&account)
+        .bind(EWS_URL)
+        .bind(&email)
+        .execute(&pool)
+        .await
+        .unwrap();
+        // The alias maps to the same mailbox through the domain override.
+        bulk_user(&pool, &format!("DUP{i:02}@example.local"), true).await;
+    }
+    let (app, session) = admin_app(&pool, &admin_id).await;
+    let html = body_string(
+        app.clone()
+            .oneshot(get_authed("/dashboard/admin", &session))
+            .await
+            .unwrap(),
+    )
+    .await;
+    let conflict = crate::i18n::translate("en", "admin-ews-row-conflict", None);
+    assert_eq!(html.matches(&conflict.replace('\'', "&#x27;")).count(), 50);
+    assert!(html.contains("DUP00@example.local"));
+    assert!(html.contains("showing 50 of 55"), "conflict count shown");
+    let second = body_string(
+        app.oneshot(get_authed("/dashboard/admin?ewsp=2", &session))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(second.matches(&conflict.replace('\'', "&#x27;")).count(), 0);
+}

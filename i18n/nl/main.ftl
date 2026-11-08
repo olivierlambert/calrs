@@ -2036,7 +2036,9 @@ admin-ews-row-conflict = Niet ingericht: de bron van een andere gebruiker leest 
 admin-ews-trust-title = Te bevestigen adressen
 admin-ews-trust-help = Deze actieve accounts in de toegestane domeinen hebben een adres waar niemand voor instaat (vrije registratie, of aangemaakt vóór deze controle), dus krijgen ze geen beheerde Exchange-bron. Bevestig een adres alleen als je weet dat het van die persoon is: na bevestiging leest calrs voor hen de agenda van die mailbox.
 admin-ews-trust-confirm = Bevestigen
-admin-ews-trust-more = { $shown } van { $total } getoond.
+admin-ews-search = Zoeken op gebruiker of postvak
+admin-ews-no-match = Geen beheerd postvak of te bevestigen adres komt overeen met deze zoekopdracht.
+admin-ews-conflicts-more = Postvak al in gebruik door een andere gebruiker: { $shown } van { $total } getoond.
 admin-ews-http-warning = Het endpoint gebruikt http://: het wachtwoord van het serviceaccount wordt onversleuteld verzonden. Gebruik bij voorkeur https://.
 # Time off (templates/time_off.html, src/web/time_off.rs, troubleshoot view)
 

@@ -290,6 +290,9 @@ them the order near those rows can be off by the timezone's offset.
 ```
 
 `uid` is the iCalendar UID of the invitation (the one webhooks carry).
+`guest.phone` is null when the event type no longer asks for a phone number
+(its `phone` setting is `off`), even if the guest gave one before, as in
+emails, webhooks and calendar events.
 `host_notes` are the hosts' own notes on the booking. `answers` are the
 guest's answers to the event type's [booking questions](booking-questions.md),
 in the shape webhooks use; match choices on `option_ids`, `value` is for

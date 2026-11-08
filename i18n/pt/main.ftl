@@ -2034,7 +2034,9 @@ admin-ews-row-conflict = Não provisionada: a fonte de outro usuário já lê es
 admin-ews-trust-title = Endereços a confirmar
 admin-ews-trust-help = Estas contas ativas nos domínios permitidos têm um endereço que ninguém garantiu (cadastro aberto, ou criadas antes desta verificação), então não recebem nenhuma fonte do Exchange gerenciada. Confirme um endereço só quando souber que pertence a essa pessoa: ao confirmar, o calrs lê para ela o calendário dessa caixa.
 admin-ews-trust-confirm = Confirmar
-admin-ews-trust-more = Mostrando { $shown } de { $total }.
+admin-ews-search = Buscar por usuário ou caixa de correio
+admin-ews-no-match = Nenhuma caixa gerenciada ou endereço a confirmar corresponde a esta busca.
+admin-ews-conflicts-more = Caixa de correio já usada por outro usuário: mostrando { $shown } de { $total }.
 admin-ews-http-warning = O endpoint usa http://: a palavra-passe da conta de serviço é enviada sem cifragem. Prefira https://.
 # Time off (templates/time_off.html, src/web/time_off.rs, troubleshoot view)
 

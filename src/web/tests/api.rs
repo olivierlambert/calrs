@@ -1279,6 +1279,57 @@ async fn api_a_host_who_does_not_own_the_event_type_reads_but_cannot_cancel() {
 }
 
 #[tokio::test]
+async fn api_hides_a_stored_phone_once_the_event_type_stops_asking() {
+    let _lock = crate::test_support::ENV_LOCK.lock().await;
+    let _env = super::oauth::environment();
+    let (app, pool, _, et_id) = setup_test_app().await;
+    let owner = user_id(&pool, "testuser").await;
+    let token = pat(&pool, &owner, ALL).await;
+    let id = insert_v1_booking(
+        &pool,
+        &et_id,
+        "phone@b.test",
+        Utc::now() + Duration::days(4),
+        30,
+        "confirmed",
+        &[("guest_phone", Some("+33612345678".to_string()))],
+    )
+    .await;
+    let set_mode = |mode: &'static str| {
+        let pool = pool.clone();
+        let et_id = et_id.clone();
+        async move {
+            sqlx::query("UPDATE event_types SET sms_phone_mode = ? WHERE id = ?")
+                .bind(mode)
+                .bind(&et_id)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+    };
+
+    set_mode("optional").await;
+    let (status, body) = send(&app, api_get(&format!("/api/v1/bookings/{id}"), &token)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["booking"]["guest"]["phone"], "+33612345678");
+
+    // Switched off: the number stays in the row but no channel shows it.
+    set_mode("off").await;
+    let (status, body) = send(&app, api_get(&format!("/api/v1/bookings/{id}"), &token)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body["booking"]["guest"]["phone"].is_null(), "{body}");
+    let (_, body) = send(&app, api_get("/api/v1/bookings", &token)).await;
+    assert!(body["bookings"][0]["guest"]["phone"].is_null(), "{body}");
+    assert_eq!(
+        crate::web::calendar_push::booking_guest_input(&pool, &format!("uid-{id}"))
+            .await
+            .phone,
+        None,
+        "the API and the other channels agree"
+    );
+}
+
+#[tokio::test]
 async fn api_requests_are_rate_limited_per_token_and_writes_per_user() {
     let _lock = crate::test_support::ENV_LOCK.lock().await;
     let _env = super::oauth::environment();
