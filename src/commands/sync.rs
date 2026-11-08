@@ -1112,6 +1112,9 @@ async fn sync_provider_calendars(
         }
     }
     let mut unreadable_calendars = 0usize;
+    // Whether Graph could not say, for some vanished booking event, whether
+    // it is gone (see `orphan_check_inconclusive_since`).
+    let mut inconclusive = false;
     // Calendars this sync tried to fetch: the ones not turned off (#324).
     let mut fetched_calendars = 0usize;
     // Bounded fetch window. Matches the CalDAV path's FULL_FETCH_LOOKBACK_DAYS:
@@ -1169,7 +1172,7 @@ async fn sync_provider_calendars(
             // An item calrs could not read may be any cached event, so a
             // snapshot with one cannot prove that a cached event is gone.
             let deleted = if unreadable == 0 {
-                remove_orphaned_provider_events(
+                remove_orphaned_provider_events_noting(
                     pool,
                     key,
                     provider,
@@ -1177,6 +1180,7 @@ async fn sync_provider_calendars(
                     &cal_id,
                     &raw_events,
                     (since_dt, until_dt),
+                    &mut inconclusive,
                 )
                 .await?
             } else {
@@ -1275,6 +1279,15 @@ async fn sync_provider_calendars(
         calendar_failures.push(crate::providers::CalendarUnreadable.to_string());
     }
 
+    // A booking whose event vanished stays confirmed while Graph cannot
+    // confirm the event is gone. That is right for a moment, but if it
+    // lasts, deletions on this source no longer cancel anything: past a day,
+    // the sync reports it (and sync health alerts the owner once).
+    if strict {
+        if let Some(message) = note_orphan_checks(pool, source_id, inconclusive).await {
+            calendar_failures.push(message);
+        }
+    }
     // On Graph, `last_full_sync` also says the source has delivered a
     // complete snapshot at least once: until then its calendars cannot
     // vouch for any time (see [`microsoft_coverage_gap`]).
@@ -1303,6 +1316,42 @@ async fn sync_provider_calendars(
     }
     tracing::info!(source_id = %source_id, "calendar provider sync completed");
     calendar_failures_result(&calendar_failures)
+}
+
+/// Records whether this sync's orphan checks were inconclusive, and returns
+/// the failure to report when they have been for over a day.
+async fn note_orphan_checks(
+    pool: &SqlitePool,
+    source_id: &str,
+    inconclusive: bool,
+) -> Option<String> {
+    if !inconclusive {
+        let _ = sqlx::query(
+            "UPDATE caldav_sources SET orphan_check_inconclusive_since = NULL WHERE id = ?",
+        )
+        .bind(source_id)
+        .execute(pool)
+        .await;
+        return None;
+    }
+    let lasting: bool = sqlx::query_scalar(
+        "UPDATE caldav_sources
+         SET orphan_check_inconclusive_since = COALESCE(orphan_check_inconclusive_since, datetime('now'))
+         WHERE id = ?
+         RETURNING orphan_check_inconclusive_since <= datetime('now', '-1 day')",
+    )
+    .bind(source_id)
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten()
+    .unwrap_or(false);
+    lasting.then(|| {
+        "for over a day, Microsoft could not confirm whether events deleted from this \
+         calendar are gone, so their bookings were not cancelled: check that calrs can \
+         read every calendar of this account"
+            .to_string()
+    })
 }
 
 /// The sum of the sync generations of a source's calendars and their
@@ -1546,7 +1595,34 @@ async fn remove_orphaned_provider_events(
     source_id: &str,
     cal_id: &str,
     raw_events: &[ProviderRawEvent],
+    window: (chrono::DateTime<Utc>, chrono::DateTime<Utc>),
+) -> Result<u32> {
+    let mut inconclusive = false;
+    remove_orphaned_provider_events_noting(
+        pool,
+        key,
+        provider,
+        source_id,
+        cal_id,
+        raw_events,
+        window,
+        &mut inconclusive,
+    )
+    .await
+}
+
+/// [`remove_orphaned_provider_events`], setting `inconclusive` when the
+/// provider could not say whether a vanished booking's event is gone.
+#[allow(clippy::too_many_arguments)]
+async fn remove_orphaned_provider_events_noting(
+    pool: &SqlitePool,
+    key: &[u8; 32],
+    provider: &dyn crate::providers::CalendarProvider,
+    source_id: &str,
+    cal_id: &str,
+    raw_events: &[ProviderRawEvent],
     (since, until): (chrono::DateTime<Utc>, chrono::DateTime<Utc>),
+    inconclusive: &mut bool,
 ) -> Result<u32> {
     // A calendar bookings go to: the source's write calendar, or one a
     // copy was recorded on as an event type's destination (#47).
@@ -1637,6 +1713,7 @@ async fn remove_orphaned_provider_events(
             )
             .await;
             if outcome == OrphanOutcome::Inconclusive {
+                *inconclusive = true;
                 continue;
             }
             cancelled = outcome == OrphanOutcome::Cancelled;
@@ -4038,6 +4115,49 @@ mod tests {
         assert!(cached_uids(&pool, &dest).await.is_empty());
         assert_eq!(booking_status(&pool, &booking).await, "confirmed");
         assert_eq!(booking_status(&pool, &other).await, "confirmed");
+    }
+
+    /// Orphan checks that stay inconclusive (a calendar Graph will not let
+    /// calrs read, say) would silently stop cancellations on the source: past
+    /// a day, the sync reports it; one conclusive sync clears it.
+    #[tokio::test]
+    async fn orphan_checks_inconclusive_for_a_day_fail_the_sync() {
+        let pool = setup_test_db().await;
+        let (source, et, _, calendar) = provider_fixture(&pool, kinds::MICROSOFT).await;
+        provider_booking(&pool, &et, "doubt").await;
+        let start = Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
+        let since = |pool: SqlitePool, source: String| async move {
+            sqlx::query_scalar::<_, Option<String>>(
+                "SELECT orphan_check_inconclusive_since FROM caldav_sources WHERE id = ?",
+            )
+            .bind(&source)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        };
+        let mut provider = snapshot_provider("write");
+        provider.exists = None;
+        cached_provider_event(&pool, &calendar, "doubt", &start).await;
+        sync_provider_calendars(&pool, &[0; 32], &provider, &source)
+            .await
+            .unwrap();
+        assert!(since(pool.clone(), source.clone()).await.is_some());
+
+        sqlx::query("UPDATE caldav_sources SET orphan_check_inconclusive_since = datetime('now', '-2 days') WHERE id = ?")
+            .bind(&source)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let error = sync_provider_calendars(&pool, &[0; 32], &provider, &source)
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("could not confirm"), "{error}");
+
+        provider.exists = Some(true);
+        sync_provider_calendars(&pool, &[0; 32], &provider, &source)
+            .await
+            .unwrap();
+        assert_eq!(since(pool.clone(), source.clone()).await, None);
     }
 
     /// Lists no calendar at all, which a mailbox never really has.
