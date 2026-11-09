@@ -27,7 +27,7 @@ pub(super) fn api_post(uri: &str, token: &str, body: &Value) -> Request<Body> {
         .unwrap()
 }
 
-async fn send(app: &Router, request: Request<Body>) -> (StatusCode, Value) {
+pub(super) async fn send(app: &Router, request: Request<Body>) -> (StatusCode, Value) {
     let response = app.clone().oneshot(request).await.unwrap();
     let status = response.status();
     assert_eq!(
@@ -74,7 +74,7 @@ pub(super) async fn pat(pool: &SqlitePool, user: &str, scope: &str) -> String {
 
 pub(super) const ALL: &str = "event-types:read slots:read bookings:read bookings:write";
 
-fn error_code(body: &Value) -> &str {
+pub(super) fn error_code(body: &Value) -> &str {
     body["error"]["code"].as_str().unwrap_or("")
 }
 
@@ -678,6 +678,14 @@ async fn api_event_types_follow_the_integration_rules() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["event_type"]["manageable"], false);
     assert!(body["event_type"].get("location_value").is_none());
+    // Only a manager can book it, so only a manager reads its questions.
+    assert_eq!(body["event_type"]["questions"], Value::Null);
+    let (_, body) = send(
+        &app,
+        api_get(&format!("/api/v1/event-types/{et_id}"), &owner_token),
+    )
+    .await;
+    assert_eq!(body["event_type"]["questions"], json!([]));
     let (status, body) = send(
         &app,
         api_get(
@@ -1009,7 +1017,7 @@ async fn api_booking_validates_its_input() {
         api_post(
             "/api/v1/bookings",
             &token,
-            &with("notes", json!("x".repeat(20 * 1024))),
+            &with("notes", json!("x".repeat(2 * 1024 * 1024))),
         ),
     )
     .await;
@@ -1276,6 +1284,57 @@ async fn api_a_host_who_does_not_own_the_event_type_reads_but_cannot_cancel() {
     assert_eq!(status, StatusCode::FORBIDDEN);
     assert_eq!(error_code(&body), "forbidden");
     assert_eq!(booking_status(&pool, &id).await, "confirmed");
+}
+
+#[tokio::test]
+async fn api_hides_a_stored_phone_once_the_event_type_stops_asking() {
+    let _lock = crate::test_support::ENV_LOCK.lock().await;
+    let _env = super::oauth::environment();
+    let (app, pool, _, et_id) = setup_test_app().await;
+    let owner = user_id(&pool, "testuser").await;
+    let token = pat(&pool, &owner, ALL).await;
+    let id = insert_v1_booking(
+        &pool,
+        &et_id,
+        "phone@b.test",
+        Utc::now() + Duration::days(4),
+        30,
+        "confirmed",
+        &[("guest_phone", Some("+33612345678".to_string()))],
+    )
+    .await;
+    let set_mode = |mode: &'static str| {
+        let pool = pool.clone();
+        let et_id = et_id.clone();
+        async move {
+            sqlx::query("UPDATE event_types SET sms_phone_mode = ? WHERE id = ?")
+                .bind(mode)
+                .bind(&et_id)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+    };
+
+    set_mode("optional").await;
+    let (status, body) = send(&app, api_get(&format!("/api/v1/bookings/{id}"), &token)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["booking"]["guest"]["phone"], "+33612345678");
+
+    // Switched off: the number stays in the row but no channel shows it.
+    set_mode("off").await;
+    let (status, body) = send(&app, api_get(&format!("/api/v1/bookings/{id}"), &token)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body["booking"]["guest"]["phone"].is_null(), "{body}");
+    let (_, body) = send(&app, api_get("/api/v1/bookings", &token)).await;
+    assert!(body["bookings"][0]["guest"]["phone"].is_null(), "{body}");
+    assert_eq!(
+        crate::web::calendar_push::booking_guest_input(&pool, &format!("uid-{id}"))
+            .await
+            .phone,
+        None,
+        "the API and the other channels agree"
+    );
 }
 
 #[tokio::test]

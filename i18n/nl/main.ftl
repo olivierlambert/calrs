@@ -219,6 +219,32 @@ base-powered-by = Mogelijk gemaakt door
 profile-pick-event-type-invite = Kies een afspraaktype om een tijd te boeken.
 profile-no-event-type = Nog geen afspraaktypes beschikbaar.
 
+# Public landing pages (/u/{username}, /team/{slug}). In landing-next-free,
+# %1 is the time, filled in by the page itself.
+landing-duration-h = { $hours } u
+landing-duration-aria =
+    { $minutes ->
+        [one] { $minutes } minuut
+       *[other] { $minutes } minuten
+    }
+landing-duration-hm = { $hours } u { $minutes }
+landing-duration-aria-h =
+    { $hours ->
+        [one] { $hours } uur
+       *[other] { $hours } uur
+    }
+landing-duration-aria-hm =
+    { $hours ->
+        [one] { $hours } uur
+       *[other] { $hours } uur
+    } { $minutes ->
+        [one] { $minutes } minuut
+       *[other] { $minutes } minuten
+    }
+landing-next-free = Volgende: %1
+landing-with-one-of = met een van
+landing-with-everyone = met iedereen
+
 # Month and weekday names + per-locale date format patterns.
 # Used by server-side date formatters in src/i18n.rs.
 
@@ -411,10 +437,8 @@ overview-page-title = Dashboard
 overview-avail-banner-body = Je standaardwerktijden zijn ingesteld op ma–vr, 9:00–17:00. Deze worden gebruikt wanneer anderen je toevoegen aan dynamische groepsafspraken.
 overview-avail-banner-cta = Controleer je beschikbaarheid
 overview-dismiss = Sluiten
-overview-getting-started = Aan de slag
 overview-step-connect-calendar = Koppel een agenda
 overview-step-first-event-type = Maak je eerste afspraaktype aan
-overview-step-share-link = Deel je boekingslink
 overview-pending-approval = In afwachting van goedkeuring
 overview-confirm = Bevestigen
 overview-decline = Afwijzen
@@ -422,7 +446,6 @@ overview-copy-link = Boekingslink kopiëren
 overview-duration-h = { $hours } u
 overview-duration-m = { $minutes } min
 overview-duration-hm = { $hours } u { $minutes } min
-overview-percent = { $value }%
 overview-chart-title = Afspraken per week
 overview-chart-this-week = Deze week
 overview-chart-week-of = Week van { $date }
@@ -436,7 +459,6 @@ overview-types-other = Overige types
 overview-agenda-title = Hierna
 overview-agenda-today = Vandaag
 overview-agenda-tomorrow = Morgen
-overview-agenda-now = Bezig
 overview-agenda-join = Deelnemen
 overview-agenda-empty = Geen afspraken in de komende 14 dagen. Deel je boekingslink om er te krijgen.
 overview-agenda-all = Alle boekingen
@@ -458,33 +480,86 @@ overview-open-calendar = Je agenda openen
 overview-week-title = Deze week
 overview-week-closed = gesloten
 overview-week-total = { $booked } geboekt
-overview-week-number = Week { $week }
 overview-week-short = W{ $week }
 overview-time-range = { $from } tot { $to }
 overview-until = tot { $time }
 overview-expires = Verloopt { $when }
 overview-guest-and-more = { $name } en { $count } anderen
-overview-mast-now = Nu: { $title } met { $guest }, tot { $time }
-overview-mast-next = Hierna: { $title } met { $guest } om { $time }
-overview-mast-next-day = Hierna: { $title } met { $guest }, { $day } om { $time }
+overview-greeting-night = Hallo, { $name }
+overview-greeting-morning = Goedemorgen, { $name }
+overview-greeting-afternoon = Goedemiddag, { $name }
+overview-greeting-evening = Goedenavond, { $name }
+overview-mast-date = { $date }, week { $week }
+overview-sum-now = Je afspraak met { $guest } loopt tot { $time }.
+overview-sum-today = Vandaag zie je { $guest } om { $time }.
+overview-sum-tomorrow = Morgen zie je { $guest } om { $time }.
+overview-sum-later = Je volgende afspraak is met { $guest } op { $day } om { $time }.
+overview-sum-more-today = { $count ->
+    [one] Daarna volgt vandaag nog één afspraak.
+   *[other] Daarna volgen vandaag nog { $count } afspraken.
+}
+overview-sum-none = Niets geboekt in de komende 14 dagen.
+overview-sum-pending = { $count ->
+    [one] Eén verzoek wacht op je antwoord.
+   *[other] { $count } verzoeken wachten op je antwoord.
+}
+overview-sum-guests = { $count ->
+    [one] { $name } en nog één persoon
+   *[other] { $name } en nog { $count } personen
+}
+overview-hero-title = Hierna
+overview-when-now = Nu, tot { $time }
+overview-when-minutes = { $count ->
+    [one] over 1 minuut
+   *[other] over { $count } minuten
+}
+overview-when-hours = { $count ->
+    [one] over 1 uur
+   *[other] over { $count } uur
+}
+overview-when-today-night = later vannacht
+overview-when-today-morning = vanochtend
+overview-when-today-afternoon = vanmiddag
+overview-when-today-evening = vanavond
+overview-when-tomorrow-night = morgen heel vroeg
+overview-when-tomorrow-morning = morgenochtend
+overview-when-tomorrow-afternoon = morgenmiddag
+overview-when-tomorrow-evening = morgenavond
+overview-when-weekday-night = { $day } heel vroeg
+overview-when-weekday-morning = { $day }ochtend
+overview-when-weekday-afternoon = { $day }middag
+overview-when-weekday-evening = { $day }avond
+overview-when-days = { $count ->
+    [one] over 1 dag
+   *[other] over { $count } dagen
+}
+overview-pulse-held = { $count ->
+    [one] Eén afspraak in de afgelopen 30 dagen, { $time } met gasten.
+   *[other] { $count } afspraken in de afgelopen 30 dagen, { $time } met gasten.
+}
+overview-pulse-held-vs = { $count ->
+    [one] Eén afspraak in de afgelopen 30 dagen, { $time } met gasten, tegenover { $prev } in de 30 dagen daarvoor.
+   *[other] { $count } afspraken in de afgelopen 30 dagen, { $time } met gasten, tegenover { $prev } in de 30 dagen daarvoor.
+}
+overview-pulse-booked = { $count ->
+    [one] In dezelfde periode kwam er één nieuwe boeking binnen.
+   *[other] In dezelfde periode kwamen er { $count } nieuwe boekingen binnen.
+}
+overview-pulse-booked-only = { $count ->
+    [one] In de afgelopen 30 dagen kwam er één nieuwe boeking binnen.
+   *[other] In de afgelopen 30 dagen kwamen er { $count } nieuwe boekingen binnen.
+}
+overview-links-page = Je pagina
+overview-agenda-nothing-else = Verder niets in de komende 14 dagen.
+overview-setup-count = { $count ->
+    [one] 1 ding om in te stellen
+   *[other] { $count } dingen om in te stellen
+}
 overview-ruler-booked = Geboekt
 overview-ruler-pending = Wacht op een beslissing
 overview-ruler-unavailable = Niet beschikbaar (je agenda)
 overview-key-open = Open voor boekingen
-overview-ruler-aria = Vandaag, { $from } tot { $to }
-overview-chart-now = nu
 overview-figures-title = Laatste 30 dagen
-overview-fig-booked = Geboekte afspraken
-overview-fig-time = Tijd in afspraken
-overview-fig-cancelled = Geannuleerd
-overview-fig-notice = Gemiddelde aanlooptijd
-overview-fig-before = { $value } in de 30 dagen ervoor
-overview-fig-prev-key = De 30 dagen ervoor
-overview-fig-days =
-    { $count ->
-        [one] 1 dag
-       *[other] { $count } dagen
-    }
 
 # Dashboard bookings (templates/dashboard_bookings.html)
 
@@ -1166,6 +1241,9 @@ admin-action-refused = Actie geweigerd:
 admin-error-last-admin = Dit is de laatste actieve beheerder. Maak eerst iemand anders beheerder of schakel een andere beheerder in.
 admin-logo = Bedrijfslogo
 admin-logo-help = Wordt getoond op openbare boekingspagina's. PNG, JPEG, GIF of WebP, max. 2 MB.
+admin-logo-light = Licht thema
+admin-logo-dark = Donker thema
+admin-logo-dark-help = Optioneel. Wordt getoond wanneer de bezoeker het donkere thema gebruikt; zonder dit logo wordt in beide thema's het lichte logo gebruikt.
 admin-logo-refused = Het logo is niet opgeslagen. Upload een PNG-, JPEG-, GIF- of WebP-afbeelding van maximaal 2 MB.
 admin-favicon = Favicon
 admin-favicon-help = Verschijnt in browsertabbladen en bladwijzers. Aanbevolen: een vierkante PNG van minstens 32×32 pixels, max. 512 KB. Zonder eigen favicon wordt de calrs-krab getoond.
@@ -1223,6 +1301,10 @@ admin-base-url = Basis-URL
 admin-base-url-help = Openbare URL van deze installatie. Wordt gebruikt voor OIDC-redirects en links in e-mails (goedkeuren/afwijzen, annuleren, herinneringen).
 admin-private-hosts = Toegestane privéhosts
 admin-private-hosts-help = Kommagescheiden hostnamen die naar privé- of gereserveerde IP-adressen mogen resolven voor CalDAV/EWS-bronnen (uitzondering op de SSRF-beveiliging). Voeg alleen hosts toe die je zelf beheert (bijv. een agendaserver op hetzelfde Docker-netwerk). Laat leeg om de beveiliging voor alle hosts actief te houden.
+admin-trusted-proxies = Vertrouwde proxy's
+admin-trusted-proxies-help = Adressen of CIDR-bereiken van de reverse proxy's waarvan de X-Forwarded-For-header wordt geloofd bij het onderscheiden van clients voor de snelheidslimieten. Laat leeg voor de standaard (loopback-, privé-, unieke lokale en link-local-bereiken: een proxy op dezelfde host of hetzelfde Docker-netwerk). Vul none in als calrs direct bereikbaar is, zodat een client zich niet als een ander adres kan voordoen.
+admin-trusted-proxies-everyone = Vertrouwde proxy's: "{ $entry }" zou elk adres vertrouwen, zodat elke client zich als een ander kan voordoen. Vul in plaats daarvan het adres of bereik van je proxy in.
+admin-trusted-proxies-invalid = Vertrouwde proxy's: "{ $entry }" is geen IP-adres of CIDR-bereik.
 admin-german-formal = Aanspreekvorm in het Duits
 admin-german-formal-du = Informeel (du)
 admin-german-formal-sie = Formeel (Sie)
@@ -1334,6 +1416,8 @@ admin-sms-test-checked = Inloggegevens geaccepteerd.
 admin-sms-test-error = De SMS-gateway heeft het verzoek geweigerd.
 admin-sms-captcha-warning = Het boekingsformulier is openbaar en het ontvangende nummer komt van de gast, dus SMS zonder captcha is een open relay waarvoor iemand anders jou kosten kan laten maken. Stel hierboven de captcha in en beperk de bestemmingslanden in de instellingen van je gateway zelf.
 admin-sms-sent-today = Vandaag verzonden:
+admin-sms-segments-today = Vandaag gefactureerde segmenten:
+admin-sms-unknown-today = Zonder antwoord van de gateway, meegeteld voor de limiet:
 admin-sms-of-cap = van { $cap }
 admin-sms-config-error = Fout in SMS-configuratie:
 admin-sms-gateway = Gateway:
@@ -1346,8 +1430,8 @@ admin-sms-docs = API-documentatie van { $provider }
 admin-sms-country = Standaard landcode
 admin-sms-country-hint = (gebruikt als gasten een lokaal telefoonnummer invoeren)
 admin-sms-daily-cap = Daglimiet
-admin-sms-daily-cap-hint = (berichten per dag voor de hele installatie, 0 voor geen limiet)
-admin-sms-daily-cap-help = Boven de limiet stopt calrs met SMS'en en blijft het e-mails versturen, zodat boekingen nooit mislukken omdat het SMS-budget op is.
+admin-sms-daily-cap-hint = (gefactureerde SMS-segmenten per UTC-dag voor de hele installatie, 0 voor geen limiet)
+admin-sms-daily-cap-help = Een bericht tot 160 tekens is één segment, of tot 70 als het een teken buiten het GSM-alfabet bevat; een langer bericht kost één segment per 153 tekens (67), en testberichten tellen ook mee. Boven de limiet stopt calrs met SMS'en en blijft het e-mails versturen, zodat boekingen nooit mislukken omdat het SMS-budget op is.
 admin-save-sms = SMS-instellingen opslaan
 admin-send-test-sms = Stuur een testbericht naar
 admin-send-test-sms-hint-check = (laat leeg om alleen de inloggegevens te controleren)
@@ -1693,6 +1777,8 @@ bookings-error-reschedule-resend-too-soon = Het verzoek is minder dan een uur ge
 bookings-resend-reschedule = Verzoek opnieuw sturen
 bookings-resend-reschedule-hint = Stuur de gast dezelfde link nog eens (hoogstens één keer per uur)
 troubleshoot-detail-pending-request = { $title } (openstaande aanvraag)
+troubleshoot-detail-claimed-booking = { $title } (overgenomen boeking)
+troubleshoot-detail-unsupported-recurrence = { $calendar } (herhaalregel die calrs niet kan lezen, vanaf het begin als bezet gerekend)
 etf-pending-blocks-slot = Openstaande aanvragen blokkeren het tijdslot
 etf-pending-blocks-slot-help = Zolang een aanvraag op je antwoord wacht, kan niemand anders dat tijdstip boeken, bij dit en bij je andere afspraaktypes.
 etf-pending-expiry = Verloop van aanvragen
@@ -1886,6 +1972,8 @@ admin-sms-check-accepted = Inloggegevens geaccepteerd door de gateway.
 admin-sms-bad-number = Dat is geen bruikbaar telefoonnummer.
 admin-sms-test-body = Testbericht van calrs. Je sms-gateway werkt.
 admin-sms-test-accepted = Testbericht geaccepteerd door de gateway.
+admin-sms-test-over-cap = De dagelijkse SMS-limiet is bereikt, dus het testbericht is niet verzonden. Testberichten tellen mee voor de daglimiet zoals alle andere.
+admin-sms-test-ledger-failed = Het SMS-gebruik kon niet worden vastgelegd, dus het testbericht is niet verzonden.
 
 ## Local multi-factor authentication
 
@@ -2036,7 +2124,9 @@ admin-ews-row-conflict = Niet ingericht: de bron van een andere gebruiker leest 
 admin-ews-trust-title = Te bevestigen adressen
 admin-ews-trust-help = Deze actieve accounts in de toegestane domeinen hebben een adres waar niemand voor instaat (vrije registratie, of aangemaakt vóór deze controle), dus krijgen ze geen beheerde Exchange-bron. Bevestig een adres alleen als je weet dat het van die persoon is: na bevestiging leest calrs voor hen de agenda van die mailbox.
 admin-ews-trust-confirm = Bevestigen
-admin-ews-trust-more = { $shown } van { $total } getoond.
+admin-ews-search = Zoeken op gebruiker of postvak
+admin-ews-no-match = Geen beheerd postvak of te bevestigen adres komt overeen met deze zoekopdracht.
+admin-ews-conflicts-more = Postvak al in gebruik door een andere gebruiker: { $shown } van { $total } getoond.
 admin-ews-http-warning = Het endpoint gebruikt http://: het wachtwoord van het serviceaccount wordt onversleuteld verzonden. Gebruik bij voorkeur https://.
 # Time off (templates/time_off.html, src/web/time_off.rs, troubleshoot view)
 
@@ -2259,6 +2349,8 @@ answer-agreed = Akkoord
 answer-not-agreed = Niet akkoord
 answer-you-agreed = Je ging akkoord
 answer-you-did-not-agree = Je ging niet akkoord
+answer-agreed-recorded-by = Akkoord, vastgelegd door { $name }
+answer-recorded-for-you-by = Namens jou vastgelegd door { $name }
 bookings-answers = Antwoorden
 validate-notes-required = Voeg een opmerking voor de organisator toe.
 validate-question-required = Beantwoord "{ $question }".

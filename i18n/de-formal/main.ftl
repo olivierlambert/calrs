@@ -256,6 +256,8 @@ admin-theme-help = Wählen Sie ein Farbdesign für alle Seiten. Die Umschaltung 
 admin-theme-custom-desc = Ihre Farben
 admin-no-groups = Noch keine Gruppen synchronisiert. Gruppen werden automatisch von Ihrem OIDC-Anbieter übernommen.
 admin-private-hosts-help = Kommagetrennte Hostnamen, die für CalDAV-/EWS-Quellen auf private oder reservierte IP-Adressen zeigen dürfen (Ausnahme vom SSRF-Schutz). Tragen Sie nur Hosts ein, die Sie kontrollieren (etwa einen Kalenderserver im selben Docker-Netz). Leer lassen, um den Schutz für alle Hosts aktiv zu halten.
+admin-trusted-proxies-help = Adressen oder CIDR-Bereiche der Reverse-Proxys, deren X-Forwarded-For-Header beim Unterscheiden der Clients für die Ratenbegrenzung geglaubt wird. Lassen Sie das Feld leer für die Vorgabe (Loopback-, private, Unique-Local- und Link-Local-Bereiche: ein Proxy auf demselben Host oder im selben Docker-Netz). Geben Sie none ein, wenn calrs direkt erreichbar ist, damit ein Client keine andere Adresse vortäuschen kann.
+admin-trusted-proxies-everyone = Vertrauenswürdige Proxys: „{ $entry }“ würde jeder Adresse vertrauen, und jeder Client könnte sich als ein anderer ausgeben. Tragen Sie stattdessen die Adresse oder den Bereich Ihres Proxys ein.
 admin-unset-env = Entfernen Sie die Umgebungsvariable, um dies hier zu bearbeiten.
 admin-wasm-url-help = Von dort lädt das Widget seinen Löser. Tragen Sie die WASM-Datei Ihres Cap-Servers ein, damit Buchungsseiten cdn.jsdelivr.net nicht mehr kontaktieren. Leer lassen für den Standardwert.
 admin-captcha-disable-help = Lassen Sie Instanz-URL, Site-Key und Secret leer, um das Captcha auf Buchungsseiten zu deaktivieren.
@@ -513,9 +515,19 @@ webhooks-url-masked-hint = (nur die Person, die ihn hinzugefügt hat, sieht die 
 book-question-pick-one = Kreuzen Sie mindestens ein Kästchen an.
 answer-you-agreed = Sie haben zugestimmt
 answer-you-did-not-agree = Sie haben nicht zugestimmt
+answer-recorded-for-you-by = In Ihrem Namen erfasst von { $name }
 validate-notes-required = Bitte schreiben Sie eine Notiz für die Gastgeber.
 validate-question-required = Bitte beantworten Sie „{ $question }“.
 validate-questions-invalid = Die Buchungsfragen konnten nicht gelesen werden. Laden Sie die Seite neu und versuchen Sie es noch einmal.
 validate-question-kind-change = Bei Frage { $position }: Eine gespeicherte Frage behält ihre Art. Entfernen Sie sie und fügen Sie eine neue hinzu.
 etf-booking-form-help = Gäste geben immer ihren Namen und ihre E-Mail-Adresse an. Fügen Sie die Fragen hinzu, die dieser Termintyp braucht: Gäste beantworten sie beim Buchen, und die Antworten kommen mit der Buchung bei Ihnen an.
 etf-q-in-calendar-help = Bei sensiblen Antworten ausschalten: Wer Ihren Kalender lesen kann, würde sie sehen.
+overview-sum-now = Gerade läuft Ihr Termin mit { $guest }, bis { $time }.
+overview-sum-today = Heute treffen Sie { $guest } um { $time }.
+overview-sum-tomorrow = Morgen treffen Sie { $guest } um { $time }.
+overview-sum-later = Ihr nächster Termin ist mit { $guest } am { $day } um { $time }.
+overview-sum-pending = { $count ->
+    [one] Eine Anfrage wartet auf Ihre Antwort.
+   *[other] { $count } Anfragen warten auf Ihre Antwort.
+}
+overview-links-page = Ihre Seite

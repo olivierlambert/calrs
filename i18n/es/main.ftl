@@ -219,6 +219,32 @@ base-powered-by = Desarrollado por
 profile-pick-event-type-invite = Elige un tipo de evento para reservar un hueco.
 profile-no-event-type = Aún no hay tipos de evento disponibles.
 
+# Public landing pages (/u/{username}, /team/{slug}). In landing-next-free,
+# %1 is the time, filled in by the page itself.
+landing-duration-h = { $hours } h
+landing-duration-aria =
+    { $minutes ->
+        [one] { $minutes } minuto
+       *[other] { $minutes } minutos
+    }
+landing-duration-hm = { $hours } h { $minutes }
+landing-duration-aria-h =
+    { $hours ->
+        [one] { $hours } hora
+       *[other] { $hours } horas
+    }
+landing-duration-aria-hm =
+    { $hours ->
+        [one] { $hours } hora
+       *[other] { $hours } horas
+    } { $minutes ->
+        [one] { $minutes } minuto
+       *[other] { $minutes } minutos
+    }
+landing-next-free = Próximo: %1
+landing-with-one-of = con uno de
+landing-with-everyone = con todos
+
 # Month and weekday names + per-locale date format patterns.
 # Used by server-side date formatters in src/i18n.rs.
 
@@ -410,10 +436,8 @@ overview-page-title = Panel
 overview-avail-banner-body = Tu horario laboral por defecto se ha fijado de lunes a viernes, de 9:00 a 17:00. Se usa cuando otras personas te incluyen en reuniones de grupo dinámicas.
 overview-avail-banner-cta = Revisa tu disponibilidad
 overview-dismiss = Descartar
-overview-getting-started = Primeros pasos
 overview-step-connect-calendar = Conectar un calendario
 overview-step-first-event-type = Crear tu primer tipo de evento
-overview-step-share-link = Compartir tu enlace de reserva
 overview-pending-approval = Pendiente de aprobación
 overview-confirm = Confirmar
 overview-decline = Rechazar
@@ -421,7 +445,6 @@ overview-copy-link = Copiar enlace de reserva
 overview-duration-h = { $hours } h
 overview-duration-m = { $minutes } min
 overview-duration-hm = { $hours } h { $minutes } min
-overview-percent = { $value } %
 overview-chart-title = Reuniones por semana
 overview-chart-this-week = Esta semana
 overview-chart-week-of = Semana del { $date }
@@ -435,7 +458,6 @@ overview-types-other = Otros tipos
 overview-agenda-title = Próximas
 overview-agenda-today = Hoy
 overview-agenda-tomorrow = Mañana
-overview-agenda-now = En curso
 overview-agenda-join = Unirse
 overview-agenda-empty = Ninguna reunión en los próximos 14 días. Comparte tu enlace de reserva para recibir alguna.
 overview-agenda-all = Todas las reservas
@@ -457,33 +479,86 @@ overview-open-calendar = Abrir tu calendario
 overview-week-title = Esta semana
 overview-week-closed = cerrado
 overview-week-total = { $booked } reservadas
-overview-week-number = Semana { $week }
 overview-week-short = S{ $week }
 overview-time-range = de { $from } a { $to }
 overview-until = hasta { $time }
 overview-expires = Vence { $when }
 overview-guest-and-more = { $name } y { $count } más
-overview-mast-now = Ahora: { $title } con { $guest }, hasta las { $time }
-overview-mast-next = Siguiente: { $title } con { $guest } a las { $time }
-overview-mast-next-day = Siguiente: { $title } con { $guest }, { $day } a las { $time }
+overview-greeting-night = Hola, { $name }
+overview-greeting-morning = Buenos días, { $name }
+overview-greeting-afternoon = Buenas tardes, { $name }
+overview-greeting-evening = Buenas noches, { $name }
+overview-mast-date = { $date }, semana { $week }
+overview-sum-now = Tu reunión con { $guest } sigue hasta las { $time }.
+overview-sum-today = Hoy te reúnes con { $guest } a las { $time }.
+overview-sum-tomorrow = Mañana te reúnes con { $guest } a las { $time }.
+overview-sum-later = Tu próxima reunión es con { $guest } el { $day } a las { $time }.
+overview-sum-more-today = { $count ->
+    [one] Después tienes una reunión más hoy.
+   *[other] Después tienes { $count } reuniones más hoy.
+}
+overview-sum-none = No hay nada reservado en los próximos 14 días.
+overview-sum-pending = { $count ->
+    [one] Una solicitud espera tu respuesta.
+   *[other] { $count } solicitudes esperan tu respuesta.
+}
+overview-sum-guests = { $count ->
+    [one] { $name } y otra persona
+   *[other] { $name } y { $count } personas más
+}
+overview-hero-title = A continuación
+overview-when-now = Ahora, hasta las { $time }
+overview-when-minutes = { $count ->
+    [one] en 1 minuto
+   *[other] en { $count } minutos
+}
+overview-when-hours = { $count ->
+    [one] en 1 hora
+   *[other] en { $count } horas
+}
+overview-when-today-night = más tarde esta noche
+overview-when-today-morning = esta mañana
+overview-when-today-afternoon = esta tarde
+overview-when-today-evening = esta noche
+overview-when-tomorrow-night = mañana de madrugada
+overview-when-tomorrow-morning = mañana por la mañana
+overview-when-tomorrow-afternoon = mañana por la tarde
+overview-when-tomorrow-evening = mañana por la noche
+overview-when-weekday-night = el { $day } de madrugada
+overview-when-weekday-morning = el { $day } por la mañana
+overview-when-weekday-afternoon = el { $day } por la tarde
+overview-when-weekday-evening = el { $day } por la noche
+overview-when-days = { $count ->
+    [one] en 1 día
+   *[other] en { $count } días
+}
+overview-pulse-held = { $count ->
+    [one] Una reunión en los últimos 30 días, { $time } con invitados.
+   *[other] { $count } reuniones en los últimos 30 días, { $time } con invitados.
+}
+overview-pulse-held-vs = { $count ->
+    [one] Una reunión en los últimos 30 días, { $time } con invitados, frente a { $prev } en los 30 días anteriores.
+   *[other] { $count } reuniones en los últimos 30 días, { $time } con invitados, frente a { $prev } en los 30 días anteriores.
+}
+overview-pulse-booked = { $count ->
+    [one] En el mismo periodo llegó una reserva nueva.
+   *[other] En el mismo periodo llegaron { $count } reservas nuevas.
+}
+overview-pulse-booked-only = { $count ->
+    [one] En los últimos 30 días llegó una reserva nueva.
+   *[other] En los últimos 30 días llegaron { $count } reservas nuevas.
+}
+overview-links-page = Tu página
+overview-agenda-nothing-else = Nada más en los próximos 14 días.
+overview-setup-count = { $count ->
+    [one] 1 cosa por configurar
+   *[other] { $count } cosas por configurar
+}
 overview-ruler-booked = Reservado
 overview-ruler-pending = Esperando una decisión
 overview-ruler-unavailable = No disponible (tu calendario)
 overview-key-open = Abierto a reservas
-overview-ruler-aria = Hoy, de { $from } a { $to }
-overview-chart-now = ahora
 overview-figures-title = Últimos 30 días
-overview-fig-booked = Reuniones reservadas
-overview-fig-time = Tiempo en reuniones
-overview-fig-cancelled = Canceladas
-overview-fig-notice = Antelación media
-overview-fig-before = { $value } los 30 días anteriores
-overview-fig-prev-key = Los 30 días anteriores
-overview-fig-days =
-    { $count ->
-        [one] 1 día
-       *[other] { $count } días
-    }
 
 # Dashboard bookings (templates/dashboard_bookings.html)
 
@@ -1164,6 +1239,9 @@ admin-action-refused = Acción rechazada:
 admin-error-last-admin = Es el último administrador activo. Asciende o activa primero a otro administrador.
 admin-logo = Logotipo de la empresa
 admin-logo-help = Se muestra en las páginas de reserva públicas. PNG, JPEG, GIF o WebP, máx. 2 MB.
+admin-logo-light = Tema claro
+admin-logo-dark = Tema oscuro
+admin-logo-dark-help = Opcional. Se muestra cuando el visitante usa el tema oscuro; sin él, se usa el logotipo claro en ambos temas.
 admin-logo-refused = No se ha guardado el logotipo. Sube una imagen PNG, JPEG, GIF o WebP de 2 MB como máximo.
 admin-favicon = Favicon
 admin-favicon-help = Se muestra en las pestañas del navegador y en los marcadores. Recomendado: un PNG cuadrado de al menos 32×32 píxeles, máx. 512 KB. Si no hay ninguno, se muestra el cangrejo de calrs.
@@ -1221,6 +1299,10 @@ admin-base-url = URL base
 admin-base-url-help = URL pública de esta instancia. Se usa en las redirecciones OIDC y en los enlaces de los correos (aprobar/rechazar, cancelar, recordatorios).
 admin-private-hosts = Lista de hosts privados permitidos
 admin-private-hosts-help = Nombres de host, separados por comas, que pueden resolverse a IP privadas o reservadas en las fuentes CalDAV/EWS (excepción a la protección SSRF). Añade solo hosts que controles (por ejemplo, un servidor de calendario en la misma red Docker). Déjalo vacío para mantener la protección activa en todos los hosts.
+admin-trusted-proxies = Proxies de confianza
+admin-trusted-proxies-help = Direcciones o rangos CIDR de los proxies inversos cuya cabecera X-Forwarded-For se cree al distinguir a los clientes para los límites de frecuencia. Déjalo vacío para el valor por defecto (rangos de loopback, privados, locales únicos y de enlace local: un proxy en el mismo host o la misma red de Docker). Escribe none si se accede a calrs directamente, para que un cliente no pueda hacerse pasar por otra dirección.
+admin-trusted-proxies-everyone = Proxies de confianza: «{ $entry }» confiaría en todas las direcciones, y cualquier cliente podría hacerse pasar por otro. Indica en su lugar la dirección o el rango de tu proxy.
+admin-trusted-proxies-invalid = Proxies de confianza: «{ $entry }» no es una dirección IP ni un rango CIDR.
 admin-german-formal = Tratamiento en alemán
 admin-german-formal-du = Informal (du)
 admin-german-formal-sie = Formal (Sie)
@@ -1332,6 +1414,8 @@ admin-sms-test-checked = Credenciales aceptadas.
 admin-sms-test-error = La pasarela de SMS ha rechazado la petición.
 admin-sms-captcha-warning = El formulario de reserva es público y el número de destino lo pone el invitado, así que un SMS sin captcha es un relay abierto que otra persona puede pagarte. Configura el captcha de arriba y restringe los países de destino en los ajustes de tu pasarela.
 admin-sms-sent-today = Enviados hoy:
+admin-sms-segments-today = Segmentos facturados hoy:
+admin-sms-unknown-today = Sin respuesta de la pasarela, contados en el límite:
 admin-sms-of-cap = de { $cap }
 admin-sms-config-error = Error en la configuración de SMS:
 admin-sms-gateway = Pasarela:
@@ -1344,8 +1428,8 @@ admin-sms-docs = Documentación de la API de { $provider }
 admin-sms-country = Prefijo de país por defecto
 admin-sms-country-hint = (se usa cuando los invitados escriben un número local)
 admin-sms-daily-cap = Límite diario
-admin-sms-daily-cap-hint = (mensajes al día para toda la instancia, 0 para no poner límite)
-admin-sms-daily-cap-help = Superado el límite, calrs deja de enviar SMS y sigue enviando correos, de modo que ninguna reserva falle porque se haya agotado el presupuesto de SMS.
+admin-sms-daily-cap-hint = (segmentos SMS facturados por día UTC para toda la instancia, 0 para no poner límite)
+admin-sms-daily-cap-help = Un mensaje de hasta 160 caracteres es un segmento, o de hasta 70 si contiene un carácter fuera del alfabeto GSM; uno más largo se factura a un segmento por cada 153 caracteres (67), y los mensajes de prueba también cuentan. Superado el límite, calrs deja de enviar SMS y sigue enviando correos, de modo que ninguna reserva falle porque se haya agotado el presupuesto de SMS.
 admin-save-sms = Guardar los ajustes de SMS
 admin-send-test-sms = Enviar un mensaje de prueba a
 admin-send-test-sms-hint-check = (déjalo vacío para comprobar solo las credenciales)
@@ -1691,6 +1775,8 @@ bookings-error-reschedule-resend-too-soon = La solicitud se envió al invitado h
 bookings-resend-reschedule = Reenviar solicitud
 bookings-resend-reschedule-hint = Enviar de nuevo el mismo enlace al invitado (como mucho una vez por hora)
 troubleshoot-detail-pending-request = { $title } (solicitud pendiente)
+troubleshoot-detail-claimed-booking = { $title } (reserva tomada)
+troubleshoot-detail-unsupported-recurrence = { $calendar } (regla de repetición que calrs no puede leer, contada como ocupada desde su inicio)
 etf-pending-blocks-slot = Las solicitudes pendientes bloquean el hueco
 etf-pending-blocks-slot-help = Mientras una solicitud espera tu respuesta, nadie más puede reservar esa hora, ni en este tipo de evento ni en los demás.
 etf-pending-expiry = Caducidad de las solicitudes
@@ -1884,6 +1970,8 @@ admin-sms-check-accepted = La pasarela ha aceptado las credenciales.
 admin-sms-bad-number = Ese número de teléfono no es válido.
 admin-sms-test-body = Mensaje de prueba de calrs. Tu pasarela SMS funciona.
 admin-sms-test-accepted = La pasarela ha aceptado el mensaje de prueba.
+admin-sms-test-over-cap = Se ha alcanzado el límite diario de SMS, así que no se ha enviado el mensaje de prueba. Los mensajes de prueba cuentan para el límite diario como los demás.
+admin-sms-test-ledger-failed = No se pudo registrar el uso de SMS, así que no se ha enviado el mensaje de prueba.
 
 ## Local multi-factor authentication
 
@@ -2034,7 +2122,9 @@ admin-ews-row-conflict = Sin aprovisionar: la fuente de otro usuario ya lee este
 admin-ews-trust-title = Direcciones por confirmar
 admin-ews-trust-help = Estas cuentas activas de los dominios permitidos tienen una dirección que nadie ha avalado (registro abierto, o creadas antes de esta comprobación), así que no reciben ninguna fuente de Exchange gestionada. Confirma una solo cuando sepas que la dirección pertenece a esa persona: al confirmarla, calrs lee para ella el calendario de ese buzón.
 admin-ews-trust-confirm = Confirmar
-admin-ews-trust-more = Se muestran { $shown } de { $total }.
+admin-ews-search = Buscar por usuario o buzón
+admin-ews-no-match = Ningún buzón gestionado ni dirección por confirmar coincide con esta búsqueda.
+admin-ews-conflicts-more = Buzón ya usado por otro usuario: se muestran { $shown } de { $total }.
 admin-ews-http-warning = El punto de conexión usa http://: la contraseña de la cuenta de servicio se envía sin cifrar. Es preferible https://.
 # Time off (templates/time_off.html, src/web/time_off.rs, troubleshoot view)
 
@@ -2257,6 +2347,8 @@ answer-agreed = Aceptado
 answer-not-agreed = No aceptado
 answer-you-agreed = Aceptaste
 answer-you-did-not-agree = No aceptaste
+answer-agreed-recorded-by = Aceptado, registrado por { $name }
+answer-recorded-for-you-by = Registrado en tu nombre por { $name }
 bookings-answers = Respuestas
 validate-notes-required = Por favor, añade una nota para el organizador.
 validate-question-required = Por favor, responde a "{ $question }".

@@ -303,6 +303,17 @@ struct Answer {
     consent: bool,
     link_url: Option<String>,
     answered_at: String,
+    /// A consent ticked by a host through the REST API rather than by the
+    /// guest: who recorded it, and with which credential. Null otherwise.
+    attested_by: Option<Attested>,
+}
+
+#[derive(Serialize, Clone, Debug)]
+struct Attested {
+    user_id: String,
+    name: String,
+    via: String,
+    credential_id: String,
 }
 
 impl From<crate::email::BookingAnswer> for Answer {
@@ -316,6 +327,12 @@ impl From<crate::email::BookingAnswer> for Answer {
             consent: a.consent,
             link_url: a.link_url,
             answered_at: a.answered_at,
+            attested_by: a.attested_by.map(|by| Attested {
+                user_id: by.user_id,
+                name: by.name,
+                via: by.via,
+                credential_id: by.credential_id,
+            }),
         }
     }
 }
@@ -580,6 +597,7 @@ fn ping_snapshot(event_type: Option<(String, String, String, Tz)>) -> Snapshot {
                 consent: false,
                 link_url: None,
                 answered_at: iso(Utc::now()),
+                attested_by: None,
             }],
             attendees: vec!["colleague@example.com".to_string()],
             hosts: vec![Host {
@@ -913,7 +931,7 @@ pub fn check_url_shape(
         .trim_start_matches('[')
         .trim_end_matches(']')
         .to_ascii_lowercase();
-    let allowlisted = allowlist.contains(&host);
+    let allowlisted = crate::net_guard::Allowlist::fixed(allowlist).allows(&host);
     match url.scheme() {
         "https" => {}
         "http" if allowlisted => {}
@@ -1026,15 +1044,18 @@ async fn post(
             return Attempt::failed(None, format!("refused: {}", e.shown()));
         }
     };
-    // The shared guarded client (#363): no proxy (a proxy resolves the host
-    // itself, which would undo the address checks), no redirects, and any
+    // The shared guarded client (#363) with no proxy (a proxy resolves the
+    // host itself, which would undo the address checks), no redirects, and any
     // lookup it makes is checked again. The addresses checked above are
     // pinned, so the connection goes to exactly those.
     let allow = crate::net_guard::Allowlist::fixed(allowlist);
-    let mut builder =
-        crate::net_guard::builder_with(allow, Arc::new(crate::net_guard::SystemLookup))
-            .timeout(REQUEST_TIMEOUT)
-            .connect_timeout(CONNECT_TIMEOUT);
+    let mut builder = crate::net_guard::builder_with(
+        allow,
+        Arc::new(crate::net_guard::SystemLookup),
+        &crate::net_guard::ProxyConfig::none(),
+    )
+    .timeout(REQUEST_TIMEOUT)
+    .connect_timeout(CONNECT_TIMEOUT);
     if let Some((host, addrs)) = &target.pinned {
         builder = builder.resolve_to_addrs(host, addrs);
     }
@@ -1293,7 +1314,7 @@ impl Drop for InFlight {
 /// still sends, to the same URL with the same secret.
 async fn serve_endpoint(
     pool: SqlitePool,
-    key: [u8; 32],
+    key: crate::crypto::SecretKey,
     webhook_id: String,
     now: DateTime<Utc>,
     allowlist: Vec<String>,
@@ -1350,7 +1371,11 @@ pub(crate) async fn start_pass(
         let Some(guard) = InFlight::claim(&webhook_id) else {
             continue;
         };
-        let (pool, key, allowlist) = (pool.clone(), *key, allowlist.to_vec());
+        let (pool, key, allowlist) = (
+            pool.clone(),
+            crate::crypto::SecretKey::new(*key),
+            allowlist.to_vec(),
+        );
         handles.push(tokio::spawn(async move {
             let _guard = guard;
             serve_endpoint(pool, key, webhook_id, now, allowlist).await
@@ -1420,7 +1445,7 @@ pub(crate) async fn prune(pool: &SqlitePool, now: DateTime<Utc>) {
 /// The delivery task spawned by `calrs serve`. Wakes when a delivery is
 /// queued, and every 30 seconds for the retries. Deliveries queued by the
 /// CLI are picked up by that tick.
-pub async fn run_webhook_loop(pool: SqlitePool, key: [u8; 32]) {
+pub async fn run_webhook_loop(pool: SqlitePool, key: crate::crypto::SecretKey) {
     // At startup too: a server that was down a while has stale rows.
     prune(&pool, Utc::now()).await;
     let mut last_prune = std::time::Instant::now();

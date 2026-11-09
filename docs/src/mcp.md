@@ -223,11 +223,12 @@ and revocations 60 requests per 5 minutes each. One address cannot hold more
 than 50 clients registered in the last 30 days that nobody approved. Over a
 limit they answer HTTP 429 with `{"error":"temporarily_unavailable"}`.
 
-These per-address protections need the reverse proxy calrs is deployed behind
-to set `X-Forwarded-For`. Without it every request has the same address
-("unknown"): the rate limits then apply to everyone together, and the
-per-address client cap is not applied at all (it would let one registrant lock
-everyone out).
+The client address follows the [trusted proxy](security.md#trusted-proxies)
+rule: `X-Forwarded-For` is believed only from a trusted proxy, otherwise the
+connection's own address is used. A trusted proxy that sends no
+`X-Forwarded-For` makes every request look like the proxy: the rate limits then
+apply to everyone together, and the per-address client cap is not applied at
+all (it would let one registrant lock everyone out).
 
 A client nobody approved is deleted after 30 days, so a user who denied, or gave
 up during login or two-factor setup, can retry with the same client. A client

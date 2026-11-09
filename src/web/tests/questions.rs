@@ -553,6 +553,36 @@ fn answers_are_written_out_per_reader() {
         answer_display(&consent("yes"), "de-formal", AnswerReader::Guest),
         "Sie haben zugestimmt"
     );
+    // A consent a host ticked through the REST API: the guest is never told
+    // they agreed.
+    let attested = BookingAnswer {
+        attested_by: Some(crate::email::Attestation {
+            user_id: "u1".into(),
+            name: "Alice".into(),
+            via: "api_token".into(),
+            credential_id: "t1".into(),
+        }),
+        ..consent("yes")
+    };
+    assert_eq!(
+        answer_display(&attested, "en", AnswerReader::Host),
+        "Agreed, recorded by Alice"
+    );
+    assert_eq!(
+        answer_display(&attested, "en", AnswerReader::Guest),
+        "Recorded on your behalf by Alice"
+    );
+    assert_eq!(
+        answer_display(&attested, "de-formal", AnswerReader::Guest),
+        "In Ihrem Namen erfasst von Alice"
+    );
+    for (lang, _) in crate::i18n::supported_with_labels() {
+        for reader in [AnswerReader::Host, AnswerReader::Guest] {
+            let text = answer_display(&attested, lang, reader);
+            assert!(text.contains("Alice"), "{lang}: {text}");
+            assert_ne!(text, answer_display(&consent("yes"), lang, reader));
+        }
+    }
     let plain = BookingAnswer {
         kind: "checkbox".into(),
         value: "no".into(),

@@ -328,7 +328,7 @@ async fn consume_code(
         .rows_affected()
             == 1);
     }
-    let secret = Zeroizing::new(crypto::decrypt_value(key, &encrypted)?);
+    let secret = crypto::decrypt_value(key, &encrypted)?;
     let Some(step) = matching_step(&secret, code, Utc::now().timestamp())? else {
         return Ok(false);
     };
@@ -431,7 +431,7 @@ async fn verify_challenge(
     let mut codes = Vec::new();
     if c.purpose == "enroll" {
         let encrypted = c.secret_enc.context("missing enrollment secret")?;
-        let secret = Zeroizing::new(crypto::decrypt_value(key, &encrypted)?);
+        let secret = crypto::decrypt_value(key, &encrypted)?;
         let Some(step) = matching_step(&secret, code, Utc::now().timestamp())? else {
             return Ok(None);
         };
@@ -519,7 +519,7 @@ async fn challenge_view(
         return Ok(error(state, lang));
     };
     let (secret, qr) = if let Some(encrypted) = c.secret_enc {
-        let secret = Zeroizing::new(crypto::decrypt_value(&state.secret_key, &encrypted)?);
+        let secret = crypto::decrypt_value(&state.secret_key, &encrypted)?;
         let generator = totp(&secret, &c.email)?;
         (generator.secret().to_base32(), generator.to_qr_base64()?)
     } else {

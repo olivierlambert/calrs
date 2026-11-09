@@ -96,8 +96,9 @@ pub struct JitsiConfig {
 pub struct WebhookConfig {
     pub url: String,
     pub auth_mode: WebhookAuthMode,
-    /// Shared secret for HMAC; empty when `auth_mode` is `None`.
-    pub secret: String,
+    /// Shared secret for HMAC; empty when `auth_mode` is `None`. Kept in
+    /// `AppState` for the life of the process, so wiped when dropped.
+    pub secret: zeroize::Zeroizing<String>,
     /// Human-readable label shown to guests; same semantics as
     /// [`JitsiConfig::display_name`].
     pub display_name: Option<String>,
@@ -194,7 +195,7 @@ pub async fn load_config(pool: &SqlitePool, key: &[u8; 32]) -> MeetingConfig {
                 (WebhookAuthMode::Hmac, Some(enc)) if !enc.is_empty() => {
                     crate::crypto::decrypt_value(key, enc).unwrap_or_default()
                 }
-                _ => String::new(),
+                _ => zeroize::Zeroizing::default(),
             };
             WebhookConfig {
                 url: url.to_string(),
@@ -320,7 +321,18 @@ pub async fn call_webhook(cfg: &WebhookConfig, payload: &WebhookPayload<'_>) -> 
         }
     };
 
-    let client = reqwest::Client::new();
+    // No redirects: a 307 or 308 would re-send the signed body to whatever
+    // host it names.
+    let client = match reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::error!(error = %e, "meeting webhook client build failed");
+            return Err(());
+        }
+    };
     let mut req = client
         .post(&cfg.url)
         .header("content-type", "application/json")
@@ -590,6 +602,28 @@ pub fn random_alphanumeric(n: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn the_meeting_webhook_does_not_follow_redirects() {
+        let (url, hits) = crate::test_support::redirect_trap().await;
+        let cfg = WebhookConfig {
+            url,
+            auth_mode: WebhookAuthMode::Hmac,
+            secret: "s3cret".to_string().into(),
+            display_name: None,
+        };
+        let payload = WebhookPayload {
+            booking_uid: "u",
+            event_slug: "e",
+            host_username: "h",
+            guest_name: "g",
+            guest_email: "g@example.com",
+            start_at: "2030-01-01T10:00:00",
+            end_at: "2030-01-01T10:30:00",
+        };
+        assert!(call_webhook(&cfg, &payload).await.is_err());
+        assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
 
     #[test]
     fn expand_pattern_replaces_known_tokens() {

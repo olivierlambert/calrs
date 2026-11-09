@@ -106,7 +106,8 @@ struct EventTypeRow {
 /// event type owner, and the rule is the web slot engine's
 /// (`booking_time::user_busy_bookings`): their own bookings, bookings assigned
 /// to them on other people's team event types, unassigned collective team
-/// bookings, and pending requests whose event type holds the slot. Bookings
+/// bookings, bookings they claimed as a watcher, and pending requests whose
+/// event type holds the slot. Bookings
 /// of other users on the same instance do not count. The window bounds are
 /// ISO local times and are widened by two days on each side, like the web
 /// path, because stored times may be UTC.
@@ -127,6 +128,7 @@ pub(crate) async fn host_busy_bookings(
            AND b.start_at <= strftime('%Y-%m-%dT%H:%M:%S', ?, '+2 days') AND b.end_at >= strftime('%Y-%m-%dT%H:%M:%S', ?, '-2 days')",
         crate::booking_time::user_busy_bookings(true)
     ))
+    .bind(&host)
     .bind(&host)
     .bind(&host)
     .bind(&host)
@@ -314,7 +316,7 @@ async fn fetch_nonrecurring_busy_events(
            AND c.sync_enabled = 1
            AND ((c.is_busy = 1 AND NOT EXISTS (SELECT 1 FROM event_type_calendars etc JOIN calendars sc ON sc.id = etc.calendar_id WHERE etc.event_type_id = ? AND sc.sync_enabled = 1))
                 OR c.id IN (SELECT calendar_id FROM event_type_calendars WHERE event_type_id = ?))
-           AND (e.rrule IS NULL OR e.rrule = '')
+           AND (e.rrule IS NULL OR e.rrule = '') AND e.rdate = 0
            AND (e.status IS NULL OR e.status != 'CANCELLED')
            AND (e.transp IS NULL OR e.transp != 'TRANSPARENT')
            AND ((e.start_at <= ? AND e.end_at >= ?)
@@ -350,6 +352,10 @@ pub async fn run(pool: &SqlitePool, cmd: EventTypeCommands) -> Result<()> {
                 if from > until {
                     anyhow::bail!("--bookable-until must be on or after --bookable-from");
                 }
+            }
+            // /u/{username}/next-free is the landing page's hint endpoint.
+            if slug == "next-free" {
+                anyhow::bail!("The slug 'next-free' is reserved, pick another one");
             }
             let account: (String,) = sqlx::query_as("SELECT id FROM accounts LIMIT 1")
                 .fetch_optional(pool)
@@ -548,7 +554,7 @@ pub async fn run(pool: &SqlitePool, cmd: EventTypeCommands) -> Result<()> {
             // Expand recurring events
             let end_compact_rrule = end_date.format("%Y%m%dT235959").to_string();
             let recurring: Vec<(String, String, String, Option<String>, Option<String>)> = sqlx::query_as(
-                "SELECT e.start_at, e.end_at, e.rrule, e.raw_ical, e.timezone FROM events e
+                "SELECT e.start_at, e.end_at, COALESCE(e.rrule, ''), e.raw_ical, e.timezone FROM events e
                  JOIN calendars c ON c.id = e.calendar_id
                  JOIN caldav_sources cs ON cs.id = c.source_id
                  JOIN accounts a ON a.id = cs.account_id
@@ -559,7 +565,7 @@ pub async fn run(pool: &SqlitePool, cmd: EventTypeCommands) -> Result<()> {
                         OR c.id IN (SELECT calendar_id FROM event_type_calendars WHERE event_type_id = ?))
                    AND (e.status IS NULL OR e.status != 'CANCELLED')
                    AND (e.transp IS NULL OR e.transp != 'TRANSPARENT')
-                   AND e.rrule IS NOT NULL AND e.rrule != '' AND (e.start_at <= ? OR e.start_at <= ?)",
+                   AND ((e.rrule IS NOT NULL AND e.rrule != '') OR e.rdate = 1) AND (e.start_at <= ? OR e.start_at <= ?)",
             )
             .bind(&et_id).bind(&et_id).bind(&et_id)
             .bind(&end_iso)
@@ -569,29 +575,20 @@ pub async fn run(pool: &SqlitePool, cmd: EventTypeCommands) -> Result<()> {
             .unwrap_or_default();
 
             for (s, e, rrule_str, raw_ical, event_tz) in &recurring {
-                if let (Some(ev_start), Some(ev_end)) =
-                    (parse_ical_datetime(s), parse_ical_datetime(e))
-                {
-                    let exdates = raw_ical
-                        .as_deref()
-                        .map(|raw| crate::rrule::extract_exdates(raw, event_tz.as_deref()))
-                        .unwrap_or_default();
-                    let occurrences = crate::rrule::expand_rrule(
-                        ev_start,
-                        ev_end,
-                        rrule_str,
-                        &exdates,
-                        now,
-                        window_end_dt,
-                    );
-                    for (os, oe) in occurrences {
-                        let cs = convert_event_to_tz(os, event_tz.as_deref(), host_tz);
-                        let ce = convert_event_to_tz(oe, event_tz.as_deref(), host_tz);
-                        busy_events.push((
-                            cs.format("%Y-%m-%dT%H:%M:%S").to_string(),
-                            ce.format("%Y-%m-%dT%H:%M:%S").to_string(),
-                        ));
-                    }
+                for (cs, ce) in crate::rrule::occurrences_in(
+                    s,
+                    e,
+                    rrule_str,
+                    raw_ical.as_deref(),
+                    event_tz.as_deref(),
+                    now,
+                    window_end_dt,
+                    host_tz,
+                ) {
+                    busy_events.push((
+                        cs.format("%Y-%m-%dT%H:%M:%S").to_string(),
+                        ce.format("%Y-%m-%dT%H:%M:%S").to_string(),
+                    ));
                 }
             }
 

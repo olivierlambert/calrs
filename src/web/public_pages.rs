@@ -116,6 +116,15 @@ pub(super) async fn redirect_team_link_to_team(
 
 // --- Group public pages ---
 
+/// The name shown under a member's face on the team page: the first word
+/// of `name` that is not an abbreviated title ("Dr.", "Prof."), so
+/// "Dr. Jane Doe" reads "Jane"; the whole name when every word is one.
+pub(super) fn first_name(name: &str) -> &str {
+    name.split_whitespace()
+        .find(|word| !word.ends_with('.'))
+        .unwrap_or(name)
+}
+
 pub(super) async fn team_profile_page(
     State(state): State<Arc<AppState>>,
     optional_auth: crate::auth::OptionalAuthUser,
@@ -177,10 +186,11 @@ pub(super) async fn team_profile_page(
     // including private/internal — they have view access via the slot pages
     // anyway, so showing them on the profile makes them discoverable. Anonymous
     // visitors and non-members continue to see only public event types.
-    let event_types: Vec<(String, String, Option<String>, i32, String, String)> =
+    let event_types: Vec<(String, String, Option<String>, i32, String, String, String)> =
         if viewer_is_member_or_admin {
             sqlx::query_as(
-                "SELECT et.slug, et.title, et.description, et.duration_min, et.visibility, et.id
+                "SELECT et.slug, et.title, et.description, et.duration_min, et.visibility, et.id,
+                    et.scheduling_mode
              FROM event_types et
              WHERE et.team_id = ? AND et.enabled = 1
              ORDER BY et.created_at",
@@ -191,7 +201,8 @@ pub(super) async fn team_profile_page(
             .unwrap_or_default()
         } else {
             sqlx::query_as(
-                "SELECT et.slug, et.title, et.description, et.duration_min, et.visibility, et.id
+                "SELECT et.slug, et.title, et.description, et.duration_min, et.visibility, et.id,
+                    et.scheduling_mode
              FROM event_types et
              WHERE et.team_id = ? AND et.enabled = 1 AND et.visibility = 'public'
              ORDER BY et.created_at",
@@ -214,35 +225,43 @@ pub(super) async fn team_profile_page(
     .await
     .unwrap_or_default();
 
-    let members_ctx: Vec<minijinja::Value> = members
-        .iter()
-        .map(|(id, name, ap)| {
-            context! {
-                id => id,
-                name => name,
-                has_avatar => ap.is_some(),
-                initials => compute_initials(name),
-            }
-        })
-        .collect();
+    let member_ctx = |(id, name, ap): &(String, String, Option<String>)| {
+        context! {
+            id => id,
+            name => name,
+            first_name => first_name(name),
+            has_avatar => ap.is_some(),
+            initials => compute_initials(name),
+        }
+    };
+    let members_ctx: Vec<minijinja::Value> = members.iter().map(member_ctx).collect();
 
     let tmpl = match state.templates.get_template("team_profile.html") {
         Ok(t) => t,
         Err(e) => return internal_error_html("template render", &e),
     };
 
-    let et_ctx: Vec<minijinja::Value> = event_types
-        .iter()
-        .map(|(slug, title, desc, duration, visibility, _)| {
-            context! {
-                slug => slug,
-                title => title,
-                description => desc.as_deref().map(crate::utils::render_inline_markdown),
-                duration_min => duration,
-                visibility => visibility,
-            }
-        })
-        .collect();
+    // Each type's roster as its slot page resolves it (enabled members not
+    // excluded by a zero weight), so "with one of" / "with everyone" names
+    // the people a guest can actually meet.
+    let mut et_ctx: Vec<minijinja::Value> = Vec::with_capacity(event_types.len());
+    for (slug, title, desc, duration, visibility, et_id, mode) in &event_types {
+        let roster = team_member_ids(&state.pool, et_id, &team_id).await;
+        let et_members: Vec<minijinja::Value> = members
+            .iter()
+            .filter(|(id, _, _)| roster.contains(id))
+            .map(member_ctx)
+            .collect();
+        et_ctx.push(context! {
+            slug => slug,
+            title => title,
+            description => desc.as_deref().map(crate::utils::render_inline_markdown),
+            duration_min => duration,
+            visibility => visibility,
+            scheduling_mode => mode,
+            members => et_members,
+        });
+    }
 
     // Pass invite token through if team is private (so links include it)
     let invite_token_for_template = if team_visibility == "private" && !passed_invite.is_empty() {
@@ -460,7 +479,7 @@ pub(super) async fn show_group_slots(
     let mut sync_tasks = tokio::task::JoinSet::new();
     for uid in team_member_ids(&state.pool, &et_id, &team_id).await {
         let pool = state.pool.clone();
-        let key = state.secret_key;
+        let key = state.secret_key.clone();
         sync_tasks.spawn(async move {
             crate::commands::sync::sync_if_stale(&pool, &key, &uid).await;
         });
@@ -1041,7 +1060,7 @@ async fn show_dynamic_group_slots(
         let mut sync_tasks = tokio::task::JoinSet::new();
         for (uid, _, _, _, _) in &dg_users {
             let pool = state.pool.clone();
-            let key = state.secret_key;
+            let key = state.secret_key.clone();
             let uid = uid.clone();
             sync_tasks.spawn(async move {
                 crate::commands::sync::sync_if_stale(&pool, &key, &uid).await;

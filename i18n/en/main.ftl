@@ -228,6 +228,32 @@ base-powered-by = Powered by
 profile-pick-event-type-invite = Pick an event type to book a time.
 profile-no-event-type = No event types available yet.
 
+# Public landing pages (/u/{username}, /team/{slug}). In landing-next-free,
+# %1 is the time, filled in by the page itself.
+landing-duration-h = { $hours } h
+landing-duration-aria =
+    { $minutes ->
+        [one] { $minutes } minute
+       *[other] { $minutes } minutes
+    }
+landing-duration-hm = { $hours } h { $minutes }
+landing-duration-aria-h =
+    { $hours ->
+        [one] { $hours } hour
+       *[other] { $hours } hours
+    }
+landing-duration-aria-hm =
+    { $hours ->
+        [one] { $hours } hour
+       *[other] { $hours } hours
+    } { $minutes ->
+        [one] { $minutes } minute
+       *[other] { $minutes } minutes
+    }
+landing-next-free = Next: %1
+landing-with-one-of = with one of
+landing-with-everyone = with everyone
+
 # Month and weekday names + per-locale date format patterns.
 # Used by server-side date formatters in src/i18n.rs.
 
@@ -420,10 +446,8 @@ overview-page-title = Overview
 overview-avail-banner-body = Your default working hours have been set to Mon–Fri, 9:00–17:00. These are used when others include you in dynamic group meetings.
 overview-avail-banner-cta = Review your availability
 overview-dismiss = Dismiss
-overview-getting-started = Getting started
 overview-step-connect-calendar = Connect a calendar
 overview-step-first-event-type = Create your first event type
-overview-step-share-link = Share your booking link
 overview-pending-approval = Waiting for your decision
 overview-confirm = Approve
 overview-decline = Decline
@@ -431,7 +455,6 @@ overview-copy-link = Copy booking link
 overview-duration-h = { $hours } h
 overview-duration-m = { $minutes } min
 overview-duration-hm = { $hours } h { $minutes } min
-overview-percent = { $value }%
 overview-chart-title = Meetings per week
 overview-chart-this-week = This week
 overview-chart-week-of = Week of { $date }
@@ -445,7 +468,6 @@ overview-types-other = Other types
 overview-agenda-title = Coming up
 overview-agenda-today = Today
 overview-agenda-tomorrow = Tomorrow
-overview-agenda-now = In progress
 overview-agenda-join = Join
 overview-agenda-empty = No meetings in the next 14 days. Share your booking link to get some.
 overview-agenda-all = All bookings
@@ -467,33 +489,86 @@ overview-open-calendar = Open your calendar
 overview-week-title = This week
 overview-week-closed = closed
 overview-week-total = { $booked } booked
-overview-week-number = Week { $week }
 overview-week-short = W{ $week }
 overview-time-range = { $from } to { $to }
 overview-until = to { $time }
 overview-expires = Expires { $when }
 overview-guest-and-more = { $name }, { $count } more
-overview-mast-now = Now: { $title } with { $guest }, until { $time }
-overview-mast-next = Next: { $title } with { $guest } at { $time }
-overview-mast-next-day = Next: { $title } with { $guest }, { $day } at { $time }
+overview-greeting-night = Hello, { $name }
+overview-greeting-morning = Good morning, { $name }
+overview-greeting-afternoon = Good afternoon, { $name }
+overview-greeting-evening = Good evening, { $name }
+overview-mast-date = { $date }, week { $week }
+overview-sum-now = You are meeting { $guest } until { $time }.
+overview-sum-today = Today you meet { $guest } at { $time }.
+overview-sum-tomorrow = Tomorrow you meet { $guest } at { $time }.
+overview-sum-later = Your next meeting is with { $guest } on { $day } at { $time }.
+overview-sum-more-today = { $count ->
+    [one] One more meeting follows later today.
+   *[other] { $count } more meetings follow later today.
+}
+overview-sum-none = Nothing is booked in the next 14 days.
+overview-sum-pending = { $count ->
+    [one] One request is waiting for your answer.
+   *[other] { $count } requests are waiting for your answer.
+}
+overview-sum-guests = { $count ->
+    [one] { $name } and one other
+   *[other] { $name } and { $count } others
+}
+overview-hero-title = Up next
+overview-when-now = Now, until { $time }
+overview-when-minutes = { $count ->
+    [one] in 1 minute
+   *[other] in { $count } minutes
+}
+overview-when-hours = { $count ->
+    [one] in 1 hour
+   *[other] in { $count } hours
+}
+overview-when-today-night = later tonight
+overview-when-today-morning = this morning
+overview-when-today-afternoon = this afternoon
+overview-when-today-evening = this evening
+overview-when-tomorrow-night = early tomorrow
+overview-when-tomorrow-morning = tomorrow morning
+overview-when-tomorrow-afternoon = tomorrow afternoon
+overview-when-tomorrow-evening = tomorrow evening
+overview-when-weekday-night = early { $day } morning
+overview-when-weekday-morning = { $day } morning
+overview-when-weekday-afternoon = { $day } afternoon
+overview-when-weekday-evening = { $day } evening
+overview-when-days = { $count ->
+    [one] in 1 day
+   *[other] in { $count } days
+}
+overview-pulse-held = { $count ->
+    [one] One meeting in the last 30 days, { $time } with guests.
+   *[other] { $count } meetings in the last 30 days, { $time } with guests.
+}
+overview-pulse-held-vs = { $count ->
+    [one] One meeting in the last 30 days, { $time } with guests, against { $prev } the 30 days before.
+   *[other] { $count } meetings in the last 30 days, { $time } with guests, against { $prev } the 30 days before.
+}
+overview-pulse-booked = { $count ->
+    [one] One new booking came in over the same period.
+   *[other] { $count } new bookings came in over the same period.
+}
+overview-pulse-booked-only = { $count ->
+    [one] One new booking came in over the last 30 days.
+   *[other] { $count } new bookings came in over the last 30 days.
+}
+overview-links-page = Your page
+overview-agenda-nothing-else = Nothing else in the next 14 days.
+overview-setup-count = { $count ->
+    [one] 1 thing to set up
+   *[other] { $count } things to set up
+}
 overview-ruler-booked = Booked
 overview-ruler-pending = Waiting for a decision
 overview-ruler-unavailable = Unavailable (your calendar)
 overview-key-open = Open for bookings
-overview-ruler-aria = Today, { $from } to { $to }
-overview-chart-now = now
 overview-figures-title = Last 30 days
-overview-fig-booked = Meetings booked
-overview-fig-time = Time in meetings
-overview-fig-cancelled = Cancelled
-overview-fig-notice = Average notice
-overview-fig-before = { $value } the 30 days before
-overview-fig-prev-key = The 30 days before
-overview-fig-days =
-    { $count ->
-        [one] 1 day
-       *[other] { $count } days
-    }
 
 # Dashboard bookings (templates/dashboard_bookings.html)
 
@@ -1174,6 +1249,9 @@ admin-action-refused = Action refused:
 admin-error-last-admin = This is the last enabled admin. Promote or enable another admin first.
 admin-logo = Company logo
 admin-logo-help = Displayed on public booking pages. PNG, JPEG, GIF or WebP, max 2 MB.
+admin-logo-light = Light theme
+admin-logo-dark = Dark theme
+admin-logo-dark-help = Optional. Shown when the visitor uses the dark theme; without it the light logo is used in both themes.
 admin-logo-refused = The logo was not saved. Upload a PNG, JPEG, GIF or WebP image of at most 2 MB.
 admin-favicon = Favicon
 admin-favicon-help = Shown in browser tabs and bookmarks. Recommended: a square PNG of at least 32×32 pixels, max 512 KB. Without one, the calrs crab is shown.
@@ -1231,6 +1309,10 @@ admin-base-url = Base URL
 admin-base-url-help = Public URL of this instance. Used for OIDC redirects and links in emails (approve/decline, cancel, reminders).
 admin-private-hosts = Private-host allowlist
 admin-private-hosts-help = Comma-separated hostnames allowed to resolve to private/reserved IPs for CalDAV/EWS sources (SSRF guard opt-out). Only add hosts you control (e.g. a calendar server on the same Docker network). Leave empty to keep the guard active for all hosts.
+admin-trusted-proxies = Trusted proxies
+admin-trusted-proxies-help = Addresses or CIDR ranges of the reverse proxies whose X-Forwarded-For header is believed when telling clients apart for the rate limits. Leave empty for the default (loopback, private, unique local and link-local ranges: a proxy on the same host or Docker network). Enter none when calrs is reached directly, so a client cannot claim another address.
+admin-trusted-proxies-everyone = Trusted proxies: “{ $entry }” would trust every address, so any client could claim to be anyone. List your proxy’s address or range instead.
+admin-trusted-proxies-invalid = Trusted proxies: “{ $entry }” is not an IP address or CIDR range.
 admin-german-formal = German form of address
 admin-german-formal-du = Informal (du)
 admin-german-formal-sie = Formal (Sie)
@@ -1342,6 +1424,8 @@ admin-sms-test-checked = Credentials accepted.
 admin-sms-test-error = The SMS gateway refused the request.
 admin-sms-captcha-warning = The booking form is public and the recipient number comes from the guest, so SMS without a captcha is an open relay someone else can bill you for. Configure the captcha above, and restrict destination countries in your gateway's own settings.
 admin-sms-sent-today = Sent today:
+admin-sms-segments-today = Billed segments today:
+admin-sms-unknown-today = No answer from the gateway, counted against the limit:
 admin-sms-of-cap = of { $cap }
 admin-sms-config-error = SMS configuration error:
 admin-sms-gateway = Gateway:
@@ -1354,8 +1438,8 @@ admin-sms-docs = { $provider } API documentation
 admin-sms-country = Default country code
 admin-sms-country-hint = (used when guests enter a local phone number)
 admin-sms-daily-cap = Daily limit
-admin-sms-daily-cap-hint = (messages per day for the whole instance, 0 for no limit)
-admin-sms-daily-cap-help = Past the limit calrs stops texting and keeps sending email, so bookings never fail because the SMS budget ran out.
+admin-sms-daily-cap-hint = (billed SMS segments per UTC day for the whole instance, 0 for no limit)
+admin-sms-daily-cap-help = A message of up to 160 characters is one segment, or up to 70 when it holds a character outside the GSM alphabet; a longer message is billed one segment per 153 characters (67), and test messages count too. Past the limit calrs stops texting and keeps sending email, so bookings never fail because the SMS budget ran out.
 admin-save-sms = Save SMS settings
 admin-send-test-sms = Send a test message to
 admin-send-test-sms-hint-check = (leave empty to only check the credentials)
@@ -1701,6 +1785,8 @@ bookings-error-reschedule-resend-too-soon = The request was emailed to the guest
 bookings-resend-reschedule = Resend request
 bookings-resend-reschedule-hint = Email the guest the same link again (once an hour at most)
 troubleshoot-detail-pending-request = { $title } (pending request)
+troubleshoot-detail-claimed-booking = { $title } (claimed booking)
+troubleshoot-detail-unsupported-recurrence = { $calendar } (a repeat rule calrs cannot read, counted as busy from its start)
 etf-pending-blocks-slot = Pending requests block the time slot
 etf-pending-blocks-slot-help = While a request waits for your answer, nobody else can book that time, on this event type or any of your others.
 etf-pending-expiry = Request expiry
@@ -1895,6 +1981,8 @@ admin-sms-check-accepted = Credentials accepted by the gateway.
 admin-sms-bad-number = That is not a usable phone number.
 admin-sms-test-body = calrs test message. Your SMS gateway works.
 admin-sms-test-accepted = Test message accepted by the gateway.
+admin-sms-test-over-cap = Today's SMS limit is reached, so the test message was not sent. Test messages count against the daily limit like any other.
+admin-sms-test-ledger-failed = The SMS usage could not be recorded, so the test message was not sent.
 
 ## Local multi-factor authentication
 
@@ -2046,7 +2134,9 @@ admin-ews-row-conflict = Not provisioned: another user's source already reads th
 admin-ews-trust-title = Addresses to confirm
 admin-ews-trust-help = These enabled accounts in the allowed email domains have an address nobody vouched for (self-registered, or created before this check existed), so they get no managed Exchange source. Confirm one only when you know the address belongs to that person: confirming lets calrs read that mailbox's calendar for them.
 admin-ews-trust-confirm = Confirm
-admin-ews-trust-more = Showing { $shown } of { $total }.
+admin-ews-search = Search by user or mailbox
+admin-ews-no-match = No managed mailbox or address to confirm matches this search.
+admin-ews-conflicts-more = Mailbox already used by another user: showing { $shown } of { $total }.
 admin-ews-http-warning = The endpoint uses http://: the service account password is sent unencrypted. Prefer https://.
 # Time off (templates/time_off.html, src/web/time_off.rs, troubleshoot view)
 
@@ -2260,6 +2350,8 @@ answer-agreed = Agreed
 answer-not-agreed = Not agreed
 answer-you-agreed = You agreed
 answer-you-did-not-agree = You did not agree
+answer-agreed-recorded-by = Agreed, recorded by { $name }
+answer-recorded-for-you-by = Recorded on your behalf by { $name }
 bookings-answers = Answers
 validate-notes-required = Please add a note for the host.
 validate-question-required = Please answer "{ $question }".

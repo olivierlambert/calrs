@@ -176,7 +176,12 @@ pub(super) async fn sweep_pending_requests(
         // (`spawn_emails`): a slow relay or a burst of expiries must not hold
         // up the reminders this loop sends next. The decline above is
         // already committed.
-        let (pool, key, smtp, bid) = (pool.clone(), *secret_key, smtp_config.clone(), bid.clone());
+        let (pool, key, smtp, bid) = (
+            pool.clone(),
+            crate::crypto::SecretKey::new(*secret_key),
+            smtp_config.clone(),
+            bid.clone(),
+        );
         spawn_emails(async move {
             notify_pending_expired(&pool, &key, smtp.as_ref(), &bid).await;
         });

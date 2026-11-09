@@ -690,7 +690,7 @@ pub(super) async fn update_source(
     // sync will use afterwards.
     let password_changed = !form.password.is_empty();
     let plaintext_password = if password_changed {
-        form.password.clone()
+        zeroize::Zeroizing::new(form.password.clone())
     } else {
         match crate::crypto::decrypt_password(&state.secret_key, &existing_password_enc) {
             Ok(p) => p,
@@ -971,6 +971,14 @@ pub(super) async fn test_source(
     .into_response()
 }
 
+/// How long the dashboard's Sync button waits for a sync of the same source
+/// already running before it says so instead.
+const SYNC_BUTTON_WAIT: std::time::Duration = if cfg!(test) {
+    std::time::Duration::from_millis(300)
+} else {
+    std::time::Duration::from_secs(20)
+};
+
 /// Runs CalDAV sync using build_client_for_source (supports both basic and OAuth2).
 async fn run_sync_for_source(
     pool: &SqlitePool,
@@ -987,7 +995,19 @@ async fn run_sync_for_source(
     // Same dispatch as the background and CLI syncs, so a failure here
     // (including credentials that no longer work) is recorded on the source
     // too. A calendar that failed to fetch fails the sync, so "Sync
-    // complete." is only shown when every calendar synced (#162).
+    // complete." is only shown when every calendar synced (#162). It waits,
+    // for a while, for a background or on-demand sync of the same source to
+    // finish rather than running alongside it (#388).
+    let lock = crate::commands::sync::source_lock(source_id).await;
+    let Ok(_guard) = tokio::time::timeout(SYNC_BUTTON_WAIT, lock.lock_owned()).await else {
+        return (
+            vec![
+                "Sync not started: this source is still being synced. Try again in a minute."
+                    .to_string(),
+            ],
+            0,
+        );
+    };
     match crate::commands::sync::sync_one_source(
         pool,
         key,
@@ -1027,6 +1047,9 @@ async fn run_sync(
     username: &str,
     password: &str,
 ) -> (Vec<String>, usize) {
+    // A new source: nothing else syncs it yet, but the lock keeps that true.
+    let lock = crate::commands::sync::source_lock(source_id).await;
+    let _guard = lock.lock().await;
     if provider_type == crate::providers::factory::kinds::EWS {
         let provider =
             match crate::providers::build_provider(provider_type, url, username, password) {

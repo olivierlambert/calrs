@@ -196,7 +196,7 @@ mod tests {
         SmsConfig {
             provider: provider.to_string(),
             api_key: String::new(),
-            api_secret: "secret".to_string(),
+            api_secret: "secret".to_string().into(),
             sender: "calrs".to_string(),
             base_url: String::new(),
             default_country_code: "+33".to_string(),
@@ -237,14 +237,14 @@ mod tests {
     #[test]
     fn a_secret_is_required_except_for_the_webhook() {
         let cfg = SmsConfig {
-            api_secret: String::new(),
+            api_secret: Default::default(),
             ..config(kinds::SEVENIO)
         };
         assert!(validate_config(&cfg).is_err());
 
         // An unauthenticated bridge on localhost is a legitimate setup.
         let cfg = SmsConfig {
-            api_secret: String::new(),
+            api_secret: Default::default(),
             base_url: "http://127.0.0.1:8080/sms".to_string(),
             ..config(kinds::WEBHOOK)
         };

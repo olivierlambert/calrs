@@ -1,0 +1,8 @@
+{#- The colour of a meeting's length, the same on every page: a fixed
+    scale from cool to warm (15 min teal, 20 to 30 blue, 45 indigo, 60
+    violet, 90 plum, two hours and more amber), other lengths snapping to
+    the nearest step. A hue only; landing_head.html mixes it into the
+    theme. Import with {% import "partials/landing_hue.html" as dial %}. -#}
+{% macro hue(d) -%}
+{{ 175 if d < 20 else 212 if d < 38 else 245 if d < 53 else 285 if d < 76 else 325 if d < 106 else 38 }}
+{%- endmacro %}

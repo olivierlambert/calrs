@@ -426,7 +426,10 @@ struct StoredTokens {
     token_expires_at: Option<String>,
 }
 const TOKEN_QUERY: &str = "SELECT access_token_enc,refresh_token_enc,token_expires_at FROM caldav_sources WHERE id = ? AND provider_type = 'microsoft' AND auth_type = 'oauth2' AND oauth2_provider = 'microsoft'";
-fn fresh_access(tokens: &StoredTokens, key: &[u8; 32]) -> Result<Option<String>> {
+fn fresh_access(
+    tokens: &StoredTokens,
+    key: &[u8; 32],
+) -> Result<Option<zeroize::Zeroizing<String>>> {
     let fresh = tokens
         .token_expires_at
         .as_deref()
@@ -475,7 +478,7 @@ pub async fn build_provider_for_source(
     let access = access_token(pool, key, source_id, false).await?;
     Ok(Box::new(SourceGraph {
         pool: pool.clone(),
-        key: *key,
+        key: crate::crypto::SecretKey::new(*key),
         source_id: source_id.to_owned(),
         graph: tokio::sync::RwLock::new(Arc::new(GraphProvider::new(&access)?)),
     }))
@@ -488,7 +491,7 @@ async fn access_token(
     key: &[u8; 32],
     source_id: &str,
     force: bool,
-) -> Result<String> {
+) -> Result<zeroize::Zeroizing<String>> {
     let stored: StoredTokens = sqlx::query_as(TOKEN_QUERY)
         .bind(source_id)
         .fetch_optional(pool)
@@ -554,7 +557,7 @@ async fn access_token(
     .await?;
     if stored_now {
         tx.commit().await?;
-        return Ok(tokens.access_token);
+        return Ok(zeroize::Zeroizing::new(tokens.access_token));
     }
     tx.rollback().await?;
     let winner: StoredTokens = sqlx::query_as(TOKEN_QUERY)
@@ -562,7 +565,7 @@ async fn access_token(
         .fetch_optional(pool)
         .await?
         .ok_or_else(|| anyhow!("Microsoft source not found"))?;
-    Ok(fresh_access(&winner, key)?.unwrap_or(tokens.access_token))
+    Ok(fresh_access(&winner, key)?.unwrap_or_else(|| zeroize::Zeroizing::new(tokens.access_token)))
 }
 
 /// Drops a refresh token the endpoint refused for good, unless a reconnect
@@ -580,7 +583,7 @@ async fn forget_refresh_token(pool: &SqlitePool, source_id: &str, refused: &str)
 /// or expired early: the tokens are refreshed once and the call retried.
 struct SourceGraph {
     pool: SqlitePool,
-    key: [u8; 32],
+    key: crate::crypto::SecretKey,
     source_id: String,
     graph: tokio::sync::RwLock<Arc<GraphProvider>>,
 }
@@ -766,7 +769,9 @@ mod tests {
                 .fetch_one(&pool)
                 .await
                 .unwrap();
-        let verifier = crate::crypto::decrypt_value(&[1; 32], &encrypted).unwrap();
+        let verifier = crate::crypto::decrypt_value(&[1; 32], &encrypted)
+            .unwrap()
+            .to_string();
         assert_ne!(encrypted, verifier);
         assert_eq!(challenge(&verifier), params["code_challenge"]);
         assert!(consume_state(&pool, "u2", state).await.is_err());
@@ -840,7 +845,9 @@ mod tests {
         let config = load_config(&pool).await.unwrap();
         assert_eq!(before, config.secret_enc);
         assert_eq!(
-            crate::crypto::decrypt_value(&[1; 32], &config.secret_enc).unwrap(),
+            crate::crypto::decrypt_value(&[1; 32], &config.secret_enc)
+                .unwrap()
+                .to_string(),
             "secret"
         );
         assert_eq!(config.tenant, "organizations");
@@ -966,7 +973,8 @@ mod tests {
             .unwrap();
         assert_eq!(
             crate::crypto::decrypt_value(&[1; 32], stored.refresh_token_enc.as_deref().unwrap())
-                .unwrap(),
+                .unwrap()
+                .to_string(),
             "original"
         );
         let previous = stored_expiry(&pool, &id).await;
@@ -1002,11 +1010,12 @@ mod tests {
             .unwrap();
         assert_eq!(
             crate::crypto::decrypt_value(&[1; 32], stored.refresh_token_enc.as_deref().unwrap())
-                .unwrap(),
+                .unwrap()
+                .to_string(),
             "rotated"
         );
         assert_eq!(
-            fresh_access(&stored, &[1; 32]).unwrap().unwrap(),
+            *fresh_access(&stored, &[1; 32]).unwrap().unwrap(),
             "new-access"
         );
         // A second task that refreshed against the pre-rotation row must not
@@ -1030,7 +1039,8 @@ mod tests {
             .unwrap();
         assert_eq!(
             crate::crypto::decrypt_value(&[1; 32], stored.refresh_token_enc.as_deref().unwrap())
-                .unwrap(),
+                .unwrap()
+                .to_string(),
             "rotated"
         );
         let previous = stored_expiry(&pool, &id).await;
@@ -1055,7 +1065,8 @@ mod tests {
             .unwrap();
         assert_eq!(
             crate::crypto::decrypt_value(&[1; 32], stored.refresh_token_enc.as_deref().unwrap())
-                .unwrap(),
+                .unwrap()
+                .to_string(),
             "rotated"
         );
     }
@@ -1137,7 +1148,9 @@ mod tests {
             .unwrap();
         let current = stored.refresh_token_enc.unwrap();
         assert_eq!(
-            crate::crypto::decrypt_value(&[1; 32], &current).unwrap(),
+            crate::crypto::decrypt_value(&[1; 32], &current)
+                .unwrap()
+                .to_string(),
             "reconnected"
         );
         // Otherwise it goes, and the next sync stops at "reconnect" without
@@ -1199,7 +1212,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            access_token(&pool, &[1; 32], &id, false).await.unwrap(),
+            *access_token(&pool, &[1; 32], &id, false).await.unwrap(),
             "new-access"
         );
         sqlx::query(

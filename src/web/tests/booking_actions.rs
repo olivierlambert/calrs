@@ -1582,3 +1582,69 @@ async fn guest_cancel_reports_the_status_it_actually_left() {
     assert_eq!(cancel_from_status(&pool, &moved, "pending").await, None);
     assert_eq!(booking_status(&pool, &moved).await, "declined");
 }
+
+// --- A claimed booking's reschedule checks the claimant (#374) ---
+
+/// A watcher claimed the booking and has a booking of their own at 11:00:
+/// the guest cannot move the claimed booking onto it, can move it to a time
+/// the claimant is free, and the claim is kept.
+#[tokio::test]
+async fn a_guest_reschedule_cannot_move_a_claimed_booking_onto_the_claimants_time() {
+    let (app, pool, _, et_id) = setup_test_app().await;
+    let bob = insert_role_user(&pool, "bob@resched374.test", "user").await;
+    let bob_et = insert_personal_et(&pool, &bob, "resched374-bob").await;
+    let day = far_future_monday();
+    let (booking_id, resched_tok, _) = insert_test_booking(
+        &pool,
+        &et_id,
+        &format!("{day}T10:00:00"),
+        &format!("{day}T10:30:00"),
+        "confirmed",
+    )
+    .await;
+    sqlx::query("UPDATE bookings SET claimed_by_user_id = ? WHERE id = ?")
+        .bind(&bob)
+        .bind(&booking_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    insert_test_booking(
+        &pool,
+        &bob_et,
+        &format!("{day}T11:00:00"),
+        &format!("{day}T11:30:00"),
+        "confirmed",
+    )
+    .await;
+    let start_of = || async {
+        sqlx::query_scalar::<_, String>("SELECT start_at FROM bookings WHERE id = ?")
+            .bind(&booking_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+    };
+    let original = start_of().await;
+
+    let csrf = "csrf-resched-claim";
+    let post = |time: &str| {
+        post_form_unauthed(
+            &format!("/booking/reschedule/{resched_tok}"),
+            csrf,
+            &format!("_csrf={csrf}&date={day}&time={time}&tz=UTC"),
+        )
+    };
+    let response = app.clone().oneshot(post("11%3A00")).await.unwrap();
+    assert_eq!(response.status(), 200);
+    assert_eq!(start_of().await, original, "the claimant is busy at 11:00");
+
+    let response = app.oneshot(post("13%3A00")).await.unwrap();
+    assert!(response.status().is_success() || response.status().is_redirection());
+    assert_ne!(start_of().await, original, "13:00 is free for everyone");
+    let claimant: Option<String> =
+        sqlx::query_scalar("SELECT claimed_by_user_id FROM bookings WHERE id = ?")
+            .bind(&booking_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(claimant.as_deref(), Some(bob.as_str()), "the claim is kept");
+}

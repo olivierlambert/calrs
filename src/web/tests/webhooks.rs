@@ -634,7 +634,9 @@ async fn admin_adds_a_webhook_and_the_secret_is_encrypted() {
     assert_eq!(url, "https://93.184.215.14/hook");
     assert!(!enc.contains(SECRET));
     assert_eq!(
-        crate::crypto::decrypt_value(&[0u8; 32], &enc).unwrap(),
+        crate::crypto::decrypt_value(&[0u8; 32], &enc)
+            .unwrap()
+            .to_string(),
         SECRET
     );
 
@@ -1488,11 +1490,13 @@ fn the_webhook_client_ignores_proxy_settings() {
     // A proxy resolves the host itself and would bypass the address pinning.
     // The environment is process-wide, so this is checked on the source
     // rather than by setting HTTPS_PROXY under parallel tests.
-    // The webhook client comes from the shared guarded builder (#363),
-    // which turns proxies off.
+    // The webhook client comes from the shared guarded builder (#363) with
+    // no proxy configured, and that builder drops reqwest's own reading of
+    // the environment.
     let source = include_str!("../webhooks.rs");
-    assert!(source.contains("crate::net_guard::builder_with("));
+    assert!(source.contains("&crate::net_guard::ProxyConfig::none(),"));
     assert!(!source.contains("reqwest::Client::builder()"));
+    assert!(crate::net_guard::ProxyConfig::none().hosts().is_empty());
     let guard = include_str!("../../net_guard.rs");
     let builder = guard
         .split("pub fn builder_with(")
@@ -1869,7 +1873,9 @@ async fn taking_over_needs_a_suspended_webhook_and_a_new_secret() {
     assert_eq!(url, "https://93.184.215.14/mine");
     assert_ne!(secret_enc, old_secret);
     assert_eq!(
-        crate::crypto::decrypt_value(&[0u8; 32], &secret_enc).unwrap(),
+        crate::crypto::decrypt_value(&[0u8; 32], &secret_enc)
+            .unwrap()
+            .to_string(),
         "fresh-secret-0123456789"
     );
     // What was queued for the old receiver is gone.

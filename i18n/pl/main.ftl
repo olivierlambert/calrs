@@ -219,6 +219,40 @@ base-powered-by = Zasilane przez
 profile-pick-event-type-invite = Wybierz typ wydarzenia, aby zarezerwować termin.
 profile-no-event-type = Nie ma jeszcze dostępnych typów wydarzeń.
 
+# Public landing pages (/u/{username}, /team/{slug}). In landing-next-free,
+# %1 is the time, filled in by the page itself.
+landing-duration-h = { $hours } godz.
+landing-duration-aria =
+    { $minutes ->
+        [one] { $minutes } minuta
+        [few] { $minutes } minuty
+        [many] { $minutes } minut
+       *[other] { $minutes } minuty
+    }
+landing-duration-hm = { $hours } godz. { $minutes }
+landing-duration-aria-h =
+    { $hours ->
+        [one] { $hours } godzina
+        [few] { $hours } godziny
+        [many] { $hours } godzin
+       *[other] { $hours } godziny
+    }
+landing-duration-aria-hm =
+    { $hours ->
+        [one] { $hours } godzina
+        [few] { $hours } godziny
+        [many] { $hours } godzin
+       *[other] { $hours } godziny
+    } { $minutes ->
+        [one] { $minutes } minuta
+        [few] { $minutes } minuty
+        [many] { $minutes } minut
+       *[other] { $minutes } minuty
+    }
+landing-next-free = Najbliższy: %1
+landing-with-one-of = z jedną z osób
+landing-with-everyone = ze wszystkimi
+
 # Month and weekday names + per-locale date format patterns.
 # Used by server-side date formatters in src/i18n.rs.
 
@@ -439,10 +473,8 @@ overview-page-title = Panel
 overview-avail-banner-body = Twoje domyślne godziny pracy ustawiono na poniedziałek–piątek, 9:00–17:00. Są używane, gdy inni dodają cię do dynamicznych spotkań grupowych.
 overview-avail-banner-cta = Sprawdź swoją dostępność
 overview-dismiss = Zamknij
-overview-getting-started = Pierwsze kroki
 overview-step-connect-calendar = Podłącz kalendarz
 overview-step-first-event-type = Utwórz swój pierwszy typ wydarzenia
-overview-step-share-link = Udostępnij swój link do rezerwacji
 overview-pending-approval = Oczekuje na zatwierdzenie
 overview-confirm = Potwierdź
 overview-decline = Odrzuć
@@ -450,7 +482,6 @@ overview-copy-link = Kopiuj link do rezerwacji
 overview-duration-h = { $hours } godz.
 overview-duration-m = { $minutes } min
 overview-duration-hm = { $hours } godz. { $minutes } min
-overview-percent = { $value }%
 overview-chart-title = Spotkania tygodniowo
 overview-chart-this-week = Ten tydzień
 overview-chart-week-of = Tydzień od { $date }
@@ -464,7 +495,6 @@ overview-types-other = Pozostałe rodzaje
 overview-agenda-title = Najbliższe
 overview-agenda-today = Dziś
 overview-agenda-tomorrow = Jutro
-overview-agenda-now = Trwa
 overview-agenda-join = Dołącz
 overview-agenda-empty = Brak spotkań w ciągu najbliższych 14 dni. Udostępnij swój link do rezerwacji, aby je otrzymać.
 overview-agenda-all = Wszystkie rezerwacje
@@ -499,35 +529,108 @@ overview-open-calendar = Otwórz swój kalendarz
 overview-week-title = Ten tydzień
 overview-week-closed = zamknięte
 overview-week-total = zarezerwowano { $booked }
-overview-week-number = Tydzień { $week }
 overview-week-short = T{ $week }
 overview-time-range = od { $from } do { $to }
 overview-until = do { $time }
 overview-expires = Wygasa { $when }
 overview-guest-and-more = { $name } (+{ $count })
-overview-mast-now = Teraz: { $title } z { $guest }, do { $time }
-overview-mast-next = Następnie: { $title } z { $guest } o { $time }
-overview-mast-next-day = Następnie: { $title } z { $guest }, { $day } o { $time }
+overview-greeting-night = Cześć, { $name }
+overview-greeting-morning = Dzień dobry, { $name }
+overview-greeting-afternoon = Dzień dobry, { $name }
+overview-greeting-evening = Dobry wieczór, { $name }
+overview-mast-date = { $date }, tydzień { $week }
+overview-sum-now = Trwa spotkanie z: { $guest }, do { $time }.
+overview-sum-today = Dziś masz spotkanie z: { $guest }, o { $time }.
+overview-sum-tomorrow = Jutro masz spotkanie z: { $guest }, o { $time }.
+overview-sum-later = Twoje następne spotkanie z: { $guest }, { $day }, o { $time }.
+overview-sum-more-today = { $count ->
+    [one] Później dziś jeszcze jedno spotkanie.
+    [few] Później dziś jeszcze { $count } spotkania.
+    [many] Później dziś jeszcze { $count } spotkań.
+   *[other] Później dziś jeszcze { $count } spotkania.
+}
+overview-sum-none = Brak rezerwacji w ciągu najbliższych 14 dni.
+overview-sum-pending = { $count ->
+    [one] Jedna prośba czeka na twoją odpowiedź.
+    [few] { $count } prośby czekają na twoją odpowiedź.
+    [many] { $count } próśb czeka na twoją odpowiedź.
+   *[other] { $count } prośby czeka na twoją odpowiedź.
+}
+overview-sum-guests = { $count ->
+    [one] { $name } i jeszcze jedna osoba
+    [few] { $name } i jeszcze { $count } osoby
+    [many] { $name } i jeszcze { $count } osób
+   *[other] { $name } i jeszcze { $count } osoby
+}
+overview-hero-title = Następne spotkanie
+overview-when-now = Teraz, do { $time }
+overview-when-minutes = { $count ->
+    [one] za 1 minutę
+    [few] za { $count } minuty
+    [many] za { $count } minut
+   *[other] za { $count } minuty
+}
+overview-when-hours = { $count ->
+    [one] za 1 godzinę
+    [few] za { $count } godziny
+    [many] za { $count } godzin
+   *[other] za { $count } godziny
+}
+overview-when-today-night = później w nocy
+overview-when-today-morning = dziś rano
+overview-when-today-afternoon = dziś po południu
+overview-when-today-evening = dziś wieczorem
+overview-when-tomorrow-night = jutro wcześnie rano
+overview-when-tomorrow-morning = jutro rano
+overview-when-tomorrow-afternoon = jutro po południu
+overview-when-tomorrow-evening = jutro wieczorem
+overview-when-weekday-night = { $day } wcześnie rano
+overview-when-weekday-morning = { $day } rano
+overview-when-weekday-afternoon = { $day } po południu
+overview-when-weekday-evening = { $day } wieczorem
+overview-when-days = { $count ->
+    [one] za 1 dzień
+    [few] za { $count } dni
+    [many] za { $count } dni
+   *[other] za { $count } dnia
+}
+overview-pulse-held = { $count ->
+    [one] Jedno spotkanie w ostatnich 30 dniach, { $time } z gośćmi.
+    [few] { $count } spotkania w ostatnich 30 dniach, { $time } z gośćmi.
+    [many] { $count } spotkań w ostatnich 30 dniach, { $time } z gośćmi.
+   *[other] { $count } spotkania w ostatnich 30 dniach, { $time } z gośćmi.
+}
+overview-pulse-held-vs = { $count ->
+    [one] Jedno spotkanie w ostatnich 30 dniach, { $time } z gośćmi, wobec { $prev } w poprzednich 30 dniach.
+    [few] { $count } spotkania w ostatnich 30 dniach, { $time } z gośćmi, wobec { $prev } w poprzednich 30 dniach.
+    [many] { $count } spotkań w ostatnich 30 dniach, { $time } z gośćmi, wobec { $prev } w poprzednich 30 dniach.
+   *[other] { $count } spotkania w ostatnich 30 dniach, { $time } z gośćmi, wobec { $prev } w poprzednich 30 dniach.
+}
+overview-pulse-booked = { $count ->
+    [one] W tym samym okresie wpłynęła jedna nowa rezerwacja.
+    [few] W tym samym okresie wpłynęły { $count } nowe rezerwacje.
+    [many] W tym samym okresie wpłynęło { $count } nowych rezerwacji.
+   *[other] W tym samym okresie wpłynęło { $count } nowej rezerwacji.
+}
+overview-pulse-booked-only = { $count ->
+    [one] W ostatnich 30 dniach wpłynęła jedna nowa rezerwacja.
+    [few] W ostatnich 30 dniach wpłynęły { $count } nowe rezerwacje.
+    [many] W ostatnich 30 dniach wpłynęło { $count } nowych rezerwacji.
+   *[other] W ostatnich 30 dniach wpłynęło { $count } nowej rezerwacji.
+}
+overview-links-page = Twoja strona
+overview-agenda-nothing-else = Nic więcej w ciągu najbliższych 14 dni.
+overview-setup-count = { $count ->
+    [one] 1 rzecz do skonfigurowania
+    [few] { $count } rzeczy do skonfigurowania
+    [many] { $count } rzeczy do skonfigurowania
+   *[other] { $count } rzeczy do skonfigurowania
+}
 overview-ruler-booked = Zarezerwowane
 overview-ruler-pending = Czeka na decyzję
 overview-ruler-unavailable = Niedostępne (twój kalendarz)
 overview-key-open = Otwarte na rezerwacje
-overview-ruler-aria = Dziś, od { $from } do { $to }
-overview-chart-now = teraz
 overview-figures-title = Ostatnie 30 dni
-overview-fig-booked = Zarezerwowane spotkania
-overview-fig-time = Czas spotkań
-overview-fig-cancelled = Anulowane
-overview-fig-notice = Średnie wyprzedzenie
-overview-fig-before = { $value } w poprzednich 30 dniach
-overview-fig-prev-key = Poprzednie 30 dni
-overview-fig-days =
-    { $count ->
-        [one] 1 dzień
-        [few] { $count } dni
-        [many] { $count } dni
-       *[other] { $count } dnia
-    }
 
 # Dashboard bookings (templates/dashboard_bookings.html)
 
@@ -1226,6 +1329,9 @@ admin-action-refused = Odmowa wykonania:
 admin-error-last-admin = To ostatni aktywny administrator. Najpierw nadaj uprawnienia administratora innemu użytkownikowi lub włącz innego administratora.
 admin-logo = Logo firmy
 admin-logo-help = Wyświetlane na publicznych stronach rezerwacji. PNG, JPEG, GIF lub WebP, maks. 2 MB.
+admin-logo-light = Jasny motyw
+admin-logo-dark = Ciemny motyw
+admin-logo-dark-help = Opcjonalne. Wyświetlane, gdy odwiedzający używa ciemnego motywu; bez niego w obu motywach używane jest jasne logo.
 admin-logo-refused = Nie zapisano logo. Prześlij obraz PNG, JPEG, GIF lub WebP o rozmiarze maks. 2 MB.
 admin-favicon = Favicon
 admin-favicon-help = Wyświetlana na kartach przeglądarki i w zakładkach. Zalecane: kwadratowy PNG o rozmiarze co najmniej 32×32 piksele, maks. 512 KB. Bez niej wyświetlany jest krab calrs.
@@ -1283,6 +1389,10 @@ admin-base-url = Adres bazowy
 admin-base-url-help = Publiczny adres tej instancji. Używany przy przekierowaniach OIDC i w linkach w e-mailach (zatwierdź/odrzuć, odwołaj, przypomnienia).
 admin-private-hosts = Lista dozwolonych hostów prywatnych
 admin-private-hosts-help = Nazwy hostów, oddzielone przecinkami, którym wolno wskazywać prywatne lub zarezerwowane adresy IP w źródłach CalDAV/EWS (wyjątek od ochrony przed SSRF). Dodawaj tylko hosty, które kontrolujesz (na przykład serwer kalendarza w tej samej sieci Dockera). Zostaw puste, aby ochrona działała dla wszystkich hostów.
+admin-trusted-proxies = Zaufane serwery proxy
+admin-trusted-proxies-help = Adresy lub zakresy CIDR odwrotnych serwerów proxy, których nagłówkowi X-Forwarded-For się ufa przy rozróżnianiu klientów na potrzeby limitów żądań. Zostaw puste, aby użyć wartości domyślnej (zakresy pętli zwrotnej, prywatne, unikalne lokalne i lokalne dla łącza: proxy na tym samym hoście lub w tej samej sieci Dockera). Wpisz none, jeśli calrs jest dostępny bezpośrednio, aby klient nie mógł podać się za inny adres.
+admin-trusted-proxies-everyone = Zaufane serwery proxy: „{ $entry }” oznaczałoby zaufanie każdemu adresowi, więc każdy klient mógłby podać się za innego. Wpisz zamiast tego adres lub zakres swojego proxy.
+admin-trusted-proxies-invalid = Zaufane serwery proxy: „{ $entry }” nie jest adresem IP ani zakresem CIDR.
 admin-german-formal = Forma zwracania się po niemiecku
 admin-german-formal-du = Nieformalna (du)
 admin-german-formal-sie = Formalna (Sie)
@@ -1394,6 +1504,8 @@ admin-sms-test-checked = Dane logowania zaakceptowane.
 admin-sms-test-error = Bramka SMS odrzuciła żądanie.
 admin-sms-captcha-warning = Formularz rezerwacji jest publiczny, a numer odbiorcy podaje gość, więc SMS bez captchy to otwarty przekaźnik, za który ktoś inny może obciążyć twój rachunek. Skonfiguruj captchę powyżej i ogranicz kraje docelowe w ustawieniach swojej bramki.
 admin-sms-sent-today = Wysłane dzisiaj:
+admin-sms-segments-today = Rozliczone segmenty dzisiaj:
+admin-sms-unknown-today = Bez odpowiedzi bramki, wliczone do limitu:
 admin-sms-of-cap = z { $cap }
 admin-sms-config-error = Błąd konfiguracji SMS:
 admin-sms-gateway = Bramka:
@@ -1406,8 +1518,8 @@ admin-sms-docs = Dokumentacja API { $provider }
 admin-sms-country = Domyślny numer kierunkowy kraju
 admin-sms-country-hint = (używany, gdy goście podają numer lokalny)
 admin-sms-daily-cap = Dzienny limit
-admin-sms-daily-cap-hint = (wiadomości dziennie dla całej instancji, 0 oznacza brak limitu)
-admin-sms-daily-cap-help = Po przekroczeniu limitu calrs przestaje wysyłać SMS-y i nadal wysyła e-maile, więc żadna rezerwacja nie zawiedzie z powodu wyczerpanego budżetu na SMS-y.
+admin-sms-daily-cap-hint = (rozliczane segmenty SMS na dobę UTC dla całej instancji, 0 oznacza brak limitu)
+admin-sms-daily-cap-help = Wiadomość do 160 znaków to jeden segment, albo do 70, jeśli zawiera znak spoza alfabetu GSM; dłuższa jest rozliczana jako jeden segment na każde 153 znaki (67), a wiadomości testowe też się liczą. Po przekroczeniu limitu calrs przestaje wysyłać SMS-y i nadal wysyła e-maile, więc żadna rezerwacja nie zawiedzie z powodu wyczerpanego budżetu na SMS-y.
 admin-save-sms = Zapisz ustawienia SMS
 admin-send-test-sms = Wyślij wiadomość testową na
 admin-send-test-sms-hint-check = (zostaw puste, aby tylko sprawdzić dane logowania)
@@ -1760,6 +1872,8 @@ bookings-error-reschedule-resend-too-soon = Prośba została wysłana gościowi 
 bookings-resend-reschedule = Wyślij prośbę ponownie
 bookings-resend-reschedule-hint = Wyślij gościowi ten sam link jeszcze raz (najwyżej raz na godzinę)
 troubleshoot-detail-pending-request = { $title } (oczekująca prośba)
+troubleshoot-detail-claimed-booking = { $title } (przejęta rezerwacja)
+troubleshoot-detail-unsupported-recurrence = { $calendar } (reguła powtarzania, której calrs nie potrafi odczytać, liczona jako zajęta od jej początku)
 etf-pending-blocks-slot = Oczekujące prośby blokują termin
 etf-pending-blocks-slot-help = Dopóki prośba czeka na twoją odpowiedź, nikt inny nie może zarezerwować tego czasu, ani w tym, ani w innych twoich typach wydarzeń.
 etf-pending-expiry = Wygasanie próśb
@@ -1955,6 +2069,8 @@ admin-sms-check-accepted = Bramka zaakceptowała dane uwierzytelniające.
 admin-sms-bad-number = Ten numer telefonu nie nadaje się do użycia.
 admin-sms-test-body = Wiadomość testowa calrs. Twoja bramka SMS działa.
 admin-sms-test-accepted = Bramka przyjęła wiadomość testową.
+admin-sms-test-over-cap = Osiągnięto dzienny limit SMS-ów, więc wiadomość testowa nie została wysłana. Wiadomości testowe liczą się do dziennego limitu jak wszystkie inne.
+admin-sms-test-ledger-failed = Nie udało się zapisać zużycia SMS-ów, więc wiadomość testowa nie została wysłana.
 
 ## Local multi-factor authentication
 
@@ -2105,7 +2221,9 @@ admin-ews-row-conflict = Nie udostępniono: źródło innego użytkownika już c
 admin-ews-trust-title = Adresy do potwierdzenia
 admin-ews-trust-help = Te aktywne konta w dozwolonych domenach mają adres, za który nikt nie poręczył (rejestracja otwarta lub konto sprzed tej kontroli), więc nie otrzymują zarządzanego źródła Exchange. Potwierdź adres tylko wtedy, gdy wiesz, że należy do tej osoby: po potwierdzeniu calrs czyta dla niej kalendarz tej skrzynki.
 admin-ews-trust-confirm = Potwierdź
-admin-ews-trust-more = Wyświetlono { $shown } z { $total }.
+admin-ews-search = Szukaj według użytkownika lub skrzynki
+admin-ews-no-match = Żadna zarządzana skrzynka ani adres do potwierdzenia nie pasuje do wyszukiwania.
+admin-ews-conflicts-more = Skrzynka używana już przez innego użytkownika: wyświetlono { $shown } z { $total }.
 admin-ews-http-warning = Punkt końcowy używa http://: hasło konta usługi jest wysyłane bez szyfrowania. Lepiej użyj https://.
 # Time off (templates/time_off.html, src/web/time_off.rs, troubleshoot view)
 
@@ -2334,6 +2452,8 @@ answer-agreed = Zgoda
 answer-not-agreed = Brak zgody
 answer-you-agreed = Wyrażasz zgodę
 answer-you-did-not-agree = Nie wyrażasz zgody
+answer-agreed-recorded-by = Zgoda, zapisana przez: { $name }
+answer-recorded-for-you-by = Zapisane w twoim imieniu przez: { $name }
 bookings-answers = Odpowiedzi
 validate-notes-required = Dodaj notatkę dla organizatora.
 validate-question-required = Odpowiedz na pytanie „{ $question }”.

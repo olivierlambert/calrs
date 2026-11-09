@@ -34,8 +34,11 @@ Every user-facing string goes through Fluent (`i18n/`).
 
  background loop, every 60 s (run_reminder_loop in web/notify.rs)
    session cleanup, pending sweep (web/pending.rs), reminders,
-   write-back retries (web/writeback.rs), sync of the stalest source
-   (commands/sync.rs)
+   write-back retries (web/writeback.rs)
+
+ background sync, every 60 s (commands/sync_scheduler.rs)
+   due sources (commands/sync.rs, daily full resyncs first, then the
+   stalest), a few at once, one per server
 
  webhook task (run_webhook_loop in web/webhooks.rs)
    delivers queued booking webhooks when woken and every 30 s
@@ -56,9 +59,10 @@ Every user-facing string goes through Fluent (`i18n/`).
 | `src/crypto.rs` | AES-256-GCM for stored credentials, secret key management |
 | `src/net_guard.rs` | Guarded HTTP clients for user- or admin-supplied URLs: per-connection private-address check and pinning, redirect policy (#363) |
 | `src/settings.rs` | Runtime settings (base URL, private-host policy): env overrides DB |
+| `src/trusted_proxies.rs` | Which TCP peers' `X-Forwarded-For` is believed (#85): `CALRS_TRUSTED_PROXIES`, else `auth_config.trusted_proxies`, else loopback/private/ULA/link-local; `client_address()` walks the header right to left past trusted hops, `rate_key()` groups IPv6 by /64. Used by `web::client_address`/`client_ip_for_rate_limit` |
 | `src/i18n.rs` | Fluent loader, language detection, the `t()` template global, i18n guard tests |
 | `src/booking_time.rs` | How booking times are stored (legacy wall clock vs UTC instant) |
-| `src/rrule.rs` | RRULE expansion for recurring events |
+| `src/rrule.rs` | RRULE expansion for recurring events; `occurrences_in` is the one expansion every busy reader shares |
 | `src/utils.rs` | iCal helpers (`split_vevents`, `parse_content_line`, `extract_vevent_field`, `extract_vevent_tzid`, datetime and timezone parsing) |
 | `src/tzid.rs` | Resolving an event's TZID to an IANA zone: by name (IANA, Windows, vendor prefix, display name), else by matching the resource's `VTIMEZONE`, else a display name's fixed offset (`event_timezone` at sync, `resolve_or_offset` when reading stored events) |
 | `src/windows_zones.rs` | Windows timezone names (`Eastern Standard Time`) mapped to IANA ids, from CLDR's `windowsZones.xml` |
@@ -71,8 +75,8 @@ Every user-facing string goes through Fluent (`i18n/`).
 | `src/microsoft_oauth.rs` | Microsoft OAuth configuration, account-bound single-use state and PKCE, encrypted tokens, compare-and-swap token refresh (HTTP outside transactions), token-aware Graph provider construction (a Graph 401 refreshes once and retries; a refused refresh token is dropped until reconnect) |
 | `src/caldav/mod.rs` | CalDAV client: discovery, fetch, sync-collection, PUT/DELETE (on Google, PUT/DELETE detour through `google_calendar`) |
 | `src/caldav/multistatus.rs` | Reading WebDAV multistatus answers by namespace: calendar listing, events, sync deltas, principal and home discovery (tests in `src/caldav/multistatus/tests.rs`) |
-| `src/xml.rs` | Bounded, namespace-aware XML tree over `quick-xml`, used by the CalDAV client |
-| `src/ews/` | Exchange Web Services client (SOAP, autodiscover, parsing); `global.rs` holds the admin's global impersonation config, provisioning of managed sources, and the client for a managed source |
+| `src/xml.rs` | Bounded, namespace-aware XML tree over `quick-xml`, used by the CalDAV and EWS clients |
+| `src/ews/` | Exchange Web Services client (SOAP, autodiscover, parsing on `src/xml.rs`, test fixtures in `fixtures.rs`); `global.rs` holds the admin's global impersonation config, provisioning of managed sources, and the client for a managed source |
 | `src/providers/` | `CalendarProvider` trait (`mod.rs`), CalDAV and Graph adapters, password-backed provider dispatch in `src/providers/factory.rs` |
 | `src/sms/` | `SmsProvider` trait, gateway adapters, phone normalisation, message bodies |
 | `src/email/` | Every email calrs sends (see below) |
@@ -86,6 +90,7 @@ Every user-facing string goes through Fluent (`i18n/`).
 |---|---|
 | `mod.rs` | `AppState`, `create_router` (every route), middleware (CSRF, CSP, embed), rate limiter, client IP, error helpers, sidebar context, booking error page helpers |
 | `public_pages.rs` | Public GET pages: user and team profiles, slot pickers, booking forms, dynamic group links, legacy redirects |
+| `next_free.rs` | The landing pages' "next free" hints, one request per page view: `GET /u/{username}/next-free` and `/team/{team_slug}/next-free`, for every type the page lists the first free start within 60 days and the guest's free days of the coming week; cache only, a minute's answer cache, the landing page's visibility rules, per-IP limited |
 | `booking.rs` | Booking form POST handlers for every URL shape, input validation, location resolution, SMS phone mode. The personal and team handlers are thin: `book_personal` and `book_team` do the booking (shared with the REST API) and return a `BookingRefusal` the handler renders as before |
 | `booking_actions.rs` | Token pages reached from emails: approve, decline, guest cancel, reschedule (guest and host), claim, ICS |
 | `availability.rs` | Slot computation, busy times, frequency limits, user working hours, timezone helpers, horizon, troubleshoot view |
@@ -103,7 +108,7 @@ Every user-facing string goes through Fluent (`i18n/`).
 | `ews_admin.rs` | Global Exchange impersonation: admin card, its save, confirm-address and remove-all handlers, the lock on user sources, guards on managed sources |
 | `dashboard.rs` | Dashboard overview, event types and bookings lists, host cancel/confirm, settings, avatar |
 | `booking_notes.rs` | Host notes on a booking (#173): who may read and edit them (`note_booking`, the one gate), the notes page and its POST |
-| `overview_stats.rs` | Dashboard overview data: masthead sentence, the day ruler (bookable hours from event type rules and overrides, calrs bookings, anonymous calendar busy time), the week list, the 12-week chart, the 30-day figures (tests in `tests/overview_stats.rs`). The dashboard identity (tokens, timetable rows, status marks) lives in `templates/dashboard_base.html`; `tests/guards.rs` fails if its tells come back |
+| `overview_stats.rs` | Dashboard overview data: the greeting and its day sentence, guest faces (initials and a warm hue from the name), the next meeting's countdown in words, the week strip (bookable hours from event type rules and overrides, calrs bookings, anonymous calendar busy time), the 12-week chart, the 30-day sentence (tests in `tests/overview_stats.rs`). The dashboard identity (tokens, timetable rows, status marks) lives in `templates/dashboard_base.html`; `tests/guards.rs` fails if its tells come back |
 | `directory.rs` | Searchable booking directory, visibility checks, personal meeting favorites and dashboard shortcuts |
 | `event_types.rs` | Event type forms (personal and team), availability overrides, form parsing helpers |
 | `invites.rs` | Invite Links page, invite management, bulk invites, quick links |
@@ -209,8 +214,11 @@ Call sites use `crate::email::name` whatever file `name` lives in.
   Graph retains the booking UID in an extended property and updates the same
   remote event when rescheduled. It does not send Graph attendee invitations:
   calrs owns the email lifecycle.
-  Sync lives in `src/commands/sync.rs` (`sync_if_stale` on page loads) and
-  `src/commands/sync_health.rs` (failure tracking).
+  Sync lives in `src/commands/sync.rs` (`sync_if_stale` on page loads,
+  `due_background_sources` for the background sync),
+  `src/commands/sync_scheduler.rs` (the background sync task: quota,
+  concurrency, one sync per server) and `src/commands/sync_health.rs`
+  (failure tracking).
   Snapshot providers reconcile a full snapshot, each through its own path.
   EWS goes through `sync_ews_source` (busy-only storage for managed
   sources, a folder removed only after two listings miss it, #362).

@@ -2,6 +2,8 @@
 
 ## Guest experience
 
+A host's page (`/u/{username}`) and a team's page (`/team/{slug}`) list their public meetings, one per line, with the length drawn as small clock faces and the next free time ("Next: Tue 10:00") in the guest's own timezone and time format. The page asks for those times once, after it has loaded, from `/u/{username}/next-free` (or `/team/{team_slug}/next-free`), which covers exactly the meetings the page lists, reads the calendars calrs already has and looks 60 days ahead at most. When it cannot tell, a line simply shows no time. Because of that address, no event type can use the slug `next-free`.
+
 1. **Visit the booking page** — `/u/host/meeting-slug` (or via an invite link for private event types, or `/u/host+other/slug` for [dynamic group links](./event-types.md#dynamic-group-links))
 2. **Pick a timezone** — auto-detected from the browser, changeable via dropdown
 3. **Browse available slots** — displayed as a week view, navigate with Previous/Next buttons

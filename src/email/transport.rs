@@ -7,7 +7,8 @@ pub struct SmtpConfig {
     pub host: String,
     pub port: u16,
     pub username: String,
-    pub password: String,
+    /// Wiped from memory when dropped (#85).
+    pub password: zeroize::Zeroizing<String>,
     pub from_email: String,
     pub from_name: Option<String>,
     pub tls_mode: SmtpTlsMode,
@@ -318,7 +319,7 @@ pub(super) fn load_smtp_config_from_env() -> Result<Option<SmtpConfig>> {
         host,
         port,
         username,
-        password,
+        password: password.into(),
         from_email,
         from_name,
         tls_mode,
@@ -561,7 +562,7 @@ pub(super) async fn send_email_with_timeouts(
         builder
             .credentials(Credentials::new(
                 config.username.clone(),
-                config.password.clone(),
+                config.password.to_string(),
             ))
             .build()
     };

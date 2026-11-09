@@ -554,7 +554,7 @@ async fn switching_sms_gateway_requires_a_fresh_credential() {
         .unwrap()
         .expect("configured");
     assert_eq!(config.provider, "sevenio");
-    assert_eq!(config.api_secret, "seven-key");
+    assert_eq!(*config.api_secret, "seven-key");
 }
 
 // --- SMS gateway configuration round-trips through the database ---
@@ -593,7 +593,7 @@ async fn sms_config_round_trips_through_the_database() {
         .unwrap()
         .expect("configured");
     assert_eq!(config.provider, crate::sms::kinds::GATEWAYAPI);
-    assert_eq!(config.api_secret, "super-secret-token");
+    assert_eq!(*config.api_secret, "super-secret-token");
     assert_eq!(config.sender, "calrs");
     assert_eq!(config.base_url, "https://gatewayapi.eu");
     assert_eq!(crate::sms::default_country_code(&pool).await, "+45");
@@ -646,6 +646,13 @@ async fn add_members(pool: &SqlitePool, n: usize) {
     }
 }
 
+/// The Users tab alone: other cards (the Exchange one) have pagers too.
+fn users_panel(body: &str) -> &str {
+    let start = body.find("id=\"panel-users\"").unwrap();
+    let end = start + body[start..].find("id=\"panel-access\"").unwrap();
+    &body[start..end]
+}
+
 fn user_rows(body: &str) -> usize {
     body.matches("<tr class=\"user-item").count()
 }
@@ -666,7 +673,7 @@ async fn small_instances_keep_the_browser_side_users_list() {
     assert!(body.contains("id=\"user-search\""));
     assert!(!body.contains("user-list-server"));
     assert!(!body.contains("name=\"back\""));
-    assert!(!body.contains("class=\"ui-pager\""));
+    assert!(!users_panel(&body).contains("class=\"ui-pager\""));
 }
 
 #[tokio::test]
@@ -698,7 +705,7 @@ async fn large_instances_page_search_filter_and_sort_users_on_the_server() {
     // Search is literal and case blind, on name or email.
     let body = page("/dashboard/admin?uq=MEMBER%2012").await;
     assert_eq!(user_rows(&body), 10);
-    assert!(!body.contains("class=\"ui-pager\""));
+    assert!(!users_panel(&body).contains("class=\"ui-pager\""));
     assert!(body.contains("10 of 131 users"));
     let body = page("/dashboard/admin?uq=member007%40").await;
     assert_eq!(user_rows(&body), 1);
@@ -968,4 +975,83 @@ async fn microsoft_credential_labels_name_their_inputs() {
             "{field}"
         );
     }
+}
+
+/// Trusted proxies (#85) are saved from the System settings in canonical
+/// form, refused when an entry is not an address or range, and shown back.
+/// The saved list is a superset of the default with a range no other test
+/// uses, since the cache it feeds is process-wide.
+#[tokio::test]
+async fn admin_saves_and_validates_trusted_proxies() {
+    // The trusted proxy cache is process-wide: hold the settings lock, and
+    // the guard puts the cache back to the default whatever happens.
+    let _lock = crate::test_support::ENV_LOCK.lock().await;
+    let _env = crate::test_support::EnvGuard::new();
+    let (app, pool, session, _) = setup_test_app().await;
+    let stored = |pool: SqlitePool| async move {
+        sqlx::query_scalar::<_, Option<String>>(
+            "SELECT trusted_proxies FROM auth_config WHERE id = 'singleton'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap()
+    };
+
+    let response = app
+        .clone()
+        .oneshot(post_form(
+            "/dashboard/admin/general",
+            &session,
+            "tp",
+            "_csrf=tp&trusted_proxies=10.0.0.1%2C+proxy.local",
+        ))
+        .await
+        .unwrap();
+    let location = response.headers()["location"].to_str().unwrap().to_string();
+    assert!(location.contains("error="), "{location}");
+    assert!(urlencoding::decode(&location)
+        .unwrap()
+        .contains("proxy.local"));
+    assert_eq!(stored(pool.clone()).await, None, "nothing saved");
+
+    let list = format!(
+        "{} 198.18.0.0/15",
+        crate::trusted_proxies::DEFAULT.join(",")
+    );
+    let body = format!("_csrf=tp&trusted_proxies={}", urlencoding::encode(&list));
+    let response = app
+        .clone()
+        .oneshot(post_form("/dashboard/admin/general", &session, "tp", &body))
+        .await
+        .unwrap();
+    assert!(!response.headers()["location"]
+        .to_str()
+        .unwrap()
+        .contains("error="));
+    let saved = stored(pool.clone()).await.unwrap();
+    assert!(saved.ends_with(", 198.18.0.0/15"), "{saved}");
+    assert!(saved.starts_with("127.0.0.0/8, ::1/128"), "{saved}");
+    let html = body_string(
+        app.clone()
+            .oneshot(get_authed("/dashboard/admin", &session))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(
+        html.contains("198.18.0.0/15") || html.contains("198.18.0.0&#x2f;15"),
+        "shown back in the form"
+    );
+
+    // Empty restores the default (NULL).
+    app.clone()
+        .oneshot(post_form(
+            "/dashboard/admin/general",
+            &session,
+            "tp",
+            "_csrf=tp&trusted_proxies=",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(stored(pool).await, None);
 }

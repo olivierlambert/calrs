@@ -1,15 +1,17 @@
 //! Response parsers for the EWS operations defined in [`super::operations`].
 //!
-//! The parsing strategy matches the rest of calrs: deterministic SOAP shapes
-//! are extracted with the namespace-agnostic helpers in [`super::soap`]. We
-//! do not pull in a full XML library — EWS payloads are structured but
-//! consistent enough that targeted extraction is reliable, and the test
-//! suite (alongside `cargo clippy`) catches regressions.
+//! Each parser reads the tree [`super::soap::post_soap`] returns, parsed by
+//! the namespace-aware reader in `src/xml.rs` (#369): elements are matched by
+//! namespace and local name, so the prefixes a server writes do not matter.
+//! A reply missing what its operation must carry (its response message, a
+//! successful `ResponseClass`, the `RootFolder`, an item's `ItemId`) is an
+//! error, never an empty result: an empty calendar reads as "free".
 
-use anyhow::{bail, Result};
+use anyhow::{anyhow, bail, Result};
 use base64::Engine;
 
-use super::soap::{attr, collect_blocks, collect_tag_contents, first_tag_content};
+use super::soap::{ews_child, ews_text, is_ews, message_code, message_failure};
+use crate::xml::{quoted, Element};
 
 /// One calendar folder discovered via `FindFolder`.
 #[derive(Debug, Clone)]
@@ -59,163 +61,307 @@ pub struct EwsSyncDelta {
     pub includes_last: bool,
 }
 
-/// Parse one page of a `FindFolderResponse` body: its calendar folders,
-/// and the `RootFolder`'s `IncludesLastItemInRange` when the server sent it
+/// `doc` and every element below it, in document order. Parsers take the
+/// whole envelope, or in tests a bare fragment whose root is the message.
+fn self_and_descendants(doc: &Element) -> impl Iterator<Item = &Element> {
+    std::iter::once(doc).chain(doc.descendants())
+}
+
+/// The EWS response message `name` of a reply, which must have succeeded.
+/// `post_soap` already turned a failed message into an error, so a message
+/// missing or not marked `Success` is a reply calrs cannot read.
+fn success_message<'a>(doc: &'a Element, name: &str, op: &str) -> Result<&'a Element> {
+    let message = self_and_descendants(doc)
+        .find(|el| is_ews(el, name))
+        .ok_or_else(|| anyhow!("EWS {op} reply holds no {name}"))?;
+    check_success(message, op)?;
+    Ok(message)
+}
+
+/// A message succeeded when its `ResponseClass` is `Success`, or `Warning`
+/// with nothing failed (`NoError`: processed, with a note), the same test
+/// [`super::soap::post_soap`] applies.
+fn check_success(message: &Element, op: &str) -> Result<()> {
+    match message.attr("ResponseClass") {
+        Some("Success") | Some("Warning") => match message_failure(message) {
+            None => Ok(()),
+            Some(failure) => bail!("EWS {op} did not succeed: {}", quoted(&failure)),
+        },
+        Some(class) => match message_failure(message) {
+            Some(failure) => bail!("EWS {op} did not succeed: {}", quoted(&failure)),
+            None => bail!("EWS {op} did not succeed (ResponseClass {})", quoted(class)),
+        },
+        None => bail!("EWS {op} did not succeed (no ResponseClass)"),
+    }
+}
+
+/// An `xs:boolean`: `true`, `false`, `1` or `0` (case aside for the words).
+/// Anything else is an error rather than a guess.
+fn parse_bool(value: &str, what: &str) -> Result<bool> {
+    let value = value.trim();
+    if value.eq_ignore_ascii_case("true") || value == "1" {
+        Ok(true)
+    } else if value.eq_ignore_ascii_case("false") || value == "0" {
+        Ok(false)
+    } else {
+        bail!("EWS {what} is not a boolean: {}", quoted(value))
+    }
+}
+
+/// The boolean attribute `name` of `el`, `None` when absent.
+fn bool_attr(el: &Element, name: &str) -> Result<Option<bool>> {
+    el.attr(name).map(|v| parse_bool(v, name)).transpose()
+}
+
+/// The boolean EWS child `name` of `el`, `false` when absent.
+fn bool_child(el: &Element, name: &str) -> Result<bool> {
+    match ews_text(el, name) {
+        Some(value) => parse_bool(&value, name),
+        None => Ok(false),
+    }
+}
+
+/// The `Id` (and `ChangeKey`) of the id child `id_name` (`ItemId`,
+/// `FolderId`) of `el`. Missing or empty is an error: an item or folder
+/// calrs cannot address is not one it can skip without losing it.
+fn required_id(el: &Element, id_name: &str) -> Result<(String, Option<String>)> {
+    let tag = ews_child(el, id_name)
+        .ok_or_else(|| anyhow!("EWS {} without an {id_name}", quoted(el.local_name())))?;
+    match tag.attr("Id") {
+        Some(id) if !id.is_empty() => {
+            Ok((id.to_string(), tag.attr("ChangeKey").map(str::to_string)))
+        }
+        _ => bail!("EWS {id_name} without an Id"),
+    }
+}
+
+/// Parse one page of a `FindFolderResponse`: its calendar folders, and the
+/// `RootFolder`'s `IncludesLastItemInRange` when the server sent it
 /// (`Some(false)`: more pages follow).
 ///
 /// The answer must be a successful `FindFolderResponseMessage` with a
 /// `RootFolder`: anything else is an error, never an empty list, since the
 /// sync drops calendars a listing no longer shows.
-pub fn parse_find_folder_page(xml: &str) -> Result<(Vec<EwsCalendarFolder>, Option<bool>)> {
-    let message = find_first_open_tag(xml, "FindFolderResponseMessage").ok_or_else(|| {
-        anyhow::anyhow!("EWS FindFolder reply holds no FindFolderResponseMessage")
-    })?;
-    if attr(&message, "ResponseClass").as_deref() != Some("Success") {
-        anyhow::bail!("EWS FindFolder did not succeed");
-    }
-    let Some(root) = find_first_open_tag(xml, "RootFolder") else {
-        anyhow::bail!("EWS FindFolder reply holds no RootFolder");
-    };
-    let includes_last =
-        attr(&root, "IncludesLastItemInRange").map(|v| v.eq_ignore_ascii_case("true"));
+pub fn parse_find_folder_page(doc: &Element) -> Result<(Vec<EwsCalendarFolder>, Option<bool>)> {
+    let message = success_message(doc, "FindFolderResponseMessage", "FindFolder")?;
+    let root = ews_child(message, "RootFolder")
+        .ok_or_else(|| anyhow!("EWS FindFolder reply holds no RootFolder"))?;
+    let includes_last = bool_attr(root, "IncludesLastItemInRange")?;
+    let folders = ews_child(root, "Folders")
+        .ok_or_else(|| anyhow!("EWS FindFolder reply holds no Folders"))?;
     let mut out = Vec::new();
-    for block in collect_blocks(xml, "CalendarFolder") {
-        let id_tag = find_first_open_tag(&block, "FolderId");
-        let (id, change_key) = match id_tag {
-            Some(tag) => (
-                attr(&tag, "Id").unwrap_or_default(),
-                attr(&tag, "ChangeKey"),
-            ),
-            None => continue,
-        };
-        if id.is_empty() {
-            continue;
-        }
-        let display_name = first_tag_content(&block, "DisplayName");
+    // The restriction asks for IPF.Appointment folders, which Exchange
+    // lists as CalendarFolder; any other folder kind is not a calendar.
+    for folder in folders.elements().filter(|el| is_ews(el, "CalendarFolder")) {
+        let (id, change_key) = required_id(folder, "FolderId")?;
         out.push(EwsCalendarFolder {
             id,
             change_key,
-            display_name,
+            display_name: ews_text(folder, "DisplayName"),
         });
     }
     Ok((out, includes_last))
 }
 
-/// Parse a `FindItemResponse` body for calendar items.
-pub fn parse_calendar_items_response(xml: &str) -> Result<EwsItemPage> {
-    let mut page = EwsItemPage::default();
-
-    // RootFolder TotalItemsInView / IncludesLastItemInRange / IndexedPagingOffset
-    if let Some(root_tag) = find_first_open_tag(xml, "RootFolder") {
-        if let Some(total) = attr(&root_tag, "TotalItemsInView") {
-            page.total = total.parse().ok();
-        }
-        page.includes_last =
-            attr(&root_tag, "IncludesLastItemInRange").map(|v| v.eq_ignore_ascii_case("true"));
+/// Parse a `GetFolderResponse` for one folder and return its id, `None` when
+/// the successful message lists no folder.
+pub fn parse_get_folder_response(doc: &Element) -> Result<Option<String>> {
+    let message = success_message(doc, "GetFolderResponseMessage", "GetFolder")?;
+    let folders = ews_child(message, "Folders")
+        .ok_or_else(|| anyhow!("EWS GetFolder reply holds no Folders"))?;
+    match folders.elements().next() {
+        Some(folder) => Ok(Some(required_id(folder, "FolderId")?.0)),
+        None => Ok(None),
     }
+}
 
-    let item_blocks = collect_blocks(xml, "CalendarItem");
-    page.included_count = item_blocks.len();
-    for block in item_blocks {
-        if let Some(item) = parse_calendar_item_block(&block) {
-            page.items.push(item);
-        }
+/// Parse a `FindItemResponse` for calendar items.
+pub fn parse_calendar_items_response(doc: &Element) -> Result<EwsItemPage> {
+    let message = success_message(doc, "FindItemResponseMessage", "FindItem")?;
+    let root = ews_child(message, "RootFolder")
+        .ok_or_else(|| anyhow!("EWS FindItem reply holds no RootFolder"))?;
+    let total = root
+        .attr("TotalItemsInView")
+        .map(|v| {
+            v.trim()
+                .parse::<u64>()
+                .map_err(|_| anyhow!("EWS TotalItemsInView is not a number: {}", quoted(v)))
+        })
+        .transpose()?;
+    let includes_last = bool_attr(root, "IncludesLastItemInRange")?;
+    let items =
+        ews_child(root, "Items").ok_or_else(|| anyhow!("EWS FindItem reply holds no Items"))?;
+
+    let mut page = EwsItemPage {
+        total,
+        includes_last,
+        // Every entry counts towards the server's cap and the paging offset,
+        // whatever its kind.
+        included_count: items.elements().count(),
+        ..Default::default()
+    };
+    for item in items.elements().filter(|el| is_ews(el, "CalendarItem")) {
+        page.items.push(parse_calendar_item(item)?);
     }
     Ok(page)
 }
 
-fn parse_calendar_item_block(block: &str) -> Option<EwsCalendarItem> {
-    let id_tag = find_first_open_tag(block, "ItemId")?;
-    let item_id = attr(&id_tag, "Id").unwrap_or_default();
-    if item_id.is_empty() {
-        return None;
-    }
-    let change_key = attr(&id_tag, "ChangeKey");
-    let uid = first_tag_content(block, "UID");
-    let subject = first_tag_content(block, "Subject");
-    let start = first_tag_content(block, "Start");
-    let end = first_tag_content(block, "End");
-    let location = first_tag_content(block, "Location");
-    let is_all_day = first_tag_content(block, "IsAllDayEvent")
-        .map(|s| s.eq_ignore_ascii_case("true"))
-        .unwrap_or(false);
-    let is_cancelled = first_tag_content(block, "IsCancelled")
-        .map(|s| s.eq_ignore_ascii_case("true"))
-        .unwrap_or(false);
-    let free_busy_status = first_tag_content(block, "LegacyFreeBusyStatus");
-    // `has_recurrence` here narrowly means "needs RECURRENCE-ID to disambiguate
-    // siblings sharing the master UID" — i.e. an expanded `Occurrence` or
-    // `Exception` returned by `CalendarView`. A raw `RecurringMaster` (only
-    // surfaced by the non-windowed `fetch_events` path, which production sync
-    // doesn't use) must NOT get a `RECURRENCE-ID`: masters are a single logical
-    // item and emitting one would store an iCal value with `RECURRENCE-ID` but
-    // no `RRULE`, which is meaningless.
-    let calendar_item_type = first_tag_content(block, "CalendarItemType");
+fn parse_calendar_item(item: &Element) -> Result<EwsCalendarItem> {
+    let (item_id, change_key) = required_id(item, "ItemId")?;
+    // `has_recurrence` here narrowly means "needs RECURRENCE-ID to
+    // disambiguate siblings sharing the master UID", i.e. an expanded
+    // `Occurrence` or `Exception` returned by `CalendarView`. A raw
+    // `RecurringMaster` (only surfaced by the non-windowed `fetch_events`
+    // path, which production sync does not use) must NOT get a
+    // `RECURRENCE-ID`: masters are a single logical item and emitting one
+    // would store an iCal value with `RECURRENCE-ID` but no `RRULE`, which is
+    // meaningless.
+    let calendar_item_type = ews_text(item, "CalendarItemType");
     let has_recurrence = matches!(
         calendar_item_type.as_deref(),
         Some(t) if t.eq_ignore_ascii_case("Occurrence") || t.eq_ignore_ascii_case("Exception")
     );
-    Some(EwsCalendarItem {
+    let uid = ews_text(item, "UID").map(|uid| safe_uid(uid, &item_id));
+    let start = ews_text(item, "Start")
+        .map(|v| checked_datetime(v, "Start", &item_id))
+        .transpose()?;
+    let end = ews_text(item, "End")
+        .map(|v| checked_datetime(v, "End", &item_id))
+        .transpose()?;
+    Ok(EwsCalendarItem {
         item_id,
         change_key,
         uid,
-        subject,
+        subject: ews_text(item, "Subject"),
         start,
         end,
-        location,
-        is_all_day,
-        is_cancelled,
-        free_busy_status,
+        location: ews_text(item, "Location"),
+        is_all_day: bool_child(item, "IsAllDayEvent")?,
+        is_cancelled: bool_child(item, "IsCancelled")?,
+        free_busy_status: ews_text(item, "LegacyFreeBusyStatus"),
         has_recurrence,
     })
 }
 
-/// Parse a `GetItemResponse` body. Returns one (item_id, ical) pair per item
-/// successfully retrieved. Items without MIME content are skipped (the server
-/// occasionally returns a placeholder for unsupported types).
-pub fn parse_get_item_response(xml: &str) -> Result<Vec<(String, String)>> {
-    let mut out = Vec::new();
-    let blocks = collect_blocks(xml, "CalendarItem");
-    let blocks = if blocks.is_empty() {
-        // Some servers return MeetingRequest etc.
-        let mut alt = collect_blocks(xml, "MeetingRequest");
-        alt.extend(collect_blocks(xml, "MeetingResponse"));
-        alt.extend(collect_blocks(xml, "MeetingCancellation"));
-        alt
-    } else {
-        blocks
-    };
+/// Whether `value` holds a control character (CR, LF, NUL, ...). Such a
+/// value would break the lines of the VCALENDAR made up from the item
+/// (`ical::synth_vcalendar`): a UID carrying CRLF could add properties, or a
+/// second VEVENT reusing a real UID marked TRANSPARENT, turning busy time
+/// into free.
+pub fn has_control(value: &str) -> bool {
+    value.chars().any(char::is_control)
+}
 
-    for block in blocks {
-        let id_tag = match find_first_open_tag(&block, "ItemId") {
-            Some(t) => t,
-            None => continue,
-        };
-        let item_id = attr(&id_tag, "Id").unwrap_or_default();
-        if item_id.is_empty() {
+/// The UID calrs stores for an item: the one Exchange sent, or, when it
+/// holds control characters, `ews-` and the hex SHA-256 of its bytes.
+///
+/// A UID is the organizer's to choose, so anyone who can invite the host
+/// can put a CRLF in one. Refusing the answer would let them freeze the
+/// host's sync; writing it as is would break the made-up VCALENDAR's lines.
+/// The item is kept (it is still busy time) under a UID derived the same
+/// way on every read, so the orphan sweep and later lookups see one stable
+/// value. calrs's own UIDs never hold control characters, so a derived UID
+/// never matches a booking.
+pub fn safe_uid(uid: String, item_id: &str) -> String {
+    if !has_control(&uid) {
+        return uid;
+    }
+    use sha2::{Digest, Sha256};
+    tracing::warn!(item_id = %item_id, "EWS item with control characters in its UID, storing it under a derived UID");
+    format!("ews-{}", hex::encode(Sha256::digest(uid.as_bytes())))
+}
+
+/// Whether `value` reads as an `xs:dateTime` as EWS writes it
+/// (`2026-05-06T09:00:00Z`, possibly with fractions or an offset): digits
+/// and `-:T.Z+` only.
+pub fn is_ews_datetime(value: &str) -> bool {
+    !value.is_empty()
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_digit() || matches!(b, b'-' | b':' | b'T' | b'.' | b'Z' | b'+'))
+}
+
+/// An item's `Start` or `End`, refused when it is not a date-time: it is
+/// written as is into the VCALENDAR made up from the item.
+fn checked_datetime(value: String, what: &str, item_id: &str) -> Result<String> {
+    if !is_ews_datetime(&value) {
+        tracing::warn!(item_id = %item_id, "EWS item with an unreadable {what}, refusing the answer");
+        bail!(
+            "EWS item {} has an unreadable {what}: {}",
+            quoted(item_id),
+            quoted(&value)
+        );
+    }
+    Ok(value)
+}
+
+/// The item kinds whose MIME content `parse_get_item_response` reads.
+const MIME_ITEM_KINDS: [&str; 4] = [
+    "CalendarItem",
+    "MeetingRequest",
+    "MeetingResponse",
+    "MeetingCancellation",
+];
+
+/// The per-message code of an item deleted since it was listed: a GetItem
+/// batch drops that item rather than failing (see
+/// [`super::operations::get_items_mime`]).
+pub const ITEM_GONE: &str = "ErrorItemNotFound";
+
+/// Parse a `GetItemResponse`. Returns one (item_id, ical) pair per item
+/// retrieved, across every response message of the batch. A message failing
+/// with [`ITEM_GONE`] is dropped; any other failed message is an error. An
+/// item without MIME content is skipped (the server occasionally returns a
+/// placeholder for unsupported types), as is MIME content that holds no
+/// calendar.
+pub fn parse_get_item_response(doc: &Element) -> Result<Vec<(String, String)>> {
+    let mut out = Vec::new();
+    let mut messages = 0;
+    for message in self_and_descendants(doc).filter(|el| is_ews(el, "GetItemResponseMessage")) {
+        messages += 1;
+        if message.attr("ResponseClass") == Some("Error")
+            && message_code(message).as_deref() == Some(ITEM_GONE)
+        {
+            tracing::debug!("EWS GetItem: an item of the batch is gone, dropping it");
             continue;
         }
-        let mime_b64 = match first_tag_content(&block, "MimeContent") {
-            Some(s) => s,
-            None => continue,
-        };
-        let decoded = match base64::engine::general_purpose::STANDARD.decode(mime_b64.trim()) {
-            Ok(bytes) => bytes,
-            Err(e) => {
-                tracing::warn!(error = %e, "EWS MimeContent base64 decode failed; skipping item");
+        check_success(message, "GetItem")?;
+        let items = ews_child(message, "Items")
+            .ok_or_else(|| anyhow!("EWS GetItem reply holds no Items"))?;
+        for item in items
+            .elements()
+            .filter(|el| MIME_ITEM_KINDS.iter().any(|kind| is_ews(el, kind)))
+        {
+            let (item_id, _) = required_id(item, "ItemId")?;
+            let Some(mime_b64) = ews_text(item, "MimeContent") else {
                 continue;
+            };
+            // Base64 may be wrapped over several lines.
+            let compact: String = mime_b64
+                .chars()
+                .filter(|c| !c.is_ascii_whitespace())
+                .collect();
+            let decoded = match base64::engine::general_purpose::STANDARD.decode(compact) {
+                Ok(bytes) => bytes,
+                Err(e) => {
+                    tracing::warn!(error = %e, "EWS MimeContent base64 decode failed; skipping item");
+                    continue;
+                }
+            };
+            let mime_text = match String::from_utf8(decoded) {
+                Ok(t) => t,
+                Err(e) => {
+                    tracing::warn!(error = %e, "EWS MimeContent not valid UTF-8; skipping item");
+                    continue;
+                }
+            };
+            if let Some(ical) = extract_vcalendar(&mime_text) {
+                out.push((item_id, ical));
             }
-        };
-        let mime_text = match String::from_utf8(decoded) {
-            Ok(t) => t,
-            Err(e) => {
-                tracing::warn!(error = %e, "EWS MimeContent not valid UTF-8; skipping item");
-                continue;
-            }
-        };
-        if let Some(ical) = extract_vcalendar(&mime_text) {
-            out.push((item_id, ical));
         }
+    }
+    if messages == 0 {
+        bail!("EWS GetItem reply holds no GetItemResponseMessage");
     }
     Ok(out)
 }
@@ -241,121 +387,91 @@ pub fn extract_vcalendar(mime: &str) -> Option<String> {
 }
 
 /// Parse the response of `CreateItem` and return the new ItemId.
-pub fn parse_create_item_response(xml: &str) -> Result<String> {
-    if let Some(tag) = find_first_open_tag(xml, "ItemId") {
-        if let Some(id) = attr(&tag, "Id") {
-            if !id.is_empty() {
-                return Ok(id);
-            }
-        }
-    }
-    bail!("CreateItem response did not include an ItemId")
+pub fn parse_create_item_response(doc: &Element) -> Result<String> {
+    let message = success_message(doc, "CreateItemResponseMessage", "CreateItem")?;
+    let item = ews_child(message, "Items")
+        .and_then(|items| items.elements().next())
+        .ok_or_else(|| anyhow!("CreateItem response did not include an ItemId"))?;
+    Ok(required_id(item, "ItemId")?.0)
 }
 
-/// Parse `SyncFolderItemsResponse` body (single page). Caller loops until
+/// Check the response of `DeleteItem`.
+pub fn parse_delete_item_response(doc: &Element) -> Result<()> {
+    success_message(doc, "DeleteItemResponseMessage", "DeleteItem").map(|_| ())
+}
+
+/// Parse a `SyncFolderItemsResponse` (single page). Caller loops until
 /// `includes_last` is true.
-pub fn parse_sync_folder_items_response(xml: &str) -> Result<EwsSyncDelta> {
-    let new_sync_state = first_tag_content(xml, "SyncState");
-    let includes_last = first_tag_content(xml, "IncludesLastItemInRange")
-        .map(|s| s.eq_ignore_ascii_case("true"))
-        .unwrap_or(false);
+pub fn parse_sync_folder_items_response(doc: &Element) -> Result<EwsSyncDelta> {
+    let message = success_message(doc, "SyncFolderItemsResponseMessage", "SyncFolderItems")?;
+    let new_sync_state = ews_text(message, "SyncState")
+        .ok_or_else(|| anyhow!("EWS SyncFolderItems reply holds no SyncState"))?;
+    let includes_last = ews_text(message, "IncludesLastItemInRange")
+        .ok_or_else(|| anyhow!("EWS SyncFolderItems reply holds no IncludesLastItemInRange"))?;
+    let changes = ews_child(message, "Changes")
+        .ok_or_else(|| anyhow!("EWS SyncFolderItems reply holds no Changes"))?;
 
     let mut delta = EwsSyncDelta {
-        new_sync_state,
-        includes_last,
+        new_sync_state: Some(new_sync_state),
+        includes_last: parse_bool(&includes_last, "IncludesLastItemInRange")?,
         ..Default::default()
     };
 
-    // Changes come as <t:Create><t:CalendarItem>…</t:CalendarItem></t:Create>
+    // Changes come as <t:Create><t:CalendarItem>...</t:CalendarItem></t:Create>
     // or <t:Update> with the same shape, and <t:Delete><t:ItemId/></t:Delete>.
-    for block in collect_blocks(xml, "Create") {
-        if let Some(item) = item_id_with_uid(&block) {
-            delta.added_or_changed.push(item);
+    // ReadFlagChange does not matter for calendars and is ignored.
+    for change in changes.elements() {
+        if is_ews(change, "Create") || is_ews(change, "Update") {
+            let item = change
+                .elements()
+                .next()
+                .ok_or_else(|| anyhow!("EWS SyncFolderItems change without an item"))?;
+            let (id, _) = required_id(item, "ItemId")?;
+            let uid = ews_text(item, "UID")
+                .map(|uid| safe_uid(uid, &id))
+                .unwrap_or_default();
+            delta.added_or_changed.push((id, uid));
+        } else if is_ews(change, "Delete") {
+            delta
+                .deleted_item_ids
+                .push(required_id(change, "ItemId")?.0);
         }
     }
-    for block in collect_blocks(xml, "Update") {
-        if let Some(item) = item_id_with_uid(&block) {
-            delta.added_or_changed.push(item);
-        }
-    }
-    for block in collect_blocks(xml, "Delete") {
-        if let Some(tag) = find_first_open_tag(&block, "ItemId") {
-            if let Some(id) = attr(&tag, "Id") {
-                if !id.is_empty() {
-                    delta.deleted_item_ids.push(id);
-                }
-            }
-        }
-    }
-    // ReadFlagChange is a sync change type that doesn't matter for calendars
-    // but EWS may emit it if we ever sync read flags — silently ignore.
     Ok(delta)
-}
-
-fn item_id_with_uid(block: &str) -> Option<(String, String)> {
-    let id = find_first_open_tag(block, "ItemId").and_then(|t| attr(&t, "Id"))?;
-    let uid = first_tag_content(block, "UID").unwrap_or_default();
-    Some((id, uid))
-}
-
-/// Locate the opening tag (with attributes) of `local_name` and return it as
-/// a substring like `<t:ItemId Id="..." ChangeKey="..."/>`. Used to pull
-/// attributes out without dragging in a real XML parser.
-pub fn find_first_open_tag(xml: &str, local_name: &str) -> Option<String> {
-    let needle = format!(":{local_name}");
-    let mut search_from = 0;
-    while let Some(pos) = xml[search_from..].find(&needle) {
-        let abs = search_from + pos;
-        let before = &xml[..abs];
-        let lt = match before.rfind('<') {
-            Some(i) => i,
-            None => {
-                search_from = abs + needle.len();
-                continue;
-            }
-        };
-        let prefix_part = &xml[lt + 1..abs];
-        if prefix_part.is_empty()
-            || prefix_part.len() > 16
-            || !prefix_part.chars().all(|c| c.is_alphanumeric() || c == '_')
-        {
-            search_from = abs + needle.len();
-            continue;
-        }
-        let open_tag_end = abs + needle.len();
-        if let Some(close) = xml[open_tag_end..].find('>') {
-            let end = open_tag_end + close + 1;
-            return Some(xml[lt..end].to_string());
-        }
-        break;
-    }
-    None
-}
-
-/// Convenience for diagnostics: count how many response messages succeeded
-/// vs failed in a batched response.
-pub fn count_response_messages(xml: &str) -> (usize, usize) {
-    let codes = collect_tag_contents(xml, "ResponseCode");
-    let total = codes.len();
-    let ok = codes.iter().filter(|c| c.as_str() == "NoError").count();
-    (ok, total)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ews::fixtures;
+
+    /// The tree of `xml`, a whole reply or a bare fragment.
+    fn doc(xml: &str) -> Element {
+        crate::xml::parse(xml).unwrap().unwrap()
+    }
+
+    /// A whole reply, parsed without the fault check.
+    fn doc_of(xml: &str) -> Element {
+        crate::ews::soap::parse_envelope(xml).unwrap()
+    }
+
+    /// A whole reply, read the way `post_soap` reads it.
+    fn reply(xml: &str) -> Element {
+        crate::ews::soap::read_reply(reqwest::StatusCode::OK, xml, "e").unwrap()
+    }
 
     #[test]
     fn find_item_page_reports_whether_the_view_is_complete() {
         let page = |flag: &str| {
-            parse_calendar_items_response(&format!(
-                r#"<m:FindItemResponse><m:RootFolder TotalItemsInView="1" {flag}><t:Items></t:Items></m:RootFolder></m:FindItemResponse>"#
-            ))
+            parse_calendar_items_response(&doc(&format!(
+                r#"<m:FindItemResponseMessage ResponseClass="Success"><m:RootFolder TotalItemsInView="1" {flag}><t:Items></t:Items></m:RootFolder></m:FindItemResponseMessage>"#
+            )))
             .unwrap()
             .includes_last
         };
         assert_eq!(page(r#"IncludesLastItemInRange="true""#), Some(true));
         assert_eq!(page(r#"IncludesLastItemInRange="false""#), Some(false));
+        assert_eq!(page(r#"IncludesLastItemInRange="1""#), Some(true));
         assert_eq!(page(""), None);
     }
 
@@ -365,15 +481,24 @@ mod tests {
     #[test]
     fn find_folder_refuses_anything_but_a_successful_listing() {
         for xml in [
-            "",
+            "<s:Envelope><s:Body/></s:Envelope>",
             "<html><body>Sign in</body></html>",
             r#"<m:FindFolderResponseMessage ResponseClass="Error"><m:RootFolder/></m:FindFolderResponseMessage>"#,
+            r#"<m:FindFolderResponseMessage><m:RootFolder><t:Folders/></m:RootFolder></m:FindFolderResponseMessage>"#,
             r#"<m:FindFolderResponseMessage ResponseClass="Success"></m:FindFolderResponseMessage>"#,
+            r#"<m:FindFolderResponseMessage ResponseClass="Success"><m:RootFolder/></m:FindFolderResponseMessage>"#,
+            // A folder calrs cannot address is not skipped.
+            r#"<m:FindFolderResponseMessage ResponseClass="Success"><m:RootFolder><t:Folders><t:CalendarFolder><t:DisplayName>X</t:DisplayName></t:CalendarFolder></t:Folders></m:RootFolder></m:FindFolderResponseMessage>"#,
+            r#"<m:FindFolderResponseMessage ResponseClass="Success"><m:RootFolder><t:Folders><t:CalendarFolder><t:FolderId Id=""/></t:CalendarFolder></t:Folders></m:RootFolder></m:FindFolderResponseMessage>"#,
+            // Paging flags that are not booleans are not guessed at.
+            r#"<m:FindFolderResponseMessage ResponseClass="Success"><m:RootFolder IncludesLastItemInRange="maybe"><t:Folders/></m:RootFolder></m:FindFolderResponseMessage>"#,
+            // Elements of another vocabulary are not EWS's.
+            r#"<x:FindFolderResponseMessage xmlns:x="urn:other" ResponseClass="Success"><x:RootFolder><x:Folders/></x:RootFolder></x:FindFolderResponseMessage>"#,
         ] {
-            assert!(parse_find_folder_page(xml).is_err(), "{xml:?}");
+            assert!(parse_find_folder_page(&doc(xml)).is_err(), "{xml:?}");
         }
         let empty = r#"<m:FindFolderResponseMessage ResponseClass="Success"><m:RootFolder TotalItemsInView="0"><t:Folders/></m:RootFolder></m:FindFolderResponseMessage>"#;
-        assert!(parse_find_folder_page(empty).unwrap().0.is_empty());
+        assert!(parse_find_folder_page(&doc(empty)).unwrap().0.is_empty());
     }
 
     /// A paged listing says whether its last folder is in; a truncated
@@ -381,9 +506,9 @@ mod tests {
     #[test]
     fn find_folder_pages_say_whether_they_are_complete() {
         let page = |attr: &str| {
-            format!(
+            doc(&format!(
                 r#"<m:FindFolderResponseMessage ResponseClass="Success"><m:RootFolder {attr}><t:Folders><t:CalendarFolder><t:FolderId Id="F1"/></t:CalendarFolder></t:Folders></m:RootFolder></m:FindFolderResponseMessage>"#
-            )
+            ))
         };
         let (folders, last) =
             parse_find_folder_page(&page(r#"IncludesLastItemInRange="false""#)).unwrap();
@@ -413,18 +538,60 @@ mod tests {
     </t:Folders>
   </m:RootFolder>
 </m:FindFolderResponseMessage>"#;
-        let (folders, _) = parse_find_folder_page(xml).unwrap();
+        let (folders, _) = parse_find_folder_page(&doc(xml)).unwrap();
         assert_eq!(folders.len(), 2);
         assert_eq!(folders[0].id, "AAMkADUw");
         assert_eq!(folders[0].change_key, Some("CK1".into()));
         assert_eq!(folders[0].display_name.as_deref(), Some("Calendar"));
         assert_eq!(folders[1].id, "AAMkADUx");
+        assert_eq!(folders[1].change_key, None);
         assert_eq!(folders[1].display_name.as_deref(), Some("Birthdays"));
+    }
+
+    /// One listing written with Exchange's prefixes, with default namespaces
+    /// and with prefixes nobody uses reads the same, entities and CDATA
+    /// decoded.
+    #[test]
+    fn find_folder_prefixes_do_not_matter() {
+        for xml in [
+            fixtures::FIND_FOLDER_SOAP_PREFIX,
+            fixtures::FIND_FOLDER_DEFAULT_NAMESPACES,
+            fixtures::FIND_FOLDER_ODD_PREFIXES,
+        ] {
+            let (folders, last) = parse_find_folder_page(&reply(xml)).unwrap();
+            assert_eq!(last, Some(true), "{xml}");
+            let read: Vec<_> = folders
+                .iter()
+                .map(|f| {
+                    (
+                        f.id.as_str(),
+                        f.change_key.as_deref(),
+                        f.display_name.as_deref(),
+                    )
+                })
+                .collect();
+            assert_eq!(
+                read,
+                [
+                    (
+                        "AAMkADUwNjA3YTQ5LTEzZDktNGQ2Yy1iZDk3LTJiNzRkZGFiMmJmZgAuAAAAAAA+/b8xAQ==",
+                        Some("AgAAABYAAAD/"),
+                        Some("Calendar")
+                    ),
+                    (
+                        "AAMkADUwNjA3YTQ5LTEzZDktNGQ2Yy1iZDk3LTJiNzRkZGFiMmJmZgAuAAAAAAA+/b8xAg==",
+                        Some("AgAAABYAAAEA"),
+                        Some("Sales & Marketing")
+                    ),
+                ],
+                "{xml}"
+            );
+        }
     }
 
     #[test]
     fn parses_find_item_calendar_view() {
-        let xml = r#"<m:FindItemResponseMessage>
+        let xml = r#"<m:FindItemResponseMessage ResponseClass="Success">
   <m:RootFolder TotalItemsInView="2" IncludesLastItemInRange="true">
     <t:Items>
       <t:CalendarItem>
@@ -450,7 +617,7 @@ mod tests {
     </t:Items>
   </m:RootFolder>
 </m:FindItemResponseMessage>"#;
-        let page = parse_calendar_items_response(xml).unwrap();
+        let page = parse_calendar_items_response(&doc(xml)).unwrap();
         assert_eq!(page.total, Some(2));
         assert_eq!(page.items.len(), 2);
         assert_eq!(page.items[0].item_id, "AB1");
@@ -462,6 +629,269 @@ mod tests {
         assert_eq!(page.items[1].free_busy_status.as_deref(), Some("OOF"));
     }
 
+    /// The Exchange 2016 CalendarView fixture, every field calrs reads.
+    #[test]
+    fn parses_an_exchange_calendar_view() {
+        let page =
+            parse_calendar_items_response(&reply(fixtures::FIND_ITEM_CALENDAR_VIEW)).unwrap();
+        assert_eq!(page.total, Some(3));
+        assert_eq!(page.includes_last, Some(true));
+        assert_eq!(page.included_count, 3);
+        let single = &page.items[0];
+        assert_eq!(single.item_id, "AAMkADUwNjA3YTQ5AEYAAAAAAD+/b8xAAA=");
+        assert_eq!(single.change_key.as_deref(), Some("DwAAABYAAAD/"));
+        assert_eq!(
+            single.subject.as_deref(),
+            Some("Q3 review: R&D <budget> \u{2013} draft")
+        );
+        assert_eq!(single.location.as_deref(), Some("Room \"Turing\" & Teams"));
+        assert_eq!(single.start.as_deref(), Some("2026-05-06T09:00:00Z"));
+        assert_eq!(single.end.as_deref(), Some("2026-05-06T09:30:00Z"));
+        assert_eq!(
+            single.uid.as_deref(),
+            Some(
+                "040000008200E00074C5B7101A82E00800000000A1B2C3D4E1DC0100000000000000001000000011"
+            )
+        );
+        assert_eq!(single.free_busy_status.as_deref(), Some("Busy"));
+        assert!(!single.is_all_day && !single.is_cancelled && !single.has_recurrence);
+
+        let absence = &page.items[1];
+        assert!(absence.is_all_day);
+        assert_eq!(absence.free_busy_status.as_deref(), Some("OOF"));
+        assert_eq!(absence.location, None);
+
+        let occurrence = &page.items[2];
+        assert!(occurrence.has_recurrence && occurrence.is_cancelled);
+        assert_eq!(occurrence.free_busy_status.as_deref(), Some("Tentative"));
+        assert_eq!(
+            occurrence.uid.as_deref(),
+            Some("series-master@corp.example")
+        );
+    }
+
+    /// The same items with default namespaces and other prefixes read the
+    /// same.
+    #[test]
+    fn find_item_prefixes_do_not_matter() {
+        let base = fixtures::FIND_ITEM_CALENDAR_VIEW;
+        let renamed = base
+            .replace("xmlns:m=", "xmlns:msg=")
+            .replace("xmlns:t=", "xmlns:typ=")
+            .replace("<m:", "<msg:")
+            .replace("</m:", "</msg:")
+            .replace("<t:", "<typ:")
+            .replace("</t:", "</typ:")
+            .replace("xmlns:s=", "xmlns:soap=")
+            .replace("<s:", "<soap:")
+            .replace("</s:", "</soap:");
+        let defaults = base
+            .replace(
+                "<m:FindItemResponse xmlns:m=\"http://schemas.microsoft.com/exchange/services/2006/messages\" xmlns:t=\"http://schemas.microsoft.com/exchange/services/2006/types\">",
+                "<FindItemResponse xmlns=\"http://schemas.microsoft.com/exchange/services/2006/messages\">",
+            )
+            .replace("<t:Items>", "<Items xmlns=\"http://schemas.microsoft.com/exchange/services/2006/types\">")
+            .replace("<m:", "<")
+            .replace("</m:", "</")
+            .replace("<t:", "<")
+            .replace("</t:", "</");
+        let want = parse_calendar_items_response(&reply(base)).unwrap();
+        for xml in [renamed, defaults] {
+            let got = parse_calendar_items_response(&reply(&xml)).unwrap();
+            assert_eq!(format!("{got:?}"), format!("{want:?}"), "{xml}");
+        }
+    }
+
+    /// Text that quotes SOAP markup stays text.
+    #[test]
+    fn find_item_text_that_looks_like_markup_is_text() {
+        let page = parse_calendar_items_response(&reply(fixtures::FIND_ITEM_FAULT_LOOKALIKE_TEXT))
+            .unwrap();
+        assert_eq!(page.items.len(), 1);
+        assert_eq!(
+            page.items[0].subject.as_deref(),
+            Some("<s:Fault><faultstring>postmortem</faultstring></s:Fault>")
+        );
+        assert_eq!(
+            page.items[0].location.as_deref(),
+            Some("<m:ResponseCode>ErrorAccessDenied</m:ResponseCode>")
+        );
+    }
+
+    /// A FindItem that is not a complete, successful answer is an error: an
+    /// empty page would read as a free calendar.
+    #[test]
+    fn find_item_refuses_what_it_cannot_read() {
+        let message = |root: &str| {
+            format!(
+                r#"<m:FindItemResponseMessage ResponseClass="Success">{root}</m:FindItemResponseMessage>"#
+            )
+        };
+        for xml in [
+            "<s:Envelope><s:Body/></s:Envelope>".to_string(),
+            r#"<m:FindItemResponse><m:RootFolder><t:Items/></m:RootFolder></m:FindItemResponse>"#.to_string(),
+            r#"<m:FindItemResponseMessage ResponseClass="Error"><m:RootFolder><t:Items/></m:RootFolder></m:FindItemResponseMessage>"#.to_string(),
+            message(""),
+            message("<m:RootFolder/>"),
+            message(r#"<m:RootFolder TotalItemsInView="lots"><t:Items/></m:RootFolder>"#),
+            message(r#"<m:RootFolder IncludesLastItemInRange="yes"><t:Items/></m:RootFolder>"#),
+            message("<m:RootFolder><t:Items><t:CalendarItem><t:Subject>no id</t:Subject></t:CalendarItem></t:Items></m:RootFolder>"),
+            message(r#"<m:RootFolder><t:Items><t:CalendarItem><t:ItemId Id="A"/><t:IsAllDayEvent>sometimes</t:IsAllDayEvent></t:CalendarItem></t:Items></m:RootFolder>"#),
+            message(r#"<m:RootFolder><t:Items><t:CalendarItem><t:ItemId Id="A"/><t:IsCancelled>2</t:IsCancelled></t:CalendarItem></t:Items></m:RootFolder>"#),
+        ] {
+            assert!(parse_calendar_items_response(&doc(&xml)).is_err(), "{xml}");
+        }
+    }
+
+    /// A Start or End that is not a date-time is a server problem and is
+    /// refused: both are written as is into the made-up VCALENDAR.
+    #[test]
+    fn find_item_refuses_values_that_would_break_the_ical() {
+        let item = |fields: &str| {
+            doc(&format!(
+                r#"<m:FindItemResponseMessage ResponseClass="Success"><m:RootFolder><t:Items><t:CalendarItem><t:ItemId Id="A"/>{fields}</t:CalendarItem></t:Items></m:RootFolder></m:FindItemResponseMessage>"#
+            ))
+        };
+        for fields in [
+            "<t:Start>2026-05-06T09:00:00Z&#xD;&#xA;END:VEVENT</t:Start>",
+            "<t:End>2026-05-06T09:30:00Z;X=1</t:End>",
+            "<t:Start>tomorrow</t:Start>",
+        ] {
+            let err = parse_calendar_items_response(&item(fields)).unwrap_err();
+            assert!(err.to_string().contains("EWS item"), "{fields}: {err}");
+        }
+        // Ordinary values read as before, offsets and fractions included.
+        let page = parse_calendar_items_response(&item(
+            "<t:UID>a b@corp</t:UID><t:Start>2026-05-06T09:00:00.000+02:00</t:Start><t:End>2026-05-06T09:30:00Z</t:End>",
+        ))
+        .unwrap();
+        assert_eq!(page.items[0].uid.as_deref(), Some("a b@corp"));
+    }
+
+    /// An organizer-chosen UID with control characters does not stop the
+    /// sync: the item is kept, busy, under a derived UID that is the same on
+    /// every read, and nothing it carried reaches the made-up VCALENDAR.
+    #[test]
+    fn hostile_uid_is_kept_under_a_derived_uid() {
+        let xml = fixtures::FIND_ITEM_CALENDAR_VIEW.replace(
+            "<t:UID>uid-2@corp.example</t:UID>",
+            "<t:UID>040000008200E00074C5B7101A82E00800000000A1B2C3D4E1DC0100000000000000001000000011&#xD;&#xA;TRANSP:TRANSPARENT&#xD;&#xA;END:VEVENT&#xD;&#xA;BEGIN:VEVENT&#xD;&#xA;UID:victim\nX-INJECTED:1</t:UID>",
+        );
+        assert_ne!(xml, fixtures::FIND_ITEM_CALENDAR_VIEW);
+        let page = parse_calendar_items_response(&reply(&xml)).unwrap();
+        assert_eq!(page.items.len(), 3, "every item is kept");
+        let hostile = &page.items[1];
+        let uid = hostile.uid.clone().unwrap();
+        assert!(uid.starts_with("ews-") && uid.len() == 4 + 64, "{uid}");
+        // Derived the same way on every read.
+        let again = parse_calendar_items_response(&reply(&xml)).unwrap();
+        assert_eq!(again.items[1].uid.as_deref(), Some(uid.as_str()));
+        // The normal item next to it is untouched.
+        assert_eq!(
+            page.items[0].uid.as_deref(),
+            Some(
+                "040000008200E00074C5B7101A82E00800000000A1B2C3D4E1DC0100000000000000001000000011"
+            )
+        );
+
+        // Both items make a VCALENDAR; the hostile one stays busy and adds
+        // nothing.
+        for item in &page.items[..2] {
+            let ics = crate::ews::ical::synth_vcalendar(item).expect("written");
+            assert_eq!(ics.matches("BEGIN:VEVENT").count(), 1, "{ics}");
+            assert_eq!(ics.matches("UID:").count(), 1, "{ics}");
+            assert!(
+                !ics.contains("X-INJECTED") && !ics.contains("victim"),
+                "{ics}"
+            );
+            assert!(ics.contains("TRANSP:OPAQUE\r\n"), "{ics}");
+            assert_eq!(ics.matches("TRANSP:").count(), 1, "{ics}");
+        }
+        let ics = crate::ews::ical::synth_vcalendar(hostile).unwrap();
+        assert!(ics.contains(&format!("UID:{uid}\r\n")), "{ics}");
+        assert!(ics.contains("DTSTART:20260508T000000Z\r\n"), "{ics}");
+
+        // SyncFolderItems derives the same UID.
+        let sync = fixtures::SYNC_FOLDER_ITEMS.replace(
+            "<t:UID>uid-new@corp.example</t:UID>",
+            "<t:UID>a&#xA;b</t:UID>",
+        );
+        let d = parse_sync_folder_items_response(&reply(&sync)).unwrap();
+        assert_eq!(d.added_or_changed[0].1, safe_uid("a\nb".to_string(), "x"));
+        assert_eq!(safe_uid("plain@corp".to_string(), "x"), "plain@corp");
+    }
+
+    /// A GetItem batch drops an item the server reports gone and fails on
+    /// any other per-message error.
+    #[test]
+    fn get_item_batch_drops_gone_items_only() {
+        let skipping = |xml: &str| {
+            crate::ews::soap::read_reply_skipping(reqwest::StatusCode::OK, xml, "e", &[ITEM_GONE])
+        };
+        let doc = skipping(fixtures::GET_ITEM_SECOND_MESSAGE_FAILS).unwrap();
+        assert!(parse_get_item_response(&doc).unwrap().is_empty());
+        // The gone item next to a readable one keeps the readable one.
+        let mixed = fixtures::GET_ITEM_MIME.replacen(
+            r#"<m:GetItemResponseMessage ResponseClass="Success">
+          <m:ResponseCode>NoError</m:ResponseCode>
+          <m:Items>
+            <t:MeetingRequest>"#,
+            r#"<m:GetItemResponseMessage ResponseClass="Error"><m:MessageText>gone</m:MessageText><m:ResponseCode>ErrorItemNotFound</m:ResponseCode><m:Items/></m:GetItemResponseMessage>
+        <m:GetItemResponseMessage ResponseClass="Success">
+          <m:ResponseCode>NoError</m:ResponseCode>
+          <m:Items>
+            <t:MeetingRequest>"#,
+            1,
+        );
+        assert_ne!(mixed, fixtures::GET_ITEM_MIME);
+        let items = parse_get_item_response(&skipping(&mixed).unwrap()).unwrap();
+        assert_eq!(items.len(), 2);
+        // Another error is not dropped, by post_soap or by the parser.
+        let denied = fixtures::GET_ITEM_SECOND_MESSAGE_FAILS
+            .replace("ErrorItemNotFound", "ErrorAccessDenied");
+        let err = skipping(&denied).unwrap_err().to_string();
+        assert!(err.contains("ErrorAccessDenied"), "{err}");
+        let err = parse_get_item_response(&doc_of(&denied))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("ErrorAccessDenied"), "{err}");
+        // Without the skip list, a gone item is a fault like any other.
+        assert!(crate::ews::soap::read_reply(
+            reqwest::StatusCode::OK,
+            fixtures::GET_ITEM_SECOND_MESSAGE_FAILS,
+            "e"
+        )
+        .is_err());
+    }
+
+    /// Warning with NoError is a success with a note, for the parsers as for
+    /// `post_soap`; Warning with an error code is a failure for both.
+    #[test]
+    fn warning_with_no_error_is_a_success_everywhere() {
+        let warning = fixtures::CREATE_ITEM.replace("\"Success\"", "\"Warning\"");
+        assert_eq!(
+            parse_create_item_response(&reply(&warning)).unwrap(),
+            "AAMkADUwNjA3YTQ5AEYAAAAAAD+/b8xNEW="
+        );
+        let failed = warning.replace(">NoError<", ">ErrorBatchProcessingStopped<");
+        assert!(crate::ews::soap::read_reply(reqwest::StatusCode::OK, &failed, "e").is_err());
+        let err = parse_create_item_response(&doc_of(&failed))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("ErrorBatchProcessingStopped"), "{err}");
+    }
+
+    /// Every entry counts towards the cap and the paging offset, but only
+    /// calendar items are returned.
+    #[test]
+    fn find_item_counts_every_entry() {
+        let xml = r#"<m:FindItemResponseMessage ResponseClass="Success"><m:RootFolder><t:Items><t:CalendarItem><t:ItemId Id="A"/></t:CalendarItem><t:Message><t:ItemId Id="B"/></t:Message></t:Items></m:RootFolder></m:FindItemResponseMessage>"#;
+        let page = parse_calendar_items_response(&doc(xml)).unwrap();
+        assert_eq!(page.included_count, 2);
+        assert_eq!(page.items.len(), 1);
+        assert_eq!(page.total, None);
+    }
+
     /// Regression: Exchange 2019 omits `<t:Recurrence>` on expanded occurrences
     /// returned by `CalendarView`, signaling recurrence via `CalendarItemType`
     /// instead. The parser must flag these as `has_recurrence=true` so that
@@ -469,7 +899,7 @@ mod tests {
     /// uniquely.
     #[test]
     fn occurrence_calendar_item_type_marks_has_recurrence() {
-        let xml = r#"<m:FindItemResponseMessage>
+        let xml = r#"<m:FindItemResponseMessage ResponseClass="Success">
   <m:RootFolder TotalItemsInView="1">
     <t:Items>
       <t:CalendarItem>
@@ -484,7 +914,7 @@ mod tests {
     </t:Items>
   </m:RootFolder>
 </m:FindItemResponseMessage>"#;
-        let page = parse_calendar_items_response(xml).unwrap();
+        let page = parse_calendar_items_response(&doc(xml)).unwrap();
         assert_eq!(page.items.len(), 1);
         assert!(
             page.items[0].has_recurrence,
@@ -494,7 +924,7 @@ mod tests {
 
     #[test]
     fn single_calendar_item_type_does_not_mark_has_recurrence() {
-        let xml = r#"<m:FindItemResponseMessage>
+        let xml = r#"<m:FindItemResponseMessage ResponseClass="Success">
   <m:RootFolder TotalItemsInView="1">
     <t:Items>
       <t:CalendarItem>
@@ -509,20 +939,84 @@ mod tests {
     </t:Items>
   </m:RootFolder>
 </m:FindItemResponseMessage>"#;
-        let page = parse_calendar_items_response(xml).unwrap();
+        let page = parse_calendar_items_response(&doc(xml)).unwrap();
         assert!(!page.items[0].has_recurrence);
     }
 
     #[test]
+    fn parses_get_folder_response() {
+        assert_eq!(
+            parse_get_folder_response(&reply(fixtures::GET_FOLDER_CALENDAR)).unwrap(),
+            Some(
+                "AAMkADUwNjA3YTQ5LTEzZDktNGQ2Yy1iZDk3LTJiNzRkZGFiMmJmZgAuAAAAAAA+/b8xAQ=="
+                    .to_string()
+            )
+        );
+        let none = r#"<m:GetFolderResponseMessage ResponseClass="Success"><m:Folders/></m:GetFolderResponseMessage>"#;
+        assert_eq!(parse_get_folder_response(&doc(none)).unwrap(), None);
+        for xml in [
+            "<s:Envelope><s:Body/></s:Envelope>",
+            r#"<m:GetFolderResponseMessage ResponseClass="Success"/>"#,
+            r#"<m:GetFolderResponseMessage ResponseClass="Success"><m:Folders><t:Folder/></m:Folders></m:GetFolderResponseMessage>"#,
+        ] {
+            assert!(parse_get_folder_response(&doc(xml)).is_err(), "{xml}");
+        }
+    }
+
+    #[test]
     fn parses_create_item_response_returns_id() {
-        let xml = r#"<m:CreateItemResponseMessage>
+        let xml = r#"<m:CreateItemResponseMessage ResponseClass="Success">
   <m:Items>
     <t:CalendarItem>
       <t:ItemId Id="NEW123" ChangeKey="CK99" />
     </t:CalendarItem>
   </m:Items>
 </m:CreateItemResponseMessage>"#;
-        assert_eq!(parse_create_item_response(xml).unwrap(), "NEW123");
+        assert_eq!(parse_create_item_response(&doc(xml)).unwrap(), "NEW123");
+        assert_eq!(
+            parse_create_item_response(&reply(fixtures::CREATE_ITEM)).unwrap(),
+            "AAMkADUwNjA3YTQ5AEYAAAAAAD+/b8xNEW="
+        );
+        for xml in [
+            "<s:Envelope><s:Body/></s:Envelope>",
+            r#"<m:CreateItemResponseMessage ResponseClass="Success"><m:Items/></m:CreateItemResponseMessage>"#,
+            r#"<m:CreateItemResponseMessage ResponseClass="Success"><m:Items><t:CalendarItem/></m:Items></m:CreateItemResponseMessage>"#,
+        ] {
+            assert!(parse_create_item_response(&doc(xml)).is_err(), "{xml}");
+        }
+    }
+
+    #[test]
+    fn delete_item_needs_a_successful_message() {
+        assert!(parse_delete_item_response(&reply(fixtures::DELETE_ITEM)).is_ok());
+        assert!(parse_delete_item_response(&doc("<s:Envelope><s:Body/></s:Envelope>")).is_err());
+    }
+
+    #[test]
+    fn parses_get_item_mime_content() {
+        let items = parse_get_item_response(&reply(fixtures::GET_ITEM_MIME)).unwrap();
+        assert_eq!(items.len(), 2, "a calendar item and a meeting request");
+        assert_eq!(items[0].0, "AAMkADUwNjA3YTQ5AEYAAAAAAD+/b8xAAA=");
+        assert_eq!(items[1].0, "AAMkADUwNjA3YTQ5AEYAAAAAAD+/b8xAAB=");
+        for (_, ical) in &items {
+            assert!(ical.starts_with("BEGIN:VCALENDAR"), "{ical}");
+            assert!(ical.ends_with("END:VCALENDAR"), "{ical}");
+            assert!(ical.contains("SUMMARY;LANGUAGE=en-US:Board review & budget"));
+            assert!(ical.contains("RRULE:FREQ=WEEKLY;COUNT=4"));
+        }
+        // An item without MIME content is skipped, one without an id is not.
+        let skipped = r#"<m:GetItemResponseMessage ResponseClass="Success"><m:Items><t:CalendarItem><t:ItemId Id="A"/></t:CalendarItem></m:Items></m:GetItemResponseMessage>"#;
+        assert!(parse_get_item_response(&doc(skipped)).unwrap().is_empty());
+        for xml in [
+            "<s:Envelope><s:Body/></s:Envelope>".to_string(),
+            r#"<m:GetItemResponseMessage ResponseClass="Success"/>"#.to_string(),
+            format!(
+                r#"<m:GetItemResponseMessage ResponseClass="Success"><m:Items><t:CalendarItem><t:MimeContent>{}</t:MimeContent></t:CalendarItem></m:Items></m:GetItemResponseMessage>"#,
+                fixtures::GET_ITEM_MIME_B64
+            ),
+        ] {
+            assert!(parse_get_item_response(&doc(&xml)).is_err(), "{xml}");
+        }
     }
 
     #[test]
@@ -536,7 +1030,7 @@ mod tests {
 
     #[test]
     fn parses_sync_delta_with_create_update_delete() {
-        let xml = r#"<m:SyncFolderItemsResponseMessage>
+        let xml = r#"<m:SyncFolderItemsResponseMessage ResponseClass="Success">
   <m:SyncState>STATE2</m:SyncState>
   <m:IncludesLastItemInRange>true</m:IncludesLastItemInRange>
   <m:Changes>
@@ -557,7 +1051,7 @@ mod tests {
     </t:Delete>
   </m:Changes>
 </m:SyncFolderItemsResponseMessage>"#;
-        let d = parse_sync_folder_items_response(xml).unwrap();
+        let d = parse_sync_folder_items_response(&doc(xml)).unwrap();
         assert_eq!(d.new_sync_state.as_deref(), Some("STATE2"));
         assert!(d.includes_last);
         assert_eq!(d.added_or_changed.len(), 2);
@@ -567,11 +1061,39 @@ mod tests {
     }
 
     #[test]
-    fn count_response_messages_works() {
-        let xml = r#"<m:ResponseMessages>
-            <m:Resp1><m:ResponseCode>NoError</m:ResponseCode></m:Resp1>
-            <m:Resp2><m:ResponseCode>ErrorAccessDenied</m:ResponseCode></m:Resp2>
-        </m:ResponseMessages>"#;
-        assert_eq!(count_response_messages(xml), (1, 2));
+    fn parses_an_exchange_sync_delta() {
+        let d = parse_sync_folder_items_response(&reply(fixtures::SYNC_FOLDER_ITEMS)).unwrap();
+        assert!(d.new_sync_state.unwrap().starts_with("H4sIAAAA"));
+        assert!(d.includes_last);
+        assert_eq!(
+            d.added_or_changed,
+            [
+                ("N1=".to_string(), "uid-new@corp.example".to_string()),
+                ("N2=".to_string(), "uid-upd&co@corp.example".to_string()),
+            ]
+        );
+        assert_eq!(d.deleted_item_ids, ["GONE="]);
+    }
+
+    #[test]
+    fn sync_delta_refuses_what_it_cannot_read() {
+        let message = |inner: &str| {
+            format!(
+                r#"<m:SyncFolderItemsResponseMessage ResponseClass="Success">{inner}</m:SyncFolderItemsResponseMessage>"#
+            )
+        };
+        let state = "<m:SyncState>S</m:SyncState><m:IncludesLastItemInRange>true</m:IncludesLastItemInRange>";
+        for xml in [
+            "<s:Envelope><s:Body/></s:Envelope>".to_string(),
+            message("<m:IncludesLastItemInRange>true</m:IncludesLastItemInRange><m:Changes/>"),
+            message("<m:SyncState>S</m:SyncState><m:Changes/>"),
+            message("<m:SyncState>S</m:SyncState><m:IncludesLastItemInRange>perhaps</m:IncludesLastItemInRange><m:Changes/>"),
+            message(state),
+            message(&format!("{state}<m:Changes><t:Create/></m:Changes>")),
+            message(&format!("{state}<m:Changes><t:Update><t:CalendarItem><t:UID>u</t:UID></t:CalendarItem></t:Update></m:Changes>")),
+            message(&format!("{state}<m:Changes><t:Delete/></m:Changes>")),
+        ] {
+            assert!(parse_sync_folder_items_response(&doc(&xml)).is_err(), "{xml}");
+        }
     }
 }

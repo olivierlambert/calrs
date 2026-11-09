@@ -1,0 +1,99 @@
+{#- Whether each row also shows the coming week as seven small day
+    markers (filled on the days with a free time). Off until the owner
+    decides; flip it to true to show the strip on both landing pages. -#}
+{%- set show_week_strip = false -%}
+{#- Behaviour of the landing pages, after the content:
+    - faces get the overview's per-person hue (--h), a stable hash;
+    - the list asks its page's next-free endpoint (data-next, one request
+      per page view) for each meeting's first free start and free days of
+      the coming week, keyed by slug, then writes them in the guest's own
+      timezone and time format. Nothing blocks the page; on a failure the
+      rows simply show nothing. -#}
+<script>
+(function() {
+  // FNV-1a over the UTF-8 bytes, as overview_stats::face_hue computes it.
+  function fnv(s) {
+    var bytes = window.TextEncoder ? new TextEncoder().encode(s) : [];
+    var h = 0x811c9dc5;
+    for (var i = 0; i < bytes.length; i++) { h ^= bytes[i]; h = Math.imul(h, 0x01000193) >>> 0; }
+    return h >>> 0;
+  }
+  var FACE_HUES = [8, 18, 28, 38, 48, 345, 330, 316];
+  function key(s) { return s.trim().split(/\s+/).join(' ').toLowerCase(); }
+  Array.prototype.forEach.call(document.querySelectorAll('[data-face]'), function(el) {
+    el.style.setProperty('--h', FACE_HUES[fnv(key(el.getAttribute('data-face'))) % FACE_HUES.length]);
+  });
+
+  var list = document.querySelector('[data-next]');
+  if (!list || !window.fetch || !window.Intl) return;
+  var label = {{ t("landing-next-free") | tojson }};
+  var lang = document.documentElement.lang || 'en';
+  var h12 = false;
+  try { h12 = localStorage.getItem('calrs_time_format') === '12'; } catch (e) {}
+  var tz = '';
+  try { tz = Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch (e) {}
+  function fmt(d, opts) {
+    if (tz) opts.timeZone = tz;
+    try { return new Intl.DateTimeFormat(lang, opts).format(d); } catch (e) { return ''; }
+  }
+  function when(d) {
+    var opts = { weekday: 'short', hour: h12 ? 'numeric' : '2-digit', minute: '2-digit', hourCycle: h12 ? 'h12' : 'h23' };
+    // Within the coming week the weekday is enough; further out, add the date.
+    if (d.getTime() - Date.now() > 6 * 86400000) { opts.day = 'numeric'; opts.month = 'short'; }
+    return fmt(d, opts);
+  }
+  // The guest's date (YYYY-MM-DD) of an instant, in their timezone.
+  function ymd(d) {
+    var p = {};
+    try {
+      new Intl.DateTimeFormat('en-CA', { timeZone: tz || undefined, year: 'numeric', month: '2-digit', day: '2-digit' })
+        .formatToParts(d).forEach(function(x) { p[x.type] = x.value; });
+    } catch (e) { return ''; }
+    return p.year + '-' + p.month + '-' + p.day;
+  }
+  var showWeek = {{ show_week_strip | tojson }};
+  function days(el, free) {
+    var box = el.querySelector('.lp-days');
+    if (!showWeek) return;
+    if (!box || !Array.isArray(free)) return;
+    var now = Date.now();
+    for (var i = 0; i < 7; i++) {
+      var d = new Date(now + i * 86400000);
+      var cell = document.createElement('span');
+      cell.className = 'lp-day' + (free.indexOf(ymd(d)) >= 0 ? ' is-free' : '');
+      cell.title = fmt(d, { weekday: 'long', day: 'numeric', month: 'long' });
+      cell.appendChild(document.createElement('i'));
+      cell.appendChild(document.createTextNode(fmt(d, { weekday: 'narrow' })));
+      box.appendChild(cell);
+    }
+    box.hidden = false;
+  }
+  function fill(el, j) {
+    if (!j || typeof j !== 'object') return;
+    days(el, j.days);
+    if (!j.start) return;
+    var text = when(new Date(j.start));
+    var next = el.querySelector('.lp-next');
+    if (!text || !next) return;
+    var parts = label.split('%1');
+    next.textContent = parts[0];
+    var b = document.createElement('b');
+    b.textContent = text;
+    next.appendChild(b);
+    if (parts[1]) next.appendChild(document.createTextNode(parts[1]));
+    next.hidden = false;
+  }
+  var url = list.getAttribute('data-next');
+  if (tz) url += (url.indexOf('?') >= 0 ? '&' : '?') + 'tz=' + encodeURIComponent(tz);
+  fetch(url, { headers: { 'Accept': 'application/json' }, credentials: 'same-origin' })
+    .then(function(r) { return r.ok ? r.json() : null; })
+    .then(function(all) {
+      if (!all || typeof all !== 'object') return;
+      Array.prototype.forEach.call(list.querySelectorAll('[data-slug]'), function(el) {
+        var slug = el.getAttribute('data-slug');
+        if (Object.prototype.hasOwnProperty.call(all, slug)) fill(el, all[slug]);
+      });
+    })
+    .catch(function() {});
+})();
+</script>

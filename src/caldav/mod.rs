@@ -16,8 +16,13 @@ use multistatus::{
 const GOOGLE_CALDAV_HOST: &str = "apidata.googleusercontent.com";
 
 pub enum CaldavAuth {
-    Basic { username: String, password: String },
-    Bearer { access_token: String },
+    Basic {
+        username: String,
+        password: zeroize::Zeroizing<String>,
+    },
+    Bearer {
+        access_token: zeroize::Zeroizing<String>,
+    },
 }
 
 pub struct CaldavClient {
@@ -108,12 +113,6 @@ pub fn private_host_allowlist() -> Vec<String> {
     crate::settings::private_host_allowlist()
 }
 
-/// Whether `host` is in the configured private-host allowlist (case-insensitive).
-fn is_host_allowlisted(host: &str, allowlist: &[String]) -> bool {
-    let host = host.to_ascii_lowercase();
-    allowlist.contains(&host)
-}
-
 /// Validate a CalDAV URL: must be http(s), must not resolve to a private IP.
 ///
 /// Self-hosted deployments (e.g. calrs and Radicale on the same docker network)
@@ -143,8 +142,8 @@ pub fn validate_caldav_url(url: &str) -> Result<()> {
         .ok_or_else(|| anyhow::anyhow!("URL has no host"))?;
 
     // Hosts the operator has explicitly opted out of the private-IP check.
-    let allowlist = private_host_allowlist();
-    if is_host_allowlisted(host, &allowlist) {
+    let allowlist = crate::net_guard::Allowlist::fixed(&private_host_allowlist());
+    if allowlist.allows(host) {
         return Ok(());
     }
 
@@ -175,10 +174,13 @@ pub fn validate_caldav_url(url: &str) -> Result<()> {
 
     for addr in &addrs {
         if is_private_ip(&addr.ip()) {
+            // The address stays in the log: this message is shown to
+            // whoever typed the URL, and an internal address is the
+            // admin's business.
+            tracing::warn!(host = %host, ip = %addr.ip(), "URL refused: its host resolves to a private or reserved address");
             bail!(
-                "URL hostname '{}' resolves to a private/reserved IP address ({}). This is not allowed for security reasons.",
-                host,
-                addr.ip()
+                "URL hostname '{}' resolves to a private/reserved IP address. This is not allowed for security reasons.",
+                host
             );
         }
     }
@@ -236,7 +238,7 @@ impl CaldavClient {
             base_url,
             CaldavAuth::Basic {
                 username: username.to_string(),
-                password: password.to_string(),
+                password: zeroize::Zeroizing::new(password.to_string()),
             },
         )
     }
@@ -245,7 +247,7 @@ impl CaldavClient {
         Self::build(
             base_url,
             CaldavAuth::Bearer {
-                access_token: access_token.to_string(),
+                access_token: zeroize::Zeroizing::new(access_token.to_string()),
             },
         )
     }
@@ -287,41 +289,41 @@ impl CaldavClient {
     fn apply_auth(&self, builder: RequestBuilder) -> RequestBuilder {
         match &self.auth {
             CaldavAuth::Basic { username, password } => {
-                builder.basic_auth(username, Some(password))
+                builder.basic_auth(username, Some(password.as_str()))
             }
-            CaldavAuth::Bearer { access_token } => builder.bearer_auth(access_token),
+            CaldavAuth::Bearer { access_token } => builder.bearer_auth(access_token.as_str()),
         }
     }
 
-    /// Resolve a href that may be absolute path or full URL.
-    ///
-    /// A full URL comes from the server. When it names another host as a
-    /// private IP literal, it is refused: host names are checked by the
-    /// guarded resolver when the request connects, literals never reach it.
-    fn resolve_url(&self, href: &str) -> Result<String> {
-        if !href.starts_with("http") {
-            return Ok(format!("{}{}", self.origin, href));
+    /// Resolve a href that may be absolute path or full URL
+    fn resolve_url(&self, href: &str) -> String {
+        if href.starts_with("http") {
+            href.to_string()
+        } else {
+            format!("{}{}", self.origin, href)
         }
-        if let Ok(url) = reqwest::Url::parse(href) {
-            let own_host = reqwest::Url::parse(&self.base_url)
-                .ok()
-                .and_then(|u| u.host_str().map(str::to_string));
-            if url.host_str() != own_host.as_deref() {
-                let allowlist = crate::net_guard::Allowlist::Settings;
-                if let Some(ip) = crate::net_guard::literal_refused(&url, &allowlist) {
-                    bail!("The server pointed to a private or reserved address ({ip}), which is not allowed");
-                }
+    }
+
+    /// Start a request, refusing a private or reserved IP literal unless it
+    /// is allowlisted (#363). Host names are checked by the guarded resolver
+    /// when the request connects, but literals never reach it, so the saved
+    /// URL, the hrefs a server returns and the allowlist as it stands now are
+    /// all checked here, at every request.
+    fn request(&self, method: reqwest::Method, url: &str) -> Result<RequestBuilder> {
+        if let Ok(parsed) = reqwest::Url::parse(url) {
+            let allowlist = crate::net_guard::Allowlist::Settings;
+            if let Some(ip) = crate::net_guard::literal_refused(&parsed, &allowlist) {
+                tracing::warn!(%ip, "CalDAV request to a private or reserved address refused");
+                bail!(crate::net_guard::REFUSED);
             }
         }
-        Ok(href.to_string())
+        Ok(self.client.request(method, url))
     }
 
     /// Send a PROPFIND request and return the response body
     async fn propfind(&self, url: &str, depth: &str, body: &str) -> Result<String> {
         tracing::debug!(url = %url, depth = %depth, "sending PROPFIND request");
-        let req = self
-            .client
-            .request(reqwest::Method::from_bytes(b"PROPFIND")?, url);
+        let req = self.request(reqwest::Method::from_bytes(b"PROPFIND")?, url)?;
         let resp = self
             .apply_auth(req)
             .header("Content-Type", "application/xml; charset=utf-8")
@@ -344,9 +346,7 @@ impl CaldavClient {
     /// false negatives. A successful principal PROPFIND is unambiguous proof
     /// that the server speaks CalDAV.
     pub async fn check_connection(&self) -> Result<bool> {
-        let req = self
-            .client
-            .request(reqwest::Method::OPTIONS, &self.base_url);
+        let req = self.request(reqwest::Method::OPTIONS, &self.base_url)?;
         let resp = self.apply_auth(req).send().await?;
 
         if !resp.status().is_success() {
@@ -413,7 +413,7 @@ impl CaldavClient {
 
     /// Discover the calendar-home-set from a principal URL
     pub async fn discover_calendar_home(&self, principal_url: &str) -> Result<String> {
-        let url = self.resolve_url(principal_url)?;
+        let url = self.resolve_url(principal_url);
         let text = self.propfind(&url, "0", PROPFIND_CALENDAR_HOME).await?;
 
         tracing::debug!(
@@ -438,7 +438,7 @@ impl CaldavClient {
 
     /// List calendars under a calendar-home-set URL (filters to actual calendars only)
     pub async fn list_calendars(&self, home_url: &str) -> Result<Vec<CalendarInfo>> {
-        let url = self.resolve_url(home_url)?;
+        let url = self.resolve_url(home_url);
         let text = self.propfind(&url, "1", PROPFIND_CALENDARS).await?;
         let (calendars, text) = parse_blocking(text, parse_calendar_list).await;
         let calendars = calendars
@@ -519,9 +519,9 @@ impl CaldavClient {
         ics_data: &str,
     ) -> Result<()> {
         let href = format!("{}/{}.ics", calendar_href.trim_end_matches('/'), uid);
-        let url = self.resolve_url(&href)?;
+        let url = self.resolve_url(&href);
 
-        let req = self.client.put(&url);
+        let req = self.request(reqwest::Method::PUT, &url)?;
         let resp = self
             .apply_auth(req)
             .header("Content-Type", "text/calendar; charset=utf-8")
@@ -558,9 +558,9 @@ impl CaldavClient {
         uid: &str,
     ) -> Result<Option<String>> {
         let href = format!("{}/{}.ics", calendar_href.trim_end_matches('/'), uid);
-        let url = self.resolve_url(&href)?;
+        let url = self.resolve_url(&href);
         let resp = self
-            .apply_auth(self.client.get(&url))
+            .apply_auth(self.request(reqwest::Method::GET, &url)?)
             .timeout(Duration::from_secs(10))
             .send()
             .await?;
@@ -587,10 +587,10 @@ impl CaldavClient {
     /// body, which is universally supported.
     pub async fn event_exists(&self, calendar_href: &str, uid: &str) -> Result<bool> {
         let href = format!("{}/{}.ics", calendar_href.trim_end_matches('/'), uid);
-        let url = self.resolve_url(&href)?;
+        let url = self.resolve_url(&href);
 
         let resp = self
-            .apply_auth(self.client.head(&url))
+            .apply_auth(self.request(reqwest::Method::HEAD, &url)?)
             .timeout(Duration::from_secs(10))
             .send()
             .await?;
@@ -604,10 +604,7 @@ impl CaldavClient {
             let body = r#"<?xml version="1.0" encoding="utf-8"?>
 <d:propfind xmlns:d="DAV:"><d:prop><d:getetag/></d:prop></d:propfind>"#;
             let resp = self
-                .apply_auth(
-                    self.client
-                        .request(reqwest::Method::from_bytes(b"PROPFIND")?, &url),
-                )
+                .apply_auth(self.request(reqwest::Method::from_bytes(b"PROPFIND")?, &url)?)
                 .header("Content-Type", "application/xml; charset=utf-8")
                 .header("Depth", "0")
                 .timeout(Duration::from_secs(10))
@@ -696,9 +693,9 @@ impl CaldavClient {
     /// Plain CalDAV DELETE, whatever the server.
     pub(crate) async fn delete_event_raw(&self, calendar_href: &str, uid: &str) -> Result<()> {
         let href = format!("{}/{}.ics", calendar_href.trim_end_matches('/'), uid);
-        let url = self.resolve_url(&href)?;
+        let url = self.resolve_url(&href);
 
-        let req = self.client.delete(&url);
+        let req = self.request(reqwest::Method::DELETE, &url)?;
         let resp = self.apply_auth(req).send().await?;
 
         let status = resp.status();
@@ -712,12 +709,10 @@ impl CaldavClient {
 
     /// Fetch events from a calendar using REPORT
     pub async fn fetch_events(&self, calendar_href: &str) -> Result<Vec<RawEvent>> {
-        let url = self.resolve_url(calendar_href)?;
+        let url = self.resolve_url(calendar_href);
 
         // Use a longer timeout for event fetches (calendars can be large)
-        let req = self
-            .client
-            .request(reqwest::Method::from_bytes(b"REPORT")?, &url);
+        let req = self.request(reqwest::Method::from_bytes(b"REPORT")?, &url)?;
         let resp = self
             .apply_auth(req)
             .header("Content-Type", "application/xml; charset=utf-8")
@@ -742,7 +737,7 @@ impl CaldavClient {
         calendar_href: &str,
         sync_token: Option<&str>,
     ) -> Result<SyncResult> {
-        let url = self.resolve_url(calendar_href)?;
+        let url = self.resolve_url(calendar_href);
 
         // Tokens are stored decoded (the parser decodes entities), so escape
         // them again.
@@ -759,9 +754,7 @@ impl CaldavClient {
             token_value
         );
 
-        let req = self
-            .client
-            .request(reqwest::Method::from_bytes(b"REPORT")?, &url);
+        let req = self.request(reqwest::Method::from_bytes(b"REPORT")?, &url)?;
         let resp = self
             .apply_auth(req)
             .header("Content-Type", "application/xml; charset=utf-8")
@@ -790,7 +783,7 @@ impl CaldavClient {
         calendar_href: &str,
         since_utc: &str,
     ) -> Result<Vec<RawEvent>> {
-        let url = self.resolve_url(calendar_href)?;
+        let url = self.resolve_url(calendar_href);
 
         let body = format!(
             r#"<?xml version="1.0" encoding="utf-8"?>
@@ -810,9 +803,7 @@ impl CaldavClient {
             since_utc
         );
 
-        let req = self
-            .client
-            .request(reqwest::Method::from_bytes(b"REPORT")?, &url);
+        let req = self.request(reqwest::Method::from_bytes(b"REPORT")?, &url)?;
         let resp = self
             .apply_auth(req)
             .header("Content-Type", "application/xml; charset=utf-8")
@@ -857,7 +848,7 @@ async fn multistatus_body(resp: reqwest::Response, what: &str, url: &str) -> Res
 /// arrives rather than after holding all of it: a declared length over the
 /// cap fails before anything is read. Decoded with the charset of the
 /// `Content-Type` (UTF-8 by default), as reqwest's `text()` does.
-async fn read_body(mut resp: reqwest::Response, cap: usize) -> Result<String> {
+pub(crate) async fn read_body(mut resp: reqwest::Response, cap: usize) -> Result<String> {
     let url = resp.url().to_string();
     if let Some(len) = resp.content_length() {
         if len > cap as u64 {
@@ -886,7 +877,7 @@ async fn read_body(mut resp: reqwest::Response, cap: usize) -> Result<String> {
 /// Run a parse on the blocking pool: a large document takes real CPU, and
 /// the same runtime serves the booking pages. The text comes back with the
 /// result, for the callers that log it.
-async fn parse_blocking<T, F>(text: String, parse: F) -> (Result<T>, String)
+pub(crate) async fn parse_blocking<T, F>(text: String, parse: F) -> (Result<T>, String)
 where
     T: Send + 'static,
     F: FnOnce(&str) -> Result<T> + Send + 'static,
@@ -898,7 +889,7 @@ where
     match task.await {
         Ok(done) => done,
         Err(e) => (
-            Err(anyhow::anyhow!("CalDAV response parser failed: {e}")),
+            Err(anyhow::anyhow!("response parser failed: {e}")),
             String::new(),
         ),
     }
@@ -1294,7 +1285,7 @@ mod tests {
             "pass",
         );
         assert_eq!(
-            client.resolve_url("/principals/users/alice/").unwrap(),
+            client.resolve_url("/principals/users/alice/"),
             "https://nextcloud.example.com/principals/users/alice/"
         );
     }
@@ -1307,43 +1298,49 @@ mod tests {
             "pass",
         );
         assert_eq!(
-            client
-                .resolve_url("https://other.server.com/calendars/")
-                .unwrap(),
+            client.resolve_url("https://other.server.com/calendars/"),
             "https://other.server.com/calendars/"
         );
     }
 
-    /// A server cannot point the client at a private IP literal on another
-    /// host (#363): literals never reach the guarded resolver. Its own host,
-    /// checked when the source was saved, and allowlisted hosts are fine.
-    #[test]
-    fn resolve_refuses_a_private_literal_on_another_host() {
-        let _lock = crate::test_support::ENV_LOCK.blocking_lock();
+    /// Every request refuses a private IP literal that is not allowlisted
+    /// (#363), the saved base URL included: literals never reach the
+    /// guarded resolver, and the allowlist may have changed since the source
+    /// was saved. The refusal names no address.
+    #[tokio::test]
+    async fn requests_refuse_a_private_literal_at_every_call() {
+        let _lock = crate::test_support::ENV_LOCK.lock().await;
         let _guard = crate::test_support::EnvGuard::new();
+        let _strict = crate::net_guard::strict();
         let client = CaldavClient::new("https://cal.example.com/dav", "user", "pass");
         for href in [
             "http://10.1.2.3/cal/",
             "http://169.254.169.254/latest/",
-            "http://[::1]:8080/cal/",
+            "http://[fd12::1]:8080/cal/",
         ] {
-            assert!(client.resolve_url(href).is_err(), "{href}");
+            let err = client.fetch_events(href).await.unwrap_err().to_string();
+            assert_eq!(err, crate::net_guard::REFUSED, "{href}");
         }
-        assert!(client.resolve_url("https://93.184.215.14/cal/").is_ok());
 
-        let local = CaldavClient::new("http://127.0.0.1:5232/dav", "user", "pass");
-        assert!(local.resolve_url("http://127.0.0.1:5232/cal/").is_ok());
-        assert!(local.resolve_url("http://10.1.2.3/cal/").is_err());
+        // A source saved on a literal is refused once it is off the list,
+        // on its own host and port too.
+        let saved = CaldavClient::new("http://10.1.2.3:5232/dav", "user", "pass");
+        let err = saved.check_connection().await.unwrap_err().to_string();
+        assert_eq!(err, crate::net_guard::REFUSED);
+        assert!(saved.fetch_events("/dav/cal/").await.is_err());
 
-        std::env::set_var("CALRS_ALLOW_PRIVATE_HOSTS", "10.1.2.3");
-        assert!(client.resolve_url("http://10.1.2.3/cal/").is_ok());
+        // Allowlisted (in any spelling of the address), the request is built.
+        std::env::set_var("CALRS_ALLOW_PRIVATE_HOSTS", "10.1.2.3, fd12:0::1");
+        let get = reqwest::Method::GET;
+        assert!(saved.request(get.clone(), "http://10.1.2.3:5232/x").is_ok());
+        assert!(client.request(get, "http://[fd12::1]:8080/cal/").is_ok());
     }
 
     #[test]
     fn resolve_with_port() {
         let client = CaldavClient::new("https://cal.example.com:8443/dav", "user", "pass");
         assert_eq!(
-            client.resolve_url("/calendars/alice/").unwrap(),
+            client.resolve_url("/calendars/alice/"),
             "https://cal.example.com:8443/calendars/alice/"
         );
     }
@@ -1355,9 +1352,7 @@ mod tests {
     fn resolve_with_port_nextcloud_principal() {
         let client = CaldavClient::new("https://my-nextcloud:8080/remote.php/dav/", "user", "pass");
         assert_eq!(
-            client
-                .resolve_url("/remote.php/dav/principals/users/alice/")
-                .unwrap(),
+            client.resolve_url("/remote.php/dav/principals/users/alice/"),
             "https://my-nextcloud:8080/remote.php/dav/principals/users/alice/"
         );
     }
@@ -1366,7 +1361,7 @@ mod tests {
     fn resolve_without_port_https_default() {
         let client = CaldavClient::new("https://cal.example.com/dav", "user", "pass");
         assert_eq!(
-            client.resolve_url("/calendars/alice/").unwrap(),
+            client.resolve_url("/calendars/alice/"),
             "https://cal.example.com/calendars/alice/"
         );
     }
@@ -1377,7 +1372,7 @@ mod tests {
         // it reaches the same server.
         let client = CaldavClient::new("https://cal.example.com:443/dav", "user", "pass");
         assert_eq!(
-            client.resolve_url("/calendars/alice/").unwrap(),
+            client.resolve_url("/calendars/alice/"),
             "https://cal.example.com/calendars/alice/"
         );
     }
@@ -1416,16 +1411,17 @@ mod tests {
     #[test]
     fn allowlist_matches_case_insensitively() {
         let list = vec!["radicale".to_string(), "nextcloud.local".to_string()];
-        assert!(is_host_allowlisted("radicale", &list));
-        assert!(is_host_allowlisted("RADICALE", &list));
-        assert!(is_host_allowlisted("Nextcloud.Local", &list));
-        assert!(!is_host_allowlisted("evil.example.com", &list));
-        assert!(!is_host_allowlisted("radicale.example.com", &list));
+        let list = crate::net_guard::Allowlist::fixed(&list);
+        assert!(list.allows("radicale"));
+        assert!(list.allows("RADICALE"));
+        assert!(list.allows("Nextcloud.Local"));
+        assert!(!list.allows("evil.example.com"));
+        assert!(!list.allows("radicale.example.com"));
     }
 
     #[test]
     fn empty_allowlist_matches_nothing() {
-        assert!(!is_host_allowlisted("radicale", &[]));
+        assert!(!crate::net_guard::Allowlist::fixed(&[]).allows("radicale"));
     }
 
     /// All env-var assertions live in one test: Rust runs tests in parallel

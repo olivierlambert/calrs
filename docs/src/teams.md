@@ -58,7 +58,7 @@ Additional team-specific options:
 
 ## Public team pages
 
-- **Public teams:** `/team/{slug}` — shows team profile with avatar, description, members, and event types
+- **Public teams:** `/team/{slug}` shows the team profile with avatar, description, members (faces with their first names), and event types. Each meeting says who the guest meets: "with one of" and the members' faces for round robin, "with everyone" for collective (members excluded with weight 0 are left out), and when it is next free
 - **Private teams:** `/team/{slug}?invite={token}` — same page, but requires a valid invite token
 - **Slot picker:** `/team/{slug}/{event-slug}` — shows available slots based on the scheduling mode. The sidebar displays the team avatar and stacked member avatars (members excluded via weight 0 are hidden)
 - **Legacy redirects:** `/g/{slug}` redirects to `/team/{slug}`, `/t/{token}` redirects to `/team/{slug}?invite={token}`
@@ -94,7 +94,7 @@ When a booking is submitted:
 
 ### Excluding members
 
-On a **collective** event type, per-member exclusions can be set from the event type editor — useful when a team member is joining the team but shouldn't (yet) be required for a specific event. Excluded members don't gate the availability window, don't receive notifications, and don't appear on the public booking page's avatar list.
+On a **collective** event type, per-member exclusions can be set from the event type editor — useful when a team member is joining the team but shouldn't (yet) be required for a specific event. Excluded members don't gate the availability window, don't receive notifications, and don't appear on the public booking page's avatar list. The event type's bookings don't make them busy either, so their own event types stay bookable at those times.
 
 ## Booking watchers
 
@@ -106,10 +106,11 @@ When a booking lands on a watched event type:
 2. The first watcher to click the button claims the booking — a short-lived token backs each button
 3. Subsequent clicks land on an "already claimed" page; no double-assignment
 4. Claimed bookings show up on the watcher's dashboard with a "Claimed by you" badge
+5. A confirmed claimed booking makes the watcher busy: their own event types stop offering that time, and the availability troubleshooter lists it as a claimed booking
 
 **Typical setup:** a customer self-serves through a public event type, and a rotating support team watches it. Whoever has bandwidth grabs the booking — no round-robin assumptions, no manual dispatch.
 
-Configuration: in the event type editor, scroll to **Booking watchers** and pick one or more teams. Watchers can be set on any scheduling mode; they're independent from the round-robin / collective assignment.
+Configuration: in the event type editor, or on the create form once a team is picked, scroll to **Booking watchers** and pick one or more teams. Watchers can be set on any scheduling mode; they're independent from the round-robin / collective assignment.
 
 ## Multi-timezone teams
 

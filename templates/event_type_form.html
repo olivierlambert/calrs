@@ -445,7 +445,7 @@
                data-order-error="{{ t('form-error-bookable-range-order') }}"
                style="max-width: 170px;">
       </div>
-      <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">{{ t("event-type-form-bookable-range-help") }}{% if editing and form_slug %} <a href="/dashboard/event-types/{{ form_slug }}/overrides" style="color: var(--ink);">{{ t("event-types-overrides") }} &rarr;</a>{% endif %}</span>
+      <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">{{ t("event-type-form-bookable-range-help") }}{% if editing and overrides_url %} <a href="{{ overrides_url }}" style="color: var(--ink);">{{ t("event-types-overrides") }} &rarr;</a>{% endif %}</span>
     </div>
   </div>
 </details>
@@ -1055,8 +1055,8 @@
 </div>
 {% endif %}
 
-{% if is_group is defined and is_group and watcher_teams is defined and watcher_teams %}
-<details class="card collapsible-section" style="margin-top: 1rem;"{% if selected_watcher_team_ids is defined and selected_watcher_team_ids %} open{% endif %}>
+{% if watcher_teams is defined and watcher_teams and ((is_group is defined and is_group) or (not editing and teams is defined and teams)) %}
+<details class="card collapsible-section" id="watcher-section" style="margin-top: 1rem;"{% if selected_watcher_team_ids is defined and selected_watcher_team_ids %} open{% endif %}>
   <summary class="collapsible-header">
     <h2>{{ t("etf-watcher-teams") }}</h2>
     <span class="collapsible-hint" id="watcher-hint"></span>
@@ -1203,7 +1203,8 @@ function sub(tpl, a, b) {
 
   // --- Priority AJAX (no page reload) ---
   function sendPriority(userId, priority) {
-    var url = '/dashboard/{% if is_group is defined and is_group %}group-event-types/{{ form_team_id }}{% else %}event-types{% endif %}/{{ original_slug if (original_slug is defined and original_slug) else form_slug }}/priority/' + userId;
+    {% set priority_base = "/dashboard/" ~ (("group-event-types/" ~ form_team_id) if (is_group is defined and is_group) else "event-types") ~ "/" ~ (original_slug if (original_slug is defined and original_slug) else form_slug) ~ "/priority/" %}
+    var url = {{ priority_base | tojson }} + userId;
     var csrfCookie = document.cookie.split(';').map(function(c){return c.trim();}).find(function(c){return c.startsWith('__Host-calrs_csrf=');});
     var csrf = csrfCookie ? csrfCookie.split('=')[1] : '';
     var body = '_csrf=' + encodeURIComponent(csrf) + '&priority=' + encodeURIComponent(priority);
@@ -1277,9 +1278,9 @@ function sub(tpl, a, b) {
     var teamMembers = {};
     {% if teams is defined and teams %}
     {% for t in teams %}
-    teamMembers["{{ t.id }}"] = [
+    teamMembers[{{ t.id | tojson }}] = [
       {% if t.members is defined %}{% for m in t.members %}
-      { userId: "{{ m.user_id }}", name: "{{ m.name }}", hasAvatar: {{ m.has_avatar | lower }}, initials: "{{ m.initials }}", timezone: "{{ m.timezone | default(value='') }}" },
+      { userId: {{ m.user_id | tojson }}, name: {{ m.name | tojson }}, hasAvatar: {{ m.has_avatar | tojson }}, initials: {{ m.initials | tojson }}, timezone: {{ (m.timezone or "") | tojson }} },
       {% endfor %}{% endif %}
     ];
     {% endfor %}
@@ -1422,6 +1423,9 @@ function sub(tpl, a, b) {
     function toggleMode() {
       var isTeam = teamSel ? !!teamSel.value : {{ is_group is defined and is_group and "true" or "false" }};
       if (modeGroup) modeGroup.style.display = isTeam ? '' : 'none';
+      // Watchers belong to team event types only.
+      var watcherSection = document.getElementById('watcher-section');
+      if (watcherSection) watcherSection.style.display = isTeam ? '' : 'none';
       togglePriority();
     }
 
@@ -2128,13 +2132,13 @@ function sub(tpl, a, b) {
     var urlBox = document.getElementById('dg-url-box');
     var urlInput = document.getElementById('dg-url');
     var copyBtn = document.getElementById('dg-copy-btn');
-    var owner = '{{ owner_username }}';
-    var slug = '{{ form_slug }}';
+    var owner = {{ owner_username | tojson }};
+    var slug = {{ form_slug | tojson }};
     var selected = []; // [{username, name, id, hasAvatar, initials}]
 
     var allUsers = [
       {% for u in dg_eligible_users %}
-      { id: '{{ u.id }}', username: '{{ u.username }}', name: '{{ u.name }}', hasAvatar: {{ u.has_avatar|lower }}, initials: '{{ u.initials }}' }{% if not loop.last %},{% endif %}
+      { id: {{ u.id | tojson }}, username: {{ u.username | tojson }}, name: {{ u.name | tojson }}, hasAvatar: {{ u.has_avatar | tojson }}, initials: {{ u.initials | tojson }} }{% if not loop.last %},{% endif %}
       {% endfor %}
     ];
 
