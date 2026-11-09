@@ -634,6 +634,7 @@ teams-empty-admin = { $link } to collaborate with your team.
 teams-empty-admin-link-label = Create one
 teams-empty-member = Teams are created by administrators. Ask your admin to create one and add you as a member.
 teams-subtitle = People who share meetings, booked round robin or all together.
+teams-search-placeholder = Filter by name or link
 
 # Dashboard invite links (templates/dashboard_internal.html)
 
@@ -1058,7 +1059,7 @@ team-form-submit = Create team
 # Team settings (templates/team_settings.html)
 
 team-settings-page-title = Settings
-team-settings-subtitle = Team settings — team admins can edit these.
+team-settings-subtitle = Team settings: team admins can edit these.
 team-settings-public-url = Public URL
 team-settings-public-url-help = Anyone can book via this link.
 team-settings-invite-link = Invite link

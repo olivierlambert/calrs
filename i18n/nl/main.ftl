@@ -625,6 +625,7 @@ teams-empty-admin = { $link } om samen te werken met je team.
 teams-empty-admin-link-label = Maak er een aan
 teams-empty-member = Teams worden aangemaakt door beheerders. Vraag je beheerder om er een aan te maken en jou als lid toe te voegen.
 teams-subtitle = Mensen die afspraken delen, om de beurt of allemaal samen geboekt.
+teams-search-placeholder = Filteren op naam of link
 
 # Dashboard invite links (templates/dashboard_internal.html)
 
@@ -1049,7 +1050,7 @@ team-form-submit = Team aanmaken
 # Team settings (templates/team_settings.html)
 
 team-settings-page-title = Instellingen
-team-settings-subtitle = Teaminstellingen — teambeheerders kunnen deze bewerken.
+team-settings-subtitle = Teaminstellingen: teambeheerders kunnen deze bewerken.
 team-settings-public-url = Openbare URL
 team-settings-public-url-help = Iedereen kan via deze link boeken.
 team-settings-invite-link = Uitnodigingslink

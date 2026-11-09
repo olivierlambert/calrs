@@ -1,66 +1,75 @@
 {% extends "dashboard_base.html" %}
 
 {% block title %}{{ t("invites-heading") }}: {{ event_type_title }}, calrs{% endblock %}
+{% block main_class %}has-cards{% endblock %}
 
 {% block dashboard_content %}
-
-<div class="card">
-  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
-    <h1 style="margin-bottom: 0;">{{ t("invites-heading") }}</h1>
-    {% if team_slug %}<a href="/dashboard/teams" class="slot-btn" style="text-decoration: none; font-size: 0.8rem;">{{ t("invites-back-teams") }}</a>{% else %}<a href="/dashboard/event-types" class="slot-btn" style="text-decoration: none; font-size: 0.8rem;">{{ t("invites-back-event-types") }}</a>{% endif %}
+{% import "partials/icons.html" as ic %}
+{% if team_slug %}<a href="/dashboard/teams" class="page-back">{{ ic.icon("arrow-left", 14) }}{{ t("invites-back-teams") }}</a>{% else %}<a href="/dashboard/event-types" class="page-back">{{ ic.icon("arrow-left", 14) }}{{ t("invites-back-event-types") }}</a>{% endif %}
+<header class="page-header">
+  <div class="page-header-text">
+    <h1 class="page-title">{{ t("invites-heading") }}</h1>
+    <p class="page-subtitle">
+      {{ t("invites-intro", title='<strong>' ~ (event_type_title | escape) ~ '</strong>') | safe }}
+      {% if owner_name is defined and owner_name %}({{ owner_name }}){% endif %}
+    </p>
   </div>
-  <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 1.25rem;">
-    {{ t("invites-intro", title='<strong>' ~ (event_type_title | escape) ~ '</strong>') | safe }}
-    {% if owner_name is defined and owner_name %}<span style="font-size: 0.85rem;">({{ owner_name }})</span>{% endif %}
-  </p>
+</header>
 
-  {% if error %}
-    <div class="error" style="margin-bottom: 1rem;">{{ error }}</div>
+{% if error %}
+<div class="notice notice--error error" role="alert">{{ ic.icon("alert") }}<span>{{ error }}</span></div>
+{% endif %}
+
+{% if bulk_result %}
+  {% if bulk_result.sent_count > 0 %}
+  <div class="notice notice--success" role="status"><span><strong>{{ t("invites-sent-count", count=bulk_result.sent_count) }}</strong></span></div>
   {% endif %}
-
-  {% if bulk_result %}
-    {% if bulk_result.sent_count > 0 %}
-      <div style="padding: 0.75rem 1rem; background: rgba(34,197,94,0.1); border: 1px solid rgba(34,197,94,0.3); color: var(--success, #16a34a); border-radius: var(--radius); margin-bottom: 0.75rem; font-size: 0.9rem;">
-        <strong>{{ t("invites-sent-count", count=bulk_result.sent_count) }}</strong>
+  {% if bulk_result.has_issues %}
+  <div class="notice notice--warning" role="alert">{{ ic.icon("alert") }}<div class="inv-issues">
+    {% if bulk_result.over_limit %}
+      <div>{{ t("invites-capped", max=bulk_result.max_recipients | escape) | safe }}</div>
+    {% endif %}
+    {% if bulk_result.invalid %}
+      <div><strong>{{ t("invites-skipped-invalid", count=bulk_result.invalid|length) }}</strong>
+        <span class="inv-muted">{{ bulk_result.invalid|join(", ") }}</span>
       </div>
     {% endif %}
-    {% if bulk_result.has_issues %}
-      <div style="padding: 0.75rem 1rem; background: rgba(245,158,11,0.1); border: 1px solid rgba(245,158,11,0.3); border-radius: var(--radius); margin-bottom: 1.25rem; font-size: 0.9rem;">
-        {% if bulk_result.over_limit %}
-          <div style="margin-bottom: 0.4rem;">{{ t("invites-capped", max=bulk_result.max_recipients | escape) | safe }}</div>
-        {% endif %}
-        {% if bulk_result.invalid %}
-          <div style="margin-bottom: 0.4rem;"><strong>{{ t("invites-skipped-invalid", count=bulk_result.invalid|length) }}</strong>
-            <span style="color: var(--text-muted);">{{ bulk_result.invalid|join(", ") }}</span>
-          </div>
-        {% endif %}
-        {% if bulk_result.duplicates %}
-          <div style="margin-bottom: 0.4rem;"><strong>{{ t("invites-skipped-duplicate", count=bulk_result.duplicates|length) }}</strong>
-            <span style="color: var(--text-muted);">{{ bulk_result.duplicates|join(", ") }}</span>
-          </div>
-        {% endif %}
-        {% if bulk_result.failed %}
-          <div><strong>{{ t("invites-failed", count=bulk_result.failed|length) }}</strong>
-            <span style="color: var(--text-muted);">{{ bulk_result.failed|join(", ") }}</span>
-            {{ t("invites-failed-hint") }}
-          </div>
-        {% endif %}
+    {% if bulk_result.duplicates %}
+      <div><strong>{{ t("invites-skipped-duplicate", count=bulk_result.duplicates|length) }}</strong>
+        <span class="inv-muted">{{ bulk_result.duplicates|join(", ") }}</span>
       </div>
     {% endif %}
+    {% if bulk_result.failed %}
+      <div><strong>{{ t("invites-failed", count=bulk_result.failed|length) }}</strong>
+        <span class="inv-muted">{{ bulk_result.failed|join(", ") }}</span>
+        {{ t("invites-failed-hint") }}
+      </div>
+    {% endif %}
+  </div></div>
   {% endif %}
+{% endif %}
 
-  <!-- Quick link generator -->
-  <div style="padding: 1rem; background: var(--accent-subtle, rgba(99,102,241,0.06)); border: 1px solid var(--accent-border, rgba(99,102,241,0.2)); border-radius: var(--radius); margin-bottom: 1.25rem; display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap;">
-    <div>
-      <div style="font-weight: 600; font-size: 0.9rem;">{{ t("invites-quick-link") }}</div>
-      <div style="font-size: 0.8rem; color: var(--text-muted);">{{ t("invites-quick-link-help") }}</div>
-    </div>
-    <button type="button" id="quick-link-btn" class="slot-btn" style="cursor: pointer; font-weight: 600; color: var(--ink); border-color: var(--border-hover); white-space: nowrap;">{{ t("invites-get-link") }}</button>
+<style>
+  .inv-issues { display: flex; flex-direction: column; gap: 0.4rem; }
+  .inv-muted { color: var(--text-muted); }
+  .inv-quick { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem 1rem; flex-wrap: wrap; }
+  .inv-quick p { margin: 0; color: var(--text-secondary); font-size: 13.5px; max-width: 52ch; }
+  .inv-row.is-spent .ui-row-title, .inv-row.is-spent .ui-row-meta { color: var(--text-muted); }
+</style>
+
+<!-- Quick link generator -->
+<section class="card" aria-labelledby="inv-quick">
+  <div class="card-head"><h2 id="inv-quick">{{ t("invites-quick-link") }}</h2></div>
+  <div class="card-body inv-quick">
+    <p>{{ t("invites-quick-link-help") }}</p>
+    <button type="button" id="quick-link-btn" class="ui-btn">{{ t("invites-get-link") }}</button>
   </div>
+</section>
 
-  <form method="POST" action="/dashboard/invites/{{ event_type_id }}/send" style="border-bottom: 1px solid var(--border); padding-bottom: 1.25rem; margin-bottom: 1.25rem;">
-    <h2 style="font-size: 1rem; margin-bottom: 0.75rem;">{{ t("invites-or-email") }}</h2>
-
+<section class="card" aria-labelledby="inv-email">
+  <div class="card-head"><h2 id="inv-email">{{ t("invites-or-email") }}</h2></div>
+  <div class="card-body">
+  <form method="POST" action="/dashboard/invites/{{ event_type_id }}/send">
     <div class="form-group">
       <label for="recipients">{{ t("invites-recipients") }} <span class="hint">{{ t("invites-recipients-hint", max=(bulk_result.max_recipients if bulk_result else 100)) }}</span></label>
       <textarea id="recipients" name="recipients" required rows="6" placeholder="alice@example.com&#10;bob@example.com&#10;carol@example.com" style="font-size: 0.9rem;"></textarea>
@@ -91,48 +100,51 @@
 
     <button type="submit" class="btn" style="margin-top: 0.75rem;">{{ t("invites-send") }}</button>
   </form>
+  </div>
+</section>
 
+<section class="card" aria-labelledby="invites-sent">
+  <div class="card-head"><h2 id="invites-sent">{{ t("invites-sent-heading") }}{% if invites %}<span class="num">{{ invites_total }}</span>{% endif %}</h2></div>
   {% if invites %}
-  <h2 id="invites-sent" style="font-size: 1rem; margin-bottom: 0.75rem;">{{ t("invites-sent-heading") }}</h2>
-  <div style="display: flex; flex-direction: column; gap: 0.5rem;">
+  <div class="ui-list card-body">
     {% for inv in invites %}
-    <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); {% if inv.is_expired or inv.is_used %}opacity: 0.6;{% endif %}">
-      <div>
-        <strong style="font-size: 0.9rem;">{{ inv.guest_name }}</strong>
-        <span style="color: var(--text-muted); font-size: 0.85rem;">&middot; {{ inv.guest_email }}</span>
-        {% if inv.is_expired %}
-          <span class="badge badge-disabled" style="margin-left: 0.25rem;">{{ t("invites-badge-expired") }}</span>
-        {% elif inv.is_used %}
-          <span class="badge badge-disabled" style="margin-left: 0.25rem;">{{ t("invites-badge-used") }}</span>
-        {% else %}
-          <span class="badge badge-success" style="margin-left: 0.25rem;">{{ t("invites-badge-active") }}</span>
-        {% endif %}
-        <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 0.25rem;">
-          {{ t("invites-sent-by", name=inv.created_by) }} &middot; {{ t("invites-uses", used=inv.used_count, max=inv.max_uses) }}
-          {% if inv.expires_at %} &middot; {{ t("invites-expires-at", date=inv.expires_at) }}{% endif %}
+    <div class="ui-row inv-row{% if inv.is_expired or inv.is_used %} is-spent{% endif %}">
+      <div class="ui-row-main">
+        <div class="ui-row-title">
+          {% if inv.guest_name %}<span class="inv-name">{{ inv.guest_name }}</span>{% endif %}
+          {% if inv.guest_email %}<span class="inv-muted" style="font-weight: 400;">{{ inv.guest_email }}</span>{% endif %}
+          {% if inv.is_expired %}
+            <span class="badge badge-disabled">{{ t("invites-badge-expired") }}</span>
+          {% elif inv.is_used %}
+            <span class="badge badge-disabled">{{ t("invites-badge-used") }}</span>
+          {% else %}
+            <span class="badge badge-success">{{ t("invites-badge-active") }}</span>
+          {% endif %}
+        </div>
+        <div class="ui-row-meta">
+          <span>{{ t("invites-sent-by", name=inv.created_by) }}</span>
+          <span>{{ t("invites-uses", used=inv.used_count, max=inv.max_uses) }}</span>
+          {% if inv.expires_at %}<span>{{ t("invites-expires-at", date=inv.expires_at) }}</span>{% endif %}
         </div>
       </div>
-      <div style="display: flex; gap: 0.5rem; align-items: center;">
+      <div class="ui-row-actions">
         {% if not inv.is_expired and not inv.is_used %}
-          <button type="button" class="slot-btn copy-invite-btn" data-invite-url="{{ inv.invite_url }}" style="font-size: 0.8rem; cursor: pointer;">{{ t("invites-copy-link") }}</button>
+          <button type="button" class="ui-btn ui-btn--sm copy-invite-btn" data-invite-url="{{ inv.invite_url }}">{{ t("invites-copy-link") }}</button>
         {% endif %}
         {% if can_delete_invites %}
         <form method="POST" action="/dashboard/invites/{{ inv.id }}/delete" style="margin: 0;">
-          <button type="submit" class="slot-btn" style="font-size: 0.8rem; color: var(--error-text); cursor: pointer;" data-confirm="{{ t('invites-delete-confirm') }}" onclick="return confirm(this.dataset.confirm);">{{ t("invites-delete") }}</button>
+          <button type="submit" class="ui-btn ui-btn--sm ui-btn--danger" data-confirm="{{ t('invites-delete-confirm') }}" onclick="return confirm(this.dataset.confirm);">{{ t("invites-delete") }}</button>
         </form>
         {% endif %}
       </div>
     </div>
     {% endfor %}
   </div>
-  {% include "partials/pager.html" %}
+  {% if pager %}<div class="card-foot">{% include "partials/pager.html" %}</div>{% endif %}
   {% else %}
-  <div class="empty" style="padding: 1.5rem 1rem;">
-    <div class="empty-icon">&#9993;</div>
-    <div class="empty-text">{{ t("invites-empty") }}</div>
-  </div>
+  <div class="card-body"><p class="empty-line">{{ t("invites-empty") }}</p></div>
   {% endif %}
-</div>
+</section>
 <script>
 (function() {
   var btn = document.getElementById('quick-link-btn');
@@ -141,6 +153,8 @@
     var match = document.cookie.match(/(?:^|;\s*)__Host-calrs_csrf=([^;]+)/);
     return match ? match[1] : '';
   }
+  // Each click creates a fresh single-use link and copies it; the toast
+  // says so, and a refused clipboard falls back to a prompt holding it.
   btn.addEventListener('click', function() {
     btn.disabled = true;
     btn.textContent = {{ t('invites-js-generating') | tojson }};
@@ -149,26 +163,17 @@
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: '_csrf=' + encodeURIComponent(getCsrfToken())
     })
-    .then(function(r) { return r.json(); })
+    .then(function(r) { if (!r.ok) throw new Error('quick link'); return r.json(); })
     .then(function(data) {
-      if (data.url) {
-        navigator.clipboard.writeText(data.url).then(function() {
-          btn.textContent = {{ t('invites-js-copied') | tojson }};
-          btn.style.color = 'var(--success)';
-          btn.style.borderColor = 'var(--success)';
-          setTimeout(function() {
-            btn.textContent = {{ t('invites-get-link') | tojson }};
-            btn.style.color = 'var(--ink)';
-            btn.style.borderColor = 'var(--border-hover)';
-            btn.disabled = false;
-          }, 2000);
-        });
-      }
+      if (!data.url) throw new Error('quick link');
+      return window.calrsCopy(data.url);
     })
     .catch(function() {
-      btn.textContent = {{ t('invites-js-error') | tojson }};
+      window.calrsToast({{ t('invites-js-error') | tojson }}, 'error');
+    })
+    .then(function() {
+      btn.textContent = {{ t('invites-get-link') | tojson }};
       btn.disabled = false;
-      setTimeout(function() { btn.textContent = {{ t('invites-get-link') | tojson }}; }, 1500);
     });
   });
 })();

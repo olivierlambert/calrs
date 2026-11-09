@@ -381,6 +381,10 @@
   .card-part + .card-part, .card-body > * + .card-part { margin-top: 2.1rem; }
   .card-body > :last-child, .card-body > :last-child > .form-group:last-child { margin-bottom: 0; }
   .card-body > .ledger > li:last-child, .card-body.ledger > li:last-child, .card-body .figs tr:last-child > * { border-bottom: 0; }
+  /* A list in a card part ends on its last row too; a list that ends on
+     its hidden "no matches" line ends on the row before it. */
+  .card-part > .ledger > li:last-child { border-bottom: 0; }
+  :is(.card-body, .card-part) > .ledger > li:has(+ [data-filter-empty]:last-child) { border-bottom: 0; }
   @media (max-width: 700px) {
     .dashboard-main .card { --card-px: 1.05rem; --card-pt: 1.05rem; --card-pb: 1.1rem; --card-gap: 0.85rem; }
   }
@@ -1352,7 +1356,8 @@ document.querySelectorAll('input[type=file][data-max-bytes]').forEach(function(i
       return;
     }
     if (key === '/') {
-      var search = document.querySelector('[data-search]');
+      // The first search on screen: a tabbed page (admin) hides the others.
+      var search = Array.prototype.find.call(document.querySelectorAll('[data-search]'), function(el) { return el.offsetParent !== null; });
       if (search) { e.preventDefault(); search.focus(); if (search.select) search.select(); }
       return;
     }

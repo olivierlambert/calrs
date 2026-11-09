@@ -1,7 +1,8 @@
 {% extends "dashboard_base.html" %}
 {% block title %}{{ t("invite-links-page-title") }}, calrs{% endblock %}
+{% block main_class %}has-cards{% endblock %}
 {% block dashboard_content %}
-{% import "partials/icons.html" as ic %}
+{% import "partials/card_list.html" as cl %}
 <header class="page-header">
   <div class="page-header-text">
     <h1 class="page-title">{{ t("invite-links-heading") }}</h1>
@@ -12,20 +13,18 @@
   </div>
 </header>
 
-<section class="sec">
+<section class="card">
   {% if event_types or q %}
-  <div class="ui-toolbar">
+  <div class="card-head is-tools">
     {#- Searches every page on the server (Enter); typing narrows the rows
         on this page at once. #}
-    <form method="get" action="/dashboard/invite-links" class="ui-search" role="search">
-      {{ ic.icon("search", 15) }}
-      <input type="search" name="q" value="{{ q }}" maxlength="{{ search_max }}" data-search data-filter placeholder="{{ t('event-types-search-placeholder') }}" aria-label="{{ t('event-types-search-placeholder') }}">
-      <span class="kbd">/</span>
+    <form method="get" action="/dashboard/invite-links" role="search">
+      {{ cl.search(t("event-types-search-placeholder"), name="q", value=q, maxlength=search_max, filter=true) }}
     </form>
   </div>
-  <div class="ui-list" data-filter-list>
+  <div class="ui-list card-body" data-filter-list>
     {% for et in event_types %}
-    <div class="ui-row et-row" style="align-items: center;" data-filter-text="{{ et.title }} {{ et.team_name }} {{ et.host_name }}">
+    <div class="ui-row et-row" data-filter-text="{{ et.title }} {{ et.team_name }} {{ et.host_name }}">
       <div class="ui-row-main et-info">
         <div class="ui-row-title">
           <span>{{ et.title }}</span>
@@ -44,7 +43,7 @@
     {% endfor %}
     <p class="ui-filter-empty" data-filter-empty{% if event_types %} hidden{% endif %}>{{ t("dash-no-matches") }}</p>
   </div>
-  {% include "partials/pager.html" %}
+  {% if pager %}<div class="card-foot">{% include "partials/pager.html" %}</div>{% endif %}
   {% else %}
     <p class="empty-line">{{ t("invite-links-empty", link='<a href="/dashboard/event-types/new?preset=internal">' ~ (t("invite-links-empty-link-label") | escape) ~ '</a>') | safe }}</p>
   {% endif %}

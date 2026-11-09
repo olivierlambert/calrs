@@ -1,7 +1,9 @@
 {% extends "dashboard_base.html" %}
 {% block title %}{{ t("bookings-page-title") }}, calrs{% endblock %}
+{% block main_class %}has-cards{% endblock %}
 {% block dashboard_content %}
 {% import "partials/icons.html" as ic %}
+{% import "partials/card_list.html" as cl %}
 {% macro who(b) -%}
   <div class="tt-who">{{ b.guest_name }} <a href="mailto:{{ b.guest_email }}">{{ b.guest_email }}</a>{% if b.guest_phone %} <a href="tel:{{ b.guest_phone }}">{{ b.guest_phone }}</a>{% endif %}</div>
 {%- endmacro %}
@@ -42,6 +44,10 @@
     color: var(--text);
   }
   .cancel-form input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .bk-pager { margin-top: 0.75rem; }
+  .bk-pager .ui-pager { margin-top: 0; }
+  .bk-card .card-subhead { margin-bottom: 0.25rem; }
+  .bk-card > .card-body > .card-part:first-of-type { margin-top: 0.75rem; }
 </style>
 
 <header class="page-header">
@@ -49,24 +55,28 @@
     <h1 class="page-title">{{ t("bookings-page-title") }}</h1>
     <p class="page-subtitle">{{ t("bookings-summary", upcoming=totals.upcoming, pending=totals.pending, tz=sidebar.user_timezone) }}</p>
   </div>
-  {% if q or bookings or pending_bookings or claimable_bookings or recent_bookings or cancelled_bookings %}
-  {#- Searches every section on the server (Enter); typing narrows the
-      rows on the page at once. #}
-  <form method="get" action="/dashboard/bookings" class="page-actions ui-search" role="search">
-    {{ ic.icon("search", 15) }}
-    <input type="search" name="q" value="{{ q }}" maxlength="{{ search_max }}" data-search data-filter placeholder="{{ t('bookings-search-placeholder') }}" aria-label="{{ t('bookings-search-placeholder') }}">
-    <span class="kbd">/</span>
-  </form>
-  {% endif %}
 </header>
 
 {% if error_message %}
 <div class="notice notice--error" role="alert">{{ ic.icon("alert") }}<span>{{ error_message }}</span></div>
 {% endif %}
 
+{#- One card, as the booking directory: the search in its band, then each
+    section as a part of its body. Enter searches every section on the
+    server; typing narrows the rows on the page at once. #}
+<section class="card bk-card">
+{% if q or bookings or pending_bookings or claimable_bookings or recent_bookings or cancelled_bookings %}
+  <div class="card-head is-tools">
+    <form method="get" action="/dashboard/bookings" role="search">
+      {{ cl.search(t("bookings-search-placeholder"), name="q", value=q, maxlength=search_max, filter=true) }}
+    </form>
+  </div>
+{% endif %}
+  <div class="card-body">
+
 {% if pending_bookings %}
-<section class="sec" aria-labelledby="bk-pending">
-  <div class="sec-h"><h2 id="bk-pending">{{ t("bookings-pending-approval") }}<span class="num">{{ totals.pending }}</span></h2></div>
+<section class="card-part" aria-labelledby="bk-pending">
+  <div class="card-subhead"><h2 id="bk-pending">{{ t("bookings-pending-approval") }}<span class="num">{{ totals.pending }}</span></h2></div>
   <ol class="ledger" data-filter-list>
   {% for b in pending_bookings %}
   <li class="tt-row" id="b-{{ b.id }}" data-filter-text="{{ b.event_title }} {{ b.guest_name }} {{ b.guest_email }}">
@@ -93,13 +103,13 @@
   {% endfor %}
   <li class="ui-filter-empty" data-filter-empty hidden>{{ t("dash-no-matches") }}</li>
   </ol>
-  {% with pager=pagers.pending %}{% include "partials/pager.html" %}{% endwith %}
+  {% if pagers.pending %}<div class="bk-pager">{% with pager=pagers.pending %}{% include "partials/pager.html" %}{% endwith %}</div>{% endif %}
 </section>
 {% endif %}
 
 {% if claimable_bookings is defined and claimable_bookings %}
-<section class="sec" aria-labelledby="bk-claim">
-  <div class="sec-h"><h2 id="bk-claim">{{ t("bookings-available-to-claim") }}<span class="num">{{ totals.claimable }}</span></h2></div>
+<section class="card-part" aria-labelledby="bk-claim">
+  <div class="card-subhead"><h2 id="bk-claim">{{ t("bookings-available-to-claim") }}<span class="num">{{ totals.claimable }}</span></h2></div>
   <ol class="ledger" data-filter-list>
   {% for b in claimable_bookings %}
   <li class="tt-row" data-filter-text="{{ b.event_title }} {{ b.guest_name }} {{ b.guest_email }} {{ b.team_name }}">
@@ -117,12 +127,12 @@
   {% endfor %}
   <li class="ui-filter-empty" data-filter-empty hidden>{{ t("dash-no-matches") }}</li>
   </ol>
-  {% with pager=pagers.claimable %}{% include "partials/pager.html" %}{% endwith %}
+  {% if pagers.claimable %}<div class="bk-pager">{% with pager=pagers.claimable %}{% include "partials/pager.html" %}{% endwith %}</div>{% endif %}
 </section>
 {% endif %}
 
-<section class="sec" aria-labelledby="bk-upcoming">
-  <div class="sec-h"><h2 id="bk-upcoming">{{ t("bookings-upcoming") }}{% if bookings %}<span class="num">{{ totals.upcoming }}</span>{% endif %}</h2></div>
+<section class="card-part" aria-labelledby="bk-upcoming">
+  <div class="card-subhead"><h2 id="bk-upcoming">{{ t("bookings-upcoming") }}{% if bookings %}<span class="num">{{ totals.upcoming }}</span>{% endif %}</h2></div>
   {% if bookings %}
   <ol class="ledger" data-filter-list>
     {% for b in bookings %}
@@ -163,17 +173,17 @@
     {% endfor %}
     <li class="ui-filter-empty" data-filter-empty hidden>{{ t("dash-no-matches") }}</li>
   </ol>
-  {% with pager=pagers.upcoming %}{% include "partials/pager.html" %}{% endwith %}
   {% elif q %}
   <p class="empty-line">{{ t("dash-no-matches") }}</p>
   {% else %}
   <p class="empty-line">{{ t("bookings-empty", link='<a href="/dashboard/event-types">' ~ (t("bookings-empty-link-label") | escape) ~ '</a>') | safe }}</p>
   {% endif %}
+  {% if pagers.upcoming %}<div class="bk-pager">{% with pager=pagers.upcoming %}{% include "partials/pager.html" %}{% endwith %}</div>{% endif %}
 </section>
 {#- Recent and Cancelled: rows that only lead to the booking's host notes. #}
 {% macro hosted_section(sec_id, heading, rows, total, pg) -%}
-<section class="sec" aria-labelledby="{{ sec_id }}">
-  <div class="sec-h"><h2 id="{{ sec_id }}">{{ heading }}<span class="num">{{ total }}</span></h2></div>
+<section class="card-part" aria-labelledby="{{ sec_id }}">
+  <div class="card-subhead"><h2 id="{{ sec_id }}">{{ heading }}<span class="num">{{ total }}</span></h2></div>
   <ol class="ledger" data-filter-list>
   {% for b in rows %}
   <li class="tt-row" data-filter-text="{{ b.event_title }} {{ b.guest_name }} {{ b.guest_email }}">
@@ -192,9 +202,11 @@
   {% endfor %}
   <li class="ui-filter-empty" data-filter-empty hidden>{{ t("dash-no-matches") }}</li>
   </ol>
-  {% with pager=pg %}{% include "partials/pager.html" %}{% endwith %}
+  {% if pg %}<div class="bk-pager">{% with pager=pg %}{% include "partials/pager.html" %}{% endwith %}</div>{% endif %}
 </section>
 {%- endmacro %}
 {% if recent_bookings %}{{ hosted_section("bk-recent", t("bookings-recent"), recent_bookings, totals.recent, pagers.recent) }}{% endif %}
 {% if cancelled_bookings %}{{ hosted_section("bk-cancelled", t("bookings-cancelled"), cancelled_bookings, totals.cancelled, pagers.cancelled) }}{% endif %}
+  </div>
+</section>
 {% endblock %}

@@ -624,6 +624,7 @@ teams-empty-admin = { $link } para colaborar com sua equipe.
 teams-empty-admin-link-label = Crie uma
 teams-empty-member = As equipes são criadas pelos administradores. Peça a eles que criem uma e adicionem você como membro.
 teams-subtitle = Pessoas que compartilham reuniões, agendadas em rodízio ou todas juntas.
+teams-search-placeholder = Filtrar por nome ou link
 
 # Dashboard invite links (templates/dashboard_internal.html)
 
