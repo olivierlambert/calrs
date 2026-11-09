@@ -2,7 +2,12 @@
 {% block title %}{{ host_name }}, calrs{% endblock %}
 {% block head %}{% include "partials/landing_head.html" %}{% endblock %}
 {% block content %}
-{% import "partials/landing_hue.html" as dial %}
+{#- Context the handler does not pass yet, all optional (see the partials):
+    host_hours (landing_about.html), host_place and host_languages (layout
+    2, no data model yet), topic_groups (layout 2, no data model yet) and
+    et_facts or et.location_type / et.requires_confirmation
+    (landing_row.html). On the demo, demo-overlay.sh sets them: hours and
+    facts from the demo's database, groups, place and languages as mock. -#}
 <section class="lp-top">
   {% include "partials/public_logo.html" %}
   <header class="lp-card">
@@ -17,27 +22,12 @@
       <h1 class="lp-name">{{ host_name }}</h1>
       {% if host_title %}<p class="lp-title">{{ host_title }}</p>{% endif %}
     </div>
+    {% with hours = host_hours, place = host_place, languages = host_languages %}{% include "partials/landing_about.html" %}{% endwith %}
     {% if host_bio %}<div class="lp-more lp-bio">{{ host_bio|safe }}</div>{% endif %}
   </header>
 </section>
 
-<ul class="lp-list"{% if event_types %} data-next="/u/{{ username }}/next-free"{% endif %}>
-  {% for et in event_types %}
-  <li class="lp-row" style="--eh: {{ dial.hue(et.duration_min) }}" data-slug="{{ et.slug }}">
-    {% with d = et.duration_min %}{% include "partials/landing_dial.html" %}{% endwith %}
-    <div class="lp-main">
-      <a href="/u/{{ username }}/{{ et.slug }}" data-calrs-sync class="lp-et-title">{{ et.title }}</a>
-      {% if et.description %}<p class="lp-desc">{{ et.description|safe }}</p>{% endif %}
-    </div>
-    <div class="lp-side">
-      <span class="lp-next" hidden></span>
-      <span class="lp-days" hidden aria-hidden="true"></span>
-    </div>
-  </li>
-  {% else %}
-  <li class="lp-empty">{{ t("profile-no-event-type") }}</li>
-  {% endfor %}
-</ul>
+{% with href_kind = "u", href_owner = username, href_tail = "", empty_text = t("profile-no-event-type") %}{% include "partials/landing_list.html" %}{% endwith %}
 {% include "partials/landing_script.html" %}
 {% endblock %}
 {% block footer %}<div class="lp-foot">{{ t("base-powered-by") }} <a href="https://cal.rs">calrs</a> <img src="/brand-logo" alt=""></div>{% endblock %}

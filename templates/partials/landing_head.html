@@ -5,7 +5,25 @@
     overview's per-person hue. Colours come from the theme variables only
     (hues are mixed into them), so light, dark, every preset and custom
     themes follow. Archivo is the dashboard's face; the booking pages keep
-    Inter, and the two never meet on one page. -#}
+    Inter, and the two never meet on one page.
+
+    Two layouts while the owner compares them, picked with ?landing=1|2,
+    remembered in localStorage (calrs_landing) and set as a class on <html>
+    before the first paint: lp-l1 (purpose first) or lp-l2 (adds topic
+    headings, a line on how booking works, the host's place and
+    languages). Elements only one layout shows carry lp-l1-only or
+    lp-l2-only. -#}
+<script>
+(function() {
+  var v = '1';
+  try {
+    var q = new URLSearchParams(location.search).get('landing');
+    if (q === '1' || q === '2') { v = q; localStorage.setItem('calrs_landing', q); }
+    else if (localStorage.getItem('calrs_landing') === '2') { v = '2'; }
+  } catch (e) {}
+  document.documentElement.classList.add('lp-l' + v);
+})();
+</script>
 <style>
   @font-face {
     font-family: 'Archivo';
@@ -29,10 +47,13 @@
   :root {
     --lp-tint: color-mix(in srgb, var(--text) 4%, var(--bg));
     --lp-face: color-mix(in srgb, var(--text) 9%, var(--surface));
-    --lp-rule: color-mix(in srgb, var(--text) 13%, var(--bg));
     --lp-rule-top: color-mix(in srgb, var(--text) 30%, var(--bg));
     --band: color-mix(in srgb, var(--accent) 7%, var(--bg));
     --face-mix: 26%;
+    --card-line: color-mix(in srgb, var(--text) 12%, var(--bg));
+    --card-head: color-mix(in srgb, var(--text) 4%, var(--surface));
+    --card-hair: color-mix(in srgb, var(--text) 8%, var(--surface));
+    --card-hover: color-mix(in srgb, var(--text) 2.5%, var(--surface));
   }
   /* The colour of a meeting's length (--eh, set on its row from a fixed
      cool-to-warm scale, see landing_dial.html), mixed into the theme: the
@@ -46,9 +67,12 @@
   html.dark {
     --lp-tint: color-mix(in srgb, var(--text) 6%, var(--bg));
     --lp-face: color-mix(in srgb, var(--text) 14%, var(--surface));
-    --lp-rule: color-mix(in srgb, var(--text) 14%, var(--bg));
     --band: color-mix(in srgb, var(--accent) 12%, var(--bg));
     --face-mix: 38%;
+    --card-line: color-mix(in srgb, var(--text) 14%, var(--bg));
+    --card-head: color-mix(in srgb, var(--text) 6%, var(--surface));
+    --card-hair: color-mix(in srgb, var(--text) 10%, var(--surface));
+    --card-hover: color-mix(in srgb, var(--text) 4%, var(--surface));
   }
   html.dark .lp-row {
     --dial-tint: color-mix(in srgb, hsl(var(--eh, 220) 55% 60%) 38%, var(--surface));
@@ -66,6 +90,7 @@
   }
   .container { max-width: 700px; margin-top: 0; margin-bottom: 0; }
   .lp-num { font-variant-numeric: tabular-nums; }
+  html:not(.lp-l2) .lp-l2-only, html.lp-l2 .lp-l1-only { display: none !important; }
 
   /* The header: logo and the host's card on a tint of the brand accent,
      edge to edge (a tint, not a gradient). */
@@ -87,7 +112,8 @@
   .lp-card { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 0 1.5rem; align-items: center; }
   .lp-card > .lp-face { grid-row: 1; grid-column: 1; }
   .lp-card > .lp-id { grid-row: 1; grid-column: 2; }
-  .lp-card > .lp-more { grid-row: 2; grid-column: 2; }
+  .lp-card > .lp-about { grid-row: 2; grid-column: 2; }
+  .lp-card > .lp-more { grid-row: 3; grid-column: 2; }
   .lp-face {
     width: 88px;
     height: 88px;
@@ -116,6 +142,17 @@
   .lp-bio a:hover { color: var(--accent); }
   .lp-bio code { background: var(--lp-tint); padding: 0.1em 0.3em; border-radius: 3px; font-size: 0.85em; }
 
+  /* When the host usually meets (and, in layout 2, where they are and
+     what they speak): quiet lines under the name, an icon each. The
+     guest's own hours, added by the page when their timezone differs,
+     sit under the host's. */
+  .lp-about { list-style: none; margin-top: 1rem; display: flex; flex-direction: column; gap: 0.35rem; font-size: 0.95rem; line-height: 1.45; color: var(--text-secondary); }
+  .lp-about li { display: flex; align-items: flex-start; gap: 0.55rem; }
+  .lp-about .nav-ic { flex: none; margin-top: 0.15em; }
+  .lp-yours { display: block; margin-top: 0.1rem; font-size: 0.875rem; font-variant-numeric: tabular-nums; }
+  .lp-yours[hidden] { display: none; }
+  .lp-yours b { color: var(--text); font-weight: 600; }
+
   /* Team members: a row of faces, each with a first name under it. */
   .lp-members { display: flex; flex-wrap: wrap; gap: 0.9rem 1.25rem; margin-top: 1.25rem; list-style: none; }
   .lp-member { max-width: 6.5rem; display: flex; flex-direction: column; align-items: flex-start; gap: 0.35rem; }
@@ -123,21 +160,33 @@
   .lp-member-name { font-size: 0.8rem; line-height: 1.2; color: var(--text-secondary); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .lp-member-more .lp-face { color: var(--text-muted); font-variant-numeric: tabular-nums; }
 
-  /* The timetable: one ruled line per meeting. The list runs 0.75rem wider
-     than the text on each side, so the hover tint has room and the dials
-     still line up with the photo above. */
-  .lp-list { border-top: 1px solid var(--lp-rule-top); list-style: none; margin: 0 -0.75rem; }
+  /* The meetings sit in cards, the dashboard's card language: a sheet on
+     the surface with a hairline border and no shadow, its title in a
+     softly tinted band (colour, not a rule, separates head and body), its
+     rows split by a fainter hairline. Same class names as the dashboard
+     (.card, .card-head, .card-body), scoped here because base.html's
+     .card is the older padded, shadowed one. The card runs 0.75rem wider
+     than the text on each side, so the dials still line up with the
+     photo above. */
+  .card.lp-cardlist { background: var(--surface); border: 1px solid var(--card-line); border-radius: 10px; box-shadow: none; padding: 0; margin: 0 -0.75rem; overflow: hidden; }
+  .card.lp-cardlist + .card.lp-cardlist { margin-top: 1.25rem; }
+  .lp-cardlist .card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 0.75rem; padding: 0.75rem 1rem 0.7rem; background: var(--card-head); }
+  .lp-cardlist .card-title { display: flex; align-items: baseline; gap: 0.4rem; margin: 0; font-size: 0.95rem; line-height: 1.3; font-weight: 640; color: var(--text); }
+  .lp-cardlist .count-pill { color: var(--text-muted); font-weight: 500; }
+  .lp-cardlist .card-body { padding: 0; }
+  .lp-list { list-style: none; margin: 0; }
   .lp-row {
     position: relative;
     display: grid;
-    grid-template-columns: 5rem minmax(0, 1fr) auto;
+    grid-template-columns: 5rem minmax(0, 1fr) 10rem;
     gap: 0 1.25rem;
     align-items: start;
     padding: 1rem 0.75rem;
-    border-bottom: 1px solid var(--lp-rule);
+    border-top: 1px solid var(--card-hair);
     transition: background-color 120ms ease;
   }
-  .lp-row:hover, .lp-row:focus-within { background: var(--lp-tint); }
+  .lp-row:first-child { border-top: 0; }
+  .lp-row:hover, .lp-row:focus-within { background: var(--card-hover); }
 
   /* The length of a meeting as clock dials, one per hour (see
      landing_dial.html), with the exact length written under them. */
@@ -171,37 +220,40 @@
   .lp-sr { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
   .lp-with-faces { display: flex; gap: 0.25rem; }
   .lp-with .lp-face { width: 22px; height: 22px; font-size: 0.55rem; }
-  .lp-side { display: flex; flex-direction: column; align-items: flex-end; gap: 0.5rem; padding-top: 0.45rem; }
-  .lp-next { font-size: 0.875rem; color: var(--text-secondary); white-space: nowrap; font-variant-numeric: tabular-nums; }
-  .lp-next b { color: var(--text); font-weight: 600; }
-  .lp-next[hidden], .lp-days[hidden] { display: none; }
-  .lp-days { display: none; }
+  /* What a guest decides on besides the purpose: how they meet, and
+     whether each request is confirmed by hand. A column on wide screens,
+     a line under the description on narrow ones. */
+  .lp-facts { list-style: none; display: flex; flex-direction: column; gap: 0.3rem; padding-top: 0.45rem; font-size: 0.875rem; line-height: 1.35; color: var(--text-secondary); }
+  .lp-fact { display: flex; align-items: center; gap: 0.45rem; white-space: nowrap; }
+  .lp-fact .nav-ic { flex: none; }
+  /* Set under the meeting mode's text, not its icon. */
+  .lp-req { padding-left: calc(16px + 0.45rem); color: var(--text); font-weight: 560; }
+  .lp-req span:first-child { text-decoration: underline dotted; text-decoration-color: var(--lp-rule-top); text-underline-offset: 3px; }
 
-  .lp-empty { padding: 1.1rem 0.75rem; border-bottom: 1px solid var(--lp-rule); color: var(--text-secondary); }
+  /* Layout 2: one line on how booking works, then topics under small
+     headings, each heading over its own ruled list. */
+  .lp-how { margin: -0.75rem 0 1.25rem; max-width: 62ch; font-size: 0.95rem; color: var(--text-secondary); }
+
+  .lp-empty { padding: 1.1rem 0.75rem; color: var(--text-secondary); }
 
   .lp-foot { margin-top: 2.5rem; margin-bottom: 2.5rem; font-size: 0.8rem; color: var(--text-muted); }
   .lp-foot a { color: var(--text-muted); text-decoration: none; }
   .lp-foot a:hover { color: var(--text); }
   .lp-foot img { width: 17px; height: 14px; vertical-align: -2px; margin-left: 0.2rem; }
 
-  /* The coming week as seven small day markers, shown only when
-     landing_script.html's show_week_strip is on. */
-  .lp-days:not([hidden]) { display: flex; gap: 3px; }
-  .lp-day { display: flex; flex-direction: column; align-items: center; gap: 2px; width: 14px; font-size: 0.625rem; line-height: 1; color: var(--text-muted); }
-  .lp-day i { display: block; width: 10px; height: 10px; box-shadow: inset 0 0 0 1px var(--lp-rule-top); }
-  .lp-day.is-free i { background: var(--dial-hand); box-shadow: none; }
-
-
   @media (max-width: 560px) {
     body { padding: 2.25rem 1rem 2rem; }
     .lp-top { clip-path: inset(-2.25rem -100vmax 0 -100vmax); }
     .lp-top .logo { margin-bottom: 2rem; }
     .lp-card { gap: 0 1rem; }
-    .lp-card > .lp-more { grid-column: 1 / -1; }
+    .lp-card > .lp-more, .lp-card > .lp-about { grid-column: 1 / -1; }
     .lp-face { width: 72px; height: 72px; font-size: 1.35rem; }
     .lp-name { font-size: 2rem; }
-    .lp-row { grid-template-columns: 5rem minmax(0, 1fr); gap: 0 0.85rem; min-height: 44px; }
+    .card.lp-cardlist { margin: 0; }
+    .lp-cardlist .card-head { padding: 0.65rem 0.85rem 0.6rem; }
+    .lp-row { grid-template-columns: 5rem minmax(0, 1fr); gap: 0 0.75rem; min-height: 44px; padding: 0.95rem 0.85rem 0.95rem 0.5rem; }
     .lp-dur { grid-row: span 2; }
-    .lp-side { grid-column: 2; align-items: flex-start; padding-top: 0.4rem; }
+    .lp-facts { grid-column: 2; flex-direction: row; flex-wrap: wrap; gap: 0.2rem 1rem; padding-top: 0.5rem; }
+    .lp-req { padding-left: 0; }
   }
 </style>

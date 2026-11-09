@@ -1,0 +1,31 @@
+{#- What a guest knows about the host before picking a meeting, under the
+    name: when they usually meet, then (layout 2) where they are and the
+    languages they speak.
+
+    `hours`, when given: {from, to, start, end, tz, zone, days}, where
+    `from` and `to` are weekday codes (mon..sun, `from` empty for every
+    day), `start` and `end` the usual first and last minute ("09:00",
+    "17:30") in the host's timezone `tz`, `zone` its place name ("Paris")
+    and `days` the weekdays as numbers (0 = Sunday), for the script that
+    adds the guest's own time when their timezone differs.
+    `place` and `languages`: display strings, already localized.
+    Nothing here is shown when the page passes none of them. -#}
+{%- import "partials/phosphor.html" as ph -%}
+{%- if hours or place or languages %}
+{%- set wd = {"mon": t("common-weekday-long-mon"), "tue": t("common-weekday-long-tue"), "wed": t("common-weekday-long-wed"), "thu": t("common-weekday-long-thu"), "fri": t("common-weekday-long-fri"), "sat": t("common-weekday-long-sat"), "sun": t("common-weekday-long-sun")} -%}
+<ul class="lp-about">
+  {%- if hours %}
+  {%- set days = t("landing-days-range", first=wd[hours.from], last=wd[hours.to]) if hours.from else t("landing-days-every") %}
+  <li class="lp-hours" data-tz="{{ hours.tz }}" data-start="{{ hours.start }}" data-end="{{ hours.end }}" data-days="{{ hours.days | join(',') }}">
+    {{ ph.icon("clock", 16) }}
+    <span>{{ t("landing-hours", days=days, start=hours.start, end=hours.end, zone=hours.zone) }}<span class="lp-yours" hidden></span></span>
+  </li>
+  {%- endif %}
+  {%- if place %}
+  <li class="lp-l2-only">{{ ph.icon("map-pin", 16) }}<span>{{ t("landing-based-in", place=place) }}</span></li>
+  {%- endif %}
+  {%- if languages %}
+  <li class="lp-l2-only">{{ ph.icon("globe", 16) }}<span>{{ t("landing-speaks", languages=languages) }}</span></li>
+  {%- endif %}
+</ul>
+{%- endif %}

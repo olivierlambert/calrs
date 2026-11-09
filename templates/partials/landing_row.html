@@ -1,0 +1,49 @@
+{#- One meeting on a landing page, for `et`: its
+    length as stopwatch dials, its title and description, and the facts a
+    guest decides on besides the purpose: how they meet, and whether the
+    host confirms each request.
+
+    The facts are read from `et` (location_type, requires_confirmation),
+    or, when the page passes `et_facts` (a map of slug to those fields),
+    from there: the demo fills that map in its overlay until the handlers
+    pass the fields themselves. A team meeting also names its people.
+    Include inside the loop; the link is
+    /`href_kind`/`href_owner`/slug`href_tail` (see landing_list.html). -#}
+{%- import "partials/landing_hue.html" as dial -%}
+{%- import "partials/phosphor.html" as ph -%}
+{%- set f = et_facts[et.slug] if (et_facts is defined and et_facts and et.slug in et_facts) else et -%}
+{%- set loc = f.location_type -%}
+<li class="lp-row" style="--eh: {{ dial.hue(et.duration_min) }}" data-slug="{{ et.slug }}">
+    {% with d = et.duration_min %}{% include "partials/landing_dial.html" %}{% endwith %}
+    <div class="lp-main">
+      <a href="/{{ href_kind }}/{{ href_owner }}/{{ et.slug }}{{ href_tail }}" data-calrs-sync class="lp-et-title">{{ et.title }}</a>
+      {%- if et.visibility == "internal" %}<span class="lp-vis">{{ t("event-types-badge-internal") }}</span>{% elif et.visibility == "private" %}<span class="lp-vis">{{ t("event-types-badge-private") }}</span>{% endif %}
+      {% if et.description %}<p class="lp-desc">{{ et.description|safe }}</p>{% endif %}
+      {% if et.scheduling_mode is defined and et.members is defined and et.members %}
+      <div class="lp-with">
+        <span>{% if et.scheduling_mode == "collective" %}{{ t("landing-with-everyone") }}{% else %}{{ t("landing-with-one-of") }}{% endif %}</span>
+        <span class="lp-sr">{% for m in et.members %}{{ m.name }}{% if not loop.last %}, {% endif %}{% endfor %}</span>
+        <span class="lp-with-faces" aria-hidden="true">
+          {% for m in et.members %}{% if loop.index <= 8 %}<span class="lp-face" data-face="{{ m.name }}" title="{{ m.name }}">{% if m.has_avatar %}<img src="/avatar/{{ m.id }}" alt="">{% else %}{{ m.initials }}{% endif %}</span>{% endif %}{% endfor %}
+        </span>
+        {% if et.members|length > 8 %}<span class="lp-num" aria-hidden="true">+{{ et.members|length - 8 }}</span>{% endif %}
+      </div>
+      {% endif %}
+    </div>
+    {%- if loc in ["link", "jitsi_auto", "webhook_auto", "google_meet", "phone", "in_person"] or f.requires_confirmation %}
+    <ul class="lp-facts">
+      {%- if loc in ["link", "jitsi_auto", "webhook_auto"] %}
+      <li class="lp-fact">{{ ph.icon("video-camera", 16) }}<span>{{ t("slots-location-video") }}</span></li>
+      {%- elif loc == "google_meet" %}
+      <li class="lp-fact">{{ ph.icon("video-camera", 16) }}<span>{{ t("slots-location-google-meet") }}</span></li>
+      {%- elif loc == "phone" %}
+      <li class="lp-fact">{{ ph.icon("phone", 16) }}<span>{{ t("slots-location-phone") }}</span></li>
+      {%- elif loc == "in_person" %}
+      <li class="lp-fact">{{ ph.icon("map-pin", 16) }}<span>{{ t("etf-location-in-person") }}</span></li>
+      {%- endif %}
+      {%- if f.requires_confirmation %}
+      <li class="lp-fact lp-req" title="{{ t('landing-on-request-hint') }}"><span>{{ t("landing-on-request") }}</span><span class="lp-sr">{{ t("landing-on-request-hint") }}</span></li>
+      {%- endif %}
+    </ul>
+    {%- endif %}
+</li>

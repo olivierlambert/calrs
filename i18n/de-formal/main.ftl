@@ -532,3 +532,6 @@ overview-sum-pending = { $count ->
    *[other] { $count } Anfragen warten auf Ihre Antwort.
 }
 overview-links-page = Ihre Seite
+
+landing-hours-yours = Ihre Zeit: %1 bis %2
+landing-how-it-works = Wählen Sie ein Thema und eine passende Zeit, die Bestätigung kommt per E-Mail.

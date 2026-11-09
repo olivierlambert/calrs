@@ -252,6 +252,16 @@ landing-duration-aria-hm =
 landing-next-free = Najbliższy: %1
 landing-with-one-of = z jedną z osób
 landing-with-everyone = ze wszystkimi
+landing-hours = Dostępność: zwykle { $days }, od { $start } do { $end } (strefa czasowa: { $zone })
+landing-days-range = { $first }–{ $last }
+landing-days-every = codziennie
+landing-hours-yours = Twój czas: od %1 do %2
+landing-on-request = Na zapytanie
+landing-on-request-hint = Każda prośba jest potwierdzana ręcznie przed rezerwacją.
+landing-how-it-works = Wybierz temat i dogodny termin, a potwierdzenie przyjdzie e-mailem.
+landing-based-in = Lokalizacja: { $place }
+landing-speaks = Języki: { $languages }
+landing-meetings = Spotkania
 
 # Month and weekday names + per-locale date format patterns.
 # Used by server-side date formatters in src/i18n.rs.

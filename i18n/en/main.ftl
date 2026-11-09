@@ -253,6 +253,19 @@ landing-duration-aria-hm =
 landing-next-free = Next: %1
 landing-with-one-of = with one of
 landing-with-everyone = with everyone
+# landing-hours reads the host's usual weekly hours; $days is landing-days-range
+# or landing-days-every. In landing-hours-yours, %1 and %2 are the same hours in
+# the guest's timezone, filled in by the page itself.
+landing-hours = Usually available { $days }, { $start } to { $end } ({ $zone } time)
+landing-days-range = { $first } to { $last }
+landing-days-every = every day
+landing-hours-yours = Your time: %1 to %2
+landing-on-request = On request
+landing-on-request-hint = Each request is confirmed by hand before it is booked.
+landing-how-it-works = Pick a topic, choose a time that suits you, and you'll get a confirmation by email.
+landing-based-in = Based in { $place }
+landing-speaks = Speaks { $languages }
+landing-meetings = Meetings
 
 # Month and weekday names + per-locale date format patterns.
 # Used by server-side date formatters in src/i18n.rs.

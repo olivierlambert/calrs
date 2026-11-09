@@ -244,6 +244,16 @@ landing-duration-aria-hm =
 landing-next-free = Järgmine: %1
 landing-with-one-of = ühega neist
 landing-with-everyone = kõigiga
+landing-hours = Tavaliselt saadaval { $days }, { $start }–{ $end } ({ $zone } aja järgi)
+landing-days-range = { $first }–{ $last }
+landing-days-every = iga päev
+landing-hours-yours = Sinu aeg: %1–%2
+landing-on-request = Päringu alusel
+landing-on-request-hint = Iga päring kinnitatakse käsitsi enne broneerimist.
+landing-how-it-works = Vali teema ja sobiv aeg, kinnituse saad e-postiga.
+landing-based-in = Asukoht: { $place }
+landing-speaks = Keeled: { $languages }
+landing-meetings = Kohtumised
 
 # Month and weekday names + per-locale date format patterns.
 # Used by server-side date formatters in src/i18n.rs.

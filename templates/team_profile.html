@@ -2,7 +2,12 @@
 {% block title %}{{ team_name }}, calrs{% endblock %}
 {% block head %}{% include "partials/landing_head.html" %}{% endblock %}
 {% block content %}
-{% import "partials/landing_hue.html" as dial %}
+{#- Context the handler does not pass yet, all optional (see the partials):
+    team_hours (landing_about.html; only when the team's meetings share one
+    timezone, else none), topic_groups (layout 2, no data model yet) and
+    et_facts or et.location_type / et.requires_confirmation
+    (landing_row.html). On the demo, demo-overlay.sh sets them from the
+    demo's database. -#}
 {% set invite_q = ("?invite=" ~ (invite_token | urlencode)) if (invite_token is defined and invite_token) else "" %}
 <section class="lp-top">
   {% include "partials/public_logo.html" %}
@@ -17,6 +22,7 @@
     <div class="lp-id">
       <h1 class="lp-name">{{ team_name }}</h1>
     </div>
+    {% with hours = team_hours, place = none, languages = none %}{% include "partials/landing_about.html" %}{% endwith %}
     {% if team_description or members %}
     <div class="lp-more">
       {% if team_description %}<div class="lp-bio">{{ team_description|safe }}</div>{% endif %}
@@ -40,34 +46,7 @@
   </header>
 </section>
 
-<ul class="lp-list"{% if event_types %} data-next="/team/{{ team_slug }}/next-free{{ invite_q }}"{% endif %}>
-  {% for et in event_types %}
-  <li class="lp-row" style="--eh: {{ dial.hue(et.duration_min) }}" data-slug="{{ et.slug }}">
-    {% with d = et.duration_min %}{% include "partials/landing_dial.html" %}{% endwith %}
-    <div class="lp-main">
-      <a href="/team/{{ team_slug }}/{{ et.slug }}{{ invite_q }}" data-calrs-sync class="lp-et-title">{{ et.title }}</a>
-      {%- if et.visibility == "internal" %}<span class="lp-vis">{{ t("event-types-badge-internal") }}</span>{% elif et.visibility == "private" %}<span class="lp-vis">{{ t("event-types-badge-private") }}</span>{% endif %}
-      {% if et.description %}<p class="lp-desc">{{ et.description|safe }}</p>{% endif %}
-      {% if et.scheduling_mode is defined and et.members is defined and et.members %}
-      <div class="lp-with">
-        <span>{% if et.scheduling_mode == "collective" %}{{ t("landing-with-everyone") }}{% else %}{{ t("landing-with-one-of") }}{% endif %}</span>
-        <span class="lp-sr">{% for m in et.members %}{{ m.name }}{% if not loop.last %}, {% endif %}{% endfor %}</span>
-        <span class="lp-with-faces" aria-hidden="true">
-          {% for m in et.members %}{% if loop.index <= 8 %}<span class="lp-face" data-face="{{ m.name }}" title="{{ m.name }}">{% if m.has_avatar %}<img src="/avatar/{{ m.id }}" alt="">{% else %}{{ m.initials }}{% endif %}</span>{% endif %}{% endfor %}
-        </span>
-        {% if et.members|length > 8 %}<span class="lp-num" aria-hidden="true">+{{ et.members|length - 8 }}</span>{% endif %}
-      </div>
-      {% endif %}
-    </div>
-    <div class="lp-side">
-      <span class="lp-next" hidden></span>
-      <span class="lp-days" hidden aria-hidden="true"></span>
-    </div>
-  </li>
-  {% else %}
-  <li class="lp-empty">{{ t("team-profile-empty") }}</li>
-  {% endfor %}
-</ul>
+{% with href_kind = "team", href_owner = team_slug, href_tail = invite_q, empty_text = t("team-profile-empty") %}{% include "partials/landing_list.html" %}{% endwith %}
 {% include "partials/landing_script.html" %}
 {% endblock %}
 {% block footer %}<div class="lp-foot">{{ t("base-powered-by") }} <a href="https://cal.rs">calrs</a> <img src="/brand-logo" alt=""></div>{% endblock %}
