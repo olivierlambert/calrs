@@ -2,6 +2,7 @@
 {% block title %}{{ t("api-docs-title") }}, calrs{% endblock %}
 {% block container_class %}is-wide{% endblock %}
 {% block head %}<link rel="stylesheet" href="/static/swagger-ui/swagger-ui.css?v={{ swagger_version }}">{% endblock %}
+{% block main_class %}has-cards{% endblock %}
 {% block dashboard_content %}
 {% import "partials/icons.html" as ic %}
 <style>
@@ -10,7 +11,7 @@
   .swagger-ui .wrapper { padding: 0; max-width: none; }
   .swagger-ui .information-container .info { margin: 1.25rem 0; }
   .swagger-ui .scheme-container { box-shadow: none; padding: 0.75rem 0; border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); }
-  .api-docs-links { display: flex; flex-wrap: wrap; gap: 0.5rem 1.25rem; font-size: 14px; margin: 0 0 1rem; }
+  .api-docs-links { display: flex; flex-wrap: wrap; gap: 0.5rem 1.25rem; font-size: 14px; margin: 0; }
 </style>
 
 <a href="/dashboard/settings/api-tokens" class="page-back">{{ ic.icon("arrow-left", 14) }}{{ t("api-docs-tokens") }}</a>
@@ -27,13 +28,18 @@
 {% endif %}
 <div class="notice notice--info">{{ ic.icon("shield") }}<span>{{ t("api-docs-try") }}</span></div>
 
-<p class="api-docs-links">
-  <a href="/api/v1/openapi.json">{{ t("api-docs-spec") }}</a>
-  <a href="https://cal.rs/docs/api.html">{{ t("api-docs-guide") }}</a>
-</p>
-
-<div id="swagger-ui"></div>
-<noscript><p>{{ t("api-docs-noscript") }}</p></noscript>
+<section class="card">
+  <div class="card-head is-tools">
+    <p class="api-docs-links">
+      <a href="/api/v1/openapi.json">{{ t("api-docs-spec") }}</a>
+      <a href="https://cal.rs/docs/api.html">{{ t("api-docs-guide") }}</a>
+    </p>
+  </div>
+  <div class="card-body">
+    <div id="swagger-ui"></div>
+    <noscript><p>{{ t("api-docs-noscript") }}</p></noscript>
+  </div>
+</section>
 
 <script src="/static/swagger-ui/swagger-ui-bundle.js?v={{ swagger_version }}"></script>
 <script>
