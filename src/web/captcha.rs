@@ -203,7 +203,18 @@ pub async fn verify(config: &Option<CaptchaConfig>, token: Option<&str>) -> Resu
 
     let verify_url = format!("{}/siteverify", cfg.api_endpoint().trim_end_matches('/'));
 
-    let client = reqwest::Client::new();
+    // No redirects: a 307 or 308 would re-send the secret to whatever host
+    // it names.
+    let client = match reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!(error = %e, "captcha client build failed");
+            return Err(());
+        }
+    };
     let resp = match client
         .post(&verify_url)
         .json(&VerifyRequest {
@@ -237,6 +248,20 @@ pub async fn verify(config: &Option<CaptchaConfig>, token: Option<&str>) -> Resu
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn verification_does_not_follow_redirects() {
+        let (url, hits) = crate::test_support::redirect_trap().await;
+        let cfg = Some(CaptchaConfig {
+            instance_url: url,
+            site_key: "key".to_string(),
+            secret: "s3cret".to_string().into(),
+            widget_url: DEFAULT_WIDGET_URL.to_string(),
+            wasm_url: None,
+        });
+        assert!(verify(&cfg, Some("token")).await.is_err());
+        assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
 
     // --- extract_origin tests ---
 
