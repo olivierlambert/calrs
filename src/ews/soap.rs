@@ -52,13 +52,13 @@ pub fn envelope(body: &str) -> String {
     )
 }
 
-/// Build an HTTP client tuned for EWS: HTTPS only (per `validate_caldav_url`),
-/// configurable timeout, no automatic redirect (Autodiscover redirects are
-/// followed manually so we can validate them).
+/// Build an HTTP client tuned for EWS: configurable timeout, no automatic
+/// redirect, and guarded resolution (`net_guard`, #363): the endpoint's host
+/// is checked against the private-host policy at every connection and
+/// connected to at the checked address.
 pub fn http_client(timeout: Duration) -> Result<Client> {
-    Client::builder()
+    crate::net_guard::client_builder()
         .timeout(timeout)
-        .redirect(reqwest::redirect::Policy::none())
         .build()
         .context("failed to build HTTP client")
 }
@@ -82,6 +82,13 @@ pub async fn post_soap(
     } else {
         DEFAULT_TIMEOUT
     };
+    // Literals never reach the guarded resolver: check the endpoint against
+    // the allowlist as it stands now, at every request (#363).
+    if let Ok(url) = reqwest::Url::parse(endpoint) {
+        if crate::net_guard::url_refused(&url) {
+            bail!(crate::net_guard::REFUSED);
+        }
+    }
     let client = http_client(timeout)?;
     let envelope = envelope(body);
 

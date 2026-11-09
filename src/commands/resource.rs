@@ -197,8 +197,19 @@ async fn full_discovery(client: &CaldavClient) {
 
 /// GET the URL and return the body if it looks like an ICS feed.
 async fn fetch_ics_feed(url: &str, username: &str, password: &str) -> Result<Option<String>> {
-    let client = reqwest::Client::builder()
+    // Literals never reach the guarded resolver: refuse a private one here,
+    // as the server's feed fetch does.
+    if reqwest::Url::parse(url).is_ok_and(|u| crate::net_guard::url_refused(&u)) {
+        anyhow::bail!(crate::net_guard::REFUSED);
+    }
+    // The same guarded client the server uses (#363), so the probe reports
+    // what calrs itself will be able to reach.
+    let client = crate::net_guard::client_builder()
         .timeout(std::time::Duration::from_secs(30))
+        .redirect(crate::net_guard::redirects(
+            10,
+            crate::net_guard::Allowlist::Settings,
+        ))
         .build()?;
     let mut req = client.get(url);
     if !username.is_empty() {
@@ -315,5 +326,23 @@ async fn run_write_test(client: &CaldavClient, url: &str) {
         ),
         Ok(true) => println!("{} Event still present after DELETE", "✗".red()),
         Err(e) => println!("{} Could not verify deletion: {}", "!".yellow(), e),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The probe refuses a private IP literal before connecting, as the
+    /// server's feed fetch does (#363): literals never reach the resolver.
+    #[tokio::test]
+    async fn the_feed_probe_refuses_a_private_literal() {
+        let _lock = crate::test_support::ENV_LOCK.lock().await;
+        let _env = crate::test_support::EnvGuard::new();
+        let _strict = crate::net_guard::strict();
+        let err = fetch_ics_feed("http://10.1.2.3/feed.ics", "", "")
+            .await
+            .unwrap_err();
+        assert_eq!(err.to_string(), crate::net_guard::REFUSED);
     }
 }

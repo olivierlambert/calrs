@@ -19,6 +19,7 @@ mod google_meet;
 mod i18n;
 mod mfa;
 mod models;
+mod net_guard;
 mod oauth2_caldav;
 mod providers;
 mod resources;
@@ -27,6 +28,7 @@ mod settings;
 mod sms;
 #[cfg(test)]
 mod test_support;
+mod trusted_proxies;
 mod tzid;
 mod utils;
 mod web;
@@ -139,6 +141,13 @@ async fn main() -> Result<()> {
     db::migrate(&pool).await?;
     let secret_key = crypto::load_or_create_key(&data_dir)?;
     db::migrate_passwords(&pool, &secret_key).await?;
+    // Every command, not only `serve`: outbound calendar clients read the
+    // private-host allowlist at connection time (#363), so `calrs sync` and
+    // the probes need the DB-stored value too.
+    settings::load_from_db(&pool).await;
+    // Most commands can make calendar requests (sync, source, resource
+    // probe, serve), so the proxy posture is logged for every one.
+    net_guard::log_proxy_posture();
 
     match cli.command {
         Commands::Source { command } => commands::source::run(&pool, &secret_key, command).await?,
@@ -154,10 +163,6 @@ async fn main() -> Result<()> {
         Commands::Resource { command } => commands::resource::run(command).await?,
         Commands::Config { command } => commands::config::run(&pool, &secret_key, command).await?,
         Commands::Serve { port, host } => {
-            // Load DB-backed runtime settings (base URL, private-host allowlist)
-            // into the process-global cache before anything reads them.
-            settings::load_from_db(&pool).await;
-
             let private_hosts = caldav::private_host_allowlist();
             if !private_hosts.is_empty() {
                 tracing::warn!(
@@ -167,6 +172,11 @@ async fn main() -> Result<()> {
                      bypass the SSRF private-IP guard for CalDAV/EWS URLs"
                 );
             }
+            tracing::info!(
+                trusted_proxies = %trusted_proxies::current().describe(),
+                from_env = trusted_proxies::set_by_env(),
+                "X-Forwarded-For is believed only from these peers"
+            );
             // Spawn background reminder task
             let reminder_pool = pool.clone();
             let reminder_key = secret_key;
@@ -192,9 +202,14 @@ async fn main() -> Result<()> {
                 tracing::info!("Shutdown signal received, stopping gracefully...");
             };
 
-            axum::serve(listener, router)
-                .with_graceful_shutdown(shutdown)
-                .await?;
+            // The TCP peer decides whether X-Forwarded-For is believed
+            // (`client_ip_for_rate_limit`, `CALRS_TRUSTED_PROXIES`).
+            axum::serve(
+                listener,
+                router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+            )
+            .with_graceful_shutdown(shutdown)
+            .await?;
             // Booking emails are sent in the background after the response;
             // let the ones still in flight finish before the runtime stops.
             web::drain_emails(std::time::Duration::from_secs(30)).await;

@@ -51,6 +51,8 @@ Every user-facing string goes through Fluent (`i18n/`).
 | `src/mfa.rs` | Local TOTP two-factor authentication: enrollment, login challenges, recovery codes, the admin policy, `/auth/mfa` and `/dashboard/settings/mfa` routes (tests in `src/mfa/tests.rs`) |
 | `src/crypto.rs` | AES-256-GCM for stored credentials, secret key management |
 | `src/settings.rs` | Runtime settings (base URL, private-host policy): env overrides DB |
+| `src/net_guard.rs` | Outbound HTTP to configured URLs: guarded resolver that checks and pins addresses (#363), literal and redirect checks, proxy handling (tests in `src/net_guard/tests.rs`) |
+| `src/trusted_proxies.rs` | Which TCP peers may set `X-Forwarded-For` (`CALRS_TRUSTED_PROXIES`), the client address and rate-limit key |
 | `src/i18n.rs` | Fluent loader, language detection, the `t()` template global, i18n guard tests |
 | `src/booking_time.rs` | How booking times are stored (legacy wall clock vs UTC instant) |
 | `src/rrule.rs` | RRULE expansion for recurring events |
@@ -138,7 +140,9 @@ Call sites use `crate::email::name` whatever file `name` lives in.
   (double-submit cookie, checked by `verify_csrf_token` in each POST handler),
   `csp_middleware` (CSP rebuilt from captcha settings, relaxed for embeds and
   booking forms). Booking POSTs are rate limited per client IP
-  (`client_ip_for_rate_limit`, rightmost `X-Forwarded-For`).
+  (`client_ip_for_rate_limit`: the TCP peer, or, when the peer is a trusted
+  proxy, `X-Forwarded-For` read right to left past trusted hops; see
+  `src/trusted_proxies.rs`).
 - **Auth extractors** (`src/auth.rs`). `AuthUser` redirects to login,
   `AdminUser` returns 403, `OptionalAuthUser` for public pages. Each resolves
   the viewer's language once.

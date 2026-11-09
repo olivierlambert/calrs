@@ -340,6 +340,10 @@ fn verify_csrf_token_fails_when_same_length_differs_at_last_byte() {
 }
 
 // --- client_ip_for_rate_limit ---
+//
+// None of these set `CALRS_TRUSTED_PROXIES`: it is read once per process,
+// so they run against the default list (loopback, private, ULA,
+// link-local). `trusted_proxies::tests` covers other lists.
 
 #[test]
 fn client_ip_unknown_when_no_headers() {
@@ -353,8 +357,9 @@ fn client_ip_ignores_x_real_ip() {
     // setups the proxy does not overwrite a client-supplied value, so
     // trusting it would let the client forge their identity directly.
     let mut headers = HeaderMap::new();
+    headers.insert(PEER_ADDR_HEADER, "127.0.0.1".parse().unwrap());
     headers.insert("x-real-ip", "1.2.3.4".parse().unwrap());
-    assert_eq!(client_ip_for_rate_limit(&headers), "unknown");
+    assert_eq!(client_ip_for_rate_limit(&headers), "127.0.0.1");
 }
 
 #[test]
@@ -362,6 +367,7 @@ fn client_ip_takes_rightmost_xff() {
     // The leftmost value is whatever the original client put in the
     // header; the rightmost is the trusted proxy's view of its peer.
     let mut headers = HeaderMap::new();
+    headers.insert(PEER_ADDR_HEADER, "127.0.0.1".parse().unwrap());
     headers.insert(
         "x-forwarded-for",
         "attacker-spoofed, 198.51.100.7".parse().unwrap(),
@@ -372,6 +378,7 @@ fn client_ip_takes_rightmost_xff() {
 #[test]
 fn client_ip_xff_single_value() {
     let mut headers = HeaderMap::new();
+    headers.insert(PEER_ADDR_HEADER, "127.0.0.1".parse().unwrap());
     headers.insert("x-forwarded-for", "203.0.113.10".parse().unwrap());
     assert_eq!(client_ip_for_rate_limit(&headers), "203.0.113.10");
 }
@@ -379,11 +386,185 @@ fn client_ip_xff_single_value() {
 #[test]
 fn client_ip_xff_trims_whitespace() {
     let mut headers = HeaderMap::new();
+    headers.insert(PEER_ADDR_HEADER, "127.0.0.1".parse().unwrap());
     headers.insert(
         "x-forwarded-for",
         "1.2.3.4 ,    198.51.100.7   ".parse().unwrap(),
     );
     assert_eq!(client_ip_for_rate_limit(&headers), "198.51.100.7");
+}
+
+#[test]
+fn client_ip_ignores_xff_without_a_peer() {
+    // Served without connection info: fail closed, the header is not
+    // believed from an unknown sender.
+    let mut headers = HeaderMap::new();
+    headers.insert("x-forwarded-for", "198.51.100.7".parse().unwrap());
+    assert_eq!(client_ip_for_rate_limit(&headers), "unknown");
+}
+
+#[test]
+fn client_ip_reads_every_xff_line_in_order() {
+    // HAProxy appends its own line: the client's first line must not win.
+    let mut headers = HeaderMap::new();
+    headers.insert(PEER_ADDR_HEADER, "127.0.0.1".parse().unwrap());
+    headers.append("x-forwarded-for", "6.6.6.6".parse().unwrap());
+    headers.append("x-forwarded-for", "198.51.100.7".parse().unwrap());
+    assert_eq!(client_ip_for_rate_limit(&headers), "198.51.100.7");
+}
+
+#[test]
+fn client_ip_walks_past_trusted_hops() {
+    // A second proxy on a private address in front of the local one.
+    let mut headers = HeaderMap::new();
+    headers.insert(PEER_ADDR_HEADER, "127.0.0.1".parse().unwrap());
+    headers.insert(
+        "x-forwarded-for",
+        "6.6.6.6, 198.51.100.7:4711, 10.0.0.2".parse().unwrap(),
+    );
+    assert_eq!(client_ip_for_rate_limit(&headers), "198.51.100.7");
+}
+
+#[test]
+fn client_ip_with_non_ascii_xff_is_its_own_bucket() {
+    // Not the proxy's address: one client sending bytes `to_str` refuses
+    // must not be able to fill the bucket everyone behind the proxy shares.
+    let mut headers = HeaderMap::new();
+    headers.insert(PEER_ADDR_HEADER, "127.0.0.1".parse().unwrap());
+    headers.insert(
+        "x-forwarded-for",
+        axum::http::HeaderValue::from_bytes(b"1.2.3.4, \xff").unwrap(),
+    );
+    assert_eq!(client_ip_for_rate_limit(&headers), "unparseable");
+}
+
+#[test]
+fn client_ip_ignores_xff_from_an_untrusted_peer() {
+    // Directly exposed: the peer is a public address, so whatever it puts
+    // in X-Forwarded-For is ignored and it cannot pick a fresh bucket.
+    let mut headers = HeaderMap::new();
+    headers.insert(PEER_ADDR_HEADER, "203.0.113.50".parse().unwrap());
+    headers.insert("x-forwarded-for", "198.51.100.1".parse().unwrap());
+    assert_eq!(client_ip_for_rate_limit(&headers), "203.0.113.50");
+}
+
+#[test]
+fn client_ip_from_a_trusted_peer_without_xff_is_the_peer() {
+    let mut headers = HeaderMap::new();
+    headers.insert(PEER_ADDR_HEADER, "127.0.0.1".parse().unwrap());
+    assert_eq!(client_ip_for_rate_limit(&headers), "127.0.0.1");
+    let mut headers = HeaderMap::new();
+    headers.insert(PEER_ADDR_HEADER, "192.0.2.44".parse().unwrap());
+    assert_eq!(client_ip_for_rate_limit(&headers), "192.0.2.44");
+}
+
+#[test]
+fn client_ip_groups_ipv6_by_64() {
+    let key = |xff: &str| {
+        let mut headers = HeaderMap::new();
+        headers.insert(PEER_ADDR_HEADER, "127.0.0.1".parse().unwrap());
+        headers.insert("x-forwarded-for", xff.parse().unwrap());
+        client_ip_for_rate_limit(&headers)
+    };
+    assert_eq!(key("2001:db8:1:2::1"), "2001:db8:1:2::/64");
+    assert_eq!(
+        key("2001:db8:1:2::1"),
+        key("2001:db8:1:2:aaaa:bbbb:cccc:dddd")
+    );
+    assert_ne!(key("2001:db8:1:2::1"), key("2001:db8:1:3::1"));
+}
+
+/// A sign-in POST as it reaches the router from a socket: `ConnectInfo`
+/// carries the peer, as `into_make_service_with_connect_info` sets it.
+fn login_from(
+    peer: &str,
+    xff: Option<&str>,
+    forged_peer: Option<&str>,
+) -> axum::http::Request<Body> {
+    let mut builder = axum::http::Request::builder()
+        .method("POST")
+        .uri("/auth/login")
+        .header("cookie", "__Host-calrs_csrf=c")
+        .header("content-type", "application/x-www-form-urlencoded");
+    if let Some(xff) = xff {
+        builder = builder.header("x-forwarded-for", xff);
+    }
+    if let Some(forged) = forged_peer {
+        builder = builder.header(PEER_ADDR_HEADER, forged);
+    }
+    let mut request = builder
+        .body(Body::from(
+            "_csrf=c&email=nobody%40example.com&password=wrong",
+        ))
+        .unwrap();
+    let addr: std::net::SocketAddr = format!("{peer}:40000").parse().unwrap();
+    request
+        .extensions_mut()
+        .insert(axum::extract::ConnectInfo(addr));
+    request
+}
+
+async fn is_rate_limited(app: &axum::Router, request: axum::http::Request<Body>) -> bool {
+    let response = app.clone().oneshot(request).await.unwrap();
+    body_string(response)
+        .await
+        .contains("Too many login attempts")
+}
+
+/// Directly exposed (public peer), a client forging a new X-Forwarded-For
+/// on every attempt still exhausts its own sign-in budget.
+#[tokio::test]
+async fn sign_in_limit_ignores_xff_forged_by_an_untrusted_peer() {
+    let (app, _, _, _) = setup_test_app().await;
+    for i in 0..10 {
+        let forged = format!("198.51.100.{i}");
+        assert!(!is_rate_limited(&app, login_from("203.0.113.60", Some(&forged), None)).await);
+    }
+    assert!(
+        is_rate_limited(
+            &app,
+            login_from("203.0.113.60", Some("198.51.100.99"), None)
+        )
+        .await
+    );
+}
+
+/// Without a reverse proxy, each TCP peer gets its own sign-in budget: one
+/// client exhausting it does not lock out another, and a client cannot
+/// claim another peer through the internal header.
+#[tokio::test]
+async fn sign_in_limit_is_per_peer_without_xff() {
+    let (app, _, _, _) = setup_test_app().await;
+    for _ in 0..10 {
+        assert!(!is_rate_limited(&app, login_from("192.0.2.1", None, None)).await);
+    }
+    assert!(is_rate_limited(&app, login_from("192.0.2.1", None, None)).await);
+    assert!(
+        !is_rate_limited(&app, login_from("192.0.2.2", None, None)).await,
+        "another peer has its own bucket"
+    );
+    assert!(
+        is_rate_limited(&app, login_from("192.0.2.1", None, Some("192.0.2.3"))).await,
+        "a client-sent peer header is ignored"
+    );
+}
+
+/// With X-Forwarded-For (behind a proxy, every request from the proxy's
+/// address), the rightmost value still identifies the client.
+#[tokio::test]
+async fn sign_in_limit_keys_on_xff_when_present() {
+    let (app, _, _, _) = setup_test_app().await;
+    for _ in 0..10 {
+        let request = login_from("127.0.0.1", Some("spoof, 198.51.100.1"), None);
+        assert!(!is_rate_limited(&app, request).await);
+    }
+    let request = login_from("127.0.0.1", Some("other, 198.51.100.1"), None);
+    assert!(is_rate_limited(&app, request).await);
+    let request = login_from("127.0.0.1", Some("198.51.100.2"), None);
+    assert!(
+        !is_rate_limited(&app, request).await,
+        "same proxy, other client"
+    );
 }
 
 // --- internal_error_* sanitization helpers ---
