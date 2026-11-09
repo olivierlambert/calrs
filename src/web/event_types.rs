@@ -387,6 +387,104 @@ pub(super) fn validate_event_type_form(form: &EventTypeForm) -> Result<String, &
     Ok(slug)
 }
 
+/// The scheduling mode a team event type form posted: `collective`, or
+/// `round_robin` for anything else, including a form without the field.
+pub(super) fn posted_scheduling_mode(form: &EventTypeForm) -> &'static str {
+    match form.scheduling_mode.as_deref() {
+        Some("collective") => "collective",
+        _ => "round_robin",
+    }
+}
+
+/// The visibility an event type form posted, `public` unless it is one of
+/// the three known values.
+fn posted_visibility(form: &EventTypeForm) -> &'static str {
+    match form.visibility.as_deref() {
+        Some("internal") => "internal",
+        Some("private") => "private",
+        _ => "public",
+    }
+}
+
+/// The reminder lead time an event type form posted, in minutes; `None`
+/// (no reminder) when blank or zero.
+fn posted_reminder_minutes(form: &EventTypeForm) -> Option<i32> {
+    Some(parse_int_field(&form.reminder_minutes, 0)).filter(|v| *v > 0)
+}
+
+/// Stores the member weights the create form posts for a new team event
+/// type (`"uid1:3,uid2:1"`: round-robin priority 1 to 3, or 0 for a member a
+/// collective event type excludes), inside the event type's transaction.
+/// Weights are clamped to the 0..=3 the edit form's priority buttons
+/// produce, and entries for users who are not members of `team_id` are
+/// ignored.
+async fn save_created_member_weights(
+    tx: &mut Tx<'_>,
+    et_id: &str,
+    team_id: &str,
+    raw: &str,
+) -> sqlx::Result<()> {
+    if raw.is_empty() {
+        return Ok(());
+    }
+    let members: std::collections::HashSet<String> =
+        sqlx::query_scalar("SELECT user_id FROM team_members WHERE team_id = ?")
+            .bind(team_id)
+            .fetch_all(&mut **tx)
+            .await?
+            .into_iter()
+            .collect();
+    for entry in raw.split(',') {
+        let Some((uid, weight)) = entry.split_once(':') else {
+            continue;
+        };
+        let uid = uid.trim();
+        if !members.contains(uid) {
+            continue;
+        }
+        let weight = weight.trim().parse::<i64>().unwrap_or(1).clamp(0, 3);
+        sqlx::query(
+            "INSERT OR REPLACE INTO event_type_member_weights (event_type_id, user_id, weight) VALUES (?, ?, ?)",
+        )
+        .bind(et_id)
+        .bind(uid)
+        .bind(weight)
+        .execute(&mut **tx)
+        .await?;
+    }
+    Ok(())
+}
+
+/// Replaces the watcher teams of `et_id` with those a team event type form
+/// posted (comma-separated team ids), inside the event type's transaction.
+/// Absent (a form without the section) leaves them as stored. Ids outside
+/// `allowed` are ignored: a team admin cannot have another team's members
+/// emailed the bookings.
+async fn save_watcher_teams(
+    tx: &mut Tx<'_>,
+    et_id: &str,
+    raw: Option<&str>,
+    allowed: &std::collections::HashSet<String>,
+) -> sqlx::Result<()> {
+    let Some(raw) = raw else { return Ok(()) };
+    sqlx::query("DELETE FROM event_type_watchers WHERE event_type_id = ?")
+        .bind(et_id)
+        .execute(&mut **tx)
+        .await?;
+    for wid in raw.split(',').map(str::trim) {
+        if allowed.contains(wid) {
+            sqlx::query(
+                "INSERT OR IGNORE INTO event_type_watchers (event_type_id, team_id) VALUES (?, ?)",
+            )
+            .bind(et_id)
+            .bind(wid)
+            .execute(&mut **tx)
+            .await?;
+        }
+    }
+    Ok(())
+}
+
 /// Template context for the "Required resources" section of the event type
 /// form: (all resources, comma-joined selected ids, scheduling mode).
 /// Resources the user may attach to an event type belonging to `team_id`.
@@ -578,6 +676,12 @@ pub(super) async fn new_event_type_form(
     // teams in the dropdown.
     let groups_ctx =
         form_teams_with_members(&state.pool, &form_admin_teams(&state.pool, user).await).await;
+    // Watcher teams, offered once a team is picked.
+    let watcher_teams_ctx = if groups_ctx.is_empty() {
+        Vec::new()
+    } else {
+        form_watcher_teams(&state.pool, user).await
+    };
     let calendars_ctx = form_calendars(&state.pool, &user.id).await;
 
     // Pre-fill availability from user's default schedule
@@ -607,6 +711,9 @@ pub(super) async fn new_event_type_form(
             editing => false,
             preset => preset,
             teams => groups_ctx,
+            watcher_teams => watcher_teams_ctx,
+            selected_watcher_team_ids => "",
+            form_scheduling_mode => "round_robin",
             calendars => calendars_ctx,
             selected_calendar_ids => "",
             write_destination => destination_form_ctx(&state.pool, &user.id, auth_user.lang, None, "").await,
@@ -825,18 +932,12 @@ pub(super) async fn create_event_type(
         .into_response();
     }
 
-    let visibility = match form.visibility.as_deref().unwrap_or("public") {
-        v @ ("public" | "internal" | "private") => v.to_string(),
-        _ => "public".to_string(),
-    };
-
-    let reminder_minutes = {
-        let v = parse_int_field(&form.reminder_minutes, 0);
-        if v > 0 {
-            Some(v)
-        } else {
-            None
-        }
+    let visibility = posted_visibility(&form);
+    let reminder_minutes = posted_reminder_minutes(&form);
+    // Only a team event type has a scheduling mode of its own.
+    let scheduling_mode = match team_id {
+        Some(_) => posted_scheduling_mode(&form),
+        None => "round_robin",
     };
 
     let default_calendar_view = match form.default_calendar_view.as_deref().unwrap_or("month") {
@@ -859,13 +960,19 @@ pub(super) async fn create_event_type(
         .filter(|s| !s.is_empty())
         .map(str::to_string);
 
-    // The event type and its booking questions (#210) are written in one
-    // transaction: a refused question list never leaves a half-saved type.
+    let watchable = match team_id {
+        Some(_) => watchable_team_ids(&state.pool, user).await,
+        None => Default::default(),
+    };
+
+    // The event type, its booking questions (#210) and a team event type's
+    // member weights and watchers are written in one transaction: a refused
+    // question list never leaves a half-saved type.
     let written = async {
         let mut tx = state.pool.begin().await?;
         sqlx::query(
-            "INSERT INTO event_types (id, account_id, slug, title, description, duration_min, slot_interval_min, buffer_before, buffer_after, min_notice_min, requires_confirmation, location_type, location_value, team_id, created_by_user_id, reminder_minutes, visibility, max_additional_guests, default_calendar_view, first_slot_only, timezone, cancel_notice_min, reschedule_notice_min, meeting_pattern_override, sms_phone_mode, guest_email_footer, booking_horizon_days, bookable_from, bookable_until, week_start)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO event_types (id, account_id, slug, title, description, duration_min, slot_interval_min, buffer_before, buffer_after, min_notice_min, requires_confirmation, location_type, location_value, team_id, created_by_user_id, reminder_minutes, visibility, max_additional_guests, scheduling_mode, default_calendar_view, first_slot_only, timezone, cancel_notice_min, reschedule_notice_min, meeting_pattern_override, sms_phone_mode, guest_email_footer, booking_horizon_days, bookable_from, bookable_until, week_start)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&et_id)
         .bind(&account_id)
@@ -883,8 +990,9 @@ pub(super) async fn create_event_type(
         .bind(team_id)
         .bind(if team_id.is_some() { Some(&user.id) } else { None })
         .bind(reminder_minutes)
-        .bind(&visibility)
+        .bind(visibility)
         .bind(parse_int_field(&form.max_additional_guests, 0))
+        .bind(scheduling_mode)
         .bind(&default_calendar_view)
         .bind(first_slot_only as i32)
         .bind(&timezone)
@@ -906,6 +1014,16 @@ pub(super) async fn create_event_type(
             form.notes_mode.as_deref(),
         )
         .await?;
+        if let Some(tid) = team_id {
+            save_created_member_weights(&mut tx, &et_id, tid, &form.member_priorities).await?;
+            save_watcher_teams(
+                &mut tx,
+                &et_id,
+                form.watcher_team_ids.as_deref(),
+                &watchable,
+            )
+            .await?;
+        }
         tx.commit().await
     }
     .await;
@@ -959,39 +1077,6 @@ pub(super) async fn create_event_type(
                 .bind(cal_id)
                 .execute(&state.pool)
                 .await;
-            }
-        }
-    }
-
-    // Save member priorities (creation flow: "uid1:3,uid2:1,uid3:2")
-    // Only insert weights for users who are actually team members.
-    if let Some(tid) = team_id {
-        if !form.member_priorities.is_empty() {
-            let valid_members: Vec<(String,)> =
-                sqlx::query_as("SELECT user_id FROM team_members WHERE team_id = ?")
-                    .bind(tid)
-                    .fetch_all(&state.pool)
-                    .await
-                    .unwrap_or_default();
-            let valid_set: std::collections::HashSet<&str> =
-                valid_members.iter().map(|(id,)| id.as_str()).collect();
-
-            for entry in form.member_priorities.split(',') {
-                let parts: Vec<&str> = entry.split(':').collect();
-                if parts.len() == 2 {
-                    let uid = parts[0].trim();
-                    let weight: i64 = parts[1].trim().parse().unwrap_or(1);
-                    if !uid.is_empty() && valid_set.contains(uid) {
-                        let _ = sqlx::query(
-                            "INSERT OR REPLACE INTO event_type_member_weights (event_type_id, user_id, weight) VALUES (?, ?, ?)",
-                        )
-                        .bind(&et_id)
-                        .bind(uid)
-                        .bind(weight)
-                        .execute(&state.pool)
-                        .await;
-                    }
-                }
             }
         }
     }
@@ -1424,10 +1509,7 @@ pub(super) async fn update_event_type(
     // `None` keeps the stored footer: the update below leaves the column.
     let guest_email_footer =
         resolve_guest_footer(&state.pool, user, form.guest_email_footer.as_deref()).await;
-    let visibility = match form.visibility.as_deref().unwrap_or("public") {
-        v @ ("public" | "internal" | "private") => v.to_string(),
-        _ => "public".to_string(),
-    };
+    let visibility = posted_visibility(&form);
 
     // Check slug uniqueness if changed
     if new_slug != slug {
@@ -1540,14 +1622,7 @@ pub(super) async fn update_event_type(
         .into_response();
     }
 
-    let reminder_minutes = {
-        let v = parse_int_field(&form.reminder_minutes, 0);
-        if v > 0 {
-            Some(v)
-        } else {
-            None
-        }
-    };
+    let reminder_minutes = posted_reminder_minutes(&form);
 
     let default_calendar_view = match form.default_calendar_view.as_deref().unwrap_or("month") {
         v @ ("month" | "week" | "column") => v.to_string(),
@@ -1591,9 +1666,10 @@ pub(super) async fn update_event_type(
         .bind(location_type)
         .bind(location_value)
         .bind(reminder_minutes)
-        .bind(&visibility)
+        .bind(visibility)
         .bind(parse_int_field(&form.max_additional_guests, 0))
-        .bind(form.scheduling_mode.as_deref().unwrap_or("round_robin"))
+        // A personal event type has no scheduling mode of its own.
+        .bind("round_robin")
         .bind(&default_calendar_view)
         .bind(if form.first_slot_only.as_deref() == Some("on") { 1 } else { 0 })
         .bind(&timezone)
@@ -2110,13 +2186,10 @@ async fn form_priority_members(
         .collect()
 }
 
-/// Teams offered as watchers on a team event type's edit form: every team
-/// for a global admin, otherwise the teams `user` belongs to.
-async fn form_watcher_teams(
-    pool: &SqlitePool,
-    user: &crate::models::User,
-) -> Vec<minijinja::Value> {
-    let teams: Vec<(String, String)> = if user.role == "admin" {
+/// Teams `user` may name as watchers of a team event type: every team for
+/// a global admin, otherwise the teams `user` belongs to.
+async fn watchable_teams(pool: &SqlitePool, user: &crate::models::User) -> Vec<(String, String)> {
+    if user.role == "admin" {
         sqlx::query_as("SELECT id, name FROM teams ORDER BY name")
             .fetch_all(pool)
             .await
@@ -2129,8 +2202,28 @@ async fn form_watcher_teams(
         .fetch_all(pool)
         .await
         .unwrap_or_default()
-    };
-    teams
+    }
+}
+
+/// The ids of [`watchable_teams`].
+async fn watchable_team_ids(
+    pool: &SqlitePool,
+    user: &crate::models::User,
+) -> std::collections::HashSet<String> {
+    watchable_teams(pool, user)
+        .await
+        .into_iter()
+        .map(|(id, _)| id)
+        .collect()
+}
+
+/// [`watchable_teams`], for the watcher section of the event type form.
+async fn form_watcher_teams(
+    pool: &SqlitePool,
+    user: &crate::models::User,
+) -> Vec<minijinja::Value> {
+    watchable_teams(pool, user)
+        .await
         .iter()
         .map(|(id, name)| context! { id => id, name => name })
         .collect()
@@ -2284,30 +2377,22 @@ async fn render_event_type_form_error(
         target,
         FormTarget::EditPersonal { .. } | FormTarget::EditTeam { .. }
     );
-    let scheduling_mode = match form.scheduling_mode.as_deref() {
-        Some("collective") => "collective",
-        _ => "round_robin",
-    };
+    let scheduling_mode = posted_scheduling_mode(form);
     let posted_team = form.team_id.as_deref().unwrap_or("");
     let (is_group, form_team_id) = match target {
         FormTarget::NewTeam { team_id } | FormTarget::EditTeam { team_id, .. } => (true, team_id),
         _ => (false, posted_team),
     };
     let teams = match target {
-        FormTarget::NewPersonal => {
+        FormTarget::NewPersonal | FormTarget::NewTeam { .. } => {
             form_teams_with_members(pool, &form_admin_teams(pool, user).await).await
         }
-        FormTarget::NewTeam { .. } => form_admin_teams(pool, user)
-            .await
-            .iter()
-            .map(|(id, name)| context! { id => id, name => name })
-            .collect(),
         _ => Vec::new(),
     };
     let watcher_teams = match target {
-        FormTarget::NewTeam { .. } => teams.clone(),
-        FormTarget::EditTeam { .. } => form_watcher_teams(pool, user).await,
-        _ => Vec::new(),
+        FormTarget::EditPersonal { .. } => Vec::new(),
+        FormTarget::NewPersonal if teams.is_empty() => Vec::new(),
+        _ => form_watcher_teams(pool, user).await,
     };
     let priority_members = match target {
         FormTarget::EditTeam { team_id, et_id, .. } => {
@@ -2697,20 +2782,15 @@ pub(super) async fn new_group_event_type_form(
         });
     }
 
-    let groups_ctx: Vec<minijinja::Value> = groups
-        .iter()
-        .map(|(id, name)| context! { id => id, name => name })
-        .collect();
+    // With their members, for the priority card of the creation flow.
+    let groups_ctx = form_teams_with_members(&state.pool, &groups).await;
 
     // Pre-fill availability from user's default schedule
     ensure_user_avail_seeded(&state.pool, &user.id).await;
     let user_avail = load_user_avail_schedule(&state.pool, &user.id).await;
 
-    // Load all teams for watcher selection (exclude the selected team itself in template)
-    let watcher_teams_ctx: Vec<minijinja::Value> = groups
-        .iter()
-        .map(|(id, name)| context! { id => id, name => name })
-        .collect();
+    // The same watcher choice as the edit form.
+    let watcher_teams_ctx = form_watcher_teams(&state.pool, user).await;
 
     let booking_form_ctx = questions::editor_context(&state.pool, None).await;
     let tmpl = match state.templates.get_template("event_type_form.html") {
@@ -2748,6 +2828,10 @@ pub(super) async fn new_group_event_type_form(
             form_buffer_after => 0,
             form_min_notice => 60,
             form_requires_confirmation => false,
+            form_scheduling_mode => "round_robin",
+            form_visibility => "public",
+            form_reminder_minutes => 1440,
+            form_max_additional_guests => 0,
             form_location_type => "link",
             form_location_value => "",
             form_meeting_pattern_override => "",
@@ -2944,13 +3028,16 @@ pub(super) async fn create_group_event_type(
         .filter(|s| !s.is_empty())
         .map(str::to_string);
 
-    // The event type and its booking questions (#210) are written in one
-    // transaction: a refused question list never leaves a half-saved type.
+    let watchable = watchable_team_ids(&state.pool, user).await;
+
+    // The event type, its booking questions (#210), member weights and
+    // watchers are written in one transaction: a refused question list never
+    // leaves a half-saved type.
     let written = async {
         let mut tx = state.pool.begin().await?;
         sqlx::query(
-            "INSERT INTO event_types (id, account_id, slug, title, description, duration_min, slot_interval_min, buffer_before, buffer_after, min_notice_min, requires_confirmation, location_type, location_value, team_id, created_by_user_id, default_calendar_view, first_slot_only, timezone, cancel_notice_min, reschedule_notice_min, meeting_pattern_override, sms_phone_mode, guest_email_footer, booking_horizon_days, bookable_from, bookable_until, week_start)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO event_types (id, account_id, slug, title, description, duration_min, slot_interval_min, buffer_before, buffer_after, min_notice_min, requires_confirmation, location_type, location_value, team_id, created_by_user_id, reminder_minutes, visibility, max_additional_guests, scheduling_mode, default_calendar_view, first_slot_only, timezone, cancel_notice_min, reschedule_notice_min, meeting_pattern_override, sms_phone_mode, guest_email_footer, booking_horizon_days, bookable_from, bookable_until, week_start)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&et_id)
         .bind(&account_id)
@@ -2967,6 +3054,10 @@ pub(super) async fn create_group_event_type(
         .bind(location_value)
         .bind(&team_id)
         .bind(&user.id)
+        .bind(posted_reminder_minutes(&form))
+        .bind(posted_visibility(&form))
+        .bind(parse_int_field(&form.max_additional_guests, 0))
+        .bind(posted_scheduling_mode(&form))
         .bind(&default_calendar_view)
         .bind(first_slot_only as i32)
         .bind(&timezone)
@@ -2986,6 +3077,14 @@ pub(super) async fn create_group_event_type(
             &et_id,
             booking_questions.as_deref(),
             form.notes_mode.as_deref(),
+        )
+        .await?;
+        save_created_member_weights(&mut tx, &et_id, &team_id, &form.member_priorities).await?;
+        save_watcher_teams(
+            &mut tx,
+            &et_id,
+            form.watcher_team_ids.as_deref(),
+            &watchable,
         )
         .await?;
         tx.commit().await
@@ -3030,22 +3129,6 @@ pub(super) async fn create_group_event_type(
             .bind(we)
             .execute(&state.pool)
             .await;
-        }
-    }
-
-    // Save watcher teams
-    if let Some(ref watcher_ids) = form.watcher_team_ids {
-        for wid in watcher_ids.split(',') {
-            let wid = wid.trim();
-            if !wid.is_empty() {
-                let _ = sqlx::query(
-                    "INSERT INTO event_type_watchers (event_type_id, team_id) VALUES (?, ?)",
-                )
-                .bind(&et_id)
-                .bind(wid)
-                .execute(&state.pool)
-                .await;
-            }
         }
     }
 
@@ -3502,7 +3585,7 @@ pub(super) async fn update_group_event_type(
     // `None` keeps the stored footer: the update below leaves the column.
     let guest_email_footer =
         resolve_guest_footer(&state.pool, user, form.guest_email_footer.as_deref()).await;
-    let visibility = form.visibility.as_deref().unwrap_or("public").to_string();
+    let visibility = posted_visibility(&form);
 
     // Check slug uniqueness if changed: within the team, and within the
     // account the event type is stored under (its creator's).
@@ -3604,14 +3687,7 @@ pub(super) async fn update_group_event_type(
         .into_response();
     }
 
-    let reminder_minutes = {
-        let v = parse_int_field(&form.reminder_minutes, 0);
-        if v > 0 {
-            Some(v)
-        } else {
-            None
-        }
-    };
+    let reminder_minutes = posted_reminder_minutes(&form);
 
     let default_calendar_view = match form.default_calendar_view.as_deref().unwrap_or("month") {
         v @ ("month" | "week" | "column") => v.to_string(),
@@ -3636,8 +3712,22 @@ pub(super) async fn update_group_event_type(
         .filter(|s| !s.is_empty())
         .map(str::to_string);
 
-    // The event type and its booking questions (#210) are written in one
-    // transaction: a refused question list never leaves a half-saved type.
+    // A watcher already attached stays allowed, so an edit by someone outside
+    // that team (which the form shows as selected) keeps it.
+    let mut watchable = watchable_team_ids(&state.pool, user).await;
+    watchable.extend(
+        sqlx::query_scalar::<_, String>(
+            "SELECT team_id FROM event_type_watchers WHERE event_type_id = ?",
+        )
+        .bind(&et_id)
+        .fetch_all(&state.pool)
+        .await
+        .unwrap_or_default(),
+    );
+
+    // The event type, its booking questions (#210) and its watchers are
+    // written in one transaction: a refused question list never leaves a
+    // half-saved type.
     let written = async {
         let mut tx = state.pool.begin().await?;
         sqlx::query(
@@ -3655,9 +3745,9 @@ pub(super) async fn update_group_event_type(
         .bind(location_type)
         .bind(location_value)
         .bind(reminder_minutes)
-        .bind(&visibility)
+        .bind(visibility)
         .bind(parse_int_field(&form.max_additional_guests, 0))
-        .bind(form.scheduling_mode.as_deref().unwrap_or("round_robin"))
+        .bind(posted_scheduling_mode(&form))
         .bind(&default_calendar_view)
         .bind(if form.first_slot_only.as_deref() == Some("on") { 1 } else { 0 })
         .bind(&timezone)
@@ -3680,6 +3770,13 @@ pub(super) async fn update_group_event_type(
             &et_id,
             booking_questions.as_deref(),
             form.notes_mode.as_deref(),
+        )
+        .await?;
+        save_watcher_teams(
+            &mut tx,
+            &et_id,
+            form.watcher_team_ids.as_deref(),
+            &watchable,
         )
         .await?;
         tx.commit().await
@@ -3733,27 +3830,6 @@ pub(super) async fn update_group_event_type(
             .bind(we)
             .execute(&state.pool)
             .await;
-        }
-    }
-
-    // Update watcher teams: delete old, insert new
-    let _ = sqlx::query("DELETE FROM event_type_watchers WHERE event_type_id = ?")
-        .bind(&et_id)
-        .execute(&state.pool)
-        .await;
-
-    if let Some(ref watcher_ids) = form.watcher_team_ids {
-        for wid in watcher_ids.split(',') {
-            let wid = wid.trim();
-            if !wid.is_empty() {
-                let _ = sqlx::query(
-                    "INSERT INTO event_type_watchers (event_type_id, team_id) VALUES (?, ?)",
-                )
-                .bind(&et_id)
-                .bind(wid)
-                .execute(&state.pool)
-                .await;
-            }
         }
     }
 

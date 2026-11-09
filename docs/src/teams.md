@@ -110,7 +110,7 @@ When a booking lands on a watched event type:
 
 **Typical setup:** a customer self-serves through a public event type, and a rotating support team watches it. Whoever has bandwidth grabs the booking — no round-robin assumptions, no manual dispatch.
 
-Configuration: in the event type editor, scroll to **Booking watchers** and pick one or more teams. Watchers can be set on any scheduling mode; they're independent from the round-robin / collective assignment.
+Configuration: in the event type editor, or on the create form once a team is picked, scroll to **Booking watchers** and pick one or more teams. Watchers can be set on any scheduling mode; they're independent from the round-robin / collective assignment.
 
 ## Multi-timezone teams
 
