@@ -1,9 +1,10 @@
 {# Page links under a long list, included with `pager` set to a
    `listing::Pager`. Only present when the list runs over more than one
-   page, so a list that fits shows no controls. #}
+   page, so a list that fits shows no controls. The range is the current
+   page, marked `aria-current`. #}
 {% if pager %}
 <nav class="ui-pager" aria-label="{{ t('pager-label') }}">
-  <span class="ui-pager-range">{{ t("pager-range", from=pager.from, to=pager.to, total=pager.total) }}</span>
+  <span class="ui-pager-range" aria-current="page">{{ t("pager-range", from=pager.from, to=pager.to, total=pager.total) }}</span>
   <span class="ui-pager-links">
     {% if pager.prev_href %}<a class="ui-btn ui-btn--sm" href="{{ pager.prev_href }}" rel="prev">{{ t("pager-previous") }}</a>{% else %}<span class="ui-btn ui-btn--sm is-off" aria-disabled="true">{{ t("pager-previous") }}</span>{% endif %}
     {% if pager.next_href %}<a class="ui-btn ui-btn--sm" href="{{ pager.next_href }}" rel="next">{{ t("pager-next") }}</a>{% else %}<span class="ui-btn ui-btn--sm is-off" aria-disabled="true">{{ t("pager-next") }}</span>{% endif %}

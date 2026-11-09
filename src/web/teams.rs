@@ -4,47 +4,53 @@ use super::*;
 
 // --- Dashboard: Teams ---
 
+type TeamListRow = (
+    String,
+    String,
+    String,
+    Option<String>,
+    String,
+    Option<String>,
+    Option<String>,
+    i64,
+);
+
 pub(super) async fn dashboard_teams(
     State(state): State<Arc<AppState>>,
     auth_user: crate::auth::AuthUser,
+    Query(query): Query<HashMap<String, String>>,
 ) -> impl IntoResponse {
     let user = &auth_user.user;
     let is_admin = user.role == "admin";
 
-    // For non-admin users, also fetch which teams they admin
-    let teams: Vec<(
-        String,
-        String,
-        String,
-        Option<String>,
-        String,
-        Option<String>,
-        Option<String>,
-        i64,
-    )> = if is_admin {
-        sqlx::query_as(
-            "SELECT t.id, t.name, t.slug, t.description, t.visibility, t.avatar_path, t.invite_token,
-                    (SELECT COUNT(*) FROM team_members tm WHERE tm.team_id = t.id) as member_count
-             FROM teams t
-             ORDER BY t.name",
-        )
-        .fetch_all(&state.pool)
-        .await
-        .unwrap_or_default()
-    } else {
-        sqlx::query_as(
-            "SELECT t.id, t.name, t.slug, t.description, t.visibility, t.avatar_path, t.invite_token,
-                    (SELECT COUNT(*) FROM team_members tm WHERE tm.team_id = t.id) as member_count
-             FROM teams t
-             JOIN team_members tm2 ON tm2.team_id = t.id
-             WHERE tm2.user_id = ?
-             ORDER BY t.name",
-        )
-        .bind(&user.id)
-        .fetch_all(&state.pool)
-        .await
-        .unwrap_or_default()
+    // Admins list every team, anyone else the teams they belong to.
+    let scope = |head: &'static str| {
+        let mut qb = sqlx::QueryBuilder::new(head);
+        qb.push(" FROM teams t");
+        if !is_admin {
+            qb.push(" JOIN team_members tm2 ON tm2.team_id = t.id WHERE tm2.user_id = ");
+            qb.push_bind(user.id.clone());
+        }
+        qb
     };
+    let listed = match listing::paged::<TeamListRow>(
+        &state.pool,
+        scope("SELECT COUNT(*)"),
+        scope(
+            "SELECT t.id, t.name, t.slug, t.description, t.visibility, t.avatar_path,
+                    t.invite_token,
+                    (SELECT COUNT(*) FROM team_members tm WHERE tm.team_id = t.id)",
+        ),
+        "t.name, t.id",
+        PageParams::from_query(&query, "page"),
+        |n| listing::href("/dashboard/teams", &[listing::page_part("page", n)], ""),
+    )
+    .await
+    {
+        Ok(page) => page,
+        Err(e) => return internal_error_html("load teams", &e),
+    };
+    let teams = &listed.rows;
 
     let member_team_ids: std::collections::HashSet<String> = if is_admin {
         // Global admins can manage all teams
@@ -98,6 +104,7 @@ pub(super) async fn dashboard_teams(
             sidebar => sidebar_context(&auth_user, "teams"),
             lang => auth_user.lang,
             teams => teams_ctx,
+            pager => listed.pager,
             is_admin => is_admin,
             impersonating => impersonating,
             impersonating_name => impersonating_name,
@@ -512,16 +519,57 @@ pub(super) async fn team_settings_page(
         }
     };
 
-    let members: Vec<(String, String, Option<String>, String, String)> = sqlx::query_as(
-        "SELECT u.id, u.name, u.avatar_path, tm.role, tm.source FROM users u \
-         JOIN team_members tm ON tm.user_id = u.id \
-         WHERE tm.team_id = ? AND u.enabled = 1 \
-         ORDER BY u.name",
+    // The save form posts the whole membership, so the page carries every
+    // member's id and role; only one page of member rows is drawn.
+    let roster: Vec<(String, String, String)> = sqlx::query_as(
+        "SELECT u.id, tm.role, tm.source FROM users u
+         JOIN team_members tm ON tm.user_id = u.id
+         WHERE tm.team_id = ? AND u.enabled = 1",
     )
     .bind(&tid)
     .fetch_all(&state.pool)
     .await
     .unwrap_or_default();
+    let direct_ids: Vec<&str> = roster
+        .iter()
+        .filter(|(_, _, source)| source != "group")
+        .map(|(id, _, _)| id.as_str())
+        .collect();
+    let admin_ids: Vec<&str> = roster
+        .iter()
+        .filter(|(_, role, _)| role == "admin")
+        .map(|(id, _, _)| id.as_str())
+        .collect();
+
+    let scope = |head: &'static str| {
+        let mut qb = sqlx::QueryBuilder::new(head);
+        qb.push(
+            " FROM users u JOIN team_members tm ON tm.user_id = u.id
+             WHERE u.enabled = 1 AND tm.team_id = ",
+        );
+        qb.push_bind(tid.clone());
+        qb
+    };
+    let members_page = match listing::paged::<(String, String, Option<String>, String, String)>(
+        &state.pool,
+        scope("SELECT COUNT(*)"),
+        scope("SELECT u.id, u.name, u.avatar_path, tm.role, tm.source"),
+        "u.name, u.id",
+        PageParams::from_query(&query, "mp"),
+        |n| {
+            listing::href(
+                &format!("/dashboard/teams/{}/settings", urlencoding::encode(&tid)),
+                &[listing::page_part("mp", n)],
+                "members",
+            )
+        },
+    )
+    .await
+    {
+        Ok(page) => page,
+        Err(e) => return internal_error_html("load team members", &e),
+    };
+    let members = &members_page.rows;
 
     let members_ctx: Vec<minijinja::Value> = members
         .iter()
@@ -571,7 +619,7 @@ pub(super) async fn team_settings_page(
     .unwrap_or_default();
 
     let member_ids: std::collections::HashSet<&str> =
-        members.iter().map(|(id, _, _, _, _)| id.as_str()).collect();
+        roster.iter().map(|(id, _, _)| id.as_str()).collect();
 
     let all_users_ctx: Vec<minijinja::Value> = all_users
         .iter()
@@ -640,6 +688,10 @@ pub(super) async fn team_settings_page(
             visibility => visibility,
             invite_token => invite_token,
             members => members_ctx,
+            members_total => members_page.total,
+            members_pager => members_page.pager,
+            direct_member_ids => direct_ids,
+            admin_member_ids => admin_ids,
             all_users => all_users_ctx,
             oidc_groups => if groups_ctx.is_empty() { None } else { Some(groups_ctx) },
             linked_groups => linked_groups_ctx,

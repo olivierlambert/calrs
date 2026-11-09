@@ -243,6 +243,7 @@ landing-duration-aria-hm =
     }
 landing-next-free = Volgende: %1
 landing-with-one-of = met een van
+faces-and-more = en nog { $count }
 landing-with-everyone = met iedereen
 
 # Month and weekday names + per-locale date format patterns.
@@ -1455,9 +1456,6 @@ admin-guest-footer-default-help = Wordt gebruikt als een afspraaktype geen eigen
 admin-guest-footer-allow-all = Alle gebruikers een voettekst laten instellen voor hun afspraaktypes
 admin-guest-footer-allow-all-help = Standaard uit: de voettekst gaat uit naam van deze installatie, dus alleen beheerders mogen er een schrijven. Een voettekst op een afspraaktype vervangt de standaard hierboven.
 admin-save-guest-footer = Voettekst opslaan
-admin-page-of = Pagina %1 van %2
-admin-show-more-js = Nog %1 tonen
-admin-show-fewer = Minder tonen
 
 # Admin panel: overview, section tabs, users table (templates/admin.html)
 
@@ -1624,12 +1622,6 @@ admin-sms-env-error-help = Corrigeer de omgevingsvariabelen <code>CALRS_SMS_*</c
 admin-sms-env-managed = Beheerd via <strong>omgevingsvariabelen</strong> (overschrijven de database). Pas de variabelen <code>CALRS_SMS_*</code> aan om dit te wijzigen, of verwijder ze om SMS hier te beheren.
 admin-sms-env-help = Je kunt dit ook instellen via omgevingsvariabelen (die dit overschrijven): <code>CALRS_SMS_PROVIDER</code>, <code>CALRS_SMS_API_KEY</code>, <code>CALRS_SMS_API_SECRET</code>, <code>CALRS_SMS_SENDER</code>, <code>CALRS_SMS_BASE_URL</code>, <code>CALRS_SMS_DAILY_CAP</code>, <code>CALRS_SMS_DEFAULT_COUNTRY_CODE</code>.
 admin-sms-trial-warning = <strong>De proefmodus van Twilio staat aan</strong> (<code>CALRS_SMS_TWILIO_TRIAL</code>). Gasten ontvangen het vooraf gedefinieerde <code>sms_appointment_reminders</code>-sjabloon van Twilio, niet het echte bericht, en alleen nummers die in je Twilio-console zijn geverifieerd worden bereikt. Dit is een testhulpmiddel voor proefaccounts. Verwijder de variabele voordat je boekingen aanneemt.
-
-admin-show-more =
-    { $count ->
-        [one] Nog { $count } tonen
-       *[other] Nog { $count } tonen
-    }
 
 # Calendar source form: backend picker (templates/source_form.html)
 

@@ -650,8 +650,11 @@ pub(super) struct RescheduleHostProfile {
 
 pub(super) struct RescheduleTeamProfile {
     pub(super) id: String,
-    /// (user id, name, avatar path) for the eligible roster.
+    /// (user id, name, avatar path) for the first faces of the eligible
+    /// roster (`SLOT_PAGE_FACES`), as the team slot page shows them.
     pub(super) members: Vec<(String, String, Option<String>)>,
+    /// How many members the eligible roster has in all.
+    pub(super) total: i64,
 }
 
 pub(super) async fn reschedule_host_profile(
@@ -670,19 +673,25 @@ pub(super) async fn reschedule_host_profile(
             if let Some((team_name, team_avatar)) = team {
                 // Same eligibility as the availability check above, so the
                 // roster shown is the one the slot grid was computed from.
-                let members: Vec<(String, String, Option<String>)> = sqlx::query_as(
-                    "SELECT u.id, u.name, u.avatar_path FROM users u
+                let rows: Vec<(String, String, Option<String>, i64)> = sqlx::query_as(
+                    "SELECT u.id, u.name, u.avatar_path, COUNT(*) OVER () FROM users u
                      JOIN team_members tm ON tm.user_id = u.id
                      LEFT JOIN event_type_member_weights etw
                        ON etw.user_id = u.id AND etw.event_type_id = ?
                      WHERE tm.team_id = ? AND u.enabled = 1 AND COALESCE(etw.weight, 1) > 0
-                     ORDER BY u.name",
+                     ORDER BY u.name, u.id LIMIT ?",
                 )
                 .bind(et_id)
                 .bind(team_id)
+                .bind(SLOT_PAGE_FACES)
                 .fetch_all(pool)
                 .await
                 .unwrap_or_default();
+                let total = rows.first().map_or(0, |r| r.3);
+                let members = rows
+                    .into_iter()
+                    .map(|(id, name, ap, _)| (id, name, ap))
+                    .collect();
                 return RescheduleHostProfile {
                     name: team_name,
                     title: None,
@@ -691,6 +700,7 @@ pub(super) async fn reschedule_host_profile(
                     team: Some(RescheduleTeamProfile {
                         id: team_id.clone(),
                         members,
+                        total,
                     }),
                 };
             }

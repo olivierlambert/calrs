@@ -47,14 +47,16 @@
 <header class="page-header">
   <div class="page-header-text">
     <h1 class="page-title">{{ t("bookings-page-title") }}</h1>
-    <p class="page-subtitle">{{ t("bookings-summary", upcoming=bookings | length, pending=pending_bookings | length, tz=sidebar.user_timezone) }}</p>
+    <p class="page-subtitle">{{ t("bookings-summary", upcoming=totals.upcoming, pending=totals.pending, tz=sidebar.user_timezone) }}</p>
   </div>
-  {% if bookings or pending_bookings or claimable_bookings or recent_bookings or cancelled_bookings %}
-  <div class="page-actions ui-search">
+  {% if q or bookings or pending_bookings or claimable_bookings or recent_bookings or cancelled_bookings %}
+  {#- Searches every section on the server (Enter); typing narrows the
+      rows on the page at once. #}
+  <form method="get" action="/dashboard/bookings" class="page-actions ui-search" role="search">
     {{ ic.icon("search", 15) }}
-    <input type="search" data-search data-filter placeholder="{{ t('bookings-search-placeholder') }}" aria-label="{{ t('bookings-search-placeholder') }}">
+    <input type="search" name="q" value="{{ q }}" maxlength="{{ search_max }}" data-search data-filter placeholder="{{ t('bookings-search-placeholder') }}" aria-label="{{ t('bookings-search-placeholder') }}">
     <span class="kbd">/</span>
-  </div>
+  </form>
   {% endif %}
 </header>
 
@@ -64,7 +66,7 @@
 
 {% if pending_bookings %}
 <section class="sec" aria-labelledby="bk-pending">
-  <div class="sec-h"><h2 id="bk-pending">{{ t("bookings-pending-approval") }}<span class="num">{{ pending_bookings | length }}</span></h2></div>
+  <div class="sec-h"><h2 id="bk-pending">{{ t("bookings-pending-approval") }}<span class="num">{{ totals.pending }}</span></h2></div>
   <ol class="ledger" data-filter-list>
   {% for b in pending_bookings %}
   <li class="tt-row" id="b-{{ b.id }}" data-filter-text="{{ b.event_title }} {{ b.guest_name }} {{ b.guest_email }}">
@@ -78,10 +80,12 @@
     <div class="tt-acts booking-actions">
       {{ notes_link(b) }}
       <form method="post" action="/dashboard/bookings/{{ b.id }}/cancel" style="margin: 0;">
+        <input type="hidden" name="return_to" value="{{ returns.pending }}">
         <button type="submit" class="ui-btn ui-btn--sm">{{ t("bookings-decline") }}</button>
       </form>
-      <a href="/dashboard/bookings/{{ b.id }}/reschedule" data-calrs-sync class="ui-btn ui-btn--sm">{{ t("bookings-reschedule") }}</a>
+      <a href="/dashboard/bookings/{{ b.id }}/reschedule{{ reschedule_query }}" data-calrs-sync class="ui-btn ui-btn--sm">{{ t("bookings-reschedule") }}</a>
       <form method="post" action="/dashboard/bookings/{{ b.id }}/confirm" style="margin: 0;">
+        <input type="hidden" name="return_to" value="{{ returns.pending }}">
         <button type="submit" class="ui-btn ui-btn--sm ui-btn--primary">{{ t("bookings-confirm") }}</button>
       </form>
     </div>
@@ -89,12 +93,13 @@
   {% endfor %}
   <li class="ui-filter-empty" data-filter-empty hidden>{{ t("dash-no-matches") }}</li>
   </ol>
+  {% with pager=pagers.pending %}{% include "partials/pager.html" %}{% endwith %}
 </section>
 {% endif %}
 
 {% if claimable_bookings is defined and claimable_bookings %}
 <section class="sec" aria-labelledby="bk-claim">
-  <div class="sec-h"><h2 id="bk-claim">{{ t("bookings-available-to-claim") }}<span class="num">{{ claimable_bookings | length }}</span></h2></div>
+  <div class="sec-h"><h2 id="bk-claim">{{ t("bookings-available-to-claim") }}<span class="num">{{ totals.claimable }}</span></h2></div>
   <ol class="ledger" data-filter-list>
   {% for b in claimable_bookings %}
   <li class="tt-row" data-filter-text="{{ b.event_title }} {{ b.guest_name }} {{ b.guest_email }} {{ b.team_name }}">
@@ -112,11 +117,12 @@
   {% endfor %}
   <li class="ui-filter-empty" data-filter-empty hidden>{{ t("dash-no-matches") }}</li>
   </ol>
+  {% with pager=pagers.claimable %}{% include "partials/pager.html" %}{% endwith %}
 </section>
 {% endif %}
 
 <section class="sec" aria-labelledby="bk-upcoming">
-  <div class="sec-h"><h2 id="bk-upcoming">{{ t("bookings-upcoming") }}{% if bookings %}<span class="num">{{ bookings | length }}</span>{% endif %}</h2></div>
+  <div class="sec-h"><h2 id="bk-upcoming">{{ t("bookings-upcoming") }}{% if bookings %}<span class="num">{{ totals.upcoming }}</span>{% endif %}</h2></div>
   {% if bookings %}
   <ol class="ledger" data-filter-list>
     {% for b in bookings %}
@@ -138,14 +144,16 @@
         {% if b.when %}<time class="rel-time" datetime="{{ b.when.iso }}"></time>{% endif %}
         {{ notes_link(b, " booking-action-btn") }}
         {% if not (b.awaiting_reschedule is defined and b.awaiting_reschedule) %}
-        <a href="/dashboard/bookings/{{ b.id }}/reschedule" class="ui-btn ui-btn--sm booking-action-btn">{{ t("bookings-reschedule") }}</a>
+        <a href="/dashboard/bookings/{{ b.id }}/reschedule{{ reschedule_query }}" class="ui-btn ui-btn--sm booking-action-btn">{{ t("bookings-reschedule") }}</a>
         {% else %}
         <form method="post" action="/dashboard/bookings/{{ b.id }}/reschedule/resend" class="booking-action-btn" style="margin: 0;">
+          <input type="hidden" name="return_to" value="{{ returns.upcoming }}">
           <button type="submit" class="ui-btn ui-btn--sm" title="{{ t('bookings-resend-reschedule-hint') }}">{{ t("bookings-resend-reschedule") }}</button>
         </form>
         {% endif %}
         <button type="button" class="ui-btn ui-btn--sm ui-btn--danger booking-action-btn" onclick="var p=this.parentElement; p.querySelectorAll('.booking-action-btn').forEach(function(b){b.hidden=true}); var f=p.querySelector('.cancel-form'); f.classList.add('is-open'); f.querySelector('input').focus();">{{ t("bookings-cancel") }}</button>
         <form method="post" action="/dashboard/bookings/{{ b.id }}/cancel" class="cancel-form">
+          <input type="hidden" name="return_to" value="{{ returns.upcoming }}">
           <input type="text" name="reason" placeholder="{{ t('bookings-reason-placeholder') }}" aria-label="{{ t('bookings-reason-placeholder') }}" onkeydown="if(event.key==='Escape'){event.preventDefault(); this.form.querySelector('[data-cancel-back]').click();}">
           <button type="submit" class="ui-btn ui-btn--sm ui-btn--danger">{{ t("bookings-confirm-cancel") }}</button>
           <button type="button" class="ui-btn ui-btn--sm ui-btn--ghost" data-cancel-back onclick="var p=this.closest('.booking-actions'); p.querySelector('.cancel-form').classList.remove('is-open'); p.querySelectorAll('.booking-action-btn').forEach(function(b){b.hidden=false});">{{ t("bookings-back") }}</button>
@@ -155,14 +163,17 @@
     {% endfor %}
     <li class="ui-filter-empty" data-filter-empty hidden>{{ t("dash-no-matches") }}</li>
   </ol>
+  {% with pager=pagers.upcoming %}{% include "partials/pager.html" %}{% endwith %}
+  {% elif q %}
+  <p class="empty-line">{{ t("dash-no-matches") }}</p>
   {% else %}
   <p class="empty-line">{{ t("bookings-empty", link='<a href="/dashboard/event-types">' ~ (t("bookings-empty-link-label") | escape) ~ '</a>') | safe }}</p>
   {% endif %}
 </section>
 {#- Recent and Cancelled: rows that only lead to the booking's host notes. #}
-{% macro hosted_section(sec_id, heading, rows) -%}
+{% macro hosted_section(sec_id, heading, rows, total, pg) -%}
 <section class="sec" aria-labelledby="{{ sec_id }}">
-  <div class="sec-h"><h2 id="{{ sec_id }}">{{ heading }}<span class="num">{{ rows | length }}</span></h2></div>
+  <div class="sec-h"><h2 id="{{ sec_id }}">{{ heading }}<span class="num">{{ total }}</span></h2></div>
   <ol class="ledger" data-filter-list>
   {% for b in rows %}
   <li class="tt-row" data-filter-text="{{ b.event_title }} {{ b.guest_name }} {{ b.guest_email }}">
@@ -181,8 +192,9 @@
   {% endfor %}
   <li class="ui-filter-empty" data-filter-empty hidden>{{ t("dash-no-matches") }}</li>
   </ol>
+  {% with pager=pg %}{% include "partials/pager.html" %}{% endwith %}
 </section>
 {%- endmacro %}
-{% if recent_bookings %}{{ hosted_section("bk-recent", t("bookings-recent"), recent_bookings) }}{% endif %}
-{% if cancelled_bookings %}{{ hosted_section("bk-cancelled", t("bookings-cancelled"), cancelled_bookings) }}{% endif %}
+{% if recent_bookings %}{{ hosted_section("bk-recent", t("bookings-recent"), recent_bookings, totals.recent, pagers.recent) }}{% endif %}
+{% if cancelled_bookings %}{{ hosted_section("bk-cancelled", t("bookings-cancelled"), cancelled_bookings, totals.cancelled, pagers.cancelled) }}{% endif %}
 {% endblock %}

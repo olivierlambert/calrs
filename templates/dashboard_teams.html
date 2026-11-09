@@ -57,6 +57,7 @@
     </div>
     {% endfor %}
   </div>
+  {% include "partials/pager.html" %}
   {% else %}
     {% if is_admin %}
     <p class="empty-line">{{ t("teams-empty") }} {{ t("teams-empty-admin", link='<a href="/dashboard/teams/new">' ~ (t("teams-empty-admin-link-label") | escape) ~ '</a>') | safe }}</p>
