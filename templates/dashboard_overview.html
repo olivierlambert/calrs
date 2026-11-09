@@ -131,6 +131,10 @@
   .wk-col { position: relative; height: 9.5rem; border-bottom: 1px solid var(--rule-strong); }
   .wk-open { position: absolute; left: 0; right: 0; background-image: radial-gradient(var(--dots) 0.6px, transparent 0.8px); background-size: 9px 9px; background-position: 2px 2px; }
   .wk-u { position: absolute; left: 0; right: 0; background: var(--data-busy); }
+  /* A repeat rule calrs cannot read, blocked to be safe: the busy band
+     with a dashed outline, a link to the troubleshoot view. */
+  .wk-u.r { outline: 1px dashed var(--data); outline-offset: -1px; }
+  a.wk-u.r:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
   .wk-b { position: absolute; box-sizing: border-box; display: grid; place-items: center; overflow: hidden; border: 1px solid var(--paper); font-size: 10.5px; font-weight: 650; line-height: 1; text-decoration: none; letter-spacing: 0.02em; }
   .wk-b.c { background: var(--bar); color: var(--on-bar); }
   .wk-b.p { background: var(--paper) var(--hatch); color: var(--ink); box-shadow: inset 0 0 0 1px var(--bar); }
@@ -363,7 +367,7 @@
           <span class="wk-head">{{ d.weekday }}<b>{{ d.day }}</b></span>
           <span class="wk-col">
             {% for o in d.bands %}<span class="wk-open" style="top: {{ o.top }}%; height: {{ o.height }}%;"></span>{% endfor %}
-            {% for u in d.busy %}<span class="wk-u" style="top: {{ u.top }}%; height: {{ u.height }}%;" title="{{ u.tip }}"><span class="sr-only">{{ u.tip }}</span></span>{% endfor %}
+            {% for u in d.busy %}{% if u.href and not d.link %}<a class="wk-u {{ u.kind }}" href="{{ u.href }}" style="top: {{ u.top }}%; height: {{ u.height }}%;" title="{{ u.tip }}"><span class="sr-only">{{ u.tip }}</span></a>{% else %}<span class="wk-u {{ u.kind }}" style="top: {{ u.top }}%; height: {{ u.height }}%;" title="{{ u.tip }}"><span class="sr-only">{{ u.tip }}</span></span>{% endif %}{% endfor %}
             {% for b in d.blocks %}<span class="wk-b {{ b.kind }}{% if b.past %} past{% endif %}"{% if not d.link %} tabindex="0"{% endif %} role="img" style="top: {{ b.top }}%; height: {{ b.height }}%; left: {{ b.left }}%; width: {{ b.width }}%;" aria-label="{{ b.aria }}">{% if b.show_initials %}<span aria-hidden="true">{{ b.initials }}</span>{% endif %}<span class="wtip{% if b.tip_left %} l{% endif %}{% if b.tip_up %} up{% endif %}" aria-hidden="true"><strong>{{ b.range }}</strong>{{ b.title }}<br>{{ b.guest }}<span class="tip-row"><i class="g {{ b.kind }}"></i> {{ b.status }}</span></span></span>{% endfor %}
             {% if d.is_today %}<span class="wk-now" data-now{% if not d.now_top %} hidden{% else %} style="top: {{ d.now_top }}%;"{% endif %}></span>{% endif %}
           </span>
@@ -376,6 +380,7 @@
         <span><i class="g c"></i>{{ t("overview-ruler-booked") }}</span>
         {% if week.has_pending %}<span><i class="g p"></i>{{ t("overview-ruler-pending") }}</span>{% endif %}
         {% if week.has_unavailable %}<span><i class="g u"></i>{{ t("overview-ruler-unavailable") }}</span>{% endif %}
+        {% if week.has_unreadable %}<span><i class="g r"></i><a href="{{ week.unreadable_link }}" title="{{ t("overview-ruler-unreadable-tip") }}">{{ t("overview-ruler-unreadable") }}</a></span>{% endif %}
         <span><i class="g o"></i>{{ t("overview-key-open") }}</span>
         {% if calendar_url %}<span class="end"><a href="{{ calendar_url }}"{% if calendar_external %} target="_blank" rel="noopener"{% endif %}>{{ t("overview-open-calendar") }}</a></span>{% endif %}
       </div>

@@ -1055,3 +1055,37 @@ async fn admin_saves_and_validates_trusted_proxies() {
         .unwrap();
     assert_eq!(stored(pool).await, None);
 }
+
+/// System settings validate every field before saving any: a refused
+/// trusted proxies list leaves the base URL and the private host allowlist
+/// posted with it as stored. (Only the refusal is exercised: a saved base
+/// URL would reach the process-wide settings cache other tests read.)
+#[tokio::test]
+async fn admin_general_settings_save_nothing_when_one_field_is_refused() {
+    let _lock = crate::test_support::ENV_LOCK.lock().await;
+    let _env = crate::test_support::EnvGuard::new();
+    let (app, pool, session, _) = setup_test_app().await;
+    let stored = |pool: SqlitePool| async move {
+        sqlx::query_as::<_, (Option<String>, Option<String>, Option<String>)>(
+            "SELECT base_url, allow_private_hosts, trusted_proxies FROM auth_config WHERE id = 'singleton'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap()
+    };
+    let before = stored(pool.clone()).await;
+
+    let response = app
+        .clone()
+        .oneshot(post_form(
+            "/dashboard/admin/general",
+            &session,
+            "gs",
+            "_csrf=gs&base_url=https%3A%2F%2Fcal.example.org&allow_private_hosts=dav.lan&trusted_proxies=not-an-address",
+        ))
+        .await
+        .unwrap();
+    let location = response.headers()["location"].to_str().unwrap().to_string();
+    assert!(location.contains("error="), "{location}");
+    assert_eq!(stored(pool.clone()).await, before, "nothing saved");
+}

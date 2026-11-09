@@ -1055,7 +1055,7 @@
 </div>
 {% endif %}
 
-{% if watcher_teams is defined and watcher_teams and ((is_group is defined and is_group) or (not editing and teams is defined and teams)) %}
+{% if ((watcher_teams is defined and watcher_teams) or (locked_watcher_teams is defined and locked_watcher_teams)) and ((is_group is defined and is_group) or (not editing and teams is defined and teams)) %}
 <details class="card collapsible-section" id="watcher-section" style="margin-top: 1rem;"{% if selected_watcher_team_ids is defined and selected_watcher_team_ids %} open{% endif %}>
   <summary class="collapsible-header">
     <h2>{{ t("etf-watcher-teams") }}</h2>
@@ -1072,6 +1072,14 @@
           {{ wt.name }}
         </label>
       {% endfor %}
+      {% if locked_watcher_teams is defined %}{% for wt in locked_watcher_teams %}
+        <label style="display: inline-flex; align-items: center; flex-wrap: wrap; gap: 0.375rem; padding: 0.4rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.85rem; color: var(--text-muted);">
+          <input type="checkbox" checked disabled style="accent-color: var(--ink);">
+          {{ wt.name }}
+          <span style="font-size: 0.8rem;">{{ t("etf-watcher-team-locked") }}</span>
+          <input type="hidden" class="watcher-team-locked" value="{{ wt.id }}">
+        </label>
+      {% endfor %}{% endif %}
     </div>
     <input type="hidden" name="watcher_team_ids" id="watcher_team_ids" value="{{ selected_watcher_team_ids }}">
   </div>
@@ -1480,7 +1488,9 @@ function sub(tpl, a, b) {
   // Sync watcher team checkboxes to hidden field
   document.querySelectorAll('.watcher-team-check').forEach(cb => {
     cb.addEventListener('change', () => {
-      const checked = [...document.querySelectorAll('.watcher-team-check:checked')].map(c => c.value);
+      // Teams the editor is not in stay attached: their read-only rows
+      // carry their ids (#405).
+      const checked = [...document.querySelectorAll('.watcher-team-check:checked, .watcher-team-locked')].map(c => c.value);
       document.getElementById('watcher_team_ids').value = checked.join(',');
     });
   });
