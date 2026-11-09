@@ -4,10 +4,11 @@
 {%- set show_week_strip = false -%}
 {#- Behaviour of the landing pages, after the content:
     - faces get the overview's per-person hue (--h), a stable hash;
-    - each row asks its next-free endpoint (data-next) for the first free
-      start and the free days of the coming week, then writes them in the
-      guest's own timezone and time format. Nothing blocks the page; on a
-      failure the row simply shows nothing. -#}
+    - the list asks its page's next-free endpoint (data-next, one request
+      per page view) for each meeting's first free start and free days of
+      the coming week, keyed by slug, then writes them in the guest's own
+      timezone and time format. Nothing blocks the page; on a failure the
+      rows simply show nothing. -#}
 <script>
 (function() {
   // FNV-1a over the UTF-8 bytes, as overview_stats::face_hue computes it.
@@ -23,8 +24,8 @@
     el.style.setProperty('--h', FACE_HUES[fnv(key(el.getAttribute('data-face'))) % FACE_HUES.length]);
   });
 
-  var rows = document.querySelectorAll('[data-next]');
-  if (!rows.length || !window.fetch || !window.Intl) return;
+  var list = document.querySelector('[data-next]');
+  if (!list || !window.fetch || !window.Intl) return;
   var label = {{ t("landing-next-free") | tojson }};
   var lang = document.documentElement.lang || 'en';
   var h12 = false;
@@ -67,27 +68,32 @@
     }
     box.hidden = false;
   }
-  Array.prototype.forEach.call(rows, function(el) {
-    var url = el.getAttribute('data-next');
-    if (tz) url += (url.indexOf('?') >= 0 ? '&' : '?') + 'tz=' + encodeURIComponent(tz);
-    fetch(url, { headers: { 'Accept': 'application/json' }, credentials: 'same-origin' })
-      .then(function(r) { return r.ok ? r.json() : null; })
-      .then(function(j) {
-        if (!j || typeof j !== 'object') return;
-        days(el, j.days);
-        if (!j.start) return;
-        var text = when(new Date(j.start));
-        var next = el.querySelector('.lp-next');
-        if (!text || !next) return;
-        var parts = label.split('%1');
-        next.textContent = parts[0];
-        var b = document.createElement('b');
-        b.textContent = text;
-        next.appendChild(b);
-        if (parts[1]) next.appendChild(document.createTextNode(parts[1]));
-        next.hidden = false;
-      })
-      .catch(function() {});
-  });
+  function fill(el, j) {
+    if (!j || typeof j !== 'object') return;
+    days(el, j.days);
+    if (!j.start) return;
+    var text = when(new Date(j.start));
+    var next = el.querySelector('.lp-next');
+    if (!text || !next) return;
+    var parts = label.split('%1');
+    next.textContent = parts[0];
+    var b = document.createElement('b');
+    b.textContent = text;
+    next.appendChild(b);
+    if (parts[1]) next.appendChild(document.createTextNode(parts[1]));
+    next.hidden = false;
+  }
+  var url = list.getAttribute('data-next');
+  if (tz) url += (url.indexOf('?') >= 0 ? '&' : '?') + 'tz=' + encodeURIComponent(tz);
+  fetch(url, { headers: { 'Accept': 'application/json' }, credentials: 'same-origin' })
+    .then(function(r) { return r.ok ? r.json() : null; })
+    .then(function(all) {
+      if (!all || typeof all !== 'object') return;
+      Array.prototype.forEach.call(list.querySelectorAll('[data-slug]'), function(el) {
+        var slug = el.getAttribute('data-slug');
+        if (Object.prototype.hasOwnProperty.call(all, slug)) fill(el, all[slug]);
+      });
+    })
+    .catch(function() {});
 })();
 </script>

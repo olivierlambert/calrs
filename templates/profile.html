@@ -8,7 +8,7 @@
   <header class="lp-card">
     <div class="lp-face" data-face="{{ host_name }}">
       {% if host_has_avatar %}
-        <img src="/avatar/{{ host_user_id }}" alt="" onerror="this.parentElement.textContent='{{ host_initials }}'">
+        <img src="/avatar/{{ host_user_id }}" alt="" data-initials="{{ host_initials }}" onerror="this.parentElement.textContent=this.dataset.initials">
       {% else %}
         {{ host_initials }}
       {% endif %}
@@ -21,9 +21,9 @@
   </header>
 </section>
 
-<ul class="lp-list">
+<ul class="lp-list"{% if event_types %} data-next="/u/{{ username }}/next-free"{% endif %}>
   {% for et in event_types %}
-  <li class="lp-row" style="--eh: {{ dial.hue(et.duration_min) }}" data-next="/u/{{ username }}/{{ et.slug }}/next-free">
+  <li class="lp-row" style="--eh: {{ dial.hue(et.duration_min) }}" data-slug="{{ et.slug }}">
     {% with d = et.duration_min %}{% include "partials/landing_dial.html" %}{% endwith %}
     <div class="lp-main">
       <a href="/u/{{ username }}/{{ et.slug }}" data-calrs-sync class="lp-et-title">{{ et.title }}</a>

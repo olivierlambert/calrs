@@ -182,8 +182,10 @@ pub struct AppState {
     /// REST API slot reads and writes, per user (`api::heavy_limit`).
     pub api_heavy_limiter: RateLimiter,
     /// Per-IP limit on the landing pages' next-free hints (`next_free`):
-    /// one page view asks once per listed meeting.
+    /// one request per page view.
     pub next_free_limiter: RateLimiter,
+    /// The next-free answers per event type and zone, kept a minute.
+    pub next_free_cache: next_free::NextFreeCache,
     /// Personal access tokens just created, waiting to be shown once on the
     /// page the creation redirects to (`api_tokens`): flash id to
     /// (user id, secret, created).
@@ -732,6 +734,7 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
         api_limiter: RateLimiter::new(300, 60),
         api_heavy_limiter: RateLimiter::new(60, 300),
         next_free_limiter: RateLimiter::new(60, 60),
+        next_free_cache: Default::default(),
         api_token_flash: std::sync::Mutex::new(HashMap::new()),
         secret_key,
         data_dir,
@@ -1080,8 +1083,8 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
         )
         // Group public routes
         .route("/team/{team_slug}", get(team_profile_page))
+        .route("/team/{team_slug}/next-free", get(team_next_free))
         .route("/team/{team_slug}/{slug}", get(show_group_slots))
-        .route("/team/{team_slug}/{slug}/next-free", get(team_next_free))
         .route(
             "/team/{team_slug}/{slug}/book",
             get(show_group_book_form).post(handle_group_booking),
@@ -1127,9 +1130,9 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
             post(host_resend_reschedule),
         )
         .route("/u/{username}", get(user_profile))
+        .route("/u/{username}/next-free", get(user_next_free))
         .route("/u/{username}/", get(redirect_user_profile_trailing_slash))
         .route("/u/{username}/{slug}", get(show_slots_for_user))
-        .route("/u/{username}/{slug}/next-free", get(user_next_free))
         .route(
             "/u/{username}/{slug}/book",
             get(show_book_form_for_user).post(handle_booking_for_user),

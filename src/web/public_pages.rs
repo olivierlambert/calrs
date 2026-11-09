@@ -116,6 +116,15 @@ pub(super) async fn redirect_team_link_to_team(
 
 // --- Group public pages ---
 
+/// The name shown under a member's face on the team page: the first word
+/// of `name` that is not an abbreviated title ("Dr.", "Prof."), so
+/// "Dr. Jane Doe" reads "Jane"; the whole name when every word is one.
+pub(super) fn first_name(name: &str) -> &str {
+    name.split_whitespace()
+        .find(|word| !word.ends_with('.'))
+        .unwrap_or(name)
+}
+
 pub(super) async fn team_profile_page(
     State(state): State<Arc<AppState>>,
     optional_auth: crate::auth::OptionalAuthUser,
@@ -220,7 +229,7 @@ pub(super) async fn team_profile_page(
         context! {
             id => id,
             name => name,
-            first_name => name.split_whitespace().next().unwrap_or(name),
+            first_name => first_name(name),
             has_avatar => ap.is_some(),
             initials => compute_initials(name),
         }

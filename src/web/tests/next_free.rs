@@ -12,29 +12,58 @@ fn get_from(uri: &str, ip: &str) -> axum::http::Request<Body> {
         .unwrap()
 }
 
+async fn json_of(response: axum::http::Response<Body>) -> serde_json::Value {
+    serde_json::from_str(&body_string(response).await).unwrap_or(serde_json::Value::Null)
+}
+
 async fn next_free_json(app: &Router, uri: &str) -> (u16, serde_json::Value) {
     let response = app.clone().oneshot(get(uri)).await.unwrap();
     let status = response.status().as_u16();
-    let body = body_string(response).await;
-    (
-        status,
-        serde_json::from_str(&body).unwrap_or(serde_json::Value::Null),
-    )
+    (status, json_of(response).await)
+}
+
+/// The slugs a page's answer covers.
+fn slugs(json: &serde_json::Value) -> Vec<String> {
+    json.as_object()
+        .map(|o| o.keys().cloned().collect())
+        .unwrap_or_default()
+}
+
+/// A personal public event type of the test user, Mon-Fri 09-17.
+async fn add_personal_type(pool: &SqlitePool, slug: &str) -> String {
+    let user_id: String = sqlx::query_scalar("SELECT id FROM users WHERE username = 'testuser'")
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    let et_id = insert_personal_et(pool, &user_id, slug).await;
+    for day in [1, 2, 3, 4, 5] {
+        sqlx::query("INSERT INTO availability_rules (id, event_type_id, day_of_week, start_time, end_time) VALUES (?, ?, ?, '09:00', '17:00')")
+            .bind(uuid::Uuid::new_v4().to_string())
+            .bind(&et_id)
+            .bind(day)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+    et_id
 }
 
 #[tokio::test]
-async fn public_type_answers_its_first_free_start_and_free_days() {
+async fn the_page_answer_holds_each_listed_type_first_start_and_free_days() {
     let (app, _, _, _) = setup_test_app().await;
     let response = app
         .clone()
-        .oneshot(get("/u/testuser/test-meeting/next-free"))
+        .oneshot(get("/u/testuser/next-free"))
         .await
         .unwrap();
     assert_eq!(response.status(), 200);
     assert_eq!(response.headers()["content-type"], "application/json");
     assert_eq!(response.headers()["cache-control"], "private, max-age=60");
-    let json: serde_json::Value = serde_json::from_str(&body_string(response).await).unwrap();
-    let start = json["start"]
+    assert_eq!(response.headers()["vary"], "Cookie");
+    let json = json_of(response).await;
+    assert_eq!(slugs(&json), ["test-meeting"]);
+    let one = &json["test-meeting"];
+    let start = one["start"]
         .as_str()
         .expect("a start, Mon-Fri 09-17 is open");
     let start = chrono::DateTime::parse_from_rfc3339(start).unwrap();
@@ -43,7 +72,7 @@ async fn public_type_answers_its_first_free_start_and_free_days() {
     // The open days of the coming week, in order: every weekday from
     // tomorrow on, and today too while a slot is left.
     let today = Utc::now().date_naive();
-    let days: Vec<NaiveDate> = json["days"]
+    let days: Vec<NaiveDate> = one["days"]
         .as_array()
         .unwrap()
         .iter()
@@ -67,89 +96,74 @@ async fn public_type_answers_its_first_free_start_and_free_days() {
 #[tokio::test]
 async fn days_follow_the_guest_timezone() {
     let (app, _, _, _) = setup_test_app().await;
-    // Kiritimati is UTC+14: a Monday 09:00 UTC slot is Monday 23:00 there,
-    // so whatever the day, every listed date is a guest-local date in range.
-    let (status, json) = next_free_json(
-        &app,
-        "/u/testuser/test-meeting/next-free?tz=Pacific/Kiritimati",
-    )
-    .await;
+    let (status, json) = next_free_json(&app, "/u/testuser/next-free?tz=Pacific/Kiritimati").await;
     assert_eq!(status, 200);
     let tz: Tz = "Pacific/Kiritimati".parse().unwrap();
     let today = Utc::now().with_timezone(&tz).date_naive();
-    for day in json["days"].as_array().unwrap() {
+    for day in json["test-meeting"]["days"].as_array().unwrap() {
         let day = NaiveDate::parse_from_str(day.as_str().unwrap(), "%Y-%m-%d").unwrap();
         assert!(day >= today && day < today + Duration::days(7), "{day}");
     }
     // An unknown zone falls back to the host's, it is not an error.
-    let (status, _) = next_free_json(&app, "/u/testuser/test-meeting/next-free?tz=Mars/Base").await;
+    let (status, json) = next_free_json(&app, "/u/testuser/next-free?tz=Mars/Base").await;
     assert_eq!(status, 200);
+    assert!(json["test-meeting"]["start"].is_string());
 }
 
+/// The answer covers exactly what /u/{username} lists: public, personal,
+/// enabled types, not past their last day, of an enabled user.
 #[tokio::test]
-async fn only_types_the_profile_lists_are_answered() {
-    let (app, pool, _, et_id) = setup_test_app().await;
-    let not_found = |uri: &'static str| {
-        let app = app.clone();
-        async move {
-            let response = app.oneshot(get(uri)).await.unwrap();
-            assert_eq!(response.status(), 404, "{uri}");
-        }
-    };
-    not_found("/u/testuser/nope/next-free").await;
-    not_found("/u/nobody/test-meeting/next-free").await;
-
-    for visibility in ["internal", "private"] {
-        sqlx::query("UPDATE event_types SET visibility = ? WHERE id = ?")
-            .bind(visibility)
-            .bind(&et_id)
-            .execute(&pool)
-            .await
-            .unwrap();
-        // Not even with an event-type invite: the landing page never lists it.
-        not_found("/u/testuser/test-meeting/next-free").await;
+async fn the_user_answer_covers_exactly_the_listed_types() {
+    let (app, pool, _, _) = setup_test_app().await;
+    let internal = add_personal_type(&pool, "internal-one").await;
+    let private = add_personal_type(&pool, "private-one").await;
+    let disabled = add_personal_type(&pool, "disabled-one").await;
+    let expired = add_personal_type(&pool, "expired-one").await;
+    for (id, sql) in [
+        (
+            &internal,
+            "UPDATE event_types SET visibility = 'internal' WHERE id = ?",
+        ),
+        (
+            &private,
+            "UPDATE event_types SET visibility = 'private' WHERE id = ?",
+        ),
+        (&disabled, "UPDATE event_types SET enabled = 0 WHERE id = ?"),
+        (
+            &expired,
+            "UPDATE event_types SET bookable_until = '2000-01-01' WHERE id = ?",
+        ),
+    ] {
+        sqlx::query(sql).bind(id).execute(&pool).await.unwrap();
     }
-    sqlx::query("UPDATE event_types SET visibility = 'public', enabled = 0 WHERE id = ?")
-        .bind(&et_id)
-        .execute(&pool)
-        .await
-        .unwrap();
-    not_found("/u/testuser/test-meeting/next-free").await;
+    seed_team_event_type(&pool).await;
 
-    sqlx::query("UPDATE event_types SET enabled = 1 WHERE id = ?")
-        .bind(&et_id)
-        .execute(&pool)
+    let (status, json) = next_free_json(&app, "/u/testuser/next-free").await;
+    assert_eq!(status, 200);
+    assert_eq!(slugs(&json), ["test-meeting"], "{json}");
+
+    // The same list the page renders.
+    let page = body_string(app.clone().oneshot(get("/u/testuser")).await.unwrap()).await;
+    let listed: Vec<&str> = page
+        .split(r#"data-slug=""#)
+        .skip(1)
+        .map(|s| s.split('"').next().unwrap())
+        .collect();
+    assert_eq!(listed, ["test-meeting"]);
+
+    let response = app
+        .clone()
+        .oneshot(get("/u/nobody/next-free"))
         .await
         .unwrap();
+    assert_eq!(response.status(), 404);
     sqlx::query("UPDATE users SET enabled = 0 WHERE username = 'testuser'")
         .execute(&pool)
         .await
         .unwrap();
-    not_found("/u/testuser/test-meeting/next-free").await;
-
-    sqlx::query("UPDATE users SET enabled = 1 WHERE username = 'testuser'")
-        .execute(&pool)
-        .await
-        .unwrap();
-    // Past its last bookable day, the type leaves the profile and the hint.
-    let yesterday = (Utc::now() - Duration::days(2))
-        .format("%Y-%m-%d")
-        .to_string();
-    sqlx::query("UPDATE event_types SET bookable_until = ? WHERE id = ?")
-        .bind(&yesterday)
-        .bind(&et_id)
-        .execute(&pool)
-        .await
-        .unwrap();
-    not_found("/u/testuser/test-meeting/next-free").await;
-}
-
-#[tokio::test]
-async fn a_team_type_is_not_answered_on_the_user_route() {
-    let (app, pool, _, _) = setup_test_app().await;
-    seed_team_event_type(&pool).await;
     let response = app
-        .oneshot(get("/u/testuser/team-sync/next-free"))
+        .clone()
+        .oneshot(get("/u/testuser/next-free"))
         .await
         .unwrap();
     assert_eq!(response.status(), 404);
@@ -157,59 +171,60 @@ async fn a_team_type_is_not_answered_on_the_user_route() {
 
 #[tokio::test]
 async fn search_stops_at_sixty_days_and_respects_the_booking_window() {
-    let (app, pool, _, et_id) = setup_test_app().await;
-    // Opening in 70 days: past the search, so nothing free (null, not 404).
+    let (app, pool, _, _) = setup_test_app().await;
+    // Opening in 70 days: past the search, so nothing free (null).
+    let late = add_personal_type(&pool, "opens-late").await;
     let from = (Utc::now() + Duration::days(70))
         .format("%Y-%m-%d")
         .to_string();
     sqlx::query("UPDATE event_types SET bookable_from = ? WHERE id = ?")
         .bind(&from)
-        .bind(&et_id)
+        .bind(&late)
         .execute(&pool)
         .await
         .unwrap();
-    let (status, json) = next_free_json(&app, "/u/testuser/test-meeting/next-free").await;
-    assert_eq!(status, 200);
-    assert!(json["start"].is_null(), "{json}");
-    assert_eq!(json["days"], serde_json::json!([]));
-
-    // Opening in 40 days: found in the last span, still no free day this week.
-    let from = Utc::now().date_naive() + Duration::days(40);
+    // Opening in 40 days: found in the last span, no free day this week.
+    let later = add_personal_type(&pool, "opens-in-40").await;
+    let from40 = Utc::now().date_naive() + Duration::days(40);
     sqlx::query("UPDATE event_types SET bookable_from = ? WHERE id = ?")
-        .bind(from.format("%Y-%m-%d").to_string())
-        .bind(&et_id)
+        .bind(from40.format("%Y-%m-%d").to_string())
+        .bind(&later)
         .execute(&pool)
         .await
         .unwrap();
-    let (_, json) = next_free_json(&app, "/u/testuser/test-meeting/next-free").await;
-    let start = chrono::DateTime::parse_from_rfc3339(json["start"].as_str().unwrap()).unwrap();
-    assert!(start.date_naive() >= from, "{start}");
-    assert_eq!(json["days"], serde_json::json!([]));
-
     // A two-day horizon: the hint never looks past it.
-    sqlx::query("UPDATE event_types SET bookable_from = NULL WHERE id = ?")
-        .bind(&et_id)
-        .execute(&pool)
-        .await
-        .unwrap();
-    set_horizon(&pool, &et_id, 2).await;
-    let (_, json) = next_free_json(&app, "/u/testuser/test-meeting/next-free").await;
-    if let Some(start) = json["start"].as_str() {
+    let short = add_personal_type(&pool, "short-horizon").await;
+    set_horizon(&pool, &short, 2).await;
+
+    let (_, json) = next_free_json(&app, "/u/testuser/next-free").await;
+    assert!(json["opens-late"]["start"].is_null(), "{json}");
+    assert_eq!(json["opens-late"]["days"], serde_json::json!([]));
+
+    let start = json["opens-in-40"]["start"].as_str().expect("found");
+    let start = chrono::DateTime::parse_from_rfc3339(start).unwrap();
+    assert!(start.date_naive() >= from40, "{start}");
+    assert_eq!(json["opens-in-40"]["days"], serde_json::json!([]));
+
+    if let Some(start) = json["short-horizon"]["start"].as_str() {
         let start = chrono::DateTime::parse_from_rfc3339(start).unwrap();
         assert!(start < Utc::now() + Duration::days(3), "{start}");
     }
-    assert!(json["days"].as_array().unwrap().len() <= 3);
+    assert!(json["short-horizon"]["days"].as_array().unwrap().len() <= 3);
 }
 
 #[tokio::test]
-async fn team_types_follow_the_team_page_rules() {
+async fn the_team_answer_follows_the_team_page_rules() {
     let (app, pool, session, _) = setup_test_app().await;
     let (team_id, et_id) = seed_team_event_type(&pool).await;
-    let uri = "/team/horizon-team/team-sync/next-free";
+    let uri = "/team/horizon-team/next-free";
 
-    let (status, json) = next_free_json(&app, uri).await;
-    assert_eq!(status, 200);
-    assert!(json["start"].is_string(), "{json}");
+    let response = app.clone().oneshot(get(uri)).await.unwrap();
+    assert_eq!(response.status(), 200);
+    assert_eq!(response.headers()["cache-control"], "private, max-age=60");
+    assert_eq!(response.headers()["vary"], "Cookie");
+    let json = json_of(response).await;
+    assert_eq!(slugs(&json), ["team-sync"]);
+    assert!(json["team-sync"]["start"].is_string(), "{json}");
 
     // A private team: only with its invite token.
     sqlx::query("UPDATE teams SET visibility = 'private', invite_token = 'tok-123' WHERE id = ?")
@@ -223,33 +238,31 @@ async fn team_types_follow_the_team_page_rules() {
         app.clone().oneshot(get(&wrong)).await.unwrap().status(),
         404
     );
-    let (status, _) = next_free_json(&app, &format!("{uri}?invite=tok-123")).await;
+    let with_invite = format!("{uri}?invite=tok-123");
+    let (status, json) = next_free_json(&app, &with_invite).await;
     assert_eq!(status, 200);
+    assert_eq!(slugs(&json), ["team-sync"]);
 
-    // An internal type: hidden from visitors, even with the team invite,
-    // and shown to a member, as the team page shows it.
+    // An internal type: left out for visitors, even with the team invite,
+    // and listed for a member, as the team page lists it. A signed-in
+    // answer is never stored.
     sqlx::query("UPDATE event_types SET visibility = 'internal' WHERE id = ?")
         .bind(&et_id)
         .execute(&pool)
         .await
         .unwrap();
-    let with_invite = format!("{uri}?invite=tok-123");
-    assert_eq!(
-        app.clone()
-            .oneshot(get(&with_invite))
-            .await
-            .unwrap()
-            .status(),
-        404
-    );
+    let (_, json) = next_free_json(&app, &with_invite).await;
+    assert!(slugs(&json).is_empty(), "{json}");
     let response = app
         .clone()
         .oneshot(get_authed(uri, &session))
         .await
         .unwrap();
     assert_eq!(response.status(), 200);
+    assert_eq!(response.headers()["cache-control"], "private, no-store");
+    assert_eq!(slugs(&json_of(response).await), ["team-sync"]);
 
-    // A signed-in non-member is a visitor.
+    // A signed-in non-member is a visitor: the private team is not found.
     let (_, outsider) =
         insert_test_user_with_session(&pool, "Out Sider", "out@example.com", "outsider").await;
     let response = app
@@ -259,6 +272,7 @@ async fn team_types_follow_the_team_page_rules() {
         .unwrap();
     assert_eq!(response.status(), 404);
 
+    // A disabled type is never listed.
     sqlx::query("UPDATE event_types SET visibility = 'public', enabled = 0 WHERE id = ?")
         .bind(&et_id)
         .execute(&pool)
@@ -269,13 +283,22 @@ async fn team_types_follow_the_team_page_rules() {
         .oneshot(get_authed(uri, &session))
         .await
         .unwrap();
-    assert_eq!(response.status(), 404);
+    assert!(slugs(&json_of(response).await).is_empty());
+    assert_eq!(
+        app.clone()
+            .oneshot(get("/team/no-such-team/next-free"))
+            .await
+            .unwrap()
+            .status(),
+        404
+    );
 }
 
+/// One request per page view, so the per-address budget is page views.
 #[tokio::test]
 async fn next_free_is_rate_limited_per_address() {
     let (app, _, _, _) = setup_test_app().await;
-    let uri = "/u/testuser/test-meeting/next-free";
+    let uri = "/u/testuser/next-free";
     for _ in 0..60 {
         let response = app
             .clone()
@@ -290,7 +313,7 @@ async fn next_free_is_rate_limited_per_address() {
         .await
         .unwrap();
     assert_eq!(response.status(), 429);
-    assert_eq!(body_string(response).await, r#"{"start":null,"days":[]}"#);
+    assert_eq!(body_string(response).await, "{}");
     // Another address keeps its own budget.
     let response = app
         .clone()
@@ -301,11 +324,12 @@ async fn next_free_is_rate_limited_per_address() {
 }
 
 #[tokio::test]
-async fn landing_rows_point_at_their_next_free_endpoint() {
+async fn landing_lists_point_at_their_page_endpoint() {
     let (app, pool, _, _) = setup_test_app().await;
     seed_team_event_type(&pool).await;
     let profile = body_string(app.clone().oneshot(get("/u/testuser")).await.unwrap()).await;
-    assert!(profile.contains(r#"data-next="/u/testuser/test-meeting/next-free""#));
+    assert!(profile.contains(r#"data-next="/u/testuser/next-free""#));
+    assert!(profile.contains(r#"data-slug="test-meeting""#));
     let team = body_string(
         app.clone()
             .oneshot(get("/team/horizon-team"))
@@ -313,12 +337,34 @@ async fn landing_rows_point_at_their_next_free_endpoint() {
             .unwrap(),
     )
     .await;
-    assert!(team.contains(r#"data-next="/team/horizon-team/team-sync/next-free""#));
+    assert!(team.contains(r#"data-next="/team/horizon-team/next-free""#));
+    assert!(team.contains(r#"data-slug="team-sync""#));
 }
 
-/// The team page names who a guest meets: "with one of" for round robin,
-/// "with everyone" for collective, over the type's own roster (a member
-/// excluded by a zero weight is left out), and first names under the faces.
+#[test]
+fn first_names_skip_abbreviated_titles() {
+    assert_eq!(first_name("Jane Doe"), "Jane");
+    assert_eq!(first_name("Dr. Jane Doe"), "Jane");
+    assert_eq!(first_name("Prof. Dr. Hans Meier"), "Hans");
+    assert_eq!(first_name("  Ana  "), "Ana");
+    assert_eq!(first_name("St."), "St.");
+}
+
+/// The landing pages' hint endpoint owns the "next-free" segment, so no
+/// event type may take that slug.
+#[tokio::test]
+async fn the_next_free_slug_is_reserved() {
+    let pool = setup_test_db().await;
+    assert_eq!(
+        slug_conflict(&pool, "next-free", "acc", None, None).await,
+        Some("form-error-event-type-slug-taken")
+    );
+    assert_eq!(
+        slug_conflict(&pool, "next-free-call", "acc", None, None).await,
+        None
+    );
+}
+
 #[tokio::test]
 async fn team_page_shows_each_type_roster_and_first_names() {
     let (app, pool, _, _) = setup_test_app().await;
@@ -358,6 +404,12 @@ async fn team_page_shows_each_type_roster_and_first_names() {
     let with = with.split("</div>").next().unwrap();
     assert!(with.contains("with one of"), "{with}");
     assert!(with.contains(r#"data-face="Test User""#), "{with}");
+    // A screen reader hears the names, not the initials.
+    assert!(
+        with.contains(r#"<span class="lp-sr">Test User</span>"#),
+        "{with}"
+    );
+    assert!(with.contains(r#"<span class="lp-with-faces" aria-hidden="true">"#));
     assert!(
         !with.contains("Zoe"),
         "an excluded member is not in the roster: {with}"

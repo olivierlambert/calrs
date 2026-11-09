@@ -9,7 +9,7 @@
   <header class="lp-card">
     <div class="lp-face lp-face-team" data-face="{{ team_name }}">
       {% if team_has_avatar %}
-        <img src="/team-avatar/{{ team_id }}" alt="" onerror="this.parentElement.textContent='{{ team_initials }}'">
+        <img src="/team-avatar/{{ team_id }}" alt="" data-initials="{{ team_initials }}" onerror="this.parentElement.textContent=this.dataset.initials">
       {% else %}
         {{ team_initials }}
       {% endif %}
@@ -40,9 +40,9 @@
   </header>
 </section>
 
-<ul class="lp-list">
+<ul class="lp-list"{% if event_types %} data-next="/team/{{ team_slug }}/next-free{{ invite_q }}"{% endif %}>
   {% for et in event_types %}
-  <li class="lp-row" style="--eh: {{ dial.hue(et.duration_min) }}" data-next="/team/{{ team_slug }}/{{ et.slug }}/next-free{{ invite_q }}">
+  <li class="lp-row" style="--eh: {{ dial.hue(et.duration_min) }}" data-slug="{{ et.slug }}">
     {% with d = et.duration_min %}{% include "partials/landing_dial.html" %}{% endwith %}
     <div class="lp-main">
       <a href="/team/{{ team_slug }}/{{ et.slug }}{{ invite_q }}" data-calrs-sync class="lp-et-title">{{ et.title }}</a>
@@ -51,10 +51,11 @@
       {% if et.scheduling_mode is defined and et.members is defined and et.members %}
       <div class="lp-with">
         <span>{% if et.scheduling_mode == "collective" %}{{ t("landing-with-everyone") }}{% else %}{{ t("landing-with-one-of") }}{% endif %}</span>
-        <span class="lp-with-faces">
+        <span class="lp-sr">{% for m in et.members %}{{ m.name }}{% if not loop.last %}, {% endif %}{% endfor %}</span>
+        <span class="lp-with-faces" aria-hidden="true">
           {% for m in et.members %}{% if loop.index <= 8 %}<span class="lp-face" data-face="{{ m.name }}" title="{{ m.name }}">{% if m.has_avatar %}<img src="/avatar/{{ m.id }}" alt="">{% else %}{{ m.initials }}{% endif %}</span>{% endif %}{% endfor %}
         </span>
-        {% if et.members|length > 8 %}<span class="lp-num">+{{ et.members|length - 8 }}</span>{% endif %}
+        {% if et.members|length > 8 %}<span class="lp-num" aria-hidden="true">+{{ et.members|length - 8 }}</span>{% endif %}
       </div>
       {% endif %}
     </div>

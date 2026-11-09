@@ -2164,13 +2164,19 @@ async fn form_dg_eligible_users(pool: &SqlitePool, user_id: &str) -> Vec<minijin
 /// (personal and team event types alike, since a team event type is stored
 /// under its creator's account) and per team (#313). `exclude_id` is the event
 /// type being edited.
-async fn slug_conflict(
+pub(super) async fn slug_conflict(
     pool: &SqlitePool,
     slug: &str,
     account_id: &str,
     team_id: Option<&str>,
     exclude_id: Option<&str>,
 ) -> Option<&'static str> {
+    // The landing pages answer their next-free hints at
+    // /u/{username}/next-free and /team/{slug}/next-free, so no event type
+    // may take that slug: its page would be unreachable.
+    if slug == "next-free" {
+        return Some("form-error-event-type-slug-taken");
+    }
     let taken = |scope: &'static str, value: String| async move {
         sqlx::query_scalar::<_, i64>(&format!(
             "SELECT 1 FROM event_types WHERE {scope} = ? AND slug = ? AND id IS NOT ?"
