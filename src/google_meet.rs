@@ -1344,8 +1344,12 @@ fn http_client() -> reqwest::Client {
     static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
     CLIENT
         .get_or_init(|| {
-            reqwest::Client::builder()
+            // No redirects: the Meet API answers directly, like the other
+            // Google clients (and reqwest 0.12's default would follow one
+            // more than 0.11's did).
+            crate::net_guard::plain_builder()
                 .timeout(std::time::Duration::from_secs(10))
+                .redirect(reqwest::redirect::Policy::none())
                 .user_agent("calrs-google-meet/1")
                 .build()
                 .unwrap_or_default()

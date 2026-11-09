@@ -1154,7 +1154,7 @@ impl<'c> AsyncHttpClient<'c> for StatusRecordingClient {
 }
 
 fn build_http_client() -> Result<openidconnect::reqwest::Client> {
-    let client = openidconnect::reqwest::ClientBuilder::new()
+    let client = crate::net_guard::plain_builder()
         .redirect(openidconnect::reqwest::redirect::Policy::none())
         .build()
         .map_err(|e| anyhow::anyhow!("Failed to build HTTP client: {}", e))?;

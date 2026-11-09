@@ -24,8 +24,11 @@
 //! still apply. Hosts that `NO_PROXY` sends direct get the full pinning.
 //! Booking webhooks use no proxy at all.
 //!
-//! Fixed provider endpoints (Google, Microsoft login and Graph) do not use
-//! this: their hosts are constants, not configuration.
+//! Fixed provider endpoints (Google, Microsoft login and Graph) and the
+//! admin-configured services outside the private-host policy (SMS gateway,
+//! captcha, meeting webhook, OIDC issuer) skip the guarded resolver: their
+//! hosts are constants or the admin's choice. They still take proxies the
+//! way the guarded clients do, through [`plain_builder`].
 
 use std::future::Future;
 use std::net::{IpAddr, SocketAddr};
@@ -410,6 +413,22 @@ pub fn builder_with(
             proxy_hosts: proxies.hosts().into(),
         }));
     proxies.apply(builder)
+}
+
+/// A client builder for a fixed endpoint or an admin-configured service
+/// outside the private-host policy: no guarded resolver, no redirects
+/// policy of its own (set one), and the environment's proxies exactly as
+/// [`client_builder`] takes them (only `http://` and `https://` proxies,
+/// `NO_PROXY` honoured). reqwest 0.12's own reading of the environment
+/// would take a `socks5://` proxy and, built without SOCKS, speak plain
+/// HTTP to it; 0.11 dropped it and went direct, as this does.
+pub fn plain_builder() -> reqwest::ClientBuilder {
+    plain_builder_with(&ProxyConfig::from_env())
+}
+
+/// [`plain_builder`] with given proxies.
+pub fn plain_builder_with(proxies: &ProxyConfig) -> reqwest::ClientBuilder {
+    proxies.apply(reqwest::Client::builder().no_proxy())
 }
 
 /// The IP address a URL names directly, `None` for a host name.

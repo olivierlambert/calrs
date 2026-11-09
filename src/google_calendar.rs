@@ -191,7 +191,7 @@ async fn fetch_out_of_office(
     time_min: &str,
     time_max: &str,
 ) -> Result<(Vec<StatusEvent>, Option<String>)> {
-    let client = reqwest::Client::builder()
+    let client = crate::net_guard::plain_builder()
         .timeout(std::time::Duration::from_secs(60))
         .redirect(reqwest::redirect::Policy::none())
         .build()?;
@@ -554,7 +554,7 @@ impl<'a> EventsApi<'a> {
     }
 
     fn http() -> std::result::Result<reqwest::Client, ApiFailure> {
-        reqwest::Client::builder()
+        crate::net_guard::plain_builder()
             .timeout(std::time::Duration::from_secs(20))
             .redirect(reqwest::redirect::Policy::none())
             .build()

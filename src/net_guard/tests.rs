@@ -676,3 +676,90 @@ async fn the_url_port_wins_over_a_port_from_the_lookup() {
     assert_eq!(client.get(&url).send().await.unwrap().status(), 200);
     assert_eq!(hits.load(Ordering::SeqCst), 1);
 }
+
+/// The clients outside the private-host policy take proxies as the guarded
+/// ones do: a SOCKS setting is dropped and the request goes direct (reqwest
+/// 0.12 alone would speak plain HTTP to the SOCKS host), an HTTP proxy is
+/// used, and `NO_PROXY` hosts go direct.
+#[tokio::test]
+async fn plain_clients_take_proxies_like_the_guarded_ones() {
+    let (socks, socks_hits) = counting_server().await;
+    let (target, target_hits) = counting_server().await;
+    let url = format!("http://127.0.0.1:{}/", target.port());
+
+    let cfg = ProxyConfig::from_vars(|name: &str| {
+        (name == "ALL_PROXY").then(|| format!("socks5://{socks}"))
+    });
+    let client = plain_builder_with(&cfg).build().unwrap();
+    assert_eq!(client.get(&url).send().await.unwrap().status(), 200);
+    assert_eq!(socks_hits.load(Ordering::SeqCst), 0);
+    assert_eq!(target_hits.load(Ordering::SeqCst), 1);
+
+    let (proxy, proxy_hits) = counting_server().await;
+    let cfg = ProxyConfig {
+        http: Some(format!("http://{proxy}")),
+        no_proxy: Some("localhost".to_string()),
+        ..ProxyConfig::none()
+    };
+    let client = plain_builder_with(&cfg).build().unwrap();
+    assert_eq!(client.get(&url).send().await.unwrap().status(), 200);
+    assert_eq!(proxy_hits.load(Ordering::SeqCst), 1);
+    assert_eq!(target_hits.load(Ordering::SeqCst), 1);
+    let direct = format!("http://localhost:{}/", target.port());
+    assert_eq!(client.get(&direct).send().await.unwrap().status(), 200);
+    assert_eq!(proxy_hits.load(Ordering::SeqCst), 1);
+    assert_eq!(target_hits.load(Ordering::SeqCst), 2);
+
+    // And with nothing configured, nothing from reqwest's own reading.
+    let client = plain_builder_with(&ProxyConfig::none()).build().unwrap();
+    assert_eq!(client.get(&url).send().await.unwrap().status(), 200);
+    assert_eq!(target_hits.load(Ordering::SeqCst), 3);
+}
+
+/// Every HTTP client calrs builds outside tests starts from
+/// [`client_builder`], [`builder_with`] or [`plain_builder`], so none reads
+/// proxies through reqwest's own environment handling.
+#[test]
+fn no_client_is_built_outside_net_guard() {
+    fn walk(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                if path.file_name().is_some_and(|n| n == "tests") {
+                    continue;
+                }
+                walk(&path, out);
+            } else if path.extension().is_some_and(|e| e == "rs") {
+                out.push(path);
+            }
+        }
+    }
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut files = Vec::new();
+    walk(&root, &mut files);
+    let forbidden = [
+        "Client::builder()",
+        "Client::new()",
+        "ClientBuilder::new()",
+        "reqwest::get(",
+        "Client::default()",
+    ];
+    let mut found = Vec::new();
+    for path in files {
+        if path.ends_with("net_guard.rs") || path.file_name().is_some_and(|n| n == "tests.rs") {
+            continue;
+        }
+        let src = std::fs::read_to_string(&path).unwrap();
+        // Test modules build their own clients against local servers.
+        let shipped = src.split("#[cfg(test)]\nmod tests").next().unwrap();
+        for (n, line) in shipped.lines().enumerate() {
+            if forbidden.iter().any(|f| line.contains(f)) && !line.trim_start().starts_with("//") {
+                found.push(format!("{}:{}", path.display(), n + 1));
+            }
+        }
+    }
+    assert!(
+        found.is_empty(),
+        "build clients through net_guard: {found:?}"
+    );
+}
