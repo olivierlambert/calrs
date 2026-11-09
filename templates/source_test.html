@@ -4,11 +4,14 @@
 
 {% block main_class %}has-cards{% endblock %}
 {% block dashboard_content %}
-<section class="card" aria-labelledby="st-title">
-  <div class="card-head"><h2 id="st-title">{% if source_name is defined and source_name %}{{ t("source-test-sync-heading", name=source_name) }}{% else %}{{ t("source-test-heading") }}{% endif %}</h2></div>
+<header class="page-header">
+  <div class="page-header-text">
+    <h1 class="page-title">{% if source_name is defined and source_name %}{{ t("source-test-sync-heading", name=source_name) }}{% else %}{{ t("source-test-heading") }}{% endif %}</h1>
+  </div>
+</header>
+<section class="card">
   <div class="card-body">
-
-  <div style="margin-top: 1rem; padding: 1rem; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.9rem; white-space: pre-line; font-family: inherit;">{{ result }}</div>
+  <div style="padding: 1rem; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.9rem; white-space: pre-line; font-family: inherit;">{{ result }}</div>
   </div>
 </section>
 {% endblock dashboard_content %}

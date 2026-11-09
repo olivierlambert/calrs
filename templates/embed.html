@@ -326,7 +326,7 @@
   function snippetElement() {
     return [
       '<!-- calrs element-click embed -->',
-      '<!-- ' + EMBED_I18N.attrComment.replace(/--/g, '—') + ' -->',
+      '<!-- ' + EMBED_I18N.attrComment.replace(/--/g, '\u2014') + ' -->',
       '<!--   data-calrs-link="' + snippetBase + calPath + '" -->',
       '<!--   data-calrs-config=\'' + buildConfigJs() + '\' -->',
       '<script src="' + snippetBase + '/embed.js" defer><' + '/script>'
@@ -421,7 +421,7 @@
       frame.appendChild(btn);
       previewBtn = btn;
     } else {
-      // element-click — render demo trigger elements so the user can try the
+      // element-click: render demo trigger elements so the user can try the
       // modal. On a real site they'd add data-calrs-link to their own markup;
       // here we just wire the click directly to the same modal simulation.
       var wrap = document.createElement('div');

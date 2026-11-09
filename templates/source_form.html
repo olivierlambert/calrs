@@ -7,6 +7,13 @@
 {% import "partials/icons.html" as ic %}
 <a href="/dashboard/sources" class="page-back">{{ ic.icon("arrow-left", 14) }}{{ t("sources-heading") }}</a>
 
+<header class="page-header">
+  <div class="page-header-text">
+    <h1 class="page-title">{% if editing %}{{ t("source-form-heading-edit") }}{% else %}{{ t("source-form-heading-add") }}{% endif %}</h1>
+    <p class="page-subtitle">{% if editing %}{{ t("source-form-subtitle-edit") }}{% else %}{{ t("source-form-subtitle-add") }}{% endif %}</p>
+  </div>
+</header>
+
 {% if not editing %}
 <section class="card" aria-labelledby="ms-title">
   <div class="card-head"><h2 id="ms-title">{{ t("microsoft-calendar-title") }}</h2></div>
@@ -24,9 +31,8 @@
 {% endif %}
 
 <section class="card" aria-labelledby="src-title">
-  <div class="card-head"><h2 id="src-title">{% if editing %}{{ t("source-form-heading-edit") }}{% else %}{{ t("source-form-heading-add") }}{% endif %}</h2></div>
+  <div class="card-head"><h2 id="src-title">{{ t("source-form-server-title") }}</h2></div>
   <div class="card-body">
-  <p class="subtitle">{% if editing %}{{ t("source-form-subtitle-edit") }}{% else %}{{ t("source-form-subtitle-add") }}{% endif %}</p>
 
   {% if error %}
     <div class="notice notice--error error" role="alert" style="margin-top: 1rem;">{{ ic.icon("alert") }}<span>{{ error }}</span></div>

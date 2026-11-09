@@ -13,12 +13,14 @@
   .source-cal-toolbar { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.75rem; }
 </style>
 <a href="/dashboard/sources" class="back-link">&larr; {{ t("source-calendars-back") }}</a>
-<section class="card" aria-labelledby="sc-title">
-  <div class="card-head"><h2 id="sc-title">{{ t("source-calendars-heading") }}</h2></div>
+<header class="page-header">
+  <div class="page-header-text">
+    <h1 class="page-title">{{ t("source-calendars-heading") }}</h1>
+    <p class="page-subtitle">{{ t("source-calendars-help", name='<strong>' ~ (source_name | escape) ~ '</strong>') | safe }}</p>
+  </div>
+</header>
+<section class="card">
   <div class="card-body">
-  <p style="color: var(--text-secondary); margin-bottom: 1rem;">
-    {{ t("source-calendars-help", name='<strong>' ~ (source_name | escape) ~ '</strong>') | safe }}
-  </p>
   {% if saved %}
   <div class="notice notice--success" role="status" style="margin-bottom: 1rem;">{{ t("source-calendars-saved") }}</div>
   {% endif %}

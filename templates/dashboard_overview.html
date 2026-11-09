@@ -95,8 +95,8 @@
   .ov-top.has-wait > .hero { grid-column: 1; grid-row: 1; }
   .ov-top > .wait { grid-column: 2; grid-row: 1; }
   .ov-top > .setup { grid-column: 1 / -1; grid-row: 2; margin-top: -0.35rem; }
-  .ov-l { grid-column: 1; }
-  .ov-r { grid-column: 2; }
+  .ov-grid:not(.one) > .ov-l { grid-column: 1; }
+  .ov-grid:not(.one) > .ov-r { grid-column: 2; }
   .ov .card { margin: 0; }
   .ov .card-body .tt-day:first-child { padding-top: 0; }
   .ov .card .chip { border-color: var(--border); }
@@ -212,7 +212,7 @@
   }
   @media (max-width: 1180px) {
     .ov-grid { grid-template-columns: minmax(0, 1fr); }
-    .ov-l, .ov-r { grid-column: 1; }
+    .ov-grid:not(.one) > .ov-l, .ov-grid:not(.one) > .ov-r { grid-column: 1; }
   }
   @media (max-width: 700px) {
     .hello { grid-template-columns: auto minmax(0, 1fr); }
@@ -326,7 +326,7 @@
 </div>
 
 {% set has_types = stats.type_rows and stats.type_rows | length >= 2 %}
-{% set has_right = week or stats.has_chart_data or has_types %}
+{% set has_right = week or stats.has_pulse or stats.has_chart_data or has_types %}
 {% set later = agenda[1:] if agenda else [] %}
 {% set has_links = username or own_links %}
 {% set has_figures = stats.has_pulse or stats.has_chart_data %}
@@ -402,7 +402,7 @@
       </div>
       {% if favorites %}
       <section class="card-part fav-wrap" aria-labelledby="ov-favs">
-        <div class="card-subhead"><h2 id="ov-favs">{{ t("directory-favorites") }}</h2>{% if favorites_total > favorites | length %}<a class="card-action" href="/dashboard/directory?favorites=true">{{ t("directory-all-favorites") }}</a>{% else %}<a class="card-action" href="/dashboard/directory">{{ t("directory-browse") }}</a>{% endif %}</div>
+        <div class="card-subhead"><h3 id="ov-favs">{{ t("directory-favorites") }}</h3>{% if favorites_total > favorites | length %}<a class="card-action" href="/dashboard/directory?favorites=true">{{ t("directory-all-favorites") }}</a>{% else %}<a class="card-action" href="/dashboard/directory">{{ t("directory-browse") }}</a>{% endif %}</div>
         {% with directory_entries=favorites, favorites_only=true %}
           {% include "partials/directory_entries.html" %}
         {% endwith %}
@@ -465,7 +465,7 @@
       {% endif %}
       {% if has_types %}
       <section class="card-part" aria-labelledby="ov-types">
-        <div class="card-subhead"><h2 id="ov-types">{{ t("overview-types-title") }}</h2></div>
+        <div class="card-subhead"><h3 id="ov-types">{{ t("overview-types-title") }}</h3></div>
         <table class="figs">
           <tbody>
             {% for r in stats.type_rows %}<tr><th scope="row">{{ r.title }}</th><td class="n">{{ r.count }}</td><td class="bar-c" aria-hidden="true"><div class="tb" style="width: {{ r.width }}%;"></div></td></tr>{% endfor %}

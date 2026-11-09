@@ -619,6 +619,16 @@ const IDENTITY_TEMPLATES: &[&str] = &[
     "invite_form.html",
     "overrides.html",
     "troubleshoot.html",
+    "time_off.html",
+    "webhooks.html",
+    "dashboard_api_tokens.html",
+    "dashboard_apps.html",
+    "booking_notes.html",
+    "api_docs.html",
+    "partials/card_list.html",
+    // embed.html is left out on purpose: its live preview draws the
+    // floating button exactly as assets/embed.js draws it on the
+    // customer's site (a pill), which is not the dashboard's own UI.
 ];
 
 /// The tells found in `css` (a template's text), as human-readable lines.
