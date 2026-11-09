@@ -1,8 +1,9 @@
 {% extends "dashboard_base.html" %}
 {% block title %}{{ t("api-tokens-page-title") }}, calrs{% endblock %}
+{% block main_class %}has-cards{% endblock %}
 {% block dashboard_content %}
 <style>
-  .app-item { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 0.75rem 1rem; padding: 0.9rem 0; border-bottom: 1px solid var(--rule); }
+  .app-item { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 0.75rem 1rem; padding: 0.9rem 0; border-bottom: 1px solid var(--rule); }
   .app-details { flex: 1 1 18rem; min-width: 0; overflow-wrap: anywhere; }
   .app-details strong { font-size: 15px; }
   .app-scopes { margin: 0.35rem 0 0; padding-left: 1.1rem; font-size: 13px; color: var(--text-secondary); line-height: 1.6; }
@@ -39,8 +40,9 @@
 {% endif %}
 
 {% if allowed and not impersonating %}
-<section class="sec">
-  <div class="sec-h"><h2>{{ t("api-tokens-new") }}</h2></div>
+<section class="card">
+  <div class="card-head"><h2>{{ t("api-tokens-new") }}</h2></div>
+  <div class="card-body">
   <form method="post" action="/dashboard/settings/api-tokens">
     <div class="form-group">
       <label for="token-name">{{ t("api-tokens-name") }}</label>
@@ -65,13 +67,15 @@
     </div>
     <button type="submit" class="ui-btn ui-btn--primary">{{ t("api-tokens-create") }}</button>
   </form>
+  </div>
 </section>
 {% elif not allowed %}
   <p class="empty-line">{{ t("api-tokens-not-allowed") }}</p>
 {% endif %}
 
-<section class="sec">
-  <div class="sec-h"><h2>{{ t("api-tokens-heading") }}{% if tokens %}<span class="num">{{ tokens | length }}</span>{% endif %}</h2></div>
+<section class="card">
+  <div class="card-head"><h2>{{ t("api-tokens-heading") }}{% if tokens %}<span class="num">{{ tokens | length }}</span>{% endif %}</h2></div>
+  <div class="card-body">
   {% if tokens %}
     {% for k in tokens %}
     <div class="app-item">
@@ -102,5 +106,6 @@
     <p class="empty-line">{{ t("api-tokens-empty") }}</p>
   {% endif %}
   <p class="app-meta">{{ t("api-tokens-docs") }} <a href="/api/docs">{{ t("api-docs-title") }}</a></p>
+  </div>
 </section>
 {% endblock %}

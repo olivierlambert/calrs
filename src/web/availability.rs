@@ -3110,8 +3110,8 @@ pub(super) async fn troubleshoot(
                 label: tr1(
                     lang,
                     "troubleshoot-label-min-notice",
-                    "minutes",
-                    &min_notice.to_string(),
+                    "duration",
+                    &crate::i18n::format_duration(lang, i64::from(min_notice)),
                 ),
                 detail: String::new(),
             });
@@ -3177,13 +3177,15 @@ pub(super) async fn troubleshoot(
                     label: tr1(
                         lang,
                         "troubleshoot-label-buffer",
-                        "minutes",
-                        &if tick_dt < *ev_s {
-                            buf_before
-                        } else {
-                            buf_after
-                        }
-                        .to_string(),
+                        "duration",
+                        &crate::i18n::format_duration(
+                            lang,
+                            i64::from(if tick_dt < *ev_s {
+                                buf_before
+                            } else {
+                                buf_after
+                            }),
+                        ),
                     ),
                     detail: tr1(lang, "troubleshoot-detail-around", "label", ev_label),
                 });
@@ -3215,13 +3217,15 @@ pub(super) async fn troubleshoot(
                     label: tr1(
                         lang,
                         "troubleshoot-label-buffer",
-                        "minutes",
-                        &if tick_dt < *bk_s {
-                            buf_before
-                        } else {
-                            buf_after
-                        }
-                        .to_string(),
+                        "duration",
+                        &crate::i18n::format_duration(
+                            lang,
+                            i64::from(if tick_dt < *bk_s {
+                                buf_before
+                            } else {
+                                buf_after
+                            }),
+                        ),
                     ),
                     detail: tr1(
                         lang,
@@ -3258,13 +3262,15 @@ pub(super) async fn troubleshoot(
                     label: tr1(
                         lang,
                         "troubleshoot-label-buffer",
-                        "minutes",
-                        &if tick_dt < *off_s {
-                            buf_before
-                        } else {
-                            buf_after
-                        }
-                        .to_string(),
+                        "duration",
+                        &crate::i18n::format_duration(
+                            lang,
+                            i64::from(if tick_dt < *off_s {
+                                buf_before
+                            } else {
+                                buf_after
+                            }),
+                        ),
                     ),
                     detail: tr1(lang, "troubleshoot-detail-around", "label", &time_off_label),
                 });

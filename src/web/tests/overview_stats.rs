@@ -552,6 +552,7 @@ fn day_booking(id: &str, start: NaiveDateTime, minutes: i64, pending: bool) -> o
         guest: "Ana Lopez".to_string(),
         extra_guests: 0,
         listed: true,
+        bookings_page: 1,
     }
 }
 
@@ -1447,4 +1448,125 @@ async fn unreadable_recurrence_is_marked_and_links_the_troubleshoot_view() {
         .unwrap()
         .to_string()
         .starts_with("14:00\u{2013}15:00, Repeating event calrs cannot read. "));
+}
+
+/// The bookings page's Upcoming section is paged: a day link opens the
+/// first page showing the day, which heads it with its day line.
+#[test]
+fn day_links_open_the_bookings_page_holding_the_day() {
+    let paris: Tz = "Europe/Paris".parse().unwrap();
+    let hours = vec![ov::EventTypeHours {
+        tz: paris,
+        rules: (1..=5).map(|d| (d, hm(9, 0), hm(17, 0))).collect(),
+        overrides: vec![],
+        bookable_from: None,
+        bookable_until: None,
+    }];
+    let on_page = |id: &str, start: NaiveDateTime, page: i64| ov::DayBooking {
+        bookings_page: page,
+        ..day_booking(id, start, 30, false)
+    };
+    let bookings = vec![
+        on_page("a", dt(2026, 11, 5, 9, 0), 3),
+        on_page("b", dt(2026, 11, 5, 10, 0), 2),
+        on_page("c", dt(2026, 11, 6, 10, 0), 1),
+    ];
+    let busy = ov::CalendarBusy {
+        times: vec![],
+        unreadable: vec![],
+    };
+    let ctx = ov::week_context(
+        "en",
+        &hours,
+        &bookings,
+        &busy,
+        &[],
+        paris,
+        wednesday_noon(),
+        WeekStart::Mon,
+    )
+    .unwrap();
+    let link = |i: usize| {
+        ctx.get_attr("days")
+            .unwrap()
+            .get_item(&minijinja::Value::from(i))
+            .unwrap()
+            .get_attr("link")
+            .unwrap()
+            .to_string()
+    };
+    assert_eq!(link(3), "/dashboard/bookings?bp=2#d-2026-11-05");
+    assert_eq!(link(4), "/dashboard/bookings#d-2026-11-06");
+}
+
+/// The page the overview computes for a booking is the page the bookings
+/// page lists it on, ties on the start time included.
+#[tokio::test]
+async fn upcoming_pages_match_the_bookings_page() {
+    let (app, pool, session, et_id) = setup_test_app().await;
+    let user: String = sqlx::query_scalar("SELECT id FROM users WHERE email = 'test@example.com'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let other_et = insert_personal_et(&pool, &user, "other").await;
+    let base = Utc::now() + Duration::days(3);
+    for i in 0..30 {
+        let start = base + Duration::hours(i);
+        insert_stat_booking(&pool, &et_id, "Guest", start, "confirmed", None, None).await;
+        insert_stat_booking(&pool, &other_et, "Guest", start, "confirmed", None, None).await;
+    }
+    let ids: Vec<String> = sqlx::query_scalar("SELECT id FROM bookings")
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+    let id_refs: Vec<&str> = ids.iter().map(String::as_str).collect();
+    let pages = crate::web::dashboard::upcoming_pages(&pool, &user, &id_refs).await;
+    assert_eq!(pages.len(), 60);
+    assert_eq!(pages.values().filter(|p| **p == 2).count(), 10);
+    let second = body_string(
+        app.oneshot(get_authed("/dashboard/bookings?bp=2", &session))
+            .await
+            .unwrap(),
+    )
+    .await;
+    for (id, page) in &pages {
+        assert_eq!(
+            second.contains(&format!("id=\"b-{id}\"")),
+            *page == 2,
+            "{id} on page {page}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn overview_figures_without_a_week_keep_the_two_column_grid() {
+    // A booking made today for a date past this week gives the 30-day
+    // sentence but no chart, and with no open hours there is no week
+    // strip: the figures card is still a right-hand card, so the grid
+    // must keep its two columns instead of squeezing it into a third.
+    let (app, pool, session, et_id) = setup_test_app().await;
+    sqlx::query("DELETE FROM availability_rules")
+        .execute(&pool)
+        .await
+        .unwrap();
+    insert_stat_booking(
+        &pool,
+        &et_id,
+        "Later Guest",
+        Utc::now() + Duration::days(16),
+        "confirmed",
+        None,
+        None,
+    )
+    .await;
+    let body = body_string(
+        app.oneshot(get_authed("/dashboard", &session))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(body.contains("id=\"ov-30\""), "the 30-day sentence shows");
+    assert!(!body.contains("card wk-sec"), "no week strip");
+    assert!(body.contains("class=\"ov-grid\""), "two-column grid");
+    assert!(!body.contains("ov-grid one"));
 }

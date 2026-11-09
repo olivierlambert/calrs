@@ -1,7 +1,13 @@
 {% extends "dashboard_base.html" %}
 {% block title %}{{ t("teams-page-title") }}, calrs{% endblock %}
+{% block main_class %}has-cards{% endblock %}
 {% block dashboard_content %}
 {% import "partials/icons.html" as ic %}
+{% import "partials/card_list.html" as cl %}
+<style>
+  /* The team's face stays beside its name when the row stacks. */
+  .tm-who { display: flex; align-items: center; gap: 0.75rem; flex: 1; min-width: 0; }
+</style>
 <header class="page-header">
   <div class="page-header-text">
     <h1 class="page-title">{{ t("teams-heading") }}</h1>
@@ -14,11 +20,19 @@
   {% endif %}
 </header>
 
-<section class="sec">
-  {% if teams %}
-  <div class="ui-list">
+<section class="card">
+  {% if teams or q %}
+  <div class="card-head is-tools">
+    {#- Searches every page on the server (Enter); typing narrows the rows
+        on this page at once. #}
+    <form method="get" action="/dashboard/teams" role="search">
+      {{ cl.search(t("teams-search-placeholder"), name="q", value=q, maxlength=search_max, filter=true) }}
+    </form>
+  </div>
+  <div class="ui-list card-body" data-filter-list>
     {% for team in teams %}
-    <div class="ui-row et-row" style="align-items: center;">
+    <div class="ui-row et-row" data-filter-text="{{ team.name }} {{ team.slug }}">
+      <div class="tm-who">
       <div class="avatar-circle" style="width: 32px; height: 32px; font-size: 0.72rem; border-radius: var(--r-control);">
         {% if team.has_avatar %}
           <img src="/team-avatar/{{ team.id }}" alt="">
@@ -40,6 +54,7 @@
           {% if team.slug %}<span style="color: var(--text-muted);">/team/{{ team.slug }}</span>{% endif %}
         </div>
       </div>
+      </div>
       <div class="ui-row-actions et-actions">
         {% if team.slug %}
           {% if team.visibility == "public" %}
@@ -56,7 +71,9 @@
       </div>
     </div>
     {% endfor %}
+    <p class="ui-filter-empty" data-filter-empty{% if teams %} hidden{% endif %}>{{ t("dash-no-matches") }}</p>
   </div>
+  {% if pager %}<div class="card-foot">{% include "partials/pager.html" %}</div>{% endif %}
   {% else %}
     {% if is_admin %}
     <p class="empty-line">{{ t("teams-empty") }} {{ t("teams-empty-admin", link='<a href="/dashboard/teams/new">' ~ (t("teams-empty-admin-link-label") | escape) ~ '</a>') | safe }}</p>

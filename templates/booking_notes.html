@@ -1,5 +1,6 @@
 {% extends "dashboard_base.html" %}
 {% block title %}{{ t("host-notes-title") }}, calrs{% endblock %}
+{% block main_class %}has-cards{% endblock %}
 {% block dashboard_content %}
 {% import "partials/icons.html" as ic %}
 <style>
@@ -17,7 +18,7 @@
   </div>
 </header>
 
-<ol class="ledger" style="margin-bottom: 2.75rem;">
+<ol class="ledger card card-body">
   <li class="tt-row">
     {% if when %}<time class="tt-time" datetime="{{ when.iso }}" title="{{ when.long_date }}">{{ when.start }}<small>{{ when.until }}</small></time>{% else %}<span class="tt-time"></span>{% endif %}
     <i class="g {{ status_mark }}" role="img" aria-label="{{ status_label }}"></i>
@@ -31,8 +32,9 @@
   </li>
 </ol>
 
-<section class="sec" aria-labelledby="hn-notes">
-  <div class="sec-h"><h2 id="hn-notes">{{ t("host-notes-title") }}</h2></div>
+<section class="card" aria-labelledby="hn-notes">
+  <div class="card-head"><h2 id="hn-notes">{{ t("host-notes-title") }}</h2></div>
+  <div class="card-body">
   <p class="sec-note">{{ t("host-notes-hint") }}</p>
 
   {% if saved %}
@@ -61,6 +63,7 @@
       <a href="{{ back_url }}" class="sec-link">{{ back_label }}</a>
     </div>
   </form>
+  </div>
 </section>
 <script>
 (function () {

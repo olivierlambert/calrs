@@ -23,7 +23,7 @@
     <div class="directory-row">
       <div class="directory-info">
         <strong>{{ et.title }}</strong>
-        <div class="directory-owner">{{ et.owner_name }}, {{ t("invite-links-duration", minutes=et.duration_min) }}{% if et.visibility == 'internal' %} <span class="badge">{{ t("event-types-badge-internal") }}</span>{% endif %}</div>
+        <div class="directory-owner">{{ et.owner_name }}, {{ duration_label(et.duration_min) }}{% if et.visibility == 'internal' %} <span class="badge">{{ t("event-types-badge-internal") }}</span>{% endif %}</div>
         {% if et.matched_hosts %}<div class="directory-owner directory-hosts">{{ t("directory-with-hosts", names=et.matched_hosts | join(", ")) }}</div>{% endif %}
       </div>
       <div class="directory-actions">

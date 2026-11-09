@@ -67,6 +67,11 @@ fn safe_interpolated_sentences_escape_their_values() {
                 bookings => vec![booking_row.clone()],
                 pending_bookings => vec![booking_row.clone()],
                 claimable_bookings => vec![booking_row.clone()],
+                totals => context! { pending => 1, claimable => 1, upcoming => 1, recent => 0, cancelled => 0 },
+                pagers => context! {},
+                returns => context! { pending => "/dashboard/bookings", upcoming => "/dashboard/bookings" },
+                reschedule_query => "",
+                q => "",
             },
         ),
         (
@@ -574,7 +579,7 @@ fn team_settings_delete_button_no_onclick_interpolation() {
         })
         .expect("renders");
 
-    let onclick = extract_onclick_for_button(&rendered, "border-color: var(--error-text)")
+    let onclick = extract_onclick_for_button(&rendered, "ts-delete")
         .expect("delete team button onclick present");
     assert_eq!(
         onclick, "if(confirm(this.dataset.confirm)) this.nextElementSibling.submit();",
@@ -619,6 +624,18 @@ const IDENTITY_TEMPLATES: &[&str] = &[
     "invite_form.html",
     "overrides.html",
     "troubleshoot.html",
+    "time_off.html",
+    "webhooks.html",
+    "dashboard_api_tokens.html",
+    "dashboard_apps.html",
+    "booking_notes.html",
+    "api_docs.html",
+    "partials/card_list.html",
+    "mfa_settings.html",
+    "auth/mfa.html",
+    // embed.html is left out on purpose: its live preview draws the
+    // floating button exactly as assets/embed.js draws it on the
+    // customer's site (a pill), which is not the dashboard's own UI.
 ];
 
 /// The tells found in `css` (a template's text), as human-readable lines.
@@ -710,6 +727,77 @@ fn dashboard_templates_keep_the_identity() {
         "dashboard identity tells:\n{}",
         problems.join("\n")
     );
+}
+
+/// The ruled-section markup a page made of cards must not fall back to
+/// (owner's choice, 2026-11-09: cards, never horizontal rules between
+/// blocks). `sec-note` and `sec-link` are text helpers and stay allowed.
+fn ruled_sections(html: &str) -> Vec<&'static str> {
+    [
+        ("class=\"sec\"", "a ruled section (class=\"sec\")"),
+        ("class=\"sec ", "a ruled section (class=\"sec ...\")"),
+        ("class=\"sec-h\"", "a ruled section head (sec-h)"),
+        ("adm-sec-h", "an admin ruled section head (adm-sec-h)"),
+    ]
+    .into_iter()
+    .filter(|(needle, _)| html.contains(needle))
+    .map(|(_, what)| what)
+    .collect()
+}
+
+#[test]
+fn card_pages_draw_no_ruled_sections() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
+    let mut card_pages = 0;
+    let mut problems = Vec::new();
+    for dir in [root.clone(), root.join("auth"), root.join("partials")] {
+        for entry in std::fs::read_dir(&dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().and_then(|e| e.to_str()) != Some("html") {
+                continue;
+            }
+            let text = std::fs::read_to_string(&path).unwrap();
+            if !text.contains("{% block main_class %}has-cards{% endblock %}") {
+                continue;
+            }
+            card_pages += 1;
+            for what in ruled_sections(&text) {
+                problems.push(format!("{}: {what}", path.display()));
+            }
+        }
+    }
+    // The pages converted so far, so a page cannot drop out of the check by
+    // losing its has-cards marker.
+    for name in [
+        "dashboard_bookings.html",
+        "dashboard_internal.html",
+        "dashboard_teams.html",
+        "invite_form.html",
+        "team_settings.html",
+        "team_form.html",
+        "admin.html",
+        "mfa_settings.html",
+    ] {
+        let text = std::fs::read_to_string(root.join(name)).unwrap();
+        assert!(
+            text.contains("{% block main_class %}has-cards{% endblock %}"),
+            "{name} should be a page of cards"
+        );
+    }
+    assert!(card_pages >= 25, "only {card_pages} card pages found");
+    assert!(
+        problems.is_empty(),
+        "ruled sections on card pages:\n{}",
+        problems.join("\n")
+    );
+    assert_eq!(
+        ruled_sections("<section class=\"sec\"><div class=\"sec-h\">"),
+        [
+            "a ruled section (class=\"sec\")",
+            "a ruled section head (sec-h)"
+        ]
+    );
+    assert!(ruled_sections("<p class=\"sec-note\"><a class=\"sec-link\">").is_empty());
 }
 
 #[test]

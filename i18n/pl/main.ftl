@@ -219,25 +219,24 @@ base-powered-by = Zasilane przez
 profile-pick-event-type-invite = Wybierz typ wydarzenia, aby zarezerwować termin.
 profile-no-event-type = Nie ma jeszcze dostępnych typów wydarzeń.
 
-# Public landing pages (/u/{username}, /team/{slug}). In landing-next-free,
-# %1 is the time, filled in by the page itself.
-landing-duration-h = { $hours } godz.
-landing-duration-aria =
+duration-short-m = { $minutes } min
+duration-short-h = { $hours } godz.
+duration-short-hm = { $hours } godz. { $minutes } min
+duration-long-m =
     { $minutes ->
         [one] { $minutes } minuta
         [few] { $minutes } minuty
         [many] { $minutes } minut
        *[other] { $minutes } minuty
     }
-landing-duration-hm = { $hours } godz. { $minutes }
-landing-duration-aria-h =
+duration-long-h =
     { $hours ->
         [one] { $hours } godzina
         [few] { $hours } godziny
         [many] { $hours } godzin
        *[other] { $hours } godziny
     }
-landing-duration-aria-hm =
+duration-long-hm =
     { $hours ->
         [one] { $hours } godzina
         [few] { $hours } godziny
@@ -249,9 +248,36 @@ landing-duration-aria-hm =
         [many] { $minutes } minut
        *[other] { $minutes } minuty
     }
-landing-next-free = Najbliższy: %1
+duration-long-d =
+    { $days ->
+        [one] { $days } dzień
+        [few] { $days } dni
+        [many] { $days } dni
+       *[other] { $days } dni
+    }
+# Public landing pages (/u/{username}, /team/{slug}).
 landing-with-one-of = z jedną z osób
+faces-and-more = i jeszcze { $count }
 landing-with-everyone = ze wszystkimi
+landing-days-range = { $first }–{ $last }
+landing-days-every = codziennie
+landing-on-request-hint = Każda prośba jest potwierdzana ręcznie przed rezerwacją.
+landing-how-it-works = Wybierz temat i dogodny termin, a potwierdzenie przyjdzie e-mailem.
+landing-based-in = Lokalizacja: { $place }
+landing-speaks = Języki: { $languages }
+landing-meetings = Spotkania
+landing-hours-vary = Dostępność: zwykle { $days } (strefa czasowa: { $zone }), godziny zależą od dnia
+landing-time-range = od %1 do %2
+landing-time-range-next = od %1 do %2 następnego dnia
+landing-other-meetings = Inne spotkania
+landing-hours-heading = Dostępność (strefa czasowa: { $zone })
+landing-hours-heading-yours = Dostępność (twój czas)
+landing-hours-toggle = Mój czas
+landing-hours-toggle-hint = Pokaż te godziny w twojej strefie czasowej
+landing-days-every-short = Codziennie
+landing-days-span = { $first }–{ $last }
+landing-host-confirms = Gospodarz potwierdza
+list-and = { $first } i { $last }
 
 # Month and weekday names + per-locale date format patterns.
 # Used by server-side date formatters in src/i18n.rs.
@@ -357,8 +383,8 @@ email-cancel-ics-attached-html = Anulowanie kalendarza w załączniku tego e-mai
 
 # Confirmation email: notice-window policy lines (src/email.rs)
 
-email-confirm-cancel-notice = Uwaga: odwołanie wymaga co najmniej { $minutes } minut wyprzedzenia.
-email-confirm-reschedule-notice = Uwaga: przeniesienie wymaga co najmniej { $minutes } minut wyprzedzenia.
+email-confirm-cancel-notice = Uwaga: minimalne wyprzedzenie przy odwołaniu to { $duration }.
+email-confirm-reschedule-notice = Uwaga: minimalne wyprzedzenie przy przeniesieniu to { $duration }.
 
 # Event type form: cancel/reschedule minimum notice (templates/event_type_form.html)
 
@@ -402,14 +428,14 @@ event-type-form-saved = Zapisano.
 
 # Booking confirmation: cancel/reschedule policy notices (templates/confirmed.html)
 
-confirmed-cancel-notice-info = Odwołanie wymaga co najmniej { $minutes } minut wyprzedzenia przed spotkaniem.
-confirmed-reschedule-notice-info = Przeniesienie wymaga co najmniej { $minutes } minut wyprzedzenia przed spotkaniem.
+confirmed-cancel-notice-info = Minimalne wyprzedzenie przy odwołaniu spotkania to { $duration }.
+confirmed-reschedule-notice-info = Minimalne wyprzedzenie przy przeniesieniu spotkania to { $duration }.
 
 # Booking action blocked page (templates/booking_action_blocked.html)
 
 booking-blocked-title-cancel = Tej rezerwacji nie można już odwołać przez internet
 booking-blocked-title-reschedule = Tej rezerwacji nie można już przenieść przez internet
-booking-blocked-body = Gospodarz wymaga co najmniej { $minutes } minut wyprzedzenia. Jeśli nie możesz się pojawić, napisz bezpośrednio na <a href="mailto:{ $host_email }">{ $host_email }</a>.
+booking-blocked-body = Minimalne wyprzedzenie wymagane przez gospodarza to { $duration }. Jeśli nie możesz się pojawić, napisz bezpośrednio na <a href="mailto:{ $host_email }">{ $host_email }</a>.
 
 # Dashboard event types listing (templates/dashboard_event_types.html)
 
@@ -479,9 +505,6 @@ overview-pending-approval = Oczekuje na zatwierdzenie
 overview-confirm = Potwierdź
 overview-decline = Odrzuć
 overview-copy-link = Kopiuj link do rezerwacji
-overview-duration-h = { $hours } godz.
-overview-duration-m = { $minutes } min
-overview-duration-hm = { $hours } godz. { $minutes } min
 overview-chart-title = Spotkania tygodniowo
 overview-chart-this-week = Ten tydzień
 overview-chart-week-of = Tydzień od { $date }
@@ -695,6 +718,7 @@ teams-empty-admin = { $link }, aby współpracować ze swoim zespołem.
 teams-empty-admin-link-label = Utwórz jakiś
 teams-empty-member = Zespoły tworzą administratorzy. Poproś ich o utworzenie zespołu i dodanie cię jako członka.
 teams-subtitle = Osoby, które dzielą spotkania, przydzielane rotacyjnie lub wspólnie.
+teams-search-placeholder = Filtruj po nazwie lub linku
 
 # Dashboard invite links (templates/dashboard_internal.html)
 
@@ -702,7 +726,6 @@ invite-links-page-title = Linki z zaproszeniem
 invite-links-heading = Linki z zaproszeniem
 invite-links-new = Nowe wydarzenie wewnętrzne
 invite-links-help = Generuj jednorazowe linki do rezerwacji dla wewnętrznych typów wydarzeń. Każdy zalogowany współpracownik może tu tworzyć i udostępniać linki.
-invite-links-duration = { $minutes } min
 invite-links-hosted-by = Prowadzi { $host }
 invite-links-get-link = Pobierz link
 invite-links-invites = Zaproszenia
@@ -774,7 +797,6 @@ event-types-badge-expired = wygasły
 event-types-badge-range-from = od { $date }
 event-types-badge-range-until = do { $date }
 event-types-send-invites = Wyślij zaproszenia
-event-types-duration = { $minutes } min
 event-types-mode-collective = zbiorowy
 event-types-mode-round-robin = rotacyjny
 event-types-edit = Edytuj
@@ -855,6 +877,8 @@ settings-add-window = Dodaj przedział godzinowy
 settings-remove-window = Usuń przedział
 settings-save = Zapisz ustawienia
 settings-appearance = Wygląd
+settings-card-profile = Profil
+settings-card-languages = Języki
 settings-theme-system = Systemowy
 settings-theme-light = Jasny
 settings-theme-dark = Ciemny
@@ -955,10 +979,9 @@ troubleshoot-page-title = Diagnostyka
 troubleshoot-empty = Nie znaleziono typów wydarzeń. { $link }, aby zacząć diagnozować dostępność.
 troubleshoot-empty-link-label = Utwórz jakiś
 troubleshoot-subtitle = Sprawdź, dlaczego terminy dla { $title } są dostępne albo zablokowane
-troubleshoot-duration = { $minutes } min
-troubleshoot-buffer-before = { $minutes } min buforu przed
-troubleshoot-buffer-after = { $minutes } min buforu po
-troubleshoot-min-notice = { $minutes } min wyprzedzenia
+troubleshoot-buffer-before = { $duration } buforu przed
+troubleshoot-buffer-after = { $duration } buforu po
+troubleshoot-min-notice = { $duration } wyprzedzenia
 troubleshoot-blocked-override = Zablokowane przez wyjątek daty (dzień wolny)
 troubleshoot-custom-hours-active = Aktywny wyjątek z własnymi godzinami (zastępuje reguły tygodniowe)
 troubleshoot-microsoft-not-ready = Twój kalendarz Microsoft nie zakończył jeszcze pierwszej synchronizacji: do tego czasu każdy termin jest zajęty. Zobacz Źródła kalendarzy.
@@ -975,10 +998,10 @@ troubleshoot-none-no-rules = Brak reguł dostępności dla tego dnia tygodnia. T
 troubleshoot-none-all-bookable = Brak zablokowanych terminów w godzinach dostępności. Można rezerwować o każdej porze.
 troubleshoot-label-outside = Poza dostępnością
 troubleshoot-label-available = Dostępne
-troubleshoot-label-min-notice = Minimalne wyprzedzenie ({ $minutes } min)
+troubleshoot-label-min-notice = Minimalne wyprzedzenie ({ $duration })
 troubleshoot-label-beyond-horizon = Poza horyzontem rezerwacji ({ $days } dni)
 troubleshoot-label-outside-date-range = Poza okresem rezerwacji
-troubleshoot-label-buffer = Bufor ({ $minutes } min)
+troubleshoot-label-buffer = Bufor ({ $duration })
 troubleshoot-label-resource-busy = Zasób zajęty: { $names }
 troubleshoot-detail-around = Wokół: { $label }
 troubleshoot-detail-around-booking = Wokół rezerwacji od { $guest }
@@ -992,7 +1015,7 @@ invites-back-teams = Wróć do zespołów
 invites-back-event-types = Wróć do typów wydarzeń
 invites-intro = Wyślij linki z zaproszeniem do { $title }
 invites-capped = <strong>Wpis ograniczono do { $max } odbiorców na jedno wysłanie.</strong> Resztę wyślij w kolejnej turze.
-invites-failed-hint = — szczegóły znajdziesz w logach serwera.
+invites-failed-hint = Szczegóły znajdziesz w logach serwera.
 invites-quick-link = Szybki link
 invites-quick-link-help = Wygeneruj jednorazowy link i skopiuj go do schowka.
 invites-get-link = Pobierz link
@@ -1062,6 +1085,7 @@ source-form-heading-edit = Edytuj źródło kalendarza
 source-form-heading-add = Podłącz kalendarz
 source-form-subtitle-edit = Zaktualizuj połączenie. Zostaw hasło puste, aby zachować dotychczasowe. Po zmianie adresu lub nazwy użytkownika uruchom synchronizację, aby odświeżyć listę wykrytych kalendarzy.
 source-form-subtitle-add = Podłącz serwer CalDAV albo Microsoft Exchange (EWS), aby calrs mógł sprawdzać dostępność, gdy goście rezerwują spotkania.
+source-form-server-title = Serwer CalDAV lub Exchange
 source-form-backend = Backend
 source-form-preset = Ustawienie wstępne
 source-form-connect-google = Połącz z Google
@@ -1128,7 +1152,7 @@ team-form-submit = Utwórz zespół
 # Team settings (templates/team_settings.html)
 
 team-settings-page-title = Ustawienia
-team-settings-subtitle = Ustawienia zespołu — mogą je edytować administratorzy zespołu.
+team-settings-subtitle = Ustawienia zespołu: mogą je edytować administratorzy zespołu.
 team-settings-public-url = Adres publiczny
 team-settings-public-url-help = Przez ten link może rezerwować każdy.
 team-settings-invite-link = Link z zaproszeniem
@@ -1540,9 +1564,6 @@ admin-guest-footer-default-help = Używana, gdy typ wydarzenia nie ma własnej s
 admin-guest-footer-allow-all = Pozwól każdemu użytkownikowi ustawiać stopkę w swoich typach wydarzeń
 admin-guest-footer-allow-all-help = Domyślnie wyłączone: stopka wychodzi w imieniu tej instancji, więc tylko administratorzy mogą ją wpisać. Stopka ustawiona w typie wydarzenia zastępuje domyślną powyżej.
 admin-save-guest-footer = Zapisz stopkę
-admin-page-of = Strona %1 z %2
-admin-show-more-js = Pokaż o %1 więcej
-admin-show-fewer = Pokaż mniej
 
 # Admin panel: overview, section tabs, users table (templates/admin.html)
 
@@ -1712,14 +1733,6 @@ admin-sms-env-error-help = Popraw zmienne środowiskowe <code>CALRS_SMS_*</code>
 admin-sms-env-managed = Zarządzane przez <strong>zmienne środowiskowe</strong> (mają pierwszeństwo przed bazą danych). Zmień zmienne <code>CALRS_SMS_*</code> albo usuń je, aby zarządzać SMS-ami stąd.
 admin-sms-env-help = Możesz też skonfigurować to zmiennymi środowiskowymi (mają pierwszeństwo przed tym): <code>CALRS_SMS_PROVIDER</code>, <code>CALRS_SMS_API_KEY</code>, <code>CALRS_SMS_API_SECRET</code>, <code>CALRS_SMS_SENDER</code>, <code>CALRS_SMS_BASE_URL</code>, <code>CALRS_SMS_DAILY_CAP</code>, <code>CALRS_SMS_DEFAULT_COUNTRY_CODE</code>.
 admin-sms-trial-warning = <strong>Tryb próbny Twilio jest włączony</strong> (<code>CALRS_SMS_TWILIO_TRIAL</code>). Goście dostają predefiniowany szablon Twilio <code>sms_appointment_reminders</code> zamiast prawdziwej wiadomości, a dotrzeć można tylko na numery zweryfikowane w twojej konsoli Twilio. To pomoc przy testowaniu na kontach próbnych. Usuń tę zmienną, zanim zaczniesz przyjmować rezerwacje.
-
-admin-show-more =
-    { $count ->
-        [one] Pokaż o { $count } więcej
-        [few] Pokaż o { $count } więcej
-        [many] Pokaż o { $count } więcej
-       *[other] Pokaż o { $count } więcej
-    }
 
 # Calendar source form: backend picker (templates/source_form.html)
 
@@ -2517,3 +2530,54 @@ etf-q-key = Klucz dla webhooków: %1
 etf-hint-questions-one = 1 pytanie
 etf-hint-questions-other = Pytania: %1
 etf-hint-no-questions = Brak pytań
+
+# Language names, for the languages a host speaks (landing.rs).
+language-name-en = angielski
+language-name-fr = francuski
+language-name-de = niemiecki
+language-name-es = hiszpański
+language-name-it = włoski
+language-name-pt = portugalski
+language-name-nl = niderlandzki
+language-name-pl = polski
+language-name-et = estoński
+language-name-ar = arabski
+language-name-zh = chiński
+language-name-ja = japoński
+language-name-ko = koreański
+language-name-ru = rosyjski
+language-name-uk = ukraiński
+language-name-sv = szwedzki
+language-name-da = duński
+language-name-nb = norweski
+language-name-fi = fiński
+language-name-cs = czeski
+language-name-ro = rumuński
+language-name-el = grecki
+language-name-tr = turecki
+language-name-hi = hindi
+language-name-he = hebrajski
+language-name-hu = węgierski
+
+# Sections and order of the landing pages (landing.rs, event type form, settings).
+etf-section = Sekcja
+etf-section-placeholder = Na początek
+etf-section-help = Spotkania z tą samą sekcją są zgrupowane pod nią na stronie publicznej, tak jak ją zapisano.
+etf-section-order-link = Zmień kolejność
+settings-based-in = Lokalizacja
+settings-based-in-placeholder = Paryż, Francja
+settings-based-in-help = Miasto lub region, widoczne pod Twoim imieniem na Twojej stronie publicznej.
+settings-speaks = Języki, którymi mówisz
+settings-speaks-help = Widoczne pod Twoim imieniem na Twojej stronie publicznej, w języku każdego odwiedzającego.
+page-order-heading = Kolejność na Twojej stronie
+page-order-team-heading = Kolejność na stronie { $team }
+page-order-subtitle = Sekcje i spotkania pojawiają się na stronie publicznej w tej kolejności. Sekcję spotkania ustawia się w jego ustawieniach.
+page-order-back = Wróć
+page-order-empty = Nie ma jeszcze spotkań.
+page-order-up = Przenieś wyżej
+page-order-down = Przenieś niżej
+page-order-section-up = Przenieś { $section } wyżej
+page-order-section-down = Przenieś { $section } niżej
+page-order-type-up = Przenieś { $title } wyżej
+page-order-type-down = Przenieś { $title } niżej
+page-order-not-listed = Nie ma go na stronie publicznej (wyłączone, wewnętrzne lub prywatne)

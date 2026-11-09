@@ -1,0 +1,32 @@
+{#- The meetings of a landing page in cards (.card, .card-head,
+    .card-body: the dashboard cards' names, so the two can share one
+    definition later: the h2 with its count in .num, as #414's cards), the card's title in a tinted band, its meetings as
+    rows under it. `cards` comes from landing::landing_cards: one card per
+    host-written section in page order and a last one for the meetings
+    without a section, or a single "Meetings" card when there are no
+    sections. A line on how booking works sits above the cards when there
+    is more than one meeting (`topic_count`). Each meeting links to
+    /`href_kind`/`href_owner`/slug`href_tail`; `empty_text` shows when
+    there is none. -#}
+{%- if topic_count > 1 %}
+<p class="lp-how">{{ t("landing-how-it-works") }}</p>
+{%- endif %}
+{%- for card in cards %}
+<section class="card lp-cardlist">
+  <div class="card-head"><h2>{{ card.title }}<span class="lp-sr">, </span><span class="num">{{ card.count }}</span></h2></div>
+  <div class="card-body">
+    <ul class="lp-list">
+      {%- for et in card.items %}
+      {% include "partials/landing_row.html" %}
+      {%- endfor %}
+    </ul>
+  </div>
+</section>
+{%- else %}
+<section class="card lp-cardlist">
+  <div class="card-head"><h2>{{ t("landing-meetings") }}</h2></div>
+  <div class="card-body">
+    <ul class="lp-list"><li class="lp-empty">{{ empty_text }}</li></ul>
+  </div>
+</section>
+{%- endfor %}

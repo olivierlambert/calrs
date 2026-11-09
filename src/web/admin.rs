@@ -20,13 +20,93 @@ pub(crate) fn is_safe_company_link(url: &str) -> bool {
 
 // --- Users tab: listing ---
 
-/// Up to this many users, the Users tab renders everyone and the browser
-/// filters, sorts and pages them, as it always has. Past it, the server
-/// does all three and renders one page: 2,000 rows with their action menus
-/// were 6.6 MB of HTML (#343).
-pub(super) const USERS_INLINE_MAX: i64 = 100;
-/// Rows per page, the same as the browser-side pages.
+/// Users per page. The server searches, filters, sorts and pages the list
+/// and renders one page: 2,000 rows with their action menus were 6.6 MB of
+/// HTML (#343).
 pub(super) const USERS_PAGE_SIZE: i64 = 25;
+/// Groups per page of the Groups list, and members shown per group.
+pub(super) const GROUPS_PAGE_SIZE: i64 = 25;
+pub(super) const GROUP_MEMBERS_PAGE_SIZE: i64 = 10;
+
+/// The Groups list as carried in the URL: `gq` (search on the name), `gp`
+/// (page), and `gm` with `gmp`: the one group whose members are paged past
+/// the first page, and that page. Anything unknown falls back to the
+/// default, never to an error.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct GroupListState {
+    pub q: String,
+    pub page: i64,
+    pub members_of: Option<String>,
+    pub members_page: i64,
+}
+
+impl GroupListState {
+    pub(super) fn from_query(query: &HashMap<String, String>) -> Self {
+        let get = |k: &str| query.get(k).map(String::as_str);
+        Self {
+            q: listing::bounded_search(get("gq").unwrap_or_default()),
+            page: listing::lenient_page(get("gp")),
+            members_of: get("gm")
+                .map(str::trim)
+                .filter(|id| !id.is_empty() && id.len() <= 64)
+                .map(str::to_string),
+            members_page: listing::lenient_page(get("gmp")),
+        }
+    }
+
+    /// The query string for group page `page`, with group `members` on its
+    /// members' page (defaults left out).
+    pub(super) fn query_string(&self, page: i64, members: Option<(&str, i64)>) -> String {
+        let mut params = Vec::new();
+        if !self.q.is_empty() {
+            params.push(format!("gq={}", urlencoding::encode(&self.q)));
+        }
+        params.push(listing::page_part("gp", page));
+        if let Some((group, members_page)) = members.filter(|(_, p)| *p > 1) {
+            params.push(format!("gm={}", urlencoding::encode(group)));
+            params.push(format!("gmp={members_page}"));
+        }
+        params.retain(|p| !p.is_empty());
+        params.join("&")
+    }
+
+    /// The state as it stands, for the other lists' links to keep.
+    fn current(&self) -> String {
+        self.query_string(
+            self.page,
+            self.members_of
+                .as_deref()
+                .map(|group| (group, self.members_page)),
+        )
+    }
+
+    /// The search as a bound `GLOB` pattern.
+    fn push_filter(&self, qb: &mut sqlx::QueryBuilder<'_, sqlx::Sqlite>) {
+        if !self.q.is_empty() {
+            qb.push(" WHERE g.name GLOB ");
+            qb.push_bind(listing::ci_glob(&self.q));
+        }
+    }
+}
+
+/// `/dashboard/admin` with both lists of the Users tab where they are,
+/// scrolled to `anchor`.
+fn admin_href(users: String, groups: String, anchor: &str) -> String {
+    listing::href("/dashboard/admin", &[users, groups], anchor)
+}
+
+/// A query string this page built as hidden form fields, so one list's
+/// search form keeps the other list where it was.
+fn hidden_params(query: &str) -> Vec<(String, String)> {
+    query
+        .split('&')
+        .filter_map(|pair| pair.split_once('='))
+        .filter_map(|(k, v)| {
+            let v = urlencoding::decode(v).ok()?.into_owned();
+            Some((k.to_string(), v))
+        })
+        .collect()
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum UserFilter {
@@ -271,30 +351,29 @@ fn push_user_filter(qb: &mut sqlx::QueryBuilder<'_, sqlx::Sqlite>, state: &UserL
     }
 }
 
-/// One page of the server-side Users list and how many users match it.
+/// One page of the Users list, its links keeping the Groups list's state
+/// (`groups`, a query string).
 async fn user_list_page(
     pool: &SqlitePool,
     state: &UserListState,
-) -> Result<(Vec<UserRow>, i64, i64), sqlx::Error> {
+    groups: &str,
+) -> Result<listing::Page<UserRow>, sqlx::Error> {
     let mut count = sqlx::QueryBuilder::new("SELECT COUNT(*) FROM users");
     push_user_filter(&mut count, state);
-    let matched: i64 = count.build_query_scalar().fetch_one(pool).await?;
-    let page = listing::clamp_page(state.page, matched, USERS_PAGE_SIZE);
     let mut select = sqlx::QueryBuilder::new(USER_COLUMNS);
     push_user_filter(&mut select, state);
-    select.push(" ORDER BY ");
-    select.push(
+    listing::paged(
+        pool,
+        count,
+        select,
         state
             .sort
             .map(|s| s.order_by(state.desc))
             .unwrap_or("created_at, id"),
-    );
-    select.push(" LIMIT ");
-    select.push_bind(USERS_PAGE_SIZE);
-    select.push(" OFFSET ");
-    select.push_bind((page - 1) * USERS_PAGE_SIZE);
-    let rows: Vec<UserRow> = select.build_query_as().fetch_all(pool).await?;
-    Ok((rows, matched, page))
+        listing::PageParams::sized(state.page, USERS_PAGE_SIZE),
+        |n| admin_href(state.query_string(n), groups.to_string(), "users"),
+    )
+    .await
 }
 
 /// Where a user action returns: the server-side list page it was taken
@@ -480,8 +559,9 @@ pub(super) async fn admin_dashboard(
         });
     }
 
-    // Users. A small instance renders all of them for the browser-side
-    // list; a large one renders the requested page only.
+    // Users, one page of them: the server searches, filters, sorts and
+    // pages, whatever the instance's size. The Groups list below shares
+    // the tab, so each list's links keep the other's state.
     let user_count: i64 = match sqlx::query_scalar("SELECT COUNT(*) FROM users")
         .fetch_one(&state.pool)
         .await
@@ -489,31 +569,17 @@ pub(super) async fn admin_dashboard(
         Ok(n) => n,
         Err(e) => return internal_error_html("count users", &e),
     };
-    let users_server = user_count > USERS_INLINE_MAX;
+    let groups_list = GroupListState::from_query(&query);
+    let groups_qs = groups_list.current();
     let mut users_list = UserListState::from_params(|k| query.get(k).map(String::as_str));
-    let (users, users_matched) = if users_server {
-        match user_list_page(&state.pool, &users_list).await {
-            Ok((rows, matched, page)) => {
-                users_list.page = page;
-                (rows, matched)
-            }
-            Err(e) => return internal_error_html("load users page", &e),
-        }
-    } else {
-        let rows: Vec<UserRow> = sqlx::query_as(&format!("{USER_COLUMNS} ORDER BY created_at"))
-            .fetch_all(&state.pool)
-            .await
-            .unwrap_or_default();
-        let matched = rows.len() as i64;
-        (rows, matched)
+    let users_page = match user_list_page(&state.pool, &users_list, &groups_qs).await {
+        Ok(page) => page,
+        Err(e) => return internal_error_html("load users page", &e),
     };
-    let users_pager = users_server
-        .then(|| {
-            listing::pager(users_list.page, users_matched, USERS_PAGE_SIZE, |n| {
-                users_list.href(n)
-            })
-        })
-        .flatten();
+    users_list.page = users_page.page;
+    let users_matched = users_page.total;
+    let users_pager = users_page.pager;
+    let users = users_page.rows;
 
     // Groups of the listed users only.
     let user_ids: Vec<&str> = users.iter().map(|u| u.0.as_str()).collect();
@@ -582,7 +648,16 @@ pub(super) async fn admin_dashboard(
         .collect();
     let users_filter_hrefs: HashMap<&str, String> = UserFilter::ALL
         .into_iter()
-        .map(|f| (f.key(), users_list.with_filter(f).href(1)))
+        .map(|f| {
+            (
+                f.key(),
+                admin_href(
+                    users_list.with_filter(f).query_string(1),
+                    groups_qs.clone(),
+                    "users",
+                ),
+            )
+        })
         .collect();
     let users_sort_links: HashMap<&str, minijinja::Value> = UserSort::ALL
         .into_iter()
@@ -590,7 +665,11 @@ pub(super) async fn admin_dashboard(
             (
                 s.key(),
                 context! {
-                    href => users_list.with_sort(s).href(1),
+                    href => admin_href(
+                        users_list.with_sort(s).query_string(1),
+                        groups_qs.clone(),
+                        "users",
+                    ),
                     aria => users_list.aria_sort(s),
                 },
             )
@@ -605,31 +684,90 @@ pub(super) async fn admin_dashboard(
         filter_hrefs => users_filter_hrefs,
         sort_links => users_sort_links,
         search_max => listing::MAX_SEARCH_CHARS,
+        // The other list's state, for the search form to carry.
+        hidden => hidden_params(&groups_qs),
     };
 
-    // Fetch groups with member count
-    let groups_rows: Vec<(String, String, i64)> = sqlx::query_as(
-        "SELECT g.id, g.name, COUNT(ug.user_id) as member_count \
-         FROM groups g LEFT JOIN user_groups ug ON ug.group_id = g.id \
-         GROUP BY g.id ORDER BY g.name",
+    // Groups, one page of them, each with one page of its members (by
+    // weight, then name), in one query for the whole page.
+    let group_count: i64 = match sqlx::query_scalar("SELECT COUNT(*) FROM groups")
+        .fetch_one(&state.pool)
+        .await
+    {
+        Ok(n) => n,
+        Err(e) => return internal_error_html("count groups", &e),
+    };
+    let users_qs = users_list.query_string(users_list.page);
+    let mut count = sqlx::QueryBuilder::new("SELECT COUNT(*) FROM groups g");
+    groups_list.push_filter(&mut count);
+    let mut select = sqlx::QueryBuilder::new(
+        "SELECT g.id, g.name,
+                (SELECT COUNT(*) FROM user_groups ug WHERE ug.group_id = g.id)
+         FROM groups g",
+    );
+    groups_list.push_filter(&mut select);
+    let groups_page = match listing::paged::<(String, String, i64)>(
+        &state.pool,
+        count,
+        select,
+        "g.name, g.id",
+        listing::PageParams::sized(groups_list.page, GROUPS_PAGE_SIZE),
+        |n| {
+            admin_href(
+                users_qs.clone(),
+                groups_list.query_string(n, None),
+                "groups",
+            )
+        },
     )
-    .fetch_all(&state.pool)
     .await
-    .unwrap_or_default();
-
-    let group_count = groups_rows.len();
-
-    // Fetch all group members with weights
+    {
+        Ok(page) => page,
+        Err(e) => return internal_error_html("load groups page", &e),
+    };
+    // The members' page of each listed group: the requested one for the
+    // group named in the URL (clamped to its members), the first otherwise.
+    let member_page_of = |gid: &str, member_count: i64| {
+        if groups_list.members_of.as_deref() == Some(gid) {
+            listing::clamp_page(
+                groups_list.members_page,
+                member_count,
+                GROUP_MEMBERS_PAGE_SIZE,
+            )
+        } else {
+            1
+        }
+    };
+    let offsets: HashMap<&str, i64> = groups_page
+        .rows
+        .iter()
+        .map(|(id, _, n)| {
+            (
+                id.as_str(),
+                (member_page_of(id, *n) - 1) * GROUP_MEMBERS_PAGE_SIZE,
+            )
+        })
+        .collect();
     let all_members: Vec<(String, String, String, i64)> = sqlx::query_as(
-        "SELECT ug.group_id, ug.user_id, u.name, ug.weight \
-         FROM user_groups ug JOIN users u ON u.id = ug.user_id \
-         ORDER BY ug.weight DESC, u.name",
+        "SELECT group_id, user_id, name, weight FROM (
+             SELECT ug.group_id AS group_id, ug.user_id AS user_id, u.name AS name,
+                    ug.weight AS weight,
+                    ROW_NUMBER() OVER (PARTITION BY ug.group_id
+                        ORDER BY ug.weight DESC, u.name, ug.user_id) AS rn
+             FROM user_groups ug JOIN users u ON u.id = ug.user_id
+             WHERE ug.group_id IN (SELECT key FROM json_each(?1)))
+         WHERE rn > json_extract(?1, '$.' || json_quote(group_id))
+           AND rn <= json_extract(?1, '$.' || json_quote(group_id)) + ?2
+         ORDER BY group_id, rn",
     )
+    .bind(serde_json::to_string(&offsets).unwrap_or_else(|_| "{}".to_string()))
+    .bind(GROUP_MEMBERS_PAGE_SIZE)
     .fetch_all(&state.pool)
     .await
     .unwrap_or_default();
 
-    let groups_ctx: Vec<minijinja::Value> = groups_rows
+    let groups_ctx: Vec<minijinja::Value> = groups_page
+        .rows
         .iter()
         .map(|(id, name, member_count)| {
             let members: Vec<minijinja::Value> = all_members
@@ -643,14 +781,44 @@ pub(super) async fn admin_dashboard(
                     }
                 })
                 .collect();
+            let members_pager = listing::pager(
+                member_page_of(id, *member_count),
+                *member_count,
+                GROUP_MEMBERS_PAGE_SIZE,
+                |n| {
+                    admin_href(
+                        users_qs.clone(),
+                        groups_list.query_string(groups_page.page, Some((id.as_str(), n))),
+                        &format!("group-{id}"),
+                    )
+                },
+            );
+            // The weight forms return to this group on this page.
+            let return_to = admin_href(
+                users_qs.clone(),
+                groups_list.query_string(
+                    groups_page.page,
+                    Some((id.as_str(), member_page_of(id, *member_count))),
+                ),
+                &format!("group-{id}"),
+            );
             context! {
                 id => id,
                 name => name,
                 member_count => member_count,
                 members => members,
+                members_pager => members_pager,
+                return_to => return_to,
             }
         })
         .collect();
+    let groups_list_ctx = context! {
+        q => groups_list.q,
+        search_max => listing::MAX_SEARCH_CHARS,
+        matched => groups_page.total,
+        pager => groups_page.pager,
+        hidden => hidden_params(&users_qs),
+    };
 
     let mfa_required = match crate::mfa::required(&state.pool).await {
         Ok(value) => value,
@@ -951,13 +1119,13 @@ pub(super) async fn admin_dashboard(
             current_user_id => current_user.id,
             users => users_ctx,
             user_count => user_count,
-            users_server => users_server,
             users_matched => users_matched,
             users_list => users_list_ctx,
             users_pager => users_pager,
             figures_age => figures_age.map(|age| age.max(1)),
             groups => groups_ctx,
             group_count => group_count,
+            groups_list => groups_list_ctx,
             mfa_required => mfa_required,
             local_admin => current_user.auth_provider == "local",
             registration_enabled => registration_enabled,
@@ -3272,6 +3440,9 @@ pub(super) async fn admin_stop_impersonate(
 pub(super) struct WeightForm {
     _csrf: Option<String>,
     weight: i64,
+    /// The Groups list page the weight was changed on.
+    #[serde(default)]
+    return_to: Option<String>,
 }
 
 pub(super) async fn admin_update_member_weight(
@@ -3297,5 +3468,7 @@ pub(super) async fn admin_update_member_weight(
         weight = w,
         "admin: updated member weight"
     );
-    Redirect::to("/dashboard/admin").into_response()
+    let back = listing::return_path(form.return_to.as_deref(), "/dashboard/admin")
+        .unwrap_or_else(|| "/dashboard/admin".to_string());
+    Redirect::to(&back).into_response()
 }

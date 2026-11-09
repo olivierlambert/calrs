@@ -1,81 +1,62 @@
 {% extends "dashboard_base.html" %}
 {% block title %}{{ team_name }} {{ t("team-settings-page-title") }}, calrs{% endblock %}
+{% block main_class %}has-cards{% endblock %}
 {% block dashboard_content %}
 {% import "partials/icons.html" as ic %}
 <a href="/dashboard/teams" class="page-back">{{ ic.icon("arrow-left", 14) }}{{ t("teams-heading") }}</a>
-<div class="card">
-  <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
-    <h1 style="margin-bottom: 0;">{{ team_name }}</h1>
-    {% if visibility == "public" %}
-      <span class="badge badge-success">{{ t("teams-badge-public") }}</span>
-    {% else %}
-      <span class="badge badge-muted">{{ t("teams-badge-private") }}</span>
-    {% endif %}
+<header class="page-header">
+  <div class="page-header-text">
+    <h1 class="page-title ts-title">{{ team_name }}
+      {% if visibility == "public" %}
+        <span class="badge badge-success">{{ t("teams-badge-public") }}</span>
+      {% else %}
+        <span class="badge badge-muted">{{ t("teams-badge-private") }}</span>
+      {% endif %}
+    </h1>
+    <p class="page-subtitle">{{ t("team-settings-subtitle") }}</p>
   </div>
-  <p style="color: var(--text-muted); font-size: 0.875rem; margin-top: 0.25rem;">{{ t("team-settings-subtitle") }}</p>
+</header>
 
-  {% if success %}
-    <div class="success" style="margin-top: 1rem; padding: 0.75rem 1rem; border-radius: var(--radius); background: var(--success-bg, #e6f9e6); color: var(--success, #2d7a2d); border: 1px solid var(--success, #2d7a2d);">{{ success }}</div>
-  {% endif %}
+<style>
+  .ts-title { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+  .ts-title .badge { font-size: 12px; }
+  .ts-help { color: var(--text-secondary); font-size: 13.5px; margin: 0 0 0.75rem; max-width: 62ch; }
+  .ts-url { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
+  .ts-url input { flex: 1 1 16rem; min-width: 0; font-size: 0.85rem; padding: 0.5rem 0.75rem; border: 1px solid var(--border-hover); border-radius: var(--r-control); background: var(--paper); color: var(--ink); font-family: inherit; }
+  #members-list .member-row + .member-row { border-top: 1px solid var(--card-rule); }
+  .ts-danger { border-color: color-mix(in srgb, var(--error-text) 40%, var(--border)) !important; }
+  .ts-danger .card-head h2 { color: var(--error-text); }
+</style>
 
-  {% if visibility == "public" and team_slug %}
-  <div style="margin-top: 1.25rem; padding: 1rem; border-radius: var(--radius); background: var(--accent-subtle, rgba(99,102,241,0.06)); border: 1px solid var(--accent-border, rgba(99,102,241,0.2));">
-    <label style="display: block; font-weight: 500; margin-bottom: 0.5rem; font-size: 0.875rem;">{{ t("team-settings-public-url") }}</label>
-    <p style="color: var(--text-muted); font-size: 0.8rem; margin-bottom: 0.5rem;">{{ t("team-settings-public-url-help") }}</p>
-    <div style="display: flex; gap: 0.5rem; align-items: center;">
-      <input type="text" id="public-url" readonly value="" style="flex: 1; font-size: 0.85rem; padding: 0.5rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); color: var(--text); font-family: inherit;">
-      <button type="button" id="copy-public-btn" class="slot-btn" style="cursor: pointer; font-weight: 600; color: var(--ink); border-color: var(--border-hover); white-space: nowrap;">{{ t("settings-copy") }}</button>
-      <a id="open-public-link" href="/team/{{ team_slug }}" target="_blank" rel="noopener noreferrer" class="slot-btn" style="text-decoration: none; font-size: 0.85rem; white-space: nowrap;">{{ t("settings-open") }} &#8599;</a>
+{% if success %}
+  <div class="notice notice--success success" data-flash="success">{{ success }}</div>
+{% endif %}
+
+{% if (visibility == "public" and team_slug) or (visibility == "private" and invite_token) %}
+{% set link_path = ("/team/" ~ team_slug) if visibility == "public" else ("/team/" ~ team_slug ~ "?invite=" ~ invite_token) %}
+<section class="card" aria-labelledby="ts-link">
+  <div class="card-head"><h2 id="ts-link">{% if visibility == "public" %}{{ t("team-settings-public-url") }}{% else %}{{ t("team-settings-invite-link") }}{% endif %}</h2></div>
+  <div class="card-body">
+    <p class="ts-help">{% if visibility == "public" %}{{ t("team-settings-public-url-help") }}{% else %}{{ t("team-settings-invite-link-help") }}{% endif %}</p>
+    <div class="ts-url">
+      <input type="text" id="team-link-url" aria-labelledby="ts-link" readonly value="{{ link_path }}" data-path="{{ link_path }}">
+      <button type="button" class="ui-btn" data-copy-path="{{ link_path }}">{{ ic.icon("copy", 14) }}{{ t("settings-copy") }}</button>
+      <a href="{{ link_path }}" target="_blank" rel="noopener noreferrer" class="ui-btn">{{ t("settings-open") }}{{ ic.icon("external", 13) }}</a>
     </div>
   </div>
-  <script>
-  (function() {
-    var url = window.location.origin + '/team/{{ team_slug }}';
-    document.getElementById('public-url').value = url;
-    document.getElementById('open-public-link').href = url;
-    document.getElementById('copy-public-btn').addEventListener('click', function() {
-      var btn = this;
-      navigator.clipboard.writeText(url).then(function() {
-        btn.textContent = {{ t('settings-copied') | tojson }};
-        btn.style.color = 'var(--success)';
-        btn.style.borderColor = 'var(--success)';
-        setTimeout(function() { btn.textContent = {{ t('settings-copy') | tojson }}; btn.style.color = 'var(--ink)'; btn.style.borderColor = 'var(--border-hover)'; }, 1500);
-      });
-    });
-  })();
-  </script>
-  {% elif visibility == "private" and invite_token %}
-  <div style="margin-top: 1.25rem; padding: 1rem; border-radius: var(--radius); background: var(--accent-subtle, rgba(99,102,241,0.06)); border: 1px solid var(--accent-border, rgba(99,102,241,0.2));">
-    <label style="display: block; font-weight: 500; margin-bottom: 0.5rem; font-size: 0.875rem;">{{ t("team-settings-invite-link") }}</label>
-    <p style="color: var(--text-muted); font-size: 0.8rem; margin-bottom: 0.5rem;">{{ t("team-settings-invite-link-help") }}</p>
-    <div style="display: flex; gap: 0.5rem; align-items: center;">
-      <input type="text" id="invite-url" readonly value="" style="flex: 1; font-size: 0.85rem; padding: 0.5rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); color: var(--text); font-family: inherit;">
-      <button type="button" id="copy-invite-btn" class="slot-btn" style="cursor: pointer; font-weight: 600; color: var(--ink); border-color: var(--border-hover); white-space: nowrap;">{{ t("settings-copy") }}</button>
-      <a id="open-invite-link" href="/team/{{ team_slug }}?invite={{ invite_token }}" target="_blank" rel="noopener noreferrer" class="slot-btn" style="text-decoration: none; font-size: 0.85rem; white-space: nowrap;">{{ t("settings-open") }} &#8599;</a>
-    </div>
-  </div>
-  <script>
-  (function() {
-    var url = window.location.origin + '/team/{{ team_slug }}?invite={{ invite_token }}';
-    document.getElementById('invite-url').value = url;
-    document.getElementById('open-invite-link').href = url;
-    document.getElementById('copy-invite-btn').addEventListener('click', function() {
-      var btn = this;
-      navigator.clipboard.writeText(url).then(function() {
-        btn.textContent = {{ t('settings-copied') | tojson }};
-        btn.style.color = 'var(--success)';
-        btn.style.borderColor = 'var(--success)';
-        setTimeout(function() { btn.textContent = {{ t('settings-copy') | tojson }}; btn.style.color = 'var(--ink)'; btn.style.borderColor = 'var(--border-hover)'; }, 1500);
-      });
-    });
-  })();
-  </script>
-  {% endif %}
+</section>
+<script>
+(function() {
+  var input = document.getElementById('team-link-url');
+  input.value = window.location.origin + input.dataset.path;
+})();
+</script>
+{% endif %}
 
-  <!-- Avatar -->
-  <div style="margin-top: 1.25rem;">
-    <label style="display: block; font-weight: 500; margin-bottom: 0.5rem; font-size: 0.875rem;">{{ t("team-settings-avatar") }}</label>
-    <div style="display: flex; align-items: center; gap: 1rem;">
+<section class="card" aria-labelledby="ts-avatar">
+  <div class="card-head"><h2 id="ts-avatar">{{ t("team-settings-avatar") }}</h2></div>
+  <div class="card-body">
+    <div style="display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;">
       <div style="width: 64px; height: 64px; border-radius: 50%; background: var(--data-busy); color: var(--ink); display: flex; align-items: center; justify-content: center; font-weight: 600; font-size: 1.25rem; flex-shrink: 0; overflow: hidden;">
         {% if team_has_avatar %}
           <img src="/team-avatar/{{ team_id }}" alt="" style="width: 100%; height: 100%; object-fit: cover;">
@@ -84,13 +65,13 @@
         {% endif %}
       </div>
       <div style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
-        <form method="post" action="/dashboard/teams/{{ team_id }}/avatar" enctype="multipart/form-data" style="margin: 0; display: flex; gap: 0.5rem; align-items: center;">
-          <input type="file" name="avatar" accept="image/png,image/jpeg,image/gif,image/webp" data-max-bytes="{{ avatar_max_bytes }}" data-too-big="{{ t('avatar-upload-refused') }}" required style="font-size: 0.85rem;">
-          <button type="submit" class="slot-btn" style="cursor: pointer; font-weight: 600; color: var(--ink); border-color: var(--border-hover);">{{ t("settings-upload") }}</button>
+        <form method="post" action="/dashboard/teams/{{ team_id }}/avatar" enctype="multipart/form-data" style="margin: 0; display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
+          <input type="file" name="avatar" accept="image/png,image/jpeg,image/gif,image/webp" data-max-bytes="{{ avatar_max_bytes }}" data-too-big="{{ t('avatar-upload-refused') }}" required style="font-size: 0.85rem; max-width: 100%;">
+          <button type="submit" class="ui-btn">{{ t("settings-upload") }}</button>
         </form>
         {% if team_has_avatar %}
         <form method="post" action="/dashboard/teams/{{ team_id }}/avatar/delete" style="margin: 0;">
-          <button type="submit" class="slot-btn" style="cursor: pointer; font-size: 0.85rem; color: var(--error-text);">{{ t("team-settings-remove") }}</button>
+          <button type="submit" class="ui-btn ui-btn--danger">{{ t("team-settings-remove") }}</button>
         </form>
         {% endif %}
       </div>
@@ -101,13 +82,13 @@
     <p style="color: var(--error-text); font-size: 0.875rem; margin-top: 0.75rem;">{{ t("avatar-upload-save-failed") }}</p>
     {% endif %}
   </div>
-</div>
+</section>
 
 <!-- Unified settings form -->
-<form method="POST" id="settings-form">
-  <!-- Profile section -->
-  <div class="card" style="margin-top: 1.25rem;">
-    <h2 style="font-size: 1rem; margin-bottom: 0.75rem;">{{ t("team-settings-profile") }}</h2>
+<form method="POST" id="settings-form" data-dirty-guard>
+  <section class="card" aria-labelledby="ts-profile">
+    <div class="card-head"><h2 id="ts-profile">{{ t("team-settings-profile") }}</h2></div>
+    <div class="card-body">
 
     <div class="form-group">
       <label for="name">{{ t("team-form-name") }}</label>
@@ -150,17 +131,18 @@
       </div>
       <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">{{ t("team-settings-visibility-help") }}</span>
     </fieldset>
-  </div>
+    </div>
+  </section>
 
-  <!-- Members section -->
-  <div class="card" style="margin-top: 1.25rem;">
-    <h2 style="font-size: 1rem; margin-bottom: 0.75rem;">{{ t("team-form-members") }}</h2>
-    <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 1rem;">{{ t("team-settings-members-help") }}</p>
+  <section class="card" aria-labelledby="members">
+    <div class="card-head"><h2 id="members">{{ t("team-form-members") }}{% if members_pager %}<span class="num">{{ members_total }}</span>{% endif %}</h2></div>
+    <div class="card-body">
+    <p class="ts-help">{{ t("team-settings-members-help") }}</p>
 
     <!-- Unified member + group list -->
     <div id="members-list" style="margin-bottom: 1rem;">
       {% for m in members %}
-      <div class="member-row" data-id="{{ m.id }}" data-type="user" style="display: flex; align-items: center; gap: 0.75rem; padding: 0.5rem 0; {% if not loop.last or linked_groups %}border-bottom: 1px solid var(--border);{% endif %}">
+      <div class="member-row" data-id="{{ m.id }}" data-type="user" style="display: flex; align-items: center; gap: 0.75rem; padding: 0.5rem 0;">
         <div style="width: 32px; height: 32px; border-radius: 50%; background: var(--data-busy); color: var(--ink); display: flex; align-items: center; justify-content: center; font-weight: 600; font-size: 0.7rem; flex-shrink: 0; overflow: hidden;">
           {% if m.has_avatar %}
             <img src="/avatar/{{ m.id }}" alt="" style="width: 100%; height: 100%; object-fit: cover;">
@@ -175,12 +157,12 @@
           <option value="admin" {% if m.role == "admin" %}selected{% endif %}>{{ t("team-settings-role-admin") }}</option>
         </select>
         {% if m.source != "group" %}
-        <button type="button" class="slot-btn remove-member-btn" data-user-id="{{ m.id }}" style="font-size: 0.75rem; color: var(--error-text); cursor: pointer;">{{ t("team-settings-remove") }}</button>
+        <button type="button" class="ui-btn ui-btn--sm ui-btn--danger remove-member-btn" data-user-id="{{ m.id }}">{{ t("team-settings-remove") }}</button>
         {% endif %}
       </div>
       {% endfor %}
       {% for g in linked_groups %}
-      <div class="member-row" data-id="{{ g.id }}" data-type="group" style="display: flex; align-items: center; gap: 0.75rem; padding: 0.5rem 0; {% if not loop.last %}border-bottom: 1px solid var(--border);{% endif %}">
+      <div class="member-row" data-id="{{ g.id }}" data-type="group" style="display: flex; align-items: center; gap: 0.75rem; padding: 0.5rem 0;">
         <div style="width: 32px; height: 32px; border-radius: 50%; background: var(--surface-hover); color: var(--text-muted); display: flex; align-items: center; justify-content: center; font-size: 1rem; flex-shrink: 0;">&#8862;</div>
         <span style="font-size: 0.9rem; flex: 1;">{{ g.name }}</span>
         <!-- Stacked member avatars -->
@@ -197,14 +179,15 @@
           {% endif %}
         </span>
         <span class="badge badge-muted">{{ t("team-settings-oidc-group") }}</span>
-        <button type="button" class="slot-btn remove-group-btn" data-group-id="{{ g.id }}" style="font-size: 0.75rem; color: var(--error-text); cursor: pointer;">{{ t("team-settings-remove") }}</button>
+        <button type="button" class="ui-btn ui-btn--sm ui-btn--danger remove-group-btn" data-group-id="{{ g.id }}">{{ t("team-settings-remove") }}</button>
       </div>
       {% endfor %}
     </div>
+    {% with pager=members_pager %}{% include "partials/pager.html" %}{% endwith %}
 
     <!-- Unified search bar -->
     <div style="position: relative;">
-      <input type="text" id="add-member-search" autocomplete="off" placeholder="{{ t('team-form-search-placeholder') }}" style="width: 100%; padding: 0.5rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.85rem; font-family: inherit; background: var(--surface); color: var(--text);">
+      <input type="text" id="add-member-search" autocomplete="off" placeholder="{{ t('team-form-search-placeholder') }}" aria-label="{{ t('team-form-search-placeholder') }}" style="width: 100%; padding: 0.5rem 0.75rem; border: 1px solid var(--border-hover); border-radius: var(--r-control); font-size: 0.85rem; font-family: inherit; background: var(--paper); color: var(--text);">
       <div id="add-member-results" style="display: none; position: absolute; top: 100%; left: 0; right: 0; background: var(--surface); border: 1px solid var(--border); border-top: none; border-radius: 0 0 var(--radius) var(--radius); max-height: 300px; overflow-y: auto; z-index: 10; box-shadow: var(--shadow-float);"></div>
     </div>
 
@@ -212,17 +195,21 @@
     <div id="member-hidden-inputs"></div>
     <div id="group-hidden-inputs"></div>
     <div id="admin-hidden-inputs"></div>
-  </div>
+    </div>
+  </section>
 
-  <div style="margin-top: 1.25rem;">
+  <div class="form-savebar">
+    <span class="form-savebar-status" role="status">{{ t("dash-unsaved") }}</span>
+    <span class="form-savebar-hint"><kbd>Ctrl</kbd><kbd>S</kbd></span>
     <button type="submit" class="btn">{{ t("team-settings-save") }}</button>
   </div>
 </form>
 
 {% if time_off %}
-<section class="sec" aria-labelledby="team-time-off" style="margin-top: 2rem;">
-  <div class="sec-h"><h2 id="team-time-off">{{ t("time-off-heading") }}<span class="sec-count">{{ time_off | length }}</span></h2></div>
-  <p class="sec-note">{{ t("team-settings-time-off-help", timezone=viewer_timezone) }}</p>
+<section class="card" aria-labelledby="team-time-off" style="margin-top: 2rem;">
+  <div class="card-head"><h2 id="team-time-off">{{ t("time-off-heading") }}<span class="num">{{ time_off | length }}</span></h2></div>
+  <div class="card-body">
+  <p class="ts-help">{{ t("team-settings-time-off-help", timezone=viewer_timezone) }}</p>
   <ul class="ui-list">
     {% for p in time_off %}
     <li class="ui-row">
@@ -236,16 +223,19 @@
     </li>
     {% endfor %}
   </ul>
+  </div>
 </section>
 {% endif %}
 
 <!-- Danger zone -->
-<div class="card" style="margin-top: 2rem; border: 1px solid var(--error-text, #dc2626);">
-  <h2 style="font-size: 1rem; margin-bottom: 0.75rem; color: var(--error-text);">{{ t("team-settings-danger-zone") }}</h2>
-  <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 0.75rem;">{{ t("team-settings-danger-help") }}</p>
-  <button type="button" class="slot-btn" style="font-size: 0.85rem; color: var(--error-text); border-color: var(--error-text); cursor: pointer;" data-confirm="{{ t('team-settings-delete-confirm', name=team_name) }}" onclick="if(confirm(this.dataset.confirm)) this.nextElementSibling.submit();">{{ t("team-settings-delete") }}</button>
+<section class="card ts-danger" aria-labelledby="ts-danger" style="margin-top: 2rem;">
+  <div class="card-head"><h2 id="ts-danger">{{ t("team-settings-danger-zone") }}</h2></div>
+  <div class="card-body">
+  <p class="ts-help">{{ t("team-settings-danger-help") }}</p>
+  <button type="button" class="ui-btn ui-btn--danger ts-delete" data-confirm="{{ t('team-settings-delete-confirm', name=team_name) }}" onclick="if(confirm(this.dataset.confirm)) this.nextElementSibling.submit();">{{ t("team-settings-delete") }}</button>
   <form method="post" action="/dashboard/teams/{{ team_id }}/delete" style="display: none;"></form>
-</div>
+  </div>
+</section>
 
 <script>
 var ROLE_MEMBER = {{ t('team-settings-role-member') | tojson }};
@@ -269,21 +259,14 @@ var MEMBER_COUNT_OTHER = {{ t('teams-member-count', count=2) | tojson }};
     {% endif %}
   ];
 
-  // Track current direct members (excludes OIDC-synced)
+  // Track current direct members (excludes OIDC-synced). Every member,
+  // not only the page of rows shown: the form posts the whole membership.
   var currentMembers = {};
-  {% for m in members %}
-  {% if m.source != "group" %}
-  currentMembers["{{ m.id }}"] = true;
-  {% endif %}
-  {% endfor %}
+  {{ direct_member_ids | tojson }}.forEach(function(id) { currentMembers[id] = true; });
 
   // Track admin members
   var adminMembers = {};
-  {% for m in members %}
-  {% if m.role == "admin" %}
-  adminMembers["{{ m.id }}"] = true;
-  {% endif %}
-  {% endfor %}
+  {{ admin_member_ids | tojson }}.forEach(function(id) { adminMembers[id] = true; });
 
   // Track linked groups
   var linkedGroups = {};
@@ -344,7 +327,7 @@ var MEMBER_COUNT_OTHER = {{ t('teams-member-count', count=2) | tojson }};
     row.className = 'member-row';
     row.dataset.id = user.id;
     row.dataset.type = 'user';
-    row.style.cssText = 'display: flex; align-items: center; gap: 0.75rem; padding: 0.5rem 0; border-top: 1px solid var(--border);';
+    row.style.cssText = 'display: flex; align-items: center; gap: 0.75rem; padding: 0.5rem 0;';
     var avatar = document.createElement('div');
     avatar.style.cssText = 'width: 32px; height: 32px; border-radius: 50%; background: var(--data-busy); color: var(--ink); display: flex; align-items: center; justify-content: center; font-weight: 600; font-size: 0.7rem; flex-shrink: 0; overflow: hidden;';
     if (user.hasAvatar) {
@@ -366,8 +349,7 @@ var MEMBER_COUNT_OTHER = {{ t('teams-member-count', count=2) | tojson }};
     row.appendChild(roleSelect);
     var removeBtn = document.createElement('button');
     removeBtn.type = 'button';
-    removeBtn.className = 'slot-btn';
-    removeBtn.style.cssText = 'font-size: 0.75rem; color: var(--error-text); cursor: pointer;';
+    removeBtn.className = 'ui-btn ui-btn--sm ui-btn--danger';
     removeBtn.textContent = {{ t('team-settings-remove') | tojson }};
     removeBtn.onclick = function() { removeMember(user.id); };
     row.appendChild(removeBtn);
@@ -400,7 +382,7 @@ var MEMBER_COUNT_OTHER = {{ t('teams-member-count', count=2) | tojson }};
     row.className = 'member-row';
     row.dataset.id = group.id;
     row.dataset.type = 'group';
-    row.style.cssText = 'display: flex; align-items: center; gap: 0.75rem; padding: 0.5rem 0; border-top: 1px solid var(--border);';
+    row.style.cssText = 'display: flex; align-items: center; gap: 0.75rem; padding: 0.5rem 0;';
     var icon = document.createElement('div');
     icon.style.cssText = 'width: 32px; height: 32px; border-radius: 50%; background: var(--surface-hover); color: var(--text-muted); display: flex; align-items: center; justify-content: center; font-size: 1rem; flex-shrink: 0;';
     icon.innerHTML = '&#8862;';
@@ -418,8 +400,7 @@ var MEMBER_COUNT_OTHER = {{ t('teams-member-count', count=2) | tojson }};
     row.appendChild(badge);
     var removeBtn = document.createElement('button');
     removeBtn.type = 'button';
-    removeBtn.className = 'slot-btn';
-    removeBtn.style.cssText = 'font-size: 0.75rem; color: var(--error-text); cursor: pointer;';
+    removeBtn.className = 'ui-btn ui-btn--sm ui-btn--danger';
     removeBtn.textContent = {{ t('team-settings-remove') | tojson }};
     removeBtn.onclick = function() { removeGroup(group.id); };
     row.appendChild(removeBtn);

@@ -14,10 +14,7 @@
 {%- set full = [hours, 3] | min -%}
 {%- set part = (rest * 100 / 60) if (d < 180 and rest > 0) else 0 -%}
 {%- set count = full + (1 if part > 0 else 0) -%}
-{%- if d < 60 -%}{%- set aria = t("landing-duration-aria", minutes=d) -%}
-{%- elif rest == 0 -%}{%- set aria = t("landing-duration-aria-h", hours=hours) -%}
-{%- else -%}{%- set aria = t("landing-duration-aria-hm", hours=hours, minutes=rest) -%}{%- endif -%}
-<span class="lp-dur" role="img" aria-label="{{ aria }}">
+<span class="lp-dur" role="img" aria-label="{{ duration_words(d) }}">
   <span class="lp-dials lp-dials-{{ count }}" aria-hidden="true">
     {%- for i in range(count) %}
     {%- set f = 100 if i < full else part %}
@@ -31,5 +28,5 @@
     </svg>
     {%- endfor %}
   </span>
-  <span class="lp-dur-label lp-num" aria-hidden="true">{% if d < 60 %}{{ t("overview-duration-m", minutes=d) }}{% elif rest == 0 %}{{ t("landing-duration-h", hours=hours) }}{% else %}{{ t("landing-duration-hm", hours=hours, minutes=rest) }}{% endif %}</span>
+  <span class="lp-dur-label lp-num" aria-hidden="true">{{ duration_label(d) }}</span>
 </span>

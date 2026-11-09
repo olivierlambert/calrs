@@ -219,21 +219,20 @@ base-powered-by = Mogelijk gemaakt door
 profile-pick-event-type-invite = Kies een afspraaktype om een tijd te boeken.
 profile-no-event-type = Nog geen afspraaktypes beschikbaar.
 
-# Public landing pages (/u/{username}, /team/{slug}). In landing-next-free,
-# %1 is the time, filled in by the page itself.
-landing-duration-h = { $hours } u
-landing-duration-aria =
+duration-short-m = { $minutes } min
+duration-short-h = { $hours } u
+duration-short-hm = { $hours } u { $minutes } min
+duration-long-m =
     { $minutes ->
         [one] { $minutes } minuut
        *[other] { $minutes } minuten
     }
-landing-duration-hm = { $hours } u { $minutes }
-landing-duration-aria-h =
+duration-long-h =
     { $hours ->
         [one] { $hours } uur
        *[other] { $hours } uur
     }
-landing-duration-aria-hm =
+duration-long-hm =
     { $hours ->
         [one] { $hours } uur
        *[other] { $hours } uur
@@ -241,9 +240,34 @@ landing-duration-aria-hm =
         [one] { $minutes } minuut
        *[other] { $minutes } minuten
     }
-landing-next-free = Volgende: %1
+duration-long-d =
+    { $days ->
+        [one] { $days } dag
+       *[other] { $days } dagen
+    }
+# Public landing pages (/u/{username}, /team/{slug}).
 landing-with-one-of = met een van
+faces-and-more = en nog { $count }
 landing-with-everyone = met iedereen
+landing-days-range = { $first } tot en met { $last }
+landing-days-every = elke dag
+landing-on-request-hint = Elke aanvraag wordt met de hand bevestigd voordat die geboekt is.
+landing-how-it-works = Kies een onderwerp en een tijd die je uitkomt, en je krijgt een bevestiging per e-mail.
+landing-based-in = Gevestigd in { $place }
+landing-speaks = Spreekt { $languages }
+landing-meetings = Afspraken
+landing-hours-vary = Meestal beschikbaar { $days } (tijdzone { $zone }), de tijden verschillen per dag
+landing-time-range = %1 tot %2
+landing-time-range-next = %1 tot %2 de volgende dag
+landing-other-meetings = Andere afspraken
+landing-hours-heading = Meestal beschikbaar, tijdzone { $zone }
+landing-hours-heading-yours = Meestal beschikbaar, in jouw tijd
+landing-hours-toggle = Mijn tijd
+landing-hours-toggle-hint = Toon deze tijden in jouw tijdzone
+landing-days-every-short = Elke dag
+landing-days-span = { $first } t/m { $last }
+landing-host-confirms = Organisator bevestigt
+list-and = { $first } en { $last }
 
 # Month and weekday names + per-locale date format patterns.
 # Used by server-side date formatters in src/i18n.rs.
@@ -322,8 +346,8 @@ email-cancel-ics-attached-html = Er is een agenda-annulering bij deze e-mail gev
 
 # Confirmation email: notice-window policy lines (src/email.rs)
 
-email-confirm-cancel-notice = Let op: annuleren kan tot uiterlijk { $minutes } minuten van tevoren.
-email-confirm-reschedule-notice = Let op: verzetten kan tot uiterlijk { $minutes } minuten van tevoren.
+email-confirm-cancel-notice = Let op: annuleren kan tot uiterlijk { $duration } van tevoren.
+email-confirm-reschedule-notice = Let op: verzetten kan tot uiterlijk { $duration } van tevoren.
 
 # Event type form: Google Meet location + cancel/reschedule minimum notice
 # (templates/event_type_form.html, src/google_meet.rs)
@@ -366,14 +390,14 @@ event-type-form-saved = Opgeslagen.
 
 # Booking confirmation: cancel/reschedule policy notices (templates/confirmed.html)
 
-confirmed-cancel-notice-info = Annuleren kan tot uiterlijk { $minutes } minuten voor de afspraak.
-confirmed-reschedule-notice-info = Verzetten kan tot uiterlijk { $minutes } minuten voor de afspraak.
+confirmed-cancel-notice-info = Annuleren kan tot uiterlijk { $duration } voor de afspraak.
+confirmed-reschedule-notice-info = Verzetten kan tot uiterlijk { $duration } voor de afspraak.
 
 # Booking action blocked page (templates/booking_action_blocked.html)
 
 booking-blocked-title-cancel = Deze boeking kan niet meer online worden geannuleerd
 booking-blocked-title-reschedule = Deze boeking kan niet meer online worden verzet
-booking-blocked-body = De organisator vraagt minstens { $minutes } minuten van tevoren bericht. Kun je niet aanwezig zijn? Mail dan rechtstreeks naar <a href="mailto:{ $host_email }">{ $host_email }</a>.
+booking-blocked-body = De organisator vraagt minstens { $duration } van tevoren bericht. Kun je niet aanwezig zijn? Mail dan rechtstreeks naar <a href="mailto:{ $host_email }">{ $host_email }</a>.
 
 # Dashboard event types listing (templates/dashboard_event_types.html)
 
@@ -443,9 +467,6 @@ overview-pending-approval = In afwachting van goedkeuring
 overview-confirm = Bevestigen
 overview-decline = Afwijzen
 overview-copy-link = Boekingslink kopiëren
-overview-duration-h = { $hours } u
-overview-duration-m = { $minutes } min
-overview-duration-hm = { $hours } u { $minutes } min
 overview-chart-title = Afspraken per week
 overview-chart-this-week = Deze week
 overview-chart-week-of = Week van { $date }
@@ -624,6 +645,7 @@ teams-empty-admin = { $link } om samen te werken met je team.
 teams-empty-admin-link-label = Maak er een aan
 teams-empty-member = Teams worden aangemaakt door beheerders. Vraag je beheerder om er een aan te maken en jou als lid toe te voegen.
 teams-subtitle = Mensen die afspraken delen, om de beurt of allemaal samen geboekt.
+teams-search-placeholder = Filteren op naam of link
 
 # Dashboard invite links (templates/dashboard_internal.html)
 
@@ -631,7 +653,6 @@ invite-links-page-title = Uitnodigingslinks
 invite-links-heading = Uitnodigingslinks
 invite-links-new = Nieuwe interne afspraak
 invite-links-help = Genereer eenmalige boekingslinks voor interne afspraaktypes. Elke ingelogde collega kan hier links aanmaken en delen.
-invite-links-duration = { $minutes } min
 invite-links-hosted-by = Georganiseerd door { $host }
 invite-links-get-link = Link ophalen
 invite-links-invites = Uitnodigingen
@@ -701,7 +722,6 @@ event-types-badge-expired = verlopen
 event-types-badge-range-from = vanaf { $date }
 event-types-badge-range-until = t/m { $date }
 event-types-send-invites = Uitnodigingen versturen
-event-types-duration = { $minutes } min
 event-types-mode-collective = collectief
 event-types-mode-round-robin = round-robin
 event-types-edit = Bewerken
@@ -782,6 +802,8 @@ settings-add-window = Tijdvak toevoegen
 settings-remove-window = Tijdvak verwijderen
 settings-save = Instellingen opslaan
 settings-appearance = Weergave
+settings-card-profile = Profiel
+settings-card-languages = Talen
 settings-theme-system = Systeem
 settings-theme-light = Licht
 settings-theme-dark = Donker
@@ -880,10 +902,9 @@ troubleshoot-page-title = Beschikbaarheid controleren
 troubleshoot-empty = Geen afspraaktypes gevonden. { $link } om je beschikbaarheid te controleren.
 troubleshoot-empty-link-label = Maak er een aan
 troubleshoot-subtitle = Bekijk waarom tijdsloten beschikbaar of geblokkeerd zijn voor { $title }
-troubleshoot-duration = { $minutes } min
-troubleshoot-buffer-before = { $minutes } min buffertijd vooraf
-troubleshoot-buffer-after = { $minutes } min buffertijd achteraf
-troubleshoot-min-notice = { $minutes } min aankondigingstijd
+troubleshoot-buffer-before = { $duration } buffertijd vooraf
+troubleshoot-buffer-after = { $duration } buffertijd achteraf
+troubleshoot-min-notice = { $duration } aankondigingstijd
 troubleshoot-blocked-override = Geblokkeerd door datumuitzondering (vrije dag)
 troubleshoot-custom-hours-active = Uitzondering met aangepaste tijden actief (vervangt wekelijkse regels)
 troubleshoot-microsoft-not-ready = Je Microsoft-agenda is nog niet voor het eerst gesynchroniseerd: tot dan is elk tijdstip bezet. Zie Agendabronnen.
@@ -900,10 +921,10 @@ troubleshoot-none-no-rules = Geen beschikbaarheidsregels voor deze dag van de we
 troubleshoot-none-all-bookable = Geen geblokkeerde tijdsloten binnen de beschikbare uren. Alle tijden zijn te boeken.
 troubleshoot-label-outside = Buiten beschikbaarheid
 troubleshoot-label-available = Beschikbaar
-troubleshoot-label-min-notice = Min. aankondigingstijd ({ $minutes } min)
+troubleshoot-label-min-notice = Min. aankondigingstijd ({ $duration })
 troubleshoot-label-beyond-horizon = Buiten boekingshorizon ({ $days } dagen)
 troubleshoot-label-outside-date-range = Buiten de boekbare periode
-troubleshoot-label-buffer = Buffertijd ({ $minutes } min)
+troubleshoot-label-buffer = Buffertijd ({ $duration })
 troubleshoot-label-resource-busy = Faciliteit bezet: { $names }
 troubleshoot-detail-around = Rond: { $label }
 troubleshoot-detail-around-booking = Rond boeking van { $guest }
@@ -917,7 +938,7 @@ invites-back-teams = Terug naar teams
 invites-back-event-types = Terug naar afspraaktypes
 invites-intro = Verstuur uitnodigingslinks voor { $title }
 invites-capped = <strong>Invoer is beperkt tot { $max } ontvangers per keer.</strong> Verstuur de rest in een volgende ronde.
-invites-failed-hint = — bekijk de serverlogs voor details.
+invites-failed-hint = Bekijk de serverlogs voor details.
 invites-quick-link = Snelle link
 invites-quick-link-help = Genereer een eenmalige link en kopieer die naar je klembord.
 invites-get-link = Link ophalen
@@ -979,6 +1000,7 @@ source-form-heading-edit = Agendabron bewerken
 source-form-heading-add = Een agenda koppelen
 source-form-subtitle-edit = Werk de verbinding bij. Laat het wachtwoord leeg om het huidige te behouden. Synchroniseer na het wijzigen van de URL of gebruikersnaam om de lijst met gevonden agenda's te vernieuwen.
 source-form-subtitle-add = Koppel een CalDAV-server of Microsoft Exchange (EWS) zodat calrs je beschikbaarheid kan controleren wanneer gasten een afspraak boeken.
+source-form-server-title = CalDAV- of Exchange-server
 source-form-backend = Backend
 source-form-preset = Voorinstelling
 source-form-connect-google = Koppelen met Google
@@ -1045,7 +1067,7 @@ team-form-submit = Team aanmaken
 # Team settings (templates/team_settings.html)
 
 team-settings-page-title = Instellingen
-team-settings-subtitle = Teaminstellingen — teambeheerders kunnen deze bewerken.
+team-settings-subtitle = Teaminstellingen: teambeheerders kunnen deze bewerken.
 team-settings-public-url = Openbare URL
 team-settings-public-url-help = Iedereen kan via deze link boeken.
 team-settings-invite-link = Uitnodigingslink
@@ -1452,9 +1474,6 @@ admin-guest-footer-default-help = Wordt gebruikt als een afspraaktype geen eigen
 admin-guest-footer-allow-all = Alle gebruikers een voettekst laten instellen voor hun afspraaktypes
 admin-guest-footer-allow-all-help = Standaard uit: de voettekst gaat uit naam van deze installatie, dus alleen beheerders mogen er een schrijven. Een voettekst op een afspraaktype vervangt de standaard hierboven.
 admin-save-guest-footer = Voettekst opslaan
-admin-page-of = Pagina %1 van %2
-admin-show-more-js = Nog %1 tonen
-admin-show-fewer = Minder tonen
 
 # Admin panel: overview, section tabs, users table (templates/admin.html)
 
@@ -1621,12 +1640,6 @@ admin-sms-env-error-help = Corrigeer de omgevingsvariabelen <code>CALRS_SMS_*</c
 admin-sms-env-managed = Beheerd via <strong>omgevingsvariabelen</strong> (overschrijven de database). Pas de variabelen <code>CALRS_SMS_*</code> aan om dit te wijzigen, of verwijder ze om SMS hier te beheren.
 admin-sms-env-help = Je kunt dit ook instellen via omgevingsvariabelen (die dit overschrijven): <code>CALRS_SMS_PROVIDER</code>, <code>CALRS_SMS_API_KEY</code>, <code>CALRS_SMS_API_SECRET</code>, <code>CALRS_SMS_SENDER</code>, <code>CALRS_SMS_BASE_URL</code>, <code>CALRS_SMS_DAILY_CAP</code>, <code>CALRS_SMS_DEFAULT_COUNTRY_CODE</code>.
 admin-sms-trial-warning = <strong>De proefmodus van Twilio staat aan</strong> (<code>CALRS_SMS_TWILIO_TRIAL</code>). Gasten ontvangen het vooraf gedefinieerde <code>sms_appointment_reminders</code>-sjabloon van Twilio, niet het echte bericht, en alleen nummers die in je Twilio-console zijn geverifieerd worden bereikt. Dit is een testhulpmiddel voor proefaccounts. Verwijder de variabele voordat je boekingen aanneemt.
-
-admin-show-more =
-    { $count ->
-        [one] Nog { $count } tonen
-       *[other] Nog { $count } tonen
-    }
 
 # Calendar source form: backend picker (templates/source_form.html)
 
@@ -2414,3 +2427,54 @@ etf-q-key = Sleutel voor webhooks: %1
 etf-hint-questions-one = 1 vraag
 etf-hint-questions-other = %1 vragen
 etf-hint-no-questions = Geen vragen
+
+# Language names, for the languages a host speaks (landing.rs).
+language-name-en = Engels
+language-name-fr = Frans
+language-name-de = Duits
+language-name-es = Spaans
+language-name-it = Italiaans
+language-name-pt = Portugees
+language-name-nl = Nederlands
+language-name-pl = Pools
+language-name-et = Estisch
+language-name-ar = Arabisch
+language-name-zh = Chinees
+language-name-ja = Japans
+language-name-ko = Koreaans
+language-name-ru = Russisch
+language-name-uk = Oekraïens
+language-name-sv = Zweeds
+language-name-da = Deens
+language-name-nb = Noors
+language-name-fi = Fins
+language-name-cs = Tsjechisch
+language-name-ro = Roemeens
+language-name-el = Grieks
+language-name-tr = Turks
+language-name-hi = Hindi
+language-name-he = Hebreeuws
+language-name-hu = Hongaars
+
+# Sections and order of the landing pages (landing.rs, event type form, settings).
+etf-section = Sectie
+etf-section-placeholder = Om te beginnen
+etf-section-help = Afspraken met dezelfde sectie staan op de openbare pagina eronder gegroepeerd, zoals de naam is geschreven.
+etf-section-order-link = Volgorde wijzigen
+settings-based-in = Locatie
+settings-based-in-placeholder = Parijs, Frankrijk
+settings-based-in-help = Een stad of regio, getoond onder je naam op je openbare pagina.
+settings-speaks = Talen die je spreekt
+settings-speaks-help = Getoond onder je naam op je openbare pagina, in de taal van elke bezoeker.
+page-order-heading = Volgorde van je pagina
+page-order-team-heading = Volgorde van de pagina van { $team }
+page-order-subtitle = Secties en afspraken staan in deze volgorde op de openbare pagina. De sectie van een afspraak staat in de instellingen ervan.
+page-order-back = Terug
+page-order-empty = Nog geen afspraken.
+page-order-up = Omhoog
+page-order-down = Omlaag
+page-order-section-up = { $section } omhoog
+page-order-section-down = { $section } omlaag
+page-order-type-up = { $title } omhoog
+page-order-type-down = { $title } omlaag
+page-order-not-listed = Niet op de openbare pagina (uitgeschakeld, intern of privé)

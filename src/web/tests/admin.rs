@@ -657,23 +657,32 @@ fn user_rows(body: &str) -> usize {
     body.matches("<tr class=\"user-item").count()
 }
 
+/// Users are searched, filtered and paged on the server whatever the
+/// instance's size: there is no browser-side list any more.
 #[tokio::test]
-async fn small_instances_keep_the_browser_side_users_list() {
+async fn small_instances_page_users_on_the_server_too() {
     let (app, pool, session, _) = setup_test_app().await;
-    add_members(&pool, (USERS_INLINE_MAX - 1) as usize).await;
+    add_members(&pool, 40).await;
     let body = body_string(
-        app.oneshot(get_authed("/dashboard/admin?up=3&uq=nobody", &session))
+        app.clone()
+            .oneshot(get_authed("/dashboard/admin?up=2", &session))
             .await
             .unwrap(),
     )
     .await;
-    // Everyone is rendered for the browser to filter, query ignored.
-    assert_eq!(user_rows(&body), USERS_INLINE_MAX as usize);
-    assert!(body.contains("id=\"user-list\""));
-    assert!(body.contains("id=\"user-search\""));
-    assert!(!body.contains("user-list-server"));
-    assert!(!body.contains("name=\"back\""));
-    assert!(!users_panel(&body).contains("class=\"ui-pager\""));
+    assert_eq!(user_rows(&body), 16);
+    assert!(body.contains("user-list-server"));
+    assert!(!body.contains("id=\"user-list\""));
+    assert!(!body.contains("id=\"user-search\""));
+    assert!(users_panel(&body).contains("26 to 41 of 41"));
+    let body = body_string(
+        app.oneshot(get_authed("/dashboard/admin?uq=nobody", &session))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(user_rows(&body), 0);
+    assert!(body.contains("No users match your filter."));
 }
 
 #[tokio::test]
