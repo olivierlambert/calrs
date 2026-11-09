@@ -302,6 +302,17 @@ struct Answer {
     consent: bool,
     link_url: Option<String>,
     answered_at: String,
+    /// A consent ticked by a host through the REST API rather than by the
+    /// guest: who recorded it, and with which credential. Null otherwise.
+    attested_by: Option<Attested>,
+}
+
+#[derive(Serialize, Clone, Debug)]
+struct Attested {
+    user_id: String,
+    name: String,
+    via: String,
+    credential_id: String,
 }
 
 impl From<crate::email::BookingAnswer> for Answer {
@@ -315,6 +326,12 @@ impl From<crate::email::BookingAnswer> for Answer {
             consent: a.consent,
             link_url: a.link_url,
             answered_at: a.answered_at,
+            attested_by: a.attested_by.map(|by| Attested {
+                user_id: by.user_id,
+                name: by.name,
+                via: by.via,
+                credential_id: by.credential_id,
+            }),
         }
     }
 }
@@ -579,6 +596,7 @@ fn ping_snapshot(event_type: Option<(String, String, String, Tz)>) -> Snapshot {
                 consent: false,
                 link_url: None,
                 answered_at: iso(Utc::now()),
+                attested_by: None,
             }],
             attendees: vec!["colleague@example.com".to_string()],
             hosts: vec![Host {

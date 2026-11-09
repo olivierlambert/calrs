@@ -515,6 +515,7 @@ webhooks-url-masked-hint = (nur die Person, die ihn hinzugefügt hat, sieht die 
 book-question-pick-one = Kreuzen Sie mindestens ein Kästchen an.
 answer-you-agreed = Sie haben zugestimmt
 answer-you-did-not-agree = Sie haben nicht zugestimmt
+answer-recorded-for-you-by = In Ihrem Namen erfasst von { $name }
 validate-notes-required = Bitte schreiben Sie eine Notiz für die Gastgeber.
 validate-question-required = Bitte beantworten Sie „{ $question }“.
 validate-questions-invalid = Die Buchungsfragen konnten nicht gelesen werden. Laden Sie die Seite neu und versuchen Sie es noch einmal.

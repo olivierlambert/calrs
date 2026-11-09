@@ -13,9 +13,10 @@ use anyhow::{bail, Context, Result};
 use reqwest::redirect::Policy;
 use std::time::Duration;
 
-use super::soap::first_tag_content;
-
 const TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Largest Autodiscover answer read, as it arrives.
+const MAX_REPLY_BYTES: usize = 1024 * 1024;
 
 /// Try a sequence of Autodiscover URLs derived from `email_domain` and return
 /// the EWS endpoint discovered, if any. The candidate order matches Microsoft
@@ -116,7 +117,8 @@ async fn try_one(
         return Ok(None);
     }
 
-    let text = resp.text().await.unwrap_or_default();
+    // An Autodiscover answer is a few kilobytes: read no more than this.
+    let text = crate::caldav::read_body(resp, MAX_REPLY_BYTES).await?;
     Ok(parse_pox_response(&text))
 }
 
@@ -136,16 +138,33 @@ fn pox_request_body(email: &str) -> String {
 }
 
 /// Extract the EWS URL from an Autodiscover POX response. We accept either:
-/// - the explicit `<EwsUrl>` element (most modern response shape)
-/// - a `<Protocol>` with `<Type>EXPR</Type>` or `<Type>EXCH</Type>` and a
-///   matching `<EwsUrl>` element nested inside
+/// - the explicit `<EwsUrl>` element (most modern response shape), the first
+///   one in the document
+/// - failing that, an `<ASUrl>` (ActiveSync), whose host serves EWS too
+///
+/// The response is read with the shared XML parser (#369). Autodiscover
+/// nests several schema namespaces, which vary between Exchange versions, so
+/// these elements are matched by local name. A reply that is not well-formed
+/// XML holds no endpoint: `None`, and the next candidate is tried.
 pub fn parse_pox_response(xml: &str) -> Option<String> {
-    if let Some(url) = first_tag_content(xml, "EwsUrl") {
-        if !url.is_empty() {
-            return Some(url);
+    let root = match crate::xml::parse(xml) {
+        Ok(Some(root)) => root,
+        Ok(None) => return None,
+        Err(e) => {
+            tracing::debug!(error = %e, "autodiscover reply is not XML");
+            return None;
         }
+    };
+    let first_text = |name: &str| {
+        std::iter::once(&root)
+            .chain(root.descendants())
+            .filter(|el| el.local_name() == name)
+            .find_map(|el| el.trimmed_text())
+    };
+    if let Some(url) = first_text("EwsUrl") {
+        return Some(url);
     }
-    if let Some(url) = first_tag_content(xml, "ASUrl") {
+    if let Some(url) = first_text("ASUrl") {
         // Some servers return the active sync URL in ASUrl which has the same host;
         // build a sensible EWS URL from it as a last resort.
         if let Ok(parsed) = reqwest::Url::parse(&url) {
@@ -198,6 +217,30 @@ mod tests {
         assert_eq!(
             parse_pox_response(xml),
             Some("https://mail.example.com/EWS/Exchange.asmx".to_string())
+        );
+    }
+
+    /// Prefixes do not matter, entities are decoded, and a reply that is
+    /// not XML (an HTML page, a body cut short) holds no endpoint.
+    #[test]
+    fn prefixed_and_broken_replies() {
+        let xml = r#"<a:Autodiscover xmlns:a="http://schemas.microsoft.com/exchange/autodiscover/responseschema/2006"><o:Response xmlns:o="http://schemas.microsoft.com/exchange/autodiscover/outlook/responseschema/2006a"><o:Account><o:Protocol><o:Type>EXCH</o:Type><o:EwsUrl> https://mail.example.com/EWS/Exchange.asmx?a=1&amp;b=2 </o:EwsUrl></o:Protocol></o:Account></o:Response></a:Autodiscover>"#;
+        assert_eq!(
+            parse_pox_response(xml),
+            Some("https://mail.example.com/EWS/Exchange.asmx?a=1&b=2".to_string())
+        );
+        for broken in [
+            "",
+            "<html><body>Sign in<br></body></html>",
+            "<Autodiscover><Response><Account><Protocol><EwsUrl>https://mail.example.com/EWS/Exch",
+        ] {
+            assert_eq!(parse_pox_response(broken), None, "{broken:?}");
+        }
+        // An empty EwsUrl is skipped for a later one.
+        let xml = "<Autodiscover><Response><Protocol><EwsUrl/></Protocol><Protocol><EwsUrl>https://b.example/EWS/Exchange.asmx</EwsUrl></Protocol></Response></Autodiscover>";
+        assert_eq!(
+            parse_pox_response(xml),
+            Some("https://b.example/EWS/Exchange.asmx".to_string())
         );
     }
 

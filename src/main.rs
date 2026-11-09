@@ -175,10 +175,22 @@ async fn main() -> Result<()> {
                      bypass the SSRF private-IP guard for CalDAV/EWS URLs"
                 );
             }
+            // A Twilio trial flag left on a full account, in the log at once.
+            tokio::spawn({
+                let pool = pool.clone();
+                let key = secret_key.clone();
+                async move { sms::check_twilio_trial_at_startup(&pool, &key).await }
+            });
             // Spawn background reminder task
             let reminder_pool = pool.clone();
             let reminder_key = secret_key.clone();
             tokio::spawn(web::run_reminder_loop(reminder_pool, reminder_key));
+            // Background calendar sync, in a task of its own so a slow
+            // calendar server never delays reminders (#388).
+            tokio::spawn(commands::sync_scheduler::run_background_sync_loop(
+                pool.clone(),
+                secret_key.clone(),
+            ));
             // Outgoing booking webhooks (#168): delivered off the request path.
             tokio::spawn(web::run_webhook_loop(pool.clone(), secret_key.clone()));
 

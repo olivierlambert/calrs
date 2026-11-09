@@ -77,7 +77,7 @@ impl SmsProvider for WebhookProvider {
             .body(body)
             .send()
             .await
-            .map_err(|e| SmsError::Transport(e.to_string()))?;
+            .map_err(super::request_error)?;
 
         let status = response.status();
         let text = response.text().await.unwrap_or_default();

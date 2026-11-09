@@ -1303,3 +1303,140 @@ async fn troubleshoot_marks_days_past_the_366_day_cap() {
     let body = body_string(response).await;
     assert!(body.contains("Beyond booking horizon (366 days)"), "{body}");
 }
+
+/// #388: calendar sync left the reminder loop. While the background sync is
+/// stuck on a slow calendar server, a tick of the reminder loop still runs
+/// at once, expires the overdue request, and syncs nothing itself.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_slow_calendar_server_does_not_hold_up_the_reminder_loop() {
+    use crate::commands::sync_scheduler::{run_tick, SchedulerConfig, SyncFn};
+    let pool = setup_test_db_with(5).await;
+    let (_, account_id, et_id) = seed_test_data(&pool).await;
+    sqlx::query(
+        "UPDATE event_types SET requires_confirmation = 1, pending_expiry_hours = 24 WHERE id = ?",
+    )
+    .bind(&et_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let past = Some(utc_stamp(Utc::now() - Duration::hours(1)));
+    let id = insert_v1_booking(
+        &pool,
+        &et_id,
+        "slow-server@test.com",
+        Utc::now() + Duration::days(2),
+        30,
+        "pending",
+        &[
+            ("pending_expires_at", past.clone()),
+            ("pending_since", past),
+        ],
+    )
+    .await;
+    let source = uuid::Uuid::new_v4().to_string();
+    sqlx::query("INSERT INTO caldav_sources (id, account_id, name, url, username) VALUES (?, ?, 'slow', 'https://dav.invalid/', 'u')")
+        .bind(&source).bind(&account_id).execute(&pool).await.unwrap();
+
+    // The background sync, waiting on a server that does not answer.
+    let started = std::sync::Arc::new(tokio::sync::Notify::new());
+    let sync_fn: SyncFn = {
+        let started = started.clone();
+        std::sync::Arc::new(move |_id: String| {
+            let started = started.clone();
+            Box::pin(async move {
+                started.notify_one();
+                tokio::time::sleep(std::time::Duration::from_secs(600)).await;
+            })
+        })
+    };
+    let cfg = SchedulerConfig {
+        min_age_secs: 0,
+        concurrency: 1,
+        source_timeout: std::time::Duration::from_secs(600),
+    };
+    let background = {
+        let pool = pool.clone();
+        tokio::spawn(async move { run_tick(&pool, &cfg, Utc::now(), 1, sync_fn).await })
+    };
+    tokio::time::timeout(std::time::Duration::from_secs(10), started.notified())
+        .await
+        .expect("the background sync started");
+
+    tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        crate::web::notify::reminder_tick(&pool, &[0u8; 32]),
+    )
+    .await
+    .expect("the reminder tick waits on no calendar server");
+    assert_eq!(booking_status(&pool, &id).await, "declined");
+    let attempt: (Option<String>, Option<String>) =
+        sqlx::query_as("SELECT last_synced, last_sync_error_at FROM caldav_sources WHERE id = ?")
+            .bind(&source)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(attempt, (None, None), "the reminder tick synced nothing");
+    assert!(!background.is_finished());
+    background.abort();
+}
+
+/// #388: an approval waits, within its refresh timeout, for a sync of the
+/// host's source already running (the background sync, a booking page), and
+/// re-checks against what that sync fetched, instead of skipping it like a
+/// slot page does.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn approval_waits_for_a_sync_of_the_hosts_source_in_progress() {
+    let (app, pool, session, et_id) = setup_test_app_with(5).await;
+    let id = insert_v1_booking(
+        &pool,
+        &et_id,
+        "waits@test.com",
+        utc(2030, 3, 18, 10, 0),
+        30,
+        "pending",
+        &[],
+    )
+    .await;
+    let account: String = sqlx::query_scalar("SELECT account_id FROM event_types WHERE id = ?")
+        .bind(&et_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    // Stale, with credentials that cannot be decrypted: a sync attempt
+    // would fail and be recorded.
+    let source = uuid::Uuid::new_v4().to_string();
+    sqlx::query("INSERT INTO caldav_sources (id, account_id, name, url, username, password_enc) VALUES (?, ?, 'busy', 'https://dav.example.com/', 'u', 'deadbeef')")
+        .bind(&source).bind(&account).execute(&pool).await.unwrap();
+
+    let lock = crate::commands::sync::source_lock(&source).await;
+    let being_synced = lock.lock().await;
+    let approval = {
+        let (app, session, id) = (app.clone(), session.clone(), id.clone());
+        tokio::spawn(async move { approve_from_dashboard(&app, &session, &id).await })
+    };
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    assert!(!approval.is_finished(), "the approval waits for the sync");
+    // The other sync finishes.
+    sqlx::query("UPDATE caldav_sources SET last_synced = datetime('now') WHERE id = ?")
+        .bind(&source)
+        .execute(&pool)
+        .await
+        .unwrap();
+    drop(being_synced);
+    let response = tokio::time::timeout(std::time::Duration::from_secs(5), approval)
+        .await
+        .expect("the approval went on once the sync ended")
+        .unwrap();
+    assert!(response.status().is_redirection());
+    assert_eq!(booking_status(&pool, &id).await, "confirmed");
+    let error: Option<String> =
+        sqlx::query_scalar("SELECT last_sync_error_at FROM caldav_sources WHERE id = ?")
+            .bind(&source)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        error, None,
+        "it read the fresh source rather than syncing it again"
+    );
+}

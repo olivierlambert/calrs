@@ -444,8 +444,10 @@ fn conforms(doc: &Value, value: &Value, schema: &Value, at: &str) -> Result<(), 
                 .as_object()
                 .cloned()
                 .unwrap_or_default();
+            // A map (`additionalProperties` a schema) takes any key.
+            let additional = &schema["additionalProperties"];
             for key in map.keys() {
-                if !properties.contains_key(key) {
+                if !properties.contains_key(key) && !additional.is_object() {
                     return Err(format!("{at}.{key}: not in the schema"));
                 }
             }
@@ -455,7 +457,8 @@ fn conforms(doc: &Value, value: &Value, schema: &Value, at: &str) -> Result<(), 
                 }
             }
             for (key, item) in map {
-                conforms(doc, item, &properties[key], &format!("{at}.{key}"))?;
+                let item_schema = properties.get(key).unwrap_or(additional);
+                conforms(doc, item, item_schema, &format!("{at}.{key}"))?;
             }
         }
         Value::Array(items) => {
@@ -506,6 +509,17 @@ async fn answers_match_the_documented_schemas() {
     let owner = user_id(&pool, "testuser").await;
     let token = pat(&pool, &owner, ALL).await;
     let write_only = pat(&pool, &owner, "bookings:write").await;
+    // Booking questions (#210) of every shape the API shows: a choice with
+    // its option ids, a consent with its policy link, a text with no link.
+    let questions = json!([
+        {"kind": "single_choice", "label": "Where are the tyres", "options": [{"label": "At the shop"}, {"label": "I bring them"}]},
+        {"kind": "checkbox", "label": "Privacy", "consent": true, "required": true, "link": "https://example.com/privacy", "help": "Read it first"},
+        {"kind": "short_text", "label": "Plate"}
+    ]);
+    let questions = crate::web::questions::parse_editor(&questions.to_string(), &[]).unwrap();
+    crate::web::questions::save(&pool, &et_id, Some(&questions), None)
+        .await
+        .unwrap();
 
     let (status, body) = send(&app, api_get("/api/v1/event-types", &token)).await;
     check(&doc, "/event-types", "get", status, &body);
@@ -514,6 +528,8 @@ async fn answers_match_the_documented_schemas() {
     let (status, body) = send(&app, api_get(&uri, &token)).await;
     assert_eq!(status, StatusCode::OK);
     check(&doc, "/event-types/{id}", "get", status, &body);
+    assert_eq!(body["event_type"]["questions"][0]["options"][1]["id"], "o2");
+    assert_eq!(body["event_type"]["questions"][1]["help"], "Read it first");
     let day = far_future_monday();
     let uri =
         format!("/api/v1/event-types/{et_id}/slots?from={day}&to={day}&timezone=Europe/Paris");
@@ -525,49 +541,62 @@ async fn answers_match_the_documented_schemas() {
     let mut create = create_body(&et_id, &monday_at("11:00"), "schema@test.com");
     create["attendees"] = json!(["other@test.com"]);
     create["notes"] = json!("About the schema");
+    create["answers"] = json!({"where_are_the_tyres": "o2", "privacy": true, "plate": "AB-123"});
+    // The request itself matches the documented body, answers included.
+    let request_schema =
+        &doc["paths"]["/bookings"]["post"]["requestBody"]["content"]["application/json"]["schema"];
+    if let Err(e) = conforms(&doc, &create, request_schema, "request") {
+        panic!("POST /bookings request: {e}");
+    }
+    let answers = &doc["components"]["schemas"]["CreateBooking"]["properties"]["answers"];
+    assert_eq!(answers["type"], json!(["object", "null"]));
+    assert_eq!(
+        answers["additionalProperties"]["oneOf"]
+            .as_array()
+            .map(Vec::len),
+        Some(3),
+        "{answers}"
+    );
+    let mut absent = create.clone();
+    absent["answers"] = Value::Null;
+    assert_eq!(conforms(&doc, &absent, request_schema, "request"), Ok(()));
+    let one_of = "one variant of oneOf must match";
+    for (wrong, at) in [
+        (
+            json!({"plate": 5}),
+            format!("request.answers.plate: {one_of}"),
+        ),
+        (
+            json!({"plate": null}),
+            format!("request.answers.plate: {one_of}"),
+        ),
+        (
+            json!({"topics": [1]}),
+            format!("request.answers.topics: {one_of}"),
+        ),
+        (
+            json!("AB-123"),
+            "request.answers: string, expected".to_string(),
+        ),
+    ] {
+        let mut body = create.clone();
+        body["answers"] = wrong;
+        let error = conforms(&doc, &body, request_schema, "request").unwrap_err();
+        assert!(error.starts_with(&at), "{error}");
+    }
+    // The array branch is refused on its item, not on its type.
+    let mut body = create.clone();
+    body["answers"] = json!({"topics": [1]});
+    let error = conforms(&doc, &body, request_schema, "request").unwrap_err();
+    assert!(
+        error.contains("request.answers.topics[0]: integer"),
+        "{error}"
+    );
     let (status, body) = send(&app, api_post("/api/v1/bookings", &token, &create)).await;
     assert_eq!(status, StatusCode::CREATED, "{body}");
     check(&doc, "/bookings", "post", status, &body);
+    assert_eq!(body["booking"]["answers"][2]["value"], "AB-123");
     let id = body["booking"]["id"].as_str().unwrap().to_string();
-    // Answers to booking questions (#210), of every shape the API shows: a
-    // choice with its option ids, a consent with its policy link, a text
-    // with no link.
-    for (position, kind, value, ids, consent, link) in [
-        (
-            0,
-            "single_choice",
-            "I bring them",
-            Some(r#"["o2"]"#),
-            0,
-            None,
-        ),
-        (
-            1,
-            "checkbox",
-            "yes",
-            None,
-            1,
-            Some("https://example.com/privacy"),
-        ),
-        (2, "short_text", "AB-123", None, 0, None),
-    ] {
-        sqlx::query(
-            "INSERT INTO booking_answers (id, booking_id, position, key, kind, label, value, value_ids, consent, link_url, in_calendar, answered_at)
-             VALUES (?, ?, ?, ?, ?, 'Question', ?, ?, ?, ?, 1, '2026-11-08T10:00:00Z')",
-        )
-        .bind(uuid::Uuid::new_v4().to_string())
-        .bind(&id)
-        .bind(position)
-        .bind(format!("q{position}"))
-        .bind(kind)
-        .bind(value)
-        .bind(ids)
-        .bind(consent)
-        .bind(link)
-        .execute(&pool)
-        .await
-        .unwrap();
-    }
     let (status, body) = send(&app, api_get("/api/v1/bookings", &token)).await;
     assert_eq!(status, StatusCode::OK);
     assert!(!body["bookings"].as_array().unwrap().is_empty());

@@ -34,8 +34,11 @@ Every user-facing string goes through Fluent (`i18n/`).
 
  background loop, every 60 s (run_reminder_loop in web/notify.rs)
    session cleanup, pending sweep (web/pending.rs), reminders,
-   write-back retries (web/writeback.rs), sync of the stalest source
-   (commands/sync.rs)
+   write-back retries (web/writeback.rs)
+
+ background sync, every 60 s (commands/sync_scheduler.rs)
+   due sources (commands/sync.rs, daily full resyncs first, then the
+   stalest), a few at once, one per server
 
  webhook task (run_webhook_loop in web/webhooks.rs)
    delivers queued booking webhooks when woken and every 30 s
@@ -58,7 +61,7 @@ Every user-facing string goes through Fluent (`i18n/`).
 | `src/trusted_proxies.rs` | Which TCP peers' `X-Forwarded-For` is believed (#85): `CALRS_TRUSTED_PROXIES`, else `auth_config.trusted_proxies`, else loopback/private/ULA/link-local; `client_address()` walks the header right to left past trusted hops, `rate_key()` groups IPv6 by /64. Used by `web::client_address`/`client_ip_for_rate_limit` |
 | `src/i18n.rs` | Fluent loader, language detection, the `t()` template global, i18n guard tests |
 | `src/booking_time.rs` | How booking times are stored (legacy wall clock vs UTC instant) |
-| `src/rrule.rs` | RRULE expansion for recurring events |
+| `src/rrule.rs` | RRULE expansion for recurring events; `occurrences_in` is the one expansion every busy reader shares |
 | `src/utils.rs` | iCal helpers (`split_vevents`, `parse_content_line`, `extract_vevent_field`, `extract_vevent_tzid`, datetime and timezone parsing) |
 | `src/tzid.rs` | Resolving an event's TZID to an IANA zone: by name (IANA, Windows, vendor prefix, display name), else by matching the resource's `VTIMEZONE`, else a display name's fixed offset (`event_timezone` at sync, `resolve_or_offset` when reading stored events) |
 | `src/windows_zones.rs` | Windows timezone names (`Eastern Standard Time`) mapped to IANA ids, from CLDR's `windowsZones.xml` |
@@ -71,8 +74,8 @@ Every user-facing string goes through Fluent (`i18n/`).
 | `src/microsoft_oauth.rs` | Microsoft OAuth configuration, account-bound single-use state and PKCE, encrypted tokens, compare-and-swap token refresh (HTTP outside transactions), token-aware Graph provider construction (a Graph 401 refreshes once and retries; a refused refresh token is dropped until reconnect) |
 | `src/caldav/mod.rs` | CalDAV client: discovery, fetch, sync-collection, PUT/DELETE (on Google, PUT/DELETE detour through `google_calendar`) |
 | `src/caldav/multistatus.rs` | Reading WebDAV multistatus answers by namespace: calendar listing, events, sync deltas, principal and home discovery (tests in `src/caldav/multistatus/tests.rs`) |
-| `src/xml.rs` | Bounded, namespace-aware XML tree over `quick-xml`, used by the CalDAV client |
-| `src/ews/` | Exchange Web Services client (SOAP, autodiscover, parsing); `global.rs` holds the admin's global impersonation config, provisioning of managed sources, and the client for a managed source |
+| `src/xml.rs` | Bounded, namespace-aware XML tree over `quick-xml`, used by the CalDAV and EWS clients |
+| `src/ews/` | Exchange Web Services client (SOAP, autodiscover, parsing on `src/xml.rs`, test fixtures in `fixtures.rs`); `global.rs` holds the admin's global impersonation config, provisioning of managed sources, and the client for a managed source |
 | `src/providers/` | `CalendarProvider` trait (`mod.rs`), CalDAV and Graph adapters, password-backed provider dispatch in `src/providers/factory.rs` |
 | `src/sms/` | `SmsProvider` trait, gateway adapters, phone normalisation, message bodies |
 | `src/email/` | Every email calrs sends (see below) |
@@ -209,8 +212,11 @@ Call sites use `crate::email::name` whatever file `name` lives in.
   Graph retains the booking UID in an extended property and updates the same
   remote event when rescheduled. It does not send Graph attendee invitations:
   calrs owns the email lifecycle.
-  Sync lives in `src/commands/sync.rs` (`sync_if_stale` on page loads) and
-  `src/commands/sync_health.rs` (failure tracking).
+  Sync lives in `src/commands/sync.rs` (`sync_if_stale` on page loads,
+  `due_background_sources` for the background sync),
+  `src/commands/sync_scheduler.rs` (the background sync task: quota,
+  concurrency, one sync per server) and `src/commands/sync_health.rs`
+  (failure tracking).
   Snapshot providers reconcile a full snapshot, each through its own path.
   EWS goes through `sync_ews_source` (busy-only storage for managed
   sources, a folder removed only after two listings miss it, #362).

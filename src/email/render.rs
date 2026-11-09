@@ -669,6 +669,15 @@ pub fn answer_display(answer: &BookingAnswer, lang: &str, reader: AnswerReader) 
         return answer.value.clone();
     }
     let yes = answer.value == "yes";
+    // A consent the host recorded through the API: the guest never ticked
+    // it, so neither reader is told they did.
+    if let (true, true, Some(by)) = (answer.consent, yes, &answer.attested_by) {
+        let name = [("name", by.name.as_str())];
+        return match reader {
+            AnswerReader::Host => ta(lang, "answer-agreed-recorded-by", name),
+            AnswerReader::Guest => ta(lang, "answer-recorded-for-you-by", name),
+        };
+    }
     match (answer.consent, reader, yes) {
         (true, AnswerReader::Guest, true) => t(lang, "answer-you-agreed"),
         (true, AnswerReader::Guest, false) => t(lang, "answer-you-did-not-agree"),

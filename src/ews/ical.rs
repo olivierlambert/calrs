@@ -20,6 +20,17 @@ pub fn synth_vcalendar(item: &EwsCalendarItem) -> Option<String> {
         .filter(|s| !s.is_empty())?;
     let start = item.start.clone()?;
     let end = item.end.clone()?;
+    // The parser already derives a safe UID (`parse::safe_uid`) and refuses
+    // a date that is not one (`parse::is_ews_datetime`); checked again since
+    // they are written into the VCALENDAR as is, where a line break would
+    // add properties.
+    if super::parse::has_control(&uid)
+        || !super::parse::is_ews_datetime(&start)
+        || !super::parse::is_ews_datetime(&end)
+    {
+        tracing::warn!(item_id = %item.item_id, "EWS item unsafe to write as iCalendar, skipping it");
+        return None;
+    }
 
     let dtstart = format_dt(&start, item.is_all_day);
     let dtend = format_dt(&end, item.is_all_day);
@@ -126,7 +137,9 @@ fn escape_ical_text(value: &str) -> String {
             ',' => out.push_str("\\,"),
             ';' => out.push_str("\\;"),
             '\n' => out.push_str("\\n"),
-            '\r' => {}
+            // RFC 5545 allows no control character in TEXT but HTAB.
+            '\t' => out.push(c),
+            c if c.is_control() => {}
             _ => out.push(c),
         }
     }
@@ -236,5 +249,42 @@ mod tests {
         it.uid = None;
         let ics = synth_vcalendar(&it).unwrap();
         assert!(ics.contains("UID:ID"));
+    }
+
+    /// A UID or date that could break the VCALENDAR's lines is never
+    /// written: a CRLF in the UID would let an organizer add a second VEVENT
+    /// reusing a real UID, marked TRANSPARENT.
+    #[test]
+    fn synth_refuses_values_that_break_lines() {
+        let mut it = item("2026-05-06T09:00:00Z", "2026-05-06T09:30:00Z", false);
+        it.uid =
+            Some("real\r\nEND:VEVENT\r\nBEGIN:VEVENT\r\nUID:victim\r\nTRANSP:TRANSPARENT".into());
+        assert_eq!(synth_vcalendar(&it), None);
+        it.uid = Some("a\nb".into());
+        assert_eq!(synth_vcalendar(&it), None);
+        let mut it = item("2026-05-06T09:00:00Z\r\nX:1", "2026-05-06T09:30:00Z", false);
+        assert_eq!(synth_vcalendar(&it), None);
+        it.start = Some("2026-05-06T09:00:00Z".into());
+        it.end = Some("2026-05-06T09:30:00Z;TZID=x".into());
+        assert_eq!(synth_vcalendar(&it), None);
+    }
+
+    /// Summary and location keep every line in place: newlines escaped,
+    /// other control characters dropped, tabs kept.
+    #[test]
+    fn synth_text_never_breaks_lines() {
+        let mut it = item("2026-05-06T09:00:00Z", "2026-05-06T09:30:00Z", false);
+        it.subject = Some("a\r\nTRANSP:TRANSPARENT\u{b}\u{0}\tb".into());
+        it.location = Some("x\rLOCATION:y".into());
+        let ics = synth_vcalendar(&it).unwrap();
+        assert!(
+            ics.contains("SUMMARY:a\\nTRANSP:TRANSPARENT\tb\r\n"),
+            "{ics}"
+        );
+        assert!(ics.contains("LOCATION:xLOCATION:y\r\n"), "{ics}");
+        assert_eq!(ics.matches("TRANSP:").count(), 2, "{ics}");
+        for line in ics.split("\r\n") {
+            assert!(!line.contains(['\r', '\n']), "{line:?}");
+        }
     }
 }
