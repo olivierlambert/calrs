@@ -1,12 +1,12 @@
 {% extends "dashboard_base.html" %}
 {% block title %}{{ heading }}, calrs{% endblock %}
+{% block main_class %}has-cards{% endblock %}
 {% block dashboard_content %}
 {#- The order of a landing page (landing.rs): its sections, each with its
     meetings, then the meetings without a section, every one with a move
     up and a move down. Sections come from the event type form. -#}
 <style>
-.po-group + .po-group { margin-top: 1.25rem; }
-.po-head { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; }
+.po-head { align-items: center; }
 .po-moves { display: flex; gap: 0.25rem; flex-shrink: 0; }
 .po-moves form { margin: 0; }
 .po-moves button { min-width: 2rem; }
@@ -22,22 +22,22 @@
   </div>
 </header>
 
-<section class="sec">
+<div class="po-cards">
   {% if not has_types %}
   <p class="po-note">{{ t("page-order-empty") }}</p>
   {% endif %}
   {% for g in groups %}
-  <div class="card po-group">
+  <section class="card">
     <div class="card-head po-head">
-      <h2 class="card-title">{% if g.label %}{{ g.label }}{% elif groups | length > 1 %}{{ t("landing-other-meetings") }}{% else %}{{ t("landing-meetings") }}{% endif %}</h2>
+      <h2>{% if g.label %}{{ g.label }}{% elif groups | length > 1 %}{{ t("landing-other-meetings") }}{% else %}{{ t("landing-meetings") }}{% endif %}<span class="num">{{ g.items | length }}</span></h2>
       {% if g.label %}
-      <div class="po-moves">
+      <div class="po-moves card-action">
         <form method="post" action="{{ action }}"><input type="hidden" name="kind" value="section"><input type="hidden" name="target" value="{{ g.label }}"><input type="hidden" name="dir" value="up"><button type="submit" class="ui-btn ui-btn--sm"{% if loop.first %} disabled{% endif %} aria-label="{{ t('page-order-section-up', section=g.label) }}" title="{{ t('page-order-up') }}">&#8593;</button></form>
         <form method="post" action="{{ action }}"><input type="hidden" name="kind" value="section"><input type="hidden" name="target" value="{{ g.label }}"><input type="hidden" name="dir" value="down"><button type="submit" class="ui-btn ui-btn--sm"{% if loop.last or (loop.revindex == 2 and not groups[loop.index].label) %} disabled{% endif %} aria-label="{{ t('page-order-section-down', section=g.label) }}" title="{{ t('page-order-down') }}">&#8595;</button></form>
       </div>
       {% endif %}
     </div>
-    <div class="card-body ui-list">
+    <div class="ui-list card-body">
       {% for et in g.items %}
       <div class="ui-row" style="align-items: center;">
         <div class="ui-row-main">
@@ -51,7 +51,7 @@
       </div>
       {% endfor %}
     </div>
-  </div>
+  </section>
   {% endfor %}
-</section>
+</div>
 {% endblock %}

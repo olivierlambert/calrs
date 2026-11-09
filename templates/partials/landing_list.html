@@ -1,6 +1,6 @@
 {#- The meetings of a landing page in cards (.card, .card-head,
     .card-body: the dashboard cards' names, so the two can share one
-    definition later), the card's title in a tinted band, its meetings as
+    definition later: the h2 with its count in .num, as #414's cards), the card's title in a tinted band, its meetings as
     rows under it. `cards` comes from landing::landing_cards: one card per
     host-written section in page order and a last one for the meetings
     without a section, or a single "Meetings" card when there are no
@@ -13,7 +13,7 @@
 {%- endif %}
 {%- for card in cards %}
 <section class="card lp-cardlist">
-  <div class="card-head"><h2 class="card-title">{{ card.title }} <span class="count-pill lp-num">{{ card.count }}</span></h2></div>
+  <div class="card-head"><h2>{{ card.title }}<span class="num">{{ card.count }}</span></h2></div>
   <div class="card-body">
     <ul class="lp-list">
       {%- for et in card.items %}
@@ -24,7 +24,7 @@
 </section>
 {%- else %}
 <section class="card lp-cardlist">
-  <div class="card-head"><h2 class="card-title">{{ t("landing-meetings") }}</h2></div>
+  <div class="card-head"><h2>{{ t("landing-meetings") }}</h2></div>
   <div class="card-body">
     <ul class="lp-list"><li class="lp-empty">{{ empty_text }}</li></ul>
   </div>

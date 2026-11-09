@@ -13,8 +13,6 @@ fn first_names_skip_abbreviated_titles() {
     assert_eq!(first_name("St."), "St.");
 }
 
-/// The landing pages' hint endpoint owns the "next-free" segment, so no
-/// event type may take that slug.
 #[tokio::test]
 async fn team_page_shows_each_type_roster_and_first_names() {
     let (app, pool, _, _) = setup_test_app().await;
@@ -164,9 +162,7 @@ async fn profile_lists_one_card_with_the_decision_facts_and_the_hours() {
     .unwrap();
     let page = body_string(app.oneshot(get("/u/testuser")).await.unwrap()).await;
     assert!(
-        page.contains(
-            r#"<h2 class="card-title">Meetings <span class="count-pill lp-num">1</span></h2>"#
-        ),
+        page.contains(r#"<h2>Meetings<span class="num">1</span></h2>"#),
         "{page}"
     );
     assert!(page.contains("<span>Phone call</span>"));
