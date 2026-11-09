@@ -57,6 +57,7 @@ Every user-facing string goes through Fluent (`i18n/`).
 | `src/mfa.rs` | Local TOTP two-factor authentication: enrollment, login challenges, recovery codes, the admin policy, `/auth/mfa` and `/dashboard/settings/mfa` routes (tests in `src/mfa/tests.rs`) |
 | `src/oauth.rs` | First-party OAuth server: discovery, public client registration, PKCE/consent, token rotation/revocation, bearer validation and cleanup |
 | `src/crypto.rs` | AES-256-GCM for stored credentials, secret key management |
+| `src/net_guard.rs` | Guarded HTTP clients for user- or admin-supplied URLs: per-connection private-address check and pinning, redirect policy (#363) |
 | `src/settings.rs` | Runtime settings (base URL, private-host policy): env overrides DB |
 | `src/trusted_proxies.rs` | Which TCP peers' `X-Forwarded-For` is believed (#85): `CALRS_TRUSTED_PROXIES`, else `auth_config.trusted_proxies`, else loopback/private/ULA/link-local; `client_address()` walks the header right to left past trusted hops, `rate_key()` groups IPv6 by /64. Used by `web::client_address`/`client_ip_for_rate_limit` |
 | `src/i18n.rs` | Fluent loader, language detection, the `t()` template global, i18n guard tests |

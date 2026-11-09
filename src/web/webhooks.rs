@@ -39,6 +39,7 @@ use chrono_tz::Tz;
 use serde::Serialize;
 use sqlx::SqlitePool;
 use std::net::{IpAddr, SocketAddr};
+use std::sync::Arc;
 use std::time::Duration;
 
 /// Version of the JSON body. Bumped only for a change a receiver must handle;
@@ -930,7 +931,7 @@ pub fn check_url_shape(
         .trim_start_matches('[')
         .trim_end_matches(']')
         .to_ascii_lowercase();
-    let allowlisted = allowlist.contains(&host);
+    let allowlisted = crate::net_guard::Allowlist::fixed(allowlist).allows(&host);
     match url.scheme() {
         "https" => {}
         "http" if allowlisted => {}
@@ -961,21 +962,18 @@ pub async fn check_target(raw: &str, allowlist: &[String]) -> Result<Target, Tar
         }
         return Ok(Target { url, pinned: None });
     }
-    let port = url.port_or_known_default().unwrap_or(443);
-    let addrs: Vec<SocketAddr> = tokio::time::timeout(
-        CONNECT_TIMEOUT,
-        tokio::net::lookup_host((host.as_str(), port)),
-    )
-    .await
-    .map_err(|_| TargetError::Unresolvable("timed out".to_string()))?
-    .map_err(|e| TargetError::Unresolvable(e.to_string()))?
-    .collect();
-    if addrs.is_empty() {
-        return Err(TargetError::Unresolvable("no address".to_string()));
-    }
-    if let Some(bad) = addrs.iter().find(|a| crate::caldav::is_private_ip(&a.ip())) {
-        return Err(TargetError::Private(bad.ip().to_string()));
-    }
+    let allow = crate::net_guard::Allowlist::fixed(allowlist);
+    let lookup = crate::net_guard::resolve_checked(&crate::net_guard::SystemLookup, &host, &allow);
+    let addrs = match tokio::time::timeout(CONNECT_TIMEOUT, lookup).await {
+        Err(_) => return Err(TargetError::Unresolvable("timed out".to_string())),
+        Ok(Err(crate::net_guard::GuardError::Private(ip))) => {
+            return Err(TargetError::Private(ip.to_string()))
+        }
+        Ok(Err(crate::net_guard::GuardError::Unresolvable(e))) => {
+            return Err(TargetError::Unresolvable(e))
+        }
+        Ok(Ok(addrs)) => addrs,
+    };
     Ok(Target {
         url,
         pinned: Some((host, addrs)),
@@ -1046,14 +1044,18 @@ async fn post(
             return Attempt::failed(None, format!("refused: {}", e.shown()));
         }
     };
-    // No proxy: reqwest honours HTTP(S)_PROXY and ALL_PROXY by default, and a
-    // proxy resolves the host itself, which would undo the address checks
-    // and the pinning below.
-    let mut builder = reqwest::Client::builder()
-        .no_proxy()
-        .timeout(REQUEST_TIMEOUT)
-        .connect_timeout(CONNECT_TIMEOUT)
-        .redirect(reqwest::redirect::Policy::none());
+    // The shared guarded client (#363) with no proxy (a proxy resolves the
+    // host itself, which would undo the address checks), no redirects, and any
+    // lookup it makes is checked again. The addresses checked above are
+    // pinned, so the connection goes to exactly those.
+    let allow = crate::net_guard::Allowlist::fixed(allowlist);
+    let mut builder = crate::net_guard::builder_with(
+        allow,
+        Arc::new(crate::net_guard::SystemLookup),
+        &crate::net_guard::ProxyConfig::none(),
+    )
+    .timeout(REQUEST_TIMEOUT)
+    .connect_timeout(CONNECT_TIMEOUT);
     if let Some((host, addrs)) = &target.pinned {
         builder = builder.resolve_to_addrs(host, addrs);
     }

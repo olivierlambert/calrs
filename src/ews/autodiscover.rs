@@ -10,7 +10,6 @@
 //! target for this implementation.
 
 use anyhow::{bail, Context, Result};
-use reqwest::redirect::Policy;
 use std::time::Duration;
 
 const TIMEOUT: Duration = Duration::from_secs(10);
@@ -36,20 +35,18 @@ pub async fn discover_ews_url(email: &str, password: &str) -> Result<String> {
     ];
 
     let body = pox_request_body(email);
-    let client = reqwest::Client::builder()
+    let client = crate::net_guard::client_builder()
         .timeout(TIMEOUT)
-        // Follow up to two redirects — Autodiscover often replies 302 to a
-        // canonical URL on the same domain.
-        //
-        // Known limitation: the SSRF validator only runs on the initial
-        // candidate URL, not on intermediate Location headers. A malicious
-        // autodiscover responder could redirect to a private hostname mid
-        // chain. The chain is HTTPS, so the attacker would also need a
-        // valid cert for the private host; we accept the residual risk and
-        // rely on the egress firewall mitigation (see docs/src/security.md).
-        // The server-supplied EwsUrl from the final response is revalidated
-        // below before being persisted.
-        .redirect(Policy::limited(2))
+        // Follow up to two redirects: Autodiscover often replies 302 to a
+        // canonical URL on the same domain. Every host in the chain goes
+        // through the guarded resolver (#363), and a redirect to a private
+        // IP literal is refused, so a hostile responder cannot bounce the
+        // request to an internal host. The server-supplied EwsUrl from the
+        // final response is revalidated below before being persisted.
+        .redirect(crate::net_guard::redirects(
+            2,
+            crate::net_guard::Allowlist::Settings,
+        ))
         .build()
         .context("HTTP client build failed")?;
 
@@ -59,6 +56,9 @@ pub async fn discover_ews_url(email: &str, password: &str) -> Result<String> {
         // hosts so a hostile email domain can't probe internal infrastructure.
         if let Err(e) = crate::caldav::validate_caldav_url(url) {
             tracing::debug!(candidate = %url, error = %e, "skipping autodiscover candidate (validator rejected)");
+            continue;
+        }
+        if reqwest::Url::parse(url).is_ok_and(|u| crate::net_guard::url_refused(&u)) {
             continue;
         }
         match try_one(&client, url, email, password, &body).await {

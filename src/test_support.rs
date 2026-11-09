@@ -54,3 +54,42 @@ impl Drop for EnvGuard {
         }
     }
 }
+
+/// A server that answers every request with a `307` to a second server on
+/// the same loopback address, and that second server's hit counter. A client
+/// that follows redirects re-sends its request (and body) there.
+pub(crate) async fn redirect_trap() -> (String, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let hits = std::sync::Arc::new(AtomicUsize::new(0));
+    let target = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let target_port = target.local_addr().unwrap().port();
+    let seen = hits.clone();
+    tokio::spawn(async move {
+        while let Ok((mut sock, _)) = target.accept().await {
+            seen.fetch_add(1, Ordering::SeqCst);
+            tokio::spawn(async move {
+                let mut buf = [0u8; 4096];
+                let _ = sock.read(&mut buf).await;
+                let _ = sock
+                    .write_all(b"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: 46\r\nconnection: close\r\n\r\n{\"success\":true,\"url\":\"https://meet.test/x\"}  ")
+                    .await;
+            });
+        }
+    });
+    let front = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let front_port = front.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        while let Ok((mut sock, _)) = front.accept().await {
+            tokio::spawn(async move {
+                let mut buf = [0u8; 4096];
+                let _ = sock.read(&mut buf).await;
+                let reply = format!(
+                    "HTTP/1.1 307 Temporary Redirect\r\nlocation: http://127.0.0.1:{target_port}/elsewhere\r\ncontent-length: 0\r\nconnection: close\r\n\r\n"
+                );
+                let _ = sock.write_all(reply.as_bytes()).await;
+            });
+        }
+    });
+    (format!("http://127.0.0.1:{front_port}/"), hits)
+}

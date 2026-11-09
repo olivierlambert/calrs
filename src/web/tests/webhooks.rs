@@ -1490,13 +1490,20 @@ fn the_webhook_client_ignores_proxy_settings() {
     // A proxy resolves the host itself and would bypass the address pinning.
     // The environment is process-wide, so this is checked on the source
     // rather than by setting HTTPS_PROXY under parallel tests.
+    // The webhook client comes from the shared guarded builder (#363) with
+    // no proxy configured, and that builder drops reqwest's own reading of
+    // the environment.
     let source = include_str!("../webhooks.rs");
-    let builder = source
-        .split("reqwest::Client::builder()")
+    assert!(source.contains("&crate::net_guard::ProxyConfig::none(),"));
+    assert!(!source.contains("reqwest::Client::builder()"));
+    assert!(crate::net_guard::ProxyConfig::none().hosts().is_empty());
+    let guard = include_str!("../../net_guard.rs");
+    let builder = guard
+        .split("pub fn builder_with(")
         .nth(1)
-        .expect("the webhook client builder");
-    let chain = &builder[..builder.find(';').unwrap()];
-    assert!(chain.contains(".no_proxy()"), "{chain}");
+        .expect("the shared client builder");
+    let body = &builder[..builder.find("\n}").unwrap()];
+    assert!(body.contains(".no_proxy()"), "{body}");
 }
 
 #[tokio::test]
