@@ -3,6 +3,7 @@
 {% block main_class %}has-cards{% endblock %}
 {% block dashboard_content %}
 {% import "partials/icons.html" as ic %}
+{% import "partials/card_list.html" as cl %}
 <style>
 .action-menu { position: relative; }
 .action-menu-dropdown { display: none; position: absolute; right: 0; top: calc(100% + 4px); background: var(--paper); border: 1px solid var(--rule); border-radius: var(--r-float); box-shadow: var(--shadow-float); z-index: 20; min-width: 190px; padding: 0.3rem; }
@@ -36,13 +37,7 @@
 <section class="card">
   {% if has_any %}
   <div class="card-head is-tools">
-  <div class="ui-toolbar">
-    <div class="ui-search">
-      {{ ic.icon("search", 15) }}
-      <input type="search" data-search data-filter placeholder="{{ t('event-types-search-placeholder') }}" aria-label="{{ t('event-types-search-placeholder') }}">
-      <span class="kbd">/</span>
-    </div>
-  </div>
+    {{ cl.search(t("event-types-search-placeholder"), filter=true) }}
   </div>
   <div class="ui-list card-body" data-filter-list>
     {% for et in all_event_types %}

@@ -308,7 +308,9 @@
      .card.is-now the "now" card (Up next): accent-tinted body and a
                   stronger accent band. One per page at most.
      .card-head.is-tools  a band holding a list's search and filters
-                  instead of a title.
+                  instead of a title; every list page is built this way:
+                  search in the band, rows in the body, the pager in a
+                  .card-foot. See partials/card_list.html (search macro).
      details.card > summary.card-head  a collapsible card; closed, the
                   band is the whole card.
      A card without a head keeps plain padding (the settings fieldsets).
@@ -353,6 +355,13 @@
   /* A head can carry a list's tools (search, filters) instead of a title. */
   .card-head.is-tools { align-items: center; padding-top: 0.6rem; padding-bottom: 0.6rem; }
   .card-head.is-tools > .ui-toolbar, .card-head.is-tools > form { margin: 0; flex: 1 1 auto; }
+  .card-head.is-tools, .card-head.is-tools > form { display: flex; align-items: center; gap: 0.5rem 1rem; flex-wrap: wrap; }
+  .card-search { flex: 1 1 16rem; max-width: 30rem; }
+  .card-search input { background: var(--card-bg); }
+  .card-head .ui-btn, .card-head select { flex-shrink: 0; }
+  .card-foot { margin-top: var(--card-gap); }
+  .card-foot:empty { display: none; }
+  .card-foot .ui-pager { margin-top: 0; }
   /* The last row of a card needs no rule under it: the card's edge ends it. */
   .card-body > .ui-list > .ui-row:last-of-type, .card-body.ui-list > .ui-row:last-of-type, .card :is(.ui-row, .wh-item, .app-item, .source-item, .dest-row, .ts-row, .directory-entry):last-of-type { border-bottom: 0; }
   /* A collapsible card: <details class="card"> with <summary class="card-head">.

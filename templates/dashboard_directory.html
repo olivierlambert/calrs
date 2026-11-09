@@ -2,10 +2,8 @@
 {% block title %}{{ t("directory-title") }}, calrs{% endblock %}
 {% block main_class %}has-cards{% endblock %}
 {% block dashboard_content %}
-{% import "partials/icons.html" as ic %}
+{% import "partials/card_list.html" as cl %}
 <style>
-  .directory-search-form { display: flex; align-items: center; gap: 0.5rem 1rem; flex-wrap: wrap; margin: 0.5rem 0; }
-  .directory-search-form .ui-search { max-width: none; }
   .directory-fav-toggle { display: inline-flex; align-items: center; gap: 0.45rem; font-size: 13.5px; color: var(--text-secondary); cursor: pointer; }
   .directory-fav-toggle input { width: auto; margin: 0; accent-color: var(--ink); }
 </style>
@@ -16,22 +14,19 @@
   </div>
 </header>
 <section class="card">
-  <form method="get" action="/dashboard/directory" class="directory-search-form card-head is-tools" role="search">
-    <label for="directory-search" class="sr-only">{{ t("directory-search") }}</label>
-    <div class="ui-search">
-      {{ ic.icon("search", 15) }}
-      <input type="search" id="directory-search" name="q" value="{{ search }}" maxlength="{{ search_max }}" placeholder="{{ t('directory-search') }}" data-search>
-      <span class="kbd">/</span>
-    </div>
+  <div class="card-head is-tools">
+  <form method="get" action="/dashboard/directory" class="directory-search-form" role="search">
+    {{ cl.search(t("directory-search"), name="q", value=search, id="directory-search", maxlength=search_max) }}
     <button type="submit" class="ui-btn">{{ t("directory-find") }}</button>
     <label class="directory-fav-toggle">
       <input type="checkbox" name="favorites" value="true" {% if favorites_only %}checked{% endif %} onchange="this.form.submit()">
       {{ t("directory-favorites-only") }}
     </label>
   </form>
+  </div>
   <div class="card-body">
   {% include "partials/directory_entries.html" %}
-  {% include "partials/pager.html" %}
   </div>
+  {% if pager %}<div class="card-foot">{% include "partials/pager.html" %}</div>{% endif %}
 </section>
 {% endblock %}
