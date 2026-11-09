@@ -200,7 +200,7 @@ impl GraphProvider {
         let mut headers = header::HeaderMap::new();
         headers.insert(header::AUTHORIZATION, auth);
         headers.insert("prefer", header::HeaderValue::from_static(PREFER));
-        let client = reqwest::Client::builder()
+        let client = crate::net_guard::plain_builder()
             .default_headers(headers)
             .redirect(reqwest::redirect::Policy::none())
             .timeout(StdDuration::from_secs(30))

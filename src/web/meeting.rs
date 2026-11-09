@@ -323,7 +323,7 @@ pub async fn call_webhook(cfg: &WebhookConfig, payload: &WebhookPayload<'_>) -> 
 
     // No redirects: a 307 or 308 would re-send the signed body to whatever
     // host it names.
-    let client = match reqwest::Client::builder()
+    let client = match crate::net_guard::plain_builder()
         .redirect(reqwest::redirect::Policy::none())
         .build()
     {

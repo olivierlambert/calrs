@@ -528,3 +528,238 @@ fn the_calendar_builder_takes_the_proxy_from_the_environment() {
     let body = src.split("pub fn client_builder()").nth(1).unwrap();
     assert!(body[..body.find("\n}").unwrap()].contains("&ProxyConfig::from_env()"));
 }
+
+/// A server on `chain.test` answering `/N` with a redirect to `/N+1` while
+/// `N < hops`, and 200 after that, counting requests.
+async fn chain_server(hops: usize) -> (SocketAddr, Arc<AtomicUsize>) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let local = listener.local_addr().unwrap();
+    let hits = Arc::new(AtomicUsize::new(0));
+    let seen = Arc::clone(&hits);
+    tokio::spawn(async move {
+        while let Ok((mut sock, _)) = listener.accept().await {
+            seen.fetch_add(1, Ordering::SeqCst);
+            tokio::spawn(async move {
+                use tokio::io::{AsyncReadExt, AsyncWriteExt};
+                let mut buf = [0u8; 2048];
+                let n = sock.read(&mut buf).await.unwrap_or(0);
+                let head = String::from_utf8_lossy(&buf[..n]);
+                let step: usize = head
+                    .split_whitespace()
+                    .nth(1)
+                    .and_then(|p| p.trim_start_matches('/').parse().ok())
+                    .unwrap_or(0);
+                let reply = if step < hops {
+                    format!(
+                        "HTTP/1.1 302 Found\r\nlocation: /{}\r\ncontent-length: 0\r\nconnection: close\r\n\r\n",
+                        step + 1
+                    )
+                } else {
+                    "HTTP/1.1 200 OK\r\ncontent-length: 2\r\nconnection: close\r\n\r\nok"
+                        .to_string()
+                };
+                let _ = sock.write_all(reply.as_bytes()).await;
+            });
+        }
+    });
+    (local, hits)
+}
+
+/// `redirects(max)` follows `max - 1` redirects and refuses the next one,
+/// the count reqwest 0.11's `Policy::limited(max)` kept (0.12's follows
+/// one more). The CalDAV client passes 10, so it follows 9, as before.
+#[tokio::test]
+async fn redirects_follow_one_fewer_than_max() {
+    let list = Allowlist::fixed(&["chain.test".to_string()]);
+    let get = |hops: usize| {
+        let list = list.clone();
+        async move {
+            let (server, hits) = chain_server(hops).await;
+            let client = builder_with(
+                list.clone(),
+                Arc::new(Fixed(vec![server])),
+                &ProxyConfig::none(),
+            )
+            .redirect(redirects_with(3, list, Vec::new()))
+            .build()
+            .unwrap();
+            let url = format!("http://chain.test:{}/0", server.port());
+            let res = client.get(&url).send().await;
+            let hits_first = hits.load(Ordering::SeqCst);
+            // The count starts again with every request on the same client.
+            let again = client.get(&url).send().await;
+            assert_eq!(res.is_ok(), again.is_ok());
+            (res, hits_first)
+        }
+    };
+    let (ok, hits) = get(2).await;
+    assert_eq!(ok.unwrap().status(), 200);
+    assert_eq!(hits, 3);
+    let (err, hits) = get(3).await;
+    let err = err.unwrap_err();
+    assert!(err.is_redirect(), "{err:?}");
+    assert_eq!(hits, 3);
+}
+
+/// reqwest 0.12 accepts a proxy URL of any scheme; calrs keeps only HTTP
+/// and HTTPS ones, and reads a setting without a scheme as `http://`.
+#[test]
+fn only_http_proxies_are_kept_and_a_bare_host_reads_as_http() {
+    for raw in [
+        "socks5://proxy.corp:1080",
+        "socks4a://proxy.corp",
+        "ftp://proxy.corp:21",
+    ] {
+        let cfg =
+            ProxyConfig::from_vars(|name: &str| (name == "HTTPS_PROXY").then(|| raw.to_string()));
+        assert!(!cfg.is_set(), "{raw}");
+        assert!(cfg.ignored, "{raw}");
+        assert!(cfg.hosts().is_empty(), "{raw}");
+    }
+    let https = ProxyConfig::from_vars(|name: &str| {
+        (name == "HTTPS_PROXY").then(|| "https://Egress.corp:8443".to_string())
+    });
+    assert_eq!(https.hosts(), vec!["egress.corp"]);
+    assert!(!https.ignored);
+    let bare = ProxyConfig::from_vars(|name: &str| {
+        (name == "HTTP_PROXY").then(|| "localhost:3128".to_string())
+    });
+    assert!(bare.is_set());
+    assert_eq!(bare.hosts(), vec!["localhost"]);
+}
+
+/// The NO_PROXY forms calrs documents still send a host direct (and so
+/// through the guarded resolver) with the 0.12 matcher: a domain and its
+/// subdomains, case aside, and an IP network.
+#[tokio::test]
+async fn no_proxy_domains_and_networks_go_direct() {
+    let (proxy, proxy_hits) = counting_server().await;
+    let (target, target_hits) = counting_server().await;
+    let proxies = ProxyConfig {
+        http: Some(format!("http://{proxy}")),
+        no_proxy: Some("Intranet.Test, 127.0.0.0/8".to_string()),
+        ..ProxyConfig::none()
+    };
+    let list = Allowlist::fixed(&["intranet.test".to_string(), "cal.intranet.test".to_string()]);
+    let client = builder_with(list, Arc::new(Fixed(vec![target])), &proxies)
+        .build()
+        .unwrap();
+    for host in [
+        "intranet.test".to_string(),
+        "cal.intranet.test".to_string(),
+        "127.0.0.1".to_string(),
+    ] {
+        let url = format!("http://{host}:{}/", target.port());
+        assert_eq!(client.get(&url).send().await.unwrap().status(), 200);
+    }
+    assert_eq!(target_hits.load(Ordering::SeqCst), 3);
+    assert_eq!(proxy_hits.load(Ordering::SeqCst), 0);
+    // A host outside the list goes to the proxy.
+    let resp = client.get("http://elsewhere.test/").send().await.unwrap();
+    assert_eq!(resp.status(), 200);
+    assert_eq!(proxy_hits.load(Ordering::SeqCst), 1);
+}
+
+/// The URL's port decides where a connection goes, never a port the lookup
+/// answered with: a URL without one goes to the scheme's default port.
+#[tokio::test]
+async fn the_url_port_wins_over_a_port_from_the_lookup() {
+    let (server, hits) = counting_server().await;
+    let list = Allowlist::fixed(&["noport.test".to_string()]);
+    let client = builder_with(list, Arc::new(Fixed(vec![server])), &ProxyConfig::none())
+        .timeout(Duration::from_secs(5))
+        .build()
+        .unwrap();
+    let _ = client.get("http://noport.test/").send().await;
+    assert_eq!(hits.load(Ordering::SeqCst), 0);
+    let url = format!("http://noport.test:{}/", server.port());
+    assert_eq!(client.get(&url).send().await.unwrap().status(), 200);
+    assert_eq!(hits.load(Ordering::SeqCst), 1);
+}
+
+/// The clients outside the private-host policy take proxies as the guarded
+/// ones do: a SOCKS setting is dropped and the request goes direct (reqwest
+/// 0.12 alone would speak plain HTTP to the SOCKS host), an HTTP proxy is
+/// used, and `NO_PROXY` hosts go direct.
+#[tokio::test]
+async fn plain_clients_take_proxies_like_the_guarded_ones() {
+    let (socks, socks_hits) = counting_server().await;
+    let (target, target_hits) = counting_server().await;
+    let url = format!("http://127.0.0.1:{}/", target.port());
+
+    let cfg = ProxyConfig::from_vars(|name: &str| {
+        (name == "ALL_PROXY").then(|| format!("socks5://{socks}"))
+    });
+    let client = plain_builder_with(&cfg).build().unwrap();
+    assert_eq!(client.get(&url).send().await.unwrap().status(), 200);
+    assert_eq!(socks_hits.load(Ordering::SeqCst), 0);
+    assert_eq!(target_hits.load(Ordering::SeqCst), 1);
+
+    let (proxy, proxy_hits) = counting_server().await;
+    let cfg = ProxyConfig {
+        http: Some(format!("http://{proxy}")),
+        no_proxy: Some("localhost".to_string()),
+        ..ProxyConfig::none()
+    };
+    let client = plain_builder_with(&cfg).build().unwrap();
+    assert_eq!(client.get(&url).send().await.unwrap().status(), 200);
+    assert_eq!(proxy_hits.load(Ordering::SeqCst), 1);
+    assert_eq!(target_hits.load(Ordering::SeqCst), 1);
+    let direct = format!("http://localhost:{}/", target.port());
+    assert_eq!(client.get(&direct).send().await.unwrap().status(), 200);
+    assert_eq!(proxy_hits.load(Ordering::SeqCst), 1);
+    assert_eq!(target_hits.load(Ordering::SeqCst), 2);
+
+    // And with nothing configured, nothing from reqwest's own reading.
+    let client = plain_builder_with(&ProxyConfig::none()).build().unwrap();
+    assert_eq!(client.get(&url).send().await.unwrap().status(), 200);
+    assert_eq!(target_hits.load(Ordering::SeqCst), 3);
+}
+
+/// Every HTTP client calrs builds outside tests starts from
+/// [`client_builder`], [`builder_with`] or [`plain_builder`], so none reads
+/// proxies through reqwest's own environment handling.
+#[test]
+fn no_client_is_built_outside_net_guard() {
+    fn walk(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                if path.file_name().is_some_and(|n| n == "tests") {
+                    continue;
+                }
+                walk(&path, out);
+            } else if path.extension().is_some_and(|e| e == "rs") {
+                out.push(path);
+            }
+        }
+    }
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut files = Vec::new();
+    walk(&root, &mut files);
+    let forbidden = [
+        "Client::builder()",
+        "Client::new()",
+        "ClientBuilder::new()",
+        "reqwest::get(",
+        "Client::default()",
+    ];
+    let mut found = Vec::new();
+    for path in files {
+        if path.ends_with("net_guard.rs") || path.file_name().is_some_and(|n| n == "tests.rs") {
+            continue;
+        }
+        let src = std::fs::read_to_string(&path).unwrap();
+        // Test modules build their own clients against local servers.
+        let shipped = src.split("#[cfg(test)]\nmod tests").next().unwrap();
+        for (n, line) in shipped.lines().enumerate() {
+            if forbidden.iter().any(|f| line.contains(f)) && !line.trim_start().starts_with("//") {
+                found.push(format!("{}:{}", path.display(), n + 1));
+            }
+        }
+    }
+    assert!(
+        found.is_empty(),
+        "build clients through net_guard: {found:?}"
+    );
+}

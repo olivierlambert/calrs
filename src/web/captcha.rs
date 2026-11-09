@@ -205,7 +205,7 @@ pub async fn verify(config: &Option<CaptchaConfig>, token: Option<&str>) -> Resu
 
     // No redirects: a 307 or 308 would re-send the secret to whatever host
     // it names.
-    let client = match reqwest::Client::builder()
+    let client = match crate::net_guard::plain_builder()
         .redirect(reqwest::redirect::Policy::none())
         .build()
     {

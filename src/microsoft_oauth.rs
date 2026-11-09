@@ -84,7 +84,7 @@ pub fn is_personal_account(microsoft_user_id: &str) -> bool {
 
 fn http_client() -> Result<reqwest::Client> {
     // Never forward credentials through a redirect, even from a trusted endpoint.
-    Ok(reqwest::Client::builder()
+    Ok(crate::net_guard::plain_builder()
         .redirect(reqwest::redirect::Policy::none())
         .timeout(std::time::Duration::from_secs(25))
         .build()?)

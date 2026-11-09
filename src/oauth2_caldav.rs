@@ -38,8 +38,11 @@ pub fn build_google_auth_url(client_id: &str, redirect_uri: &str, state: &str) -
 /// `get_valid_access_token` *before* `ATTACH_DEADLINE` wraps `attach_meet`, so
 /// an unbounded token refresh could hang the guest booking forever.
 async fn post_to_google_token(op: &str, form: &[(&str, &str)]) -> Result<TokenResponse> {
-    let client = reqwest::Client::builder()
+    // No redirects: Google's token endpoint answers directly, and a
+    // redirect would carry the refresh token or the client secret along.
+    let client = crate::net_guard::plain_builder()
         .timeout(std::time::Duration::from_secs(10))
+        .redirect(reqwest::redirect::Policy::none())
         .build()
         .unwrap_or_default();
     let resp = client.post(GOOGLE_TOKEN_URL).form(form).send().await?;
@@ -245,7 +248,9 @@ pub fn google_caldav_url_for_email(email: &str) -> String {
 
 /// Fetch the authenticated Google account's email via the OIDC userinfo endpoint.
 pub async fn fetch_google_email(access_token: &str) -> Result<String> {
-    let resp = reqwest::Client::new()
+    let resp = crate::net_guard::plain_builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()?
         .get("https://openidconnect.googleapis.com/v1/userinfo")
         .bearer_auth(access_token)
         .send()

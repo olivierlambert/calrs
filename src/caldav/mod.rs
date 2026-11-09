@@ -569,7 +569,7 @@ impl CaldavClient {
         if !status.is_success() {
             bail!("GET {} returned {}", url, status);
         }
-        Ok(Some(resp.text().await?))
+        Ok(Some(read_body(resp, MAX_EVENT_BYTES).await?))
     }
 
     /// Check whether an event resource still exists on the server.
@@ -841,6 +841,10 @@ async fn multistatus_body(resp: reqwest::Response, what: &str, url: &str) -> Res
     }
     read_body(resp, crate::xml::MAX_INPUT_BYTES).await
 }
+
+/// The most of one event resource ([`CaldavClient::get_event_raw`]) calrs
+/// reads, the same bound as a multistatus reply.
+const MAX_EVENT_BYTES: usize = crate::xml::MAX_INPUT_BYTES;
 
 /// Read a response body as text, refusing one over `cap` bytes as it
 /// arrives rather than after holding all of it: a declared length over the
@@ -1521,5 +1525,55 @@ mod tests {
         assert!(validate_caldav_url("http://10.0.0.1").is_err());
 
         std::env::remove_var("CALRS_ALLOW_PRIVATE_HOSTS");
+    }
+
+    /// A server answering every request with `head` (status line and
+    /// headers) followed by `body`, whatever `Content-Length` says.
+    async fn serve_raw(head: String, body: &'static [u8]) -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            while let Ok((mut socket, _)) = listener.accept().await {
+                let head = head.clone();
+                tokio::spawn(async move {
+                    let mut request = [0u8; 4096];
+                    let _ = socket.read(&mut request).await;
+                    let _ = socket.write_all(head.as_bytes()).await;
+                    let _ = socket.write_all(body).await;
+                });
+            }
+        });
+        format!("http://127.0.0.1:{port}/dav/")
+    }
+
+    #[tokio::test]
+    async fn get_event_raw_reads_at_most_the_event_cap() {
+        // A declared length over the cap is refused before anything is read.
+        let head = format!(
+            "HTTP/1.1 200 OK\r\ncontent-type: text/calendar\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+            MAX_EVENT_BYTES + 1
+        );
+        let base = serve_raw(head, b"BEGIN:VCALENDAR").await;
+        let err = CaldavClient::new(&base, "u", "p")
+            .get_event_raw("/dav/cal/", "uid-1")
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("more than the"), "{err}");
+
+        // An ordinary event still comes back whole, decoded by its charset.
+        let body: &'static [u8] = b"BEGIN:VCALENDAR\r\nSUMMARY:caf\xe9\r\nEND:VCALENDAR\r\n";
+        let head = format!(
+            "HTTP/1.1 200 OK\r\ncontent-type: text/calendar; charset=iso-8859-1\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+            body.len()
+        );
+        let base = serve_raw(head, body).await;
+        let text = CaldavClient::new(&base, "u", "p")
+            .get_event_raw("/dav/cal/", "uid-1")
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(text.contains("SUMMARY:caf\u{e9}"), "{text}");
     }
 }
