@@ -264,6 +264,7 @@ landing-hours-heading = Meestal beschikbaar, tijdzone { $zone }
 landing-hours-heading-yours = Meestal beschikbaar, in jouw tijd
 landing-hours-toggle = Mijn tijd
 landing-hours-toggle-hint = Toon deze tijden in jouw tijdzone
+landing-days-every-short = Elke dag
 landing-days-span = { $first } t/m { $last }
 landing-host-confirms = Organisator bevestigt
 list-and = { $first } en { $last }

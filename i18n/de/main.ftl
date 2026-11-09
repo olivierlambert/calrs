@@ -264,6 +264,7 @@ landing-hours-heading = Meist verfügbar, Ortszeit { $zone }
 landing-hours-heading-yours = Meist verfügbar, in deiner Zeit
 landing-hours-toggle = Meine Zeit
 landing-hours-toggle-hint = Diese Zeiten in deiner Zeitzone zeigen
+landing-days-every-short = Täglich
 landing-days-span = { $first }–{ $last }
 landing-host-confirms = Gastgeber bestätigt
 list-and = { $first } und { $last }

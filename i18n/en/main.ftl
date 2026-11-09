@@ -264,7 +264,8 @@ faces-and-more = and { $count } more
 landing-with-everyone = with everyone
 # The usual hours beside the host's name: landing-hours-heading over a
 # timetable, one row per schedule: the days with the short weekday names
-# (landing-days-span for a run, else a list joined with list-and), the hours
+# (landing-days-span for a run, landing-days-every-short for the whole week,
+# else a list joined with list-and; the row starts capitalised), the hours
 # with landing-time-range (%1 and %2 the times). The "My time" button
 # (landing-hours-toggle) rewrites the rows in the visitor's timezone, with
 # landing-time-range-next when they end the next day, and the heading as
@@ -287,6 +288,7 @@ landing-hours-heading = Usually available, { $zone } time
 landing-hours-heading-yours = Usually available, your time
 landing-hours-toggle = My time
 landing-hours-toggle-hint = Show these hours in your timezone
+landing-days-every-short = Every day
 landing-days-span = { $first } to { $last }
 landing-host-confirms = Host confirms
 list-and = { $first } and { $last }

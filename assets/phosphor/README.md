@@ -1,8 +1,9 @@
 # Phosphor Icons (vendored subset)
 
-The dashboard's icons: the sidebar navigation, and a few places where an icon
-carries meaning (Join, copy a link, the set-up line, the next meeting's time
-and place).
+The icons of the dashboard and the public pages: the sidebar navigation, and
+places where an icon carries meaning (Join, copy a link, the set-up line, the
+next meeting's time and place; on the landing pages, the usual hours, place,
+languages and each meeting's facts: how the guest meets and "Host confirms").
 
 - Source: https://github.com/phosphor-icons/core, npm package
   `@phosphor-icons/core`, files `assets/regular/<name>.svg`

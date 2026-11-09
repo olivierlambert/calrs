@@ -264,6 +264,7 @@ landing-hours-heading = Normalmente disponível, horário de { $zone }
 landing-hours-heading-yours = Normalmente disponível, no seu horário
 landing-hours-toggle = Meu horário
 landing-hours-toggle-hint = Mostrar estes horários no seu fuso horário
+landing-days-every-short = Todos os dias
 landing-days-span = { $first } a { $last }
 landing-host-confirms = O anfitrião confirma
 list-and = { $first } e { $last }

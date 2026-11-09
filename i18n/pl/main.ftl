@@ -274,6 +274,7 @@ landing-hours-heading = Dostępność (strefa czasowa: { $zone })
 landing-hours-heading-yours = Dostępność (twój czas)
 landing-hours-toggle = Mój czas
 landing-hours-toggle-hint = Pokaż te godziny w twojej strefie czasowej
+landing-days-every-short = Codziennie
 landing-days-span = { $first }–{ $last }
 landing-host-confirms = Gospodarz potwierdza
 list-and = { $first } i { $last }

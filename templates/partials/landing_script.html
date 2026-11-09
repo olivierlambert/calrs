@@ -1,10 +1,10 @@
 {#- Behaviour of the landing pages, after the content:
     - faces get the overview's per-person hue (--h), a stable hash;
-    - the host's usual hours (landing_about.html) can be shown in the
-      guest's timezone and time format with the "My time" button, which
-      appears only when that timezone differs. Nothing blocks the page; on
-      a failure the button stays hidden and the hours stay as the server
-      wrote them. -#}
+    - the host's usual hours (landing_about.html) follow the guest's time
+      format (12 or 24 hours, as set on the slot page), and can be shown in
+      the guest's timezone with the "My time" button, which appears only
+      when that timezone differs. Nothing blocks the page; on a failure the
+      button stays hidden and the hours stay as the server wrote them. -#}
 <script>
 (function() {
   // FNV-1a over the UTF-8 bytes, as overview_stats::face_hue computes it.
@@ -33,12 +33,13 @@
   var label = box && box.querySelector('.lp-hours-label');
   if (!toggle || !table || !label || !window.Intl) return;
   var htz = box.getAttribute('data-tz');
-  var gtz = '';
-  try { gtz = Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch (e) {}
-  if (!htz || !gtz || htz === gtz) return;
-  var groups = [];
-  try { groups = JSON.parse(box.getAttribute('data-groups') || '[]'); } catch (e) { return; }
-  if (!Array.isArray(groups) || !groups.length) return;
+  var groups = [], week = [], weekRest = [];
+  try {
+    groups = JSON.parse(box.getAttribute('data-groups') || '[]');
+    week = JSON.parse(box.getAttribute('data-week') || '[]');
+    weekRest = JSON.parse(box.getAttribute('data-week-rest') || '[]');
+  } catch (e) { return; }
+  if (!Array.isArray(groups) || !groups.length || week.length !== 7 || weekRest.length !== 7) return;
   var lang = document.documentElement.lang || 'en';
   var h12 = false;
   try { h12 = localStorage.getItem('calrs_time_format') === '12'; } catch (e) {}
@@ -72,13 +73,13 @@
         hourCycle: h12 ? 'h12' : 'h23' }).format(new Date(ms));
     } catch (e) { return ''; }
   }
-  // The page's own wording, with %1/%2 for what the script fills in.
+  // The page's own wording, with %1/%2 for what the script fills in; the
+  // weekday names as the server writes them at the start of a row and
+  // after another word (landing::short_week).
   var L = {
-    week: [{{ t("slots-weekday-sun") | tojson }}, {{ t("slots-weekday-mon") | tojson }},
-      {{ t("slots-weekday-tue") | tojson }}, {{ t("slots-weekday-wed") | tojson }},
-      {{ t("slots-weekday-thu") | tojson }}, {{ t("slots-weekday-fri") | tojson }},
-      {{ t("slots-weekday-sat") | tojson }}],
-    every: {{ t("landing-days-every") | tojson }},
+    week: week,
+    weekRest: weekRest,
+    every: {{ t("landing-days-every-short") | tojson }},
     daysSpan: {{ t("landing-days-span", first="%1", last="%2") | tojson }},
     and: {{ t("list-and", first="%1", last="%2", e="no") | tojson }},
     range: {{ t("landing-time-range") | tojson }},
@@ -99,14 +100,29 @@
         if (!has(s) || has(s + 6)) continue;
         var run = true;
         for (var k = 0; k < sorted.length; k++) if (!has(s + k)) run = false;
-        if (run) return fill(L.daysSpan, L.week[MONDAY_FIRST[s]], L.week[MONDAY_FIRST[(s + sorted.length - 1) % 7]]);
+        if (run) return fill(L.daysSpan, L.week[MONDAY_FIRST[s]], L.weekRest[MONDAY_FIRST[(s + sorted.length - 1) % 7]]);
         break;
       }
     }
-    var names = sorted.map(function(d) { return L.week[d]; });
+    var names = sorted.map(function(d, i) { return i ? L.weekRest[d] : L.week[d]; });
     if (names.length === 1) return names[0];
     return fill(L.and, names.slice(0, -1).join(', '), names[names.length - 1]);
   }
+  // The host's own rows in the visitor's time format: the server writes
+  // 24-hour times.
+  function wall(hhmm) {
+    var p = String(hhmm).split(':');
+    try {
+      return new Intl.DateTimeFormat(lang, { timeZone: 'UTC', hour: '2-digit', minute: '2-digit',
+        hourCycle: 'h12' }).format(new Date(Date.UTC(2000, 0, 1, +p[0], +p[1])));
+    } catch (e) { return hhmm; }
+  }
+  if (h12 && table.rows.length === groups.length) {
+    groups.forEach(function(g, i) { table.rows[i].cells[1].textContent = fill(L.range, wall(g.start), wall(g.end)); });
+  }
+  var gtz = '';
+  try { gtz = Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch (e) {}
+  if (!htz || !gtz || htz === gtz) return;
   // Each row in the visitor's zone.
   var differs = false;
   var rows = [];

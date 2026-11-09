@@ -261,19 +261,57 @@ fn weekday_name(lang: &str, day: u32, short: bool) -> String {
     crate::i18n::translate(lang, key, None)
 }
 
+/// Languages whose weekday names are lowercase in running text: the short
+/// names (capitalised as column headings on the slot page) start a
+/// timetable row capitalised, and the ones after it are lowercased ("Lun
+/// au jeu", "Lun, mer et ven"). German capitalises them, Estonian writes
+/// capital letters, Dutch already lowercase.
+const LOWERCASE_WEEKDAYS: &[&str] = &["fr", "es", "pt", "it", "pl"];
+
+/// A short weekday name as it reads in a timetable row, `first` or after
+/// another word.
+fn short_weekday(lang: &str, day: u32, first: bool) -> String {
+    let name = weekday_name(lang, day, true);
+    if first || !LOWERCASE_WEEKDAYS.contains(&lang) {
+        name
+    } else {
+        name.to_lowercase()
+    }
+}
+
+/// The short weekday names, Sunday first, at the start of a row and after
+/// another word, for the page script that rewrites the rows.
+fn short_week(lang: &str) -> (Vec<String>, Vec<String>) {
+    (0..7)
+        .map(|d| (short_weekday(lang, d, true), short_weekday(lang, d, false)))
+        .unzip()
+}
+
 /// "Monday to Friday", "every day", "Monday, Wednesday and Friday": a run
 /// of three days or more as a range, anything else as a list. A run may
 /// wrap past the end of the week ("Friday to Monday"), which a visitor's
 /// zone can make of a host's Saturday to Tuesday. With `short`, the
 /// timetable's form: "Mon to Fri", "Mon, Wed and Fri".
 fn days_phrase(lang: &str, days: &[u32], short: bool) -> String {
+    let name = |day: u32, first: bool| {
+        if short {
+            short_weekday(lang, day, first)
+        } else {
+            weekday_name(lang, day, false)
+        }
+    };
     if days.len() == 7 {
-        return crate::i18n::translate(lang, "landing-days-every", None);
+        let key = if short {
+            "landing-days-every-short"
+        } else {
+            "landing-days-every"
+        };
+        return crate::i18n::translate(lang, key, None);
     }
     if let Some((first, last)) = circular_run(days) {
         let mut args = FluentArgs::new();
-        args.set("first", FluentValue::from(weekday_name(lang, first, short)));
-        args.set("last", FluentValue::from(weekday_name(lang, last, short)));
+        args.set("first", FluentValue::from(name(first, true)));
+        args.set("last", FluentValue::from(name(last, false)));
         let key = if short {
             "landing-days-span"
         } else {
@@ -284,7 +322,8 @@ fn days_phrase(lang: &str, days: &[u32], short: bool) -> String {
     let sorted: Vec<u32> = WEEK.iter().copied().filter(|d| days.contains(d)).collect();
     let names: Vec<String> = sorted
         .iter()
-        .map(|d| weekday_name(lang, *d, short))
+        .enumerate()
+        .map(|(i, d)| name(*d, i == 0))
         .collect();
     join_list(lang, &names)
 }
@@ -395,7 +434,16 @@ pub(super) fn usual_hours(
     } else {
         Vec::new()
     };
-    Some(context! { text => text, heading => heading, rows => rows, tz => tz, groups => shown })
+    let (week, week_rest) = short_week(lang);
+    Some(context! {
+        text => text,
+        heading => heading,
+        rows => rows,
+        tz => tz,
+        groups => shown,
+        week => week,
+        week_rest => week_rest,
+    })
 }
 
 /// Rules and timezone of the meetings `ids`, for [`usual_hours`]: `None`
@@ -797,13 +845,21 @@ mod tests {
         let v = usual_hours("fr", &week, "Europe/Paris").unwrap();
         assert_eq!(
             rows(&v),
-            ["Lun au Jeu: de 09:00 à 17:30", "Ven: de 09:00 à 16:00"]
+            ["Lun au jeu: de 09:00 à 17:30", "Ven: de 09:00 à 16:00"]
         );
+        assert_eq!(days_phrase("fr", &[1, 3, 5], true), "Lun, mer et ven");
+        assert_eq!(days_phrase("es", &[1, 2, 3, 4], true), "Lun a jue");
+        assert_eq!(days_phrase("pt", &[1, 2, 3, 4, 5], true), "Seg a sex");
+        assert_eq!(days_phrase("it", &[1, 2, 3], true), "Lun–mer");
+        assert_eq!(days_phrase("pl", &[1, 2, 3], true), "Pon–śr");
+        assert_eq!(days_phrase("nl", &[1, 2, 3], true), "ma t/m wo");
         let v = usual_hours("de", &week, "Europe/Berlin").unwrap();
         assert_eq!(rows(&v), ["Mo–Do: 09:00 bis 17:30", "Fr: 09:00 bis 16:00"]);
         let every: Vec<_> = (0..=6).map(|d| rule(d, "10:00", "16:00")).collect();
         let v = usual_hours("en", &every, "UTC").unwrap();
-        assert_eq!(rows(&v), ["every day: 10:00 to 16:00"]);
+        assert_eq!(rows(&v), ["Every day: 10:00 to 16:00"]);
+        let v = usual_hours("de", &every, "UTC").unwrap();
+        assert_eq!(rows(&v), ["Täglich: 10:00 bis 16:00"]);
         assert_eq!(days_phrase("en", &[1, 3, 5], true), "Mon, Wed and Fri");
         assert_eq!(days_phrase("en", &[5, 6, 0, 1], true), "Fri to Mon");
     }

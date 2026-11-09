@@ -86,19 +86,25 @@
      left. Its images keep base.html's display rules, which pick the one
      for the theme. */
   .lp-top .logo { text-align: left; margin-bottom: 1.5rem; }
-  .lp-top .logo img { max-height: 56px; max-width: 240px; object-fit: contain; vertical-align: top; }
+  .lp-top .logo img { max-height: 72px; max-width: 320px; object-fit: contain; object-position: left center; vertical-align: top; }
+  @media (max-width: 760px) {
+    .lp-top .logo img { max-height: 48px; max-width: 240px; }
+  }
 
   /* The host, set like a business card, in one band: the photo; who
      they are (name, title, bio, a team's faces); and beside them, when
      anything is set, the practical block (usual hours, place, languages).
-     Under 760px the practical block goes under the rest. */
+     Under 900px the practical block goes under the rest. Long unbroken
+     names, bios and places wrap rather than run into it. */
   .lp-card { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 0 1.5rem; align-items: center; }
   .lp-card > .lp-face { grid-row: 1; grid-column: 1; }
   .lp-card > .lp-id { grid-row: 1; grid-column: 2; }
   .lp-card > .lp-practical { grid-row: 2; grid-column: 1 / -1; margin-top: 1.25rem; }
-  @media (min-width: 761px) {
-    .lp-card.has-practical { grid-template-columns: auto minmax(0, 1fr) auto; gap: 0 2.5rem; }
-    .lp-card.has-practical > .lp-practical { grid-row: 1; grid-column: 3; margin-top: 0; max-width: 22rem; }
+  /* The practical column has a fixed width, so the bio beside it does not
+     reflow when "My time" rewrites the rows. */
+  @media (min-width: 901px) {
+    .lp-card.has-practical { grid-template-columns: auto minmax(0, 1fr) 20rem; gap: 0 2.5rem; }
+    .lp-card.has-practical > .lp-practical { grid-row: 1; grid-column: 3; margin-top: 0; }
   }
   .lp-face {
     width: 88px;
@@ -121,9 +127,9 @@
   .lp-face img { width: 100%; height: 100%; object-fit: cover; display: block; }
   /* A team's own picture is a mark, not a person: square, 6px corners. */
   .lp-face.lp-face-team { border-radius: 6px; }
-  .lp-name { font-size: 2.5rem; line-height: 1.05; font-weight: 640; font-stretch: 82%; letter-spacing: -0.012em; margin: 0; color: var(--text); }
+  .lp-name { overflow-wrap: anywhere; font-size: 2.5rem; line-height: 1.05; font-weight: 640; font-stretch: 82%; letter-spacing: -0.012em; margin: 0; color: var(--text); }
   .lp-title { margin-top: 0.3rem; font-size: 1.0625rem; color: var(--text-secondary); }
-  .lp-bio { margin-top: 0.65rem; max-width: 62ch; color: var(--text-secondary); font-size: 0.975rem; line-height: 1.6; }
+  .lp-bio { overflow-wrap: anywhere; margin-top: 0.65rem; max-width: 62ch; color: var(--text-secondary); font-size: 0.975rem; line-height: 1.6; }
   .lp-bio a { color: var(--text); text-decoration: underline; text-underline-offset: 2px; text-decoration-thickness: 1px; }
   .lp-bio a:hover { color: var(--accent); }
   .lp-bio code { background: var(--lp-tint); padding: 0.1em 0.3em; border-radius: 3px; font-size: 0.85em; }
@@ -135,17 +141,20 @@
      one line. Icons sit on the text's centre line. */
   .lp-practical { display: flex; flex-direction: column; gap: 0.55rem; font-size: 0.9rem; line-height: 1.4; color: var(--text-secondary); }
   .lp-practical .nav-ic { flex: none; width: 1.05em; height: 1.05em; }
-  .lp-hours-head { display: flex; align-items: center; flex-wrap: wrap; gap: 0.25rem 0.5rem; color: var(--text); font-weight: 560; }
-  .lp-tt-toggle { font: inherit; font-size: 0.8rem; font-weight: 500; line-height: 1.2; color: var(--text-secondary); background: transparent; border: 1px solid var(--card-line); border-radius: 999px; padding: 0.15rem 0.6rem; cursor: pointer; }
+  .lp-hours-head { display: flex; align-items: flex-start; gap: 0.5rem; color: var(--text); font-weight: 560; }
+  .lp-hours-head .nav-ic { margin-top: 0.17em; }
+  .lp-hours-label { flex: 1 1 auto; min-width: 0; }
+  .lp-tt-toggle { flex: none; margin-top: -0.05rem; font: inherit; font-size: 0.8rem; font-weight: 500; line-height: 1.2; color: var(--text-secondary); background: transparent; border: 1px solid var(--card-line); border-radius: 999px; padding: 0.15rem 0.6rem; cursor: pointer; }
   .lp-tt-toggle:hover { color: var(--text); border-color: var(--text-muted); }
   .lp-tt-toggle[aria-pressed="true"] { color: var(--text); background: var(--surface); border-color: var(--text-muted); }
   .lp-tt-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .lp-tt-toggle[hidden] { display: none; }
   .lp-tt { border-collapse: collapse; margin: 0.15rem 0 0 calc(1.05em + 0.5rem); font-variant-numeric: tabular-nums; }
   .lp-tt th { font-weight: 400; text-align: left; padding: 0.05rem 1.1rem 0.05rem 0; white-space: nowrap; color: var(--text-secondary); }
-  .lp-tt td { padding: 0.05rem 0; color: var(--text); white-space: nowrap; }
-  .lp-where { display: flex; flex-wrap: wrap; align-items: center; gap: 0.2rem 0.55rem; }
-  .lp-where-item { display: inline-flex; align-items: center; gap: 0.5rem; }
+  .lp-tt th, .lp-tt td { vertical-align: top; }
+  .lp-tt td { padding: 0.05rem 0; color: var(--text); }
+  .lp-where { overflow-wrap: anywhere; display: flex; flex-wrap: wrap; align-items: center; gap: 0.2rem 0.55rem; }
+  .lp-where-item { display: inline-flex; align-items: center; gap: 0.5rem; min-width: 0; }
   .lp-dot { color: var(--text-muted); }
 
   /* Team members: a row of faces, each with a first name under it. */

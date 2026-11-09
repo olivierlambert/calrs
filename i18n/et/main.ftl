@@ -264,6 +264,7 @@ landing-hours-heading = Tavaliselt saadaval ({ $zone } aja järgi)
 landing-hours-heading-yours = Tavaliselt saadaval (sinu aja järgi)
 landing-hours-toggle = Minu aeg
 landing-hours-toggle-hint = Näita neid aegu sinu ajavööndis
+landing-days-every-short = Iga päev
 landing-days-span = { $first }–{ $last }
 landing-host-confirms = Korraldaja kinnitab
 list-and = { $first } ja { $last }
