@@ -90,7 +90,7 @@ Every user-facing string goes through Fluent (`i18n/`).
 |---|---|
 | `mod.rs` | `AppState`, `create_router` (every route), middleware (CSRF, CSP, embed), rate limiter, client IP, error helpers, sidebar context, booking error page helpers |
 | `public_pages.rs` | Public GET pages: user and team profiles, slot pickers, booking forms, dynamic group links, legacy redirects |
-| `next_free.rs` | The landing pages' "next free" hints, one request per page view: `GET /u/{username}/next-free` and `/team/{team_slug}/next-free`, for every type the page lists the first free start within 60 days and the guest's free days of the coming week; cache only, a minute's answer cache, the landing page's visibility rules, per-IP limited |
+| `landing.rs` | What the landing pages show besides the meetings: sections (grouping, `PAGE_ORDER`, the event type form's section field and suggestions) and the arrange pages `/dashboard/event-types/order` and `/dashboard/teams/{team_id}/order` (up and down moves, positions rewritten in one transaction, team admins only), the host's usual hours line (`usual_hours`), "Based in" and the spoken languages (codes, names in the visitor's language, `join_list`) |
 | `booking.rs` | Booking form POST handlers for every URL shape, input validation, location resolution, SMS phone mode. The personal and team handlers are thin: `book_personal` and `book_team` do the booking (shared with the REST API) and return a `BookingRefusal` the handler renders as before |
 | `booking_actions.rs` | Token pages reached from emails: approve, decline, guest cancel, reschedule (guest and host), claim, ICS |
 | `availability.rs` | Slot computation, busy times, frequency limits, user working hours, timezone helpers, horizon, troubleshoot view |

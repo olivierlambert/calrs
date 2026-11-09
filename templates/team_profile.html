@@ -2,12 +2,6 @@
 {% block title %}{{ team_name }}, calrs{% endblock %}
 {% block head %}{% include "partials/landing_head.html" %}{% endblock %}
 {% block content %}
-{#- Context the handler does not pass yet, all optional (see the partials):
-    team_hours (landing_about.html; only when the team's meetings share one
-    timezone, else none), topic_groups (layout 2, no data model yet) and
-    et_facts or et.location_type / et.requires_confirmation
-    (landing_row.html). On the demo, demo-overlay.sh sets them from the
-    demo's database. -#}
 {% set invite_q = ("?invite=" ~ (invite_token | urlencode)) if (invite_token is defined and invite_token) else "" %}
 <section class="lp-top">
   {% include "partials/public_logo.html" %}
@@ -22,7 +16,7 @@
     <div class="lp-id">
       <h1 class="lp-name">{{ team_name }}</h1>
     </div>
-    {% with hours = team_hours, place = none, languages = none %}{% include "partials/landing_about.html" %}{% endwith %}
+    {% include "partials/landing_about.html" %}
     {% if team_description or members %}
     <div class="lp-more">
       {% if team_description %}<div class="lp-bio">{{ team_description|safe }}</div>{% endif %}

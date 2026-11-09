@@ -778,7 +778,7 @@
     <div class="slots-info-meta">
       <div class="slots-info-meta-item">
         <span class="slots-info-meta-icon">{{ ph.icon("clock", 15) }}</span>
-        <span>{{ event_type.duration_min }} min</span>
+        <span>{{ duration_label(event_type.duration_min) }}</span>
       </div>
       {% if not (host_user_id is defined and host_user_id) %}
       <div class="slots-info-meta-item">

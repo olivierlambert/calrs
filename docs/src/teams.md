@@ -58,7 +58,7 @@ Additional team-specific options:
 
 ## Public team pages
 
-- **Public teams:** `/team/{slug}` shows the team profile with avatar, description, members (faces with their first names), and event types. Each meeting says who the guest meets: "with one of" and the members' faces for round robin, "with everyone" for collective (members excluded with weight 0 are left out), and when it is next free
+- **Public teams:** `/team/{slug}` shows the team profile with avatar, description, members (faces with their first names), and event types. Each meeting says who the guest meets: "with one of" and the members' faces for round robin, "with everyone" for collective (members excluded with weight 0 are left out). Team admins group the team's meetings into sections and set their order at `/dashboard/teams/{id}/order`; the team's usual hours show only when its meetings share one timezone
 - **Private teams:** `/team/{slug}?invite={token}` — same page, but requires a valid invite token
 - **Slot picker:** `/team/{slug}/{event-slug}` — shows available slots based on the scheduling mode. The sidebar displays the team avatar and stacked member avatars (members excluded via weight 0 are hidden)
 - **Legacy redirects:** `/g/{slug}` redirects to `/team/{slug}`, `/t/{token}` redirects to `/team/{slug}?invite={token}`

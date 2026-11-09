@@ -69,14 +69,20 @@ pub async fn send_guest_confirmation_ex(
         ta(
             lang,
             "email-confirm-cancel-notice",
-            [("minutes", m.to_string().as_str())],
+            [(
+                "duration",
+                crate::i18n::format_duration_long(lang, i64::from(m)).as_str(),
+            )],
         )
     });
     let reschedule_notice_line = reschedule_notice_min.filter(|m| *m > 0).map(|m| {
         ta(
             lang,
             "email-confirm-reschedule-notice",
-            [("minutes", m.to_string().as_str())],
+            [(
+                "duration",
+                crate::i18n::format_duration_long(lang, i64::from(m)).as_str(),
+            )],
         )
     });
 

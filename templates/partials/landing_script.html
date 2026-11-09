@@ -19,10 +19,12 @@
     el.style.setProperty('--h', FACE_HUES[fnv(key(el.getAttribute('data-face'))) % FACE_HUES.length]);
   });
 
-  // The host's usual hours, in the guest's timezone when it differs: the
-  // first and last minute on the next day the host usually meets (so a
-  // clock change between now and then is accounted for), converted with
-  // Intl alone. Written as "Your time: 08:00 to 16:30" under the host's line.
+  // The host's usual hours, in the visitor's timezone when it differs:
+  // for each group of days the line names, its first and last minute on
+  // the next day of that group (so a clock change between now and then is
+  // accounted for), converted with Intl alone. Written under the host's
+  // line as "Your time: 08:00 to 16:30", or, when the days differ or move
+  // past midnight, "Your time: Tuesday to Saturday, 01:00 to 09:30".
   var line = document.querySelector('.lp-hours[data-tz]');
   var yours = line && line.querySelector('.lp-yours');
   if (!yours || !window.Intl) return;
@@ -30,6 +32,9 @@
   var gtz = '';
   try { gtz = Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch (e) {}
   if (!htz || !gtz || htz === gtz) return;
+  var groups = [];
+  try { groups = JSON.parse(line.getAttribute('data-groups') || '[]'); } catch (e) { return; }
+  if (!Array.isArray(groups) || !groups.length) return;
   var lang = document.documentElement.lang || 'en';
   var h12 = false;
   try { h12 = localStorage.getItem('calrs_time_format') === '12'; } catch (e) {}
@@ -53,43 +58,87 @@
   }
   // The instant a wall-clock time ("09:00") falls on, in a timezone.
   function instant(tz, y, m, d, hm) {
-    var parts = hm.split(':');
+    var parts = String(hm).split(':');
     var guess = Date.UTC(y, m - 1, d, +parts[0], +parts[1]);
     var o = offset(tz, guess);
     if (o === null) return null;
     var o2 = offset(tz, guess - o);
     return guess - (o2 === null ? o : o2);
   }
-  var days = (line.getAttribute('data-days') || '').split(',').filter(Boolean).map(Number);
-  var day = null;
-  for (var i = 0; i < 8 && !day; i++) {
-    var p = fields(htz, Date.now() + i * 86400000);
-    if (p && (days.length === 0 || days.indexOf(WEEK.indexOf(p.weekday)) >= 0)) day = p;
-  }
-  if (!day) return;
-  var start = instant(htz, +day.year, +day.month, +day.day, line.getAttribute('data-start') || '');
-  var end = instant(htz, +day.year, +day.month, +day.day, line.getAttribute('data-end') || '');
-  if (start === null || end === null || isNaN(start) || isNaN(end)) return;
-  if (offset(htz, start) === offset(gtz, start) && offset(htz, end) === offset(gtz, end)) return;
   function hm(ms) {
     try {
-      return new Intl.DateTimeFormat(lang, { timeZone: gtz, hour: 'numeric', minute: '2-digit',
+      return new Intl.DateTimeFormat(lang, { timeZone: gtz, hour: '2-digit', minute: '2-digit',
         hourCycle: h12 ? 'h12' : 'h23' }).format(new Date(ms));
     } catch (e) { return ''; }
   }
-  var a = hm(start), b = hm(end);
-  if (!a || !b) return;
-  var label = {{ t("landing-hours-yours") | tojson }};
-  var bits = label.split(/(%1|%2)/);
-  bits.forEach(function(bit) {
-    if (bit === '%1' || bit === '%2') {
-      var el = document.createElement('b');
-      el.textContent = bit === '%1' ? a : b;
-      yours.appendChild(el);
-    } else if (bit) {
-      yours.appendChild(document.createTextNode(bit));
+  // The page's own wording, with %1/%2 for what the script fills in.
+  var L = {
+    week: [{{ t("common-weekday-long-sun") | tojson }}, {{ t("common-weekday-long-mon") | tojson }},
+      {{ t("common-weekday-long-tue") | tojson }}, {{ t("common-weekday-long-wed") | tojson }},
+      {{ t("common-weekday-long-thu") | tojson }}, {{ t("common-weekday-long-fri") | tojson }},
+      {{ t("common-weekday-long-sat") | tojson }}],
+    every: {{ t("landing-days-every") | tojson }},
+    daysRange: {{ t("landing-days-range", first="%1", last="%2") | tojson }},
+    and: {{ t("list-and", first="%1", last="%2", e="no") | tojson }},
+    range: {{ t("landing-time-range") | tojson }},
+    next: {{ t("landing-time-range-next") | tojson }},
+    clause: {{ t("landing-yours-clause") | tojson }},
+    two: {{ t("landing-yours-two") | tojson }},
+    yours: {{ t("landing-hours-yours") | tojson }}
+  };
+  function fill(pattern, a, b) { return pattern.replace('%1', a).replace('%2', b); }
+  // As landing::days_phrase: every day, a run of three or more Monday
+  // first as a range, else a list.
+  var MONDAY_FIRST = [1, 2, 3, 4, 5, 6, 0];
+  function daysPhrase(days) {
+    var sorted = MONDAY_FIRST.filter(function(d) { return days.indexOf(d) >= 0; });
+    if (sorted.length === 7) return L.every;
+    var pos = sorted.map(function(d) { return MONDAY_FIRST.indexOf(d); });
+    var run = pos.every(function(x, i) { return i === 0 || x === pos[i - 1] + 1; });
+    if (run && sorted.length >= 3) return fill(L.daysRange, L.week[sorted[0]], L.week[sorted[sorted.length - 1]]);
+    var names = sorted.map(function(d) { return L.week[d]; });
+    if (names.length === 1) return names[0];
+    return fill(L.and, names.slice(0, -1).join(', '), names[names.length - 1]);
+  }
+  // Each group of days in the visitor's zone: its days moved along when
+  // the shift carries the start past midnight, its hours, and whether it
+  // ends on the next day.
+  var differs = false, shifted = false;
+  var entries = [];
+  for (var g = 0; g < groups.length; g++) {
+    var days = Array.isArray(groups[g].days) ? groups[g].days : [];
+    var day = null, hostDay = -1;
+    for (var i = 0; i < 8 && !day; i++) {
+      var p = fields(htz, Date.now() + i * 86400000);
+      if (p && days.indexOf(WEEK.indexOf(p.weekday)) >= 0) { day = p; hostDay = WEEK.indexOf(p.weekday); }
     }
-  });
+    if (!day) return;
+    var start = instant(htz, +day.year, +day.month, +day.day, groups[g].start);
+    var end = instant(htz, +day.year, +day.month, +day.day, groups[g].end);
+    if (start === null || end === null || isNaN(start) || isNaN(end)) return;
+    if (offset(htz, start) !== offset(gtz, start) || offset(htz, end) !== offset(gtz, end)) differs = true;
+    var gs = fields(gtz, start), ge = fields(gtz, end);
+    if (!gs || !ge) return;
+    var shift = (WEEK.indexOf(gs.weekday) - hostDay + 7) % 7;
+    if (shift !== 0) shifted = true;
+    var from = hm(start), to = hm(end);
+    if (!from || !to) return;
+    var nextDay = gs.weekday !== ge.weekday;
+    entries.push({
+      days: days.map(function(d) { return (d + shift) % 7; }),
+      range: fill(nextDay ? L.next : L.range, from, to)
+    });
+  }
+  if (!differs || !entries.length) return;
+  var text;
+  if (entries.length === 1 && !shifted) {
+    // The same days, one set of hours: the hours alone.
+    text = entries[0].range;
+  } else {
+    var clauses = entries.map(function(e) { return fill(L.clause, daysPhrase(e.days), e.range); });
+    text = clauses.length === 1 ? clauses[0] : fill(L.two, clauses[0], clauses[1]);
+  }
+  yours.textContent = L.yours.replace('%1', text);
   yours.hidden = false;
 })();
 </script>

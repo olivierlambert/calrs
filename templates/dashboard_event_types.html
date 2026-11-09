@@ -65,7 +65,7 @@
           {% endif %}
         </div>
         <div class="ui-row-meta">
-          <span>{{ t("event-types-duration", minutes=et.duration_min) }}</span>
+          <span>{{ duration_label(et.duration_min) }}</span>
           {% if et.is_team %}<span>{% if et.scheduling_mode == "collective" %}{{ t("event-types-mode-collective") }}{% else %}{{ t("event-types-mode-round-robin") }}{% endif %}</span>{% endif %}
           {% if et.view_url %}
           <a href="{{ et.view_url }}" target="_blank" rel="noopener" class="et-path" title="{% if et.visibility == 'public' %}{{ t('event-types-view-public') }}{% else %}{{ t('event-types-view-page') }}{% endif %}">{{ et_path }}/{{ et.slug }}</a>

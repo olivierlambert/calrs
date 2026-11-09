@@ -268,6 +268,8 @@ pub(super) struct EventTypeForm {
     pub(super) visibility: Option<String>, // "public", "internal", or "private"
     pub(super) location_type: Option<String>, // "link", "phone", "in_person", "custom", "jitsi_auto", "webhook_auto", "google_meet"
     pub(super) location_value: Option<String>,
+    /// The landing page section, free text; absent: left as stored.
+    pub(super) section: Option<String>,
     // Optional per-event-type pattern override for the jitsi_auto provider.
     // NULL/empty falls back to the org-wide default pattern from auth_config.
     meeting_pattern_override: Option<String>,
@@ -785,6 +787,9 @@ pub(super) async fn new_event_type_form(
             form_requires_confirmation => matches!(preset, "private"),
             form_visibility => match preset { "private" => "private", "internal" => "internal", _ => "public" },
             form_location_type => "link",
+            form_section => "",
+            section_suggestions => section_suggestions(&state.pool, &user.id, None).await,
+            order_url => "/dashboard/event-types/order",
             form_location_value => "",
             form_meeting_pattern_override => "",
             form_avail_schedule => user_avail,
@@ -1064,6 +1069,7 @@ pub(super) async fn create_event_type(
             form.notes_mode.as_deref(),
         )
         .await?;
+        save_section_in(&mut tx, &et_id, form.section.as_deref()).await?;
         if let Some(tid) = team_id {
             save_created_member_weights(&mut tx, &et_id, tid, &form.member_priorities).await?;
             save_watcher_teams(
@@ -1432,6 +1438,9 @@ pub(super) async fn edit_event_type_form(
             form_sms_phone_mode => form_sms_phone_mode,
             form_visibility => visibility,
             form_location_type => loc_type,
+            form_section => stored_section(&state.pool, &et_id).await,
+            section_suggestions => section_suggestions(&state.pool, &user.id, None).await,
+            order_url => "/dashboard/event-types/order",
             form_location_value => loc_value.unwrap_or_default(),
             form_meeting_pattern_override => meeting_pattern_override.clone().unwrap_or_default(),
             form_avail_days => avail_days,
@@ -1740,6 +1749,7 @@ pub(super) async fn update_event_type(
             form.notes_mode.as_deref(),
         )
         .await?;
+        save_section_in(&mut tx, &et_id, form.section.as_deref()).await?;
         tx.commit().await
     }
     .await;
@@ -2344,9 +2354,6 @@ async fn form_dg_eligible_users(pool: &SqlitePool, user_id: &str) -> Vec<minijin
         .collect()
 }
 
-/// The slug the landing pages' hint endpoint owns (`next_free.rs`).
-pub(super) const NEXT_FREE_SLUG: &str = "next-free";
-
 /// The form error key for `slug` when another event type already holds it,
 /// `None` when it is free. The schema keeps slugs unique per account
 /// (personal and team event types alike, since a team event type is stored
@@ -2359,26 +2366,6 @@ pub(super) async fn slug_conflict(
     team_id: Option<&str>,
     exclude_id: Option<&str>,
 ) -> Option<&'static str> {
-    // The landing pages answer their next-free hints at
-    // /u/{username}/next-free and /team/{slug}/next-free, so no event type
-    // may take that slug: its page would be unreachable. Only a new or
-    // changed slug is refused, so an event type that still holds it (the
-    // upgrade renames them, see 20261109014416_rename_next_free_slugs) can
-    // be saved and renamed.
-    if slug == NEXT_FREE_SLUG {
-        let current: Option<String> = match exclude_id {
-            Some(id) => sqlx::query_scalar("SELECT slug FROM event_types WHERE id = ?")
-                .bind(id)
-                .fetch_optional(pool)
-                .await
-                .ok()
-                .flatten(),
-            None => None,
-        };
-        if current.as_deref() != Some(NEXT_FREE_SLUG) {
-            return Some("form-error-event-type-slug-taken");
-        }
-    }
     let taken = |scope: &'static str, value: String| async move {
         sqlx::query_scalar::<_, i64>(&format!(
             "SELECT 1 FROM event_types WHERE {scope} = ? AND slug = ? AND id IS NOT ?"
@@ -2629,6 +2616,13 @@ async fn render_event_type_form_error(
             form_sms_phone_mode => crate::sms::phone_mode::parse(form.sms_phone_mode.as_deref().unwrap_or("")),
             form_visibility => form.visibility.as_deref().unwrap_or("public"),
             form_location_type => form.location_type.as_deref().unwrap_or("link"),
+            form_section => form.section.as_deref().unwrap_or(""),
+            section_suggestions => section_suggestions(pool, &user.id, is_group.then_some(form_team_id)).await,
+            order_url => if is_group {
+                format!("/dashboard/teams/{form_team_id}/order")
+            } else {
+                "/dashboard/event-types/order".to_string()
+            },
             form_location_value => form.location_value.as_deref().unwrap_or(""),
             form_meeting_pattern_override => form.meeting_pattern_override.as_deref().unwrap_or(""),
             form_avail_days => form.avail_days.as_deref().unwrap_or("1,2,3,4,5"),
@@ -2946,6 +2940,9 @@ pub(super) async fn new_group_event_type_form(
             form_reminder_minutes => 1440,
             form_max_additional_guests => 0,
             form_location_type => "link",
+            form_section => "",
+            section_suggestions => section_suggestions(&state.pool, &user.id, None).await,
+            order_url => "",
             form_location_value => "",
             form_meeting_pattern_override => "",
             form_avail_schedule => user_avail,
@@ -3192,6 +3189,7 @@ pub(super) async fn create_group_event_type(
             form.notes_mode.as_deref(),
         )
         .await?;
+        save_section_in(&mut tx, &et_id, form.section.as_deref()).await?;
         save_created_member_weights(&mut tx, &et_id, &team_id, &form.member_priorities).await?;
         save_watcher_teams(
             &mut tx,
@@ -3556,6 +3554,9 @@ pub(super) async fn edit_group_event_type_form(
             form_sms_phone_mode => form_sms_phone_mode,
             form_visibility => visibility,
             form_location_type => loc_type,
+            form_section => stored_section(&state.pool, &et_id).await,
+            section_suggestions => section_suggestions(&state.pool, &user.id, Some(&team_id)).await,
+            order_url => format!("/dashboard/teams/{team_id}/order"),
             form_location_value => loc_value.unwrap_or_default(),
             form_meeting_pattern_override => meeting_pattern_override.clone().unwrap_or_default(),
             form_avail_days => avail_days,
@@ -3888,6 +3889,7 @@ pub(super) async fn update_group_event_type(
             form.notes_mode.as_deref(),
         )
         .await?;
+        save_section_in(&mut tx, &et_id, form.section.as_deref()).await?;
         save_watcher_teams(
             &mut tx,
             &et_id,

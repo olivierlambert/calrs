@@ -1,29 +1,11 @@
 {#- Shared head for the two public landing pages (/u/{username} and
     /team/{slug}). The host is set like a business card on a tint of the
-    brand accent; below it, each meeting is one ruled line led by
+    brand accent; below it, the meetings sit in cards, each a row led by
     stopwatch faces of its length, coloured by that length. People get the
     overview's per-person hue. Colours come from the theme variables only
     (hues are mixed into them), so light, dark, every preset and custom
     themes follow. Archivo is the dashboard's face; the booking pages keep
-    Inter, and the two never meet on one page.
-
-    Two layouts while the owner compares them, picked with ?landing=1|2,
-    remembered in localStorage (calrs_landing) and set as a class on <html>
-    before the first paint: lp-l1 (purpose first) or lp-l2 (adds topic
-    headings, a line on how booking works, the host's place and
-    languages). Elements only one layout shows carry lp-l1-only or
-    lp-l2-only. -#}
-<script>
-(function() {
-  var v = '1';
-  try {
-    var q = new URLSearchParams(location.search).get('landing');
-    if (q === '1' || q === '2') { v = q; localStorage.setItem('calrs_landing', q); }
-    else if (localStorage.getItem('calrs_landing') === '2') { v = '2'; }
-  } catch (e) {}
-  document.documentElement.classList.add('lp-l' + v);
-})();
-</script>
+    Inter, and the two never meet on one page. -#}
 <style>
   @font-face {
     font-family: 'Archivo';
@@ -90,7 +72,6 @@
   }
   .container { max-width: 700px; margin-top: 0; margin-bottom: 0; }
   .lp-num { font-variant-numeric: tabular-nums; }
-  html:not(.lp-l2) .lp-l2-only, html.lp-l2 .lp-l1-only { display: none !important; }
 
   /* The header: logo and the host's card on a tint of the brand accent,
      edge to edge (a tint, not a gradient). */
@@ -151,7 +132,6 @@
   .lp-about .nav-ic { flex: none; margin-top: 0.15em; }
   .lp-yours { display: block; margin-top: 0.1rem; font-size: 0.875rem; font-variant-numeric: tabular-nums; }
   .lp-yours[hidden] { display: none; }
-  .lp-yours b { color: var(--text); font-weight: 600; }
 
   /* Team members: a row of faces, each with a first name under it. */
   .lp-members { display: flex; flex-wrap: wrap; gap: 0.9rem 1.25rem; margin-top: 1.25rem; list-style: none; }

@@ -228,21 +228,24 @@ base-powered-by = Powered by
 profile-pick-event-type-invite = Pick an event type to book a time.
 profile-no-event-type = No event types available yet.
 
-# Public landing pages (/u/{username}, /team/{slug}). In landing-next-free,
-# %1 is the time, filled in by the page itself.
-landing-duration-h = { $hours } h
-landing-duration-aria =
+# Lengths of time (i18n::format_duration and format_duration_long, the
+# templates' duration_label() and duration_words()): the short form labels a
+# meeting ("45 min", "1 h 30"), the long one is read in sentences and by
+# screen readers, with the language's plurals.
+duration-short-m = { $minutes } min
+duration-short-h = { $hours } h
+duration-short-hm = { $hours } h { $minutes } min
+duration-long-m =
     { $minutes ->
         [one] { $minutes } minute
        *[other] { $minutes } minutes
     }
-landing-duration-hm = { $hours } h { $minutes }
-landing-duration-aria-h =
+duration-long-h =
     { $hours ->
         [one] { $hours } hour
        *[other] { $hours } hours
     }
-landing-duration-aria-hm =
+duration-long-hm =
     { $hours ->
         [one] { $hours } hour
        *[other] { $hours } hours
@@ -250,22 +253,39 @@ landing-duration-aria-hm =
         [one] { $minutes } minute
        *[other] { $minutes } minutes
     }
-landing-next-free = Next: %1
+duration-long-d =
+    { $days ->
+        [one] { $days } day
+       *[other] { $days } days
+    }
+# Public landing pages (/u/{username}, /team/{slug}).
 landing-with-one-of = with one of
 landing-with-everyone = with everyone
-# landing-hours reads the host's usual weekly hours; $days is landing-days-range
-# or landing-days-every. In landing-hours-yours, %1 and %2 are the same hours in
-# the guest's timezone, filled in by the page itself.
+# landing-hours, -two and -vary read the host's usual weekly hours; $days is
+# landing-days-range, landing-days-every or a list joined with list-and. In
+# landing-hours-yours, %1 is the same hours in the visitor's timezone, each
+# written with landing-time-range (%1 and %2 the times), or -next when it ends
+# the next day; with days (when they differ or move), landing-yours-clause
+# (%1 the days, %2 the hours) and landing-yours-two for two groups. Filled in by
+# the page script.
 landing-hours = Usually available { $days }, { $start } to { $end } ({ $zone } time)
 landing-days-range = { $first } to { $last }
 landing-days-every = every day
-landing-hours-yours = Your time: %1 to %2
+landing-hours-yours = Your time: %1
 landing-on-request = On request
 landing-on-request-hint = Each request is confirmed by hand before it is booked.
 landing-how-it-works = Pick a topic, choose a time that suits you, and you'll get a confirmation by email.
 landing-based-in = Based in { $place }
 landing-speaks = Speaks { $languages }
 landing-meetings = Meetings
+landing-hours-two = Usually available { $days }, { $start } to { $end }, and { $days2 }, { $start2 } to { $end2 } ({ $zone } time)
+landing-hours-vary = Usually available { $days } ({ $zone } time), hours vary by day
+landing-time-range = %1 to %2
+landing-time-range-next = %1 to %2 the next day
+landing-yours-clause = %1, %2
+landing-yours-two = %1, and %2
+landing-other-meetings = Other meetings
+list-and = { $first } and { $last }
 
 # Month and weekday names + per-locale date format patterns.
 # Used by server-side date formatters in src/i18n.rs.
@@ -344,8 +364,8 @@ email-cancel-ics-attached-html = A calendar cancellation is attached to this ema
 
 # Confirmation email: notice-window policy lines (src/email.rs)
 
-email-confirm-cancel-notice = Note: cancellation requires at least { $minutes } minutes notice.
-email-confirm-reschedule-notice = Note: rescheduling requires at least { $minutes } minutes notice.
+email-confirm-cancel-notice = Note: cancellation requires at least { $duration } notice.
+email-confirm-reschedule-notice = Note: rescheduling requires at least { $duration } notice.
 
 # Event type form: Google Meet location + cancel/reschedule minimum notice
 # (templates/event_type_form.html, src/google_meet.rs)
@@ -388,14 +408,14 @@ event-type-form-saved = Saved.
 
 # Booking confirmation: cancel/reschedule policy notices (templates/confirmed.html)
 
-confirmed-cancel-notice-info = Cancellation requires at least { $minutes } minutes notice before the meeting.
-confirmed-reschedule-notice-info = Rescheduling requires at least { $minutes } minutes notice before the meeting.
+confirmed-cancel-notice-info = Cancellation requires at least { $duration } notice before the meeting.
+confirmed-reschedule-notice-info = Rescheduling requires at least { $duration } notice before the meeting.
 
 # Booking action blocked page (templates/booking_action_blocked.html)
 
 booking-blocked-title-cancel = This booking can no longer be cancelled online
 booking-blocked-title-reschedule = This booking can no longer be rescheduled online
-booking-blocked-body = The host requires at least { $minutes } minutes of notice. If you cannot attend, please email <a href="mailto:{ $host_email }">{ $host_email }</a> directly.
+booking-blocked-body = The host requires at least { $duration } of notice. If you cannot attend, please email <a href="mailto:{ $host_email }">{ $host_email }</a> directly.
 
 # Dashboard event types listing (templates/dashboard_event_types.html)
 
@@ -465,9 +485,6 @@ overview-pending-approval = Waiting for your decision
 overview-confirm = Approve
 overview-decline = Decline
 overview-copy-link = Copy booking link
-overview-duration-h = { $hours } h
-overview-duration-m = { $minutes } min
-overview-duration-hm = { $hours } h { $minutes } min
 overview-chart-title = Meetings per week
 overview-chart-this-week = This week
 overview-chart-week-of = Week of { $date }
@@ -653,7 +670,6 @@ invite-links-page-title = Invite Links
 invite-links-heading = Invite Links
 invite-links-new = New internal event
 invite-links-help = Generate single-use booking links for internal event types. Any authenticated colleague can create and share links here.
-invite-links-duration = { $minutes }min
 invite-links-hosted-by = Hosted by { $host }
 invite-links-get-link = Get link
 invite-links-invites = Invites
@@ -723,7 +739,6 @@ event-types-badge-expired = expired
 event-types-badge-range-from = from { $date }
 event-types-badge-range-until = until { $date }
 event-types-send-invites = Send invites
-event-types-duration = { $minutes }min
 event-types-mode-collective = collective
 event-types-mode-round-robin = round robin
 event-types-edit = Edit
@@ -902,10 +917,9 @@ troubleshoot-page-title = Troubleshoot
 troubleshoot-empty = No event types found. { $link } to start troubleshooting availability.
 troubleshoot-empty-link-label = Create one
 troubleshoot-subtitle = See why time slots are available or blocked for { $title }
-troubleshoot-duration = { $minutes }min
-troubleshoot-buffer-before = { $minutes }min buffer before
-troubleshoot-buffer-after = { $minutes }min buffer after
-troubleshoot-min-notice = { $minutes }min notice
+troubleshoot-buffer-before = { $duration } buffer before
+troubleshoot-buffer-after = { $duration } buffer after
+troubleshoot-min-notice = { $duration } notice
 troubleshoot-blocked-override = Blocked by date override (day off)
 troubleshoot-custom-hours-active = Custom hours override active (replaces weekly rules)
 troubleshoot-microsoft-not-ready = Your Microsoft calendar has not finished its first sync: every time shows as busy until it has. See Calendar sources.
@@ -922,10 +936,10 @@ troubleshoot-none-no-rules = No availability rules for this day of the week. Thi
 troubleshoot-none-all-bookable = No blocked slots during availability hours. All times are bookable.
 troubleshoot-label-outside = Outside availability
 troubleshoot-label-available = Available
-troubleshoot-label-min-notice = Min. notice ({ $minutes }min)
+troubleshoot-label-min-notice = Min. notice ({ $duration })
 troubleshoot-label-beyond-horizon = Beyond booking horizon ({ $days } days)
 troubleshoot-label-outside-date-range = Outside the bookable date range
-troubleshoot-label-buffer = Buffer ({ $minutes }min)
+troubleshoot-label-buffer = Buffer ({ $duration })
 troubleshoot-label-resource-busy = Resource busy: { $names }
 troubleshoot-detail-around = Around: { $label }
 troubleshoot-detail-around-booking = Around: { $guest } booking
@@ -2428,3 +2442,54 @@ etf-q-key = Key for webhooks: %1
 etf-hint-questions-one = 1 question
 etf-hint-questions-other = %1 questions
 etf-hint-no-questions = No questions
+
+# Language names, for the languages a host speaks (landing.rs).
+language-name-en = English
+language-name-fr = French
+language-name-de = German
+language-name-es = Spanish
+language-name-it = Italian
+language-name-pt = Portuguese
+language-name-nl = Dutch
+language-name-pl = Polish
+language-name-et = Estonian
+language-name-ar = Arabic
+language-name-zh = Chinese
+language-name-ja = Japanese
+language-name-ko = Korean
+language-name-ru = Russian
+language-name-uk = Ukrainian
+language-name-sv = Swedish
+language-name-da = Danish
+language-name-nb = Norwegian
+language-name-fi = Finnish
+language-name-cs = Czech
+language-name-ro = Romanian
+language-name-el = Greek
+language-name-tr = Turkish
+language-name-hi = Hindi
+language-name-he = Hebrew
+language-name-hu = Hungarian
+
+# Sections and order of the landing pages (landing.rs, event type form, settings).
+etf-section = Section
+etf-section-placeholder = Getting started
+etf-section-help = Meetings with the same section are grouped under it on the public page, shown as written.
+etf-section-order-link = Change the order
+settings-based-in = Based in
+settings-based-in-placeholder = Paris, France
+settings-based-in-help = A city or region, shown under your name on your public page.
+settings-speaks = Languages you speak
+settings-speaks-help = Shown under your name on your public page, in each visitor's language.
+page-order-heading = Order of your page
+page-order-team-heading = Order of the { $team } page
+page-order-subtitle = Sections and meetings appear on the public page in this order. A meeting's section is set in its settings.
+page-order-back = Back
+page-order-empty = No meetings yet.
+page-order-up = Move up
+page-order-down = Move down
+page-order-section-up = Move { $section } up
+page-order-section-down = Move { $section } down
+page-order-type-up = Move { $title } up
+page-order-type-down = Move { $title } down
+page-order-not-listed = Not on the public page (disabled, internal or private)

@@ -292,6 +292,40 @@ pub fn format_date(date: NaiveDate, lang: &str) -> String {
     translate(lang, "common-format-date", Some(&args))
 }
 
+/// A length of time as a label, in `lang`: "45 min", "2 h", "1 h 30 min"
+/// (each locale writes its own units). The one formatter for a meeting's
+/// length on pages, in emails and in texts; negative lengths read as
+/// their absolute value.
+pub fn format_duration(lang: &str, minutes: i64) -> String {
+    duration_in(lang, minutes, false)
+}
+
+/// A length of time in words, in `lang`, with the language's plurals:
+/// "1 minute", "2 hours 30 minutes", and whole days as days ("2 days"), for
+/// sentences ("at least 2 days of notice") and screen readers.
+pub fn format_duration_long(lang: &str, minutes: i64) -> String {
+    duration_in(lang, minutes, true)
+}
+
+fn duration_in(lang: &str, minutes: i64, long: bool) -> String {
+    let total = minutes.unsigned_abs();
+    let (hours, rest) = (total / 60, total % 60);
+    let mut args = FluentArgs::new();
+    args.set("days", number((total / 1440) as f64));
+    args.set("hours", number(hours as f64));
+    args.set("minutes", number(rest as f64));
+    let key = match (long, hours, rest) {
+        (true, _, 0) if total >= 1440 && total.is_multiple_of(1440) => "duration-long-d",
+        (true, 0, _) => "duration-long-m",
+        (true, _, 0) => "duration-long-h",
+        (true, _, _) => "duration-long-hm",
+        (false, 0, _) => "duration-short-m",
+        (false, _, 0) => "duration-short-h",
+        (false, _, _) => "duration-short-hm",
+    };
+    translate(lang, key, Some(&args))
+}
+
 /// The BCP-47 tag for a locale code, for `<html lang>`. The codes are the
 /// bundle directory names, and `pt` is Brazilian Portuguese: declared as
 /// plain `pt`, browsers and screen readers would assume European Portuguese.
@@ -311,7 +345,27 @@ pub fn html_lang(code: &str) -> &str {
 /// rendering context's `lang` var.
 pub fn register(env: &mut Environment<'static>) {
     env.add_function("t", t_function);
+    // Named for what they return, not `duration`, which pages use as a
+    // variable. A missing length renders nothing rather than failing the page.
+    env.add_function("duration_label", |state: &State, minutes: Option<i64>| {
+        minutes
+            .map(|m| format_duration(&state_lang(state), m))
+            .unwrap_or_default()
+    });
+    env.add_function("duration_words", |state: &State, minutes: Option<i64>| {
+        minutes
+            .map(|m| format_duration_long(&state_lang(state), m))
+            .unwrap_or_default()
+    });
     env.add_filter("html_lang", |code: String| html_lang(&code).to_string());
+}
+
+/// The language a template renders in: its context's `lang`, else English.
+fn state_lang(state: &State) -> String {
+    state
+        .lookup("lang")
+        .and_then(|v| v.as_str().map(|s| s.to_string()))
+        .unwrap_or_else(|| DEFAULT_LANG.to_string())
 }
 
 /// A template argument on its way into Fluent.
@@ -357,10 +411,7 @@ pub fn number<'a>(n: f64) -> FluentValue<'a> {
 }
 
 fn t_function(state: &State, key: &str, kwargs: Kwargs) -> String {
-    let lang_owned: String = state
-        .lookup("lang")
-        .and_then(|v| v.as_str().map(|s| s.to_string()))
-        .unwrap_or_else(|| DEFAULT_LANG.to_string());
+    let lang_owned = state_lang(state);
 
     // Collect kwargs into FluentArgs. We hold the converted strings in a Vec
     // so FluentArgs (which borrows) stays valid for the format_pattern call.
@@ -1130,7 +1181,7 @@ mod tests {
         let mut env = Environment::new();
         env.set_undefined_behavior(minijinja::UndefinedBehavior::Lenient);
         register(&mut env);
-        env.add_template("p", "{{ t('confirmed-cancel-notice-info', minutes=m) }}")
+        env.add_template("p", "{{ t('troubleshoot-label-beyond-horizon', days=m) }}")
             .expect("template");
         let tmpl = env.get_template("p").expect("template");
         for lang in ["en", "fr"] {
@@ -1143,6 +1194,37 @@ mod tests {
                 "{lang}: {out}"
             );
         }
+    }
+
+    /// One formatter for every length shown: short labels, long words with
+    /// the language's plurals, whole days as days, Polish few and many.
+    #[test]
+    fn durations_read_in_the_reader_language() {
+        assert_eq!(format_duration("en", 45), "45 min");
+        assert_eq!(format_duration("en", 120), "2 h");
+        assert_eq!(format_duration("en", 90), "1 h 30 min");
+        assert_eq!(format_duration("fr", 90), "1 h 30");
+        assert_eq!(format_duration("de", 90), "1 Std. 30 Min.");
+        assert_eq!(format_duration_long("en", 1), "1 minute");
+        assert_eq!(format_duration_long("en", 61), "1 hour 1 minute");
+        assert_eq!(format_duration_long("en", 150), "2 hours 30 minutes");
+        assert_eq!(format_duration_long("en", 1440), "1 day");
+        assert_eq!(format_duration_long("en", 2880), "2 days");
+        assert_eq!(format_duration_long("en", 1500), "25 hours");
+        assert_eq!(format_duration_long("pl", 2 * 60), "2 godziny");
+        assert_eq!(format_duration_long("pl", 5 * 60), "5 godzin");
+        assert_eq!(format_duration_long("pl", 22), "22 minuty");
+        assert_eq!(format_duration_long("de-formal", 1440), "1 Tag");
+        let mut env = Environment::new();
+        register(&mut env);
+        env.add_template("p", "{{ duration_label(m) }}, {{ duration_words(m) }}")
+            .expect("template");
+        let out = env
+            .get_template("p")
+            .expect("template")
+            .render(minijinja::context! { lang => "fr", m => 90 })
+            .expect("render");
+        assert_eq!(out, "1 h 30, 1 heure 30 minutes");
     }
 
     /// Every shipped locale is complete: a key added to English without a
