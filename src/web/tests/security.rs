@@ -94,6 +94,203 @@ async fn rate_limiter_resets_after_window() {
     assert!(!limiter.check_limited("ip1").await); // reset, allowed again
 }
 
+/// Compile-time pin (#85, FINDING-14): the secrets the web state keeps for
+/// the life of the process are wiped when dropped.
+#[allow(dead_code)]
+fn long_lived_secrets_are_wiped_on_drop(
+    state: &AppState,
+    captcha: &captcha::CaptchaConfig,
+    hook: &meeting::WebhookConfig,
+    ews: &crate::ews::global::EwsGlobalConfig,
+) {
+    fn wiped_on_drop<T: zeroize::ZeroizeOnDrop>(_: &T) {}
+    wiped_on_drop(&state.secret_key);
+    wiped_on_drop(&captcha.secret);
+    wiped_on_drop(&hook.secret);
+    wiped_on_drop(&ews.service_password);
+}
+
+// --- Persistent (SQLite) rate limiter, booking POSTs (#85, FINDING-10) ---
+
+async fn limiter(
+    pool: &SqlitePool,
+    bucket: &'static str,
+    max: u32,
+    now: i64,
+) -> PersistentRateLimiter {
+    PersistentRateLimiter::load_at(pool.clone(), bucket, max, 300, now).await
+}
+
+async fn stored_count(pool: &SqlitePool, bucket: &str, key: &str) -> Option<i64> {
+    sqlx::query_scalar("SELECT count FROM rate_limit_counters WHERE bucket = ? AND key = ?")
+        .bind(bucket)
+        .bind(key)
+        .fetch_optional(pool)
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn persistent_limiter_counts_per_key_and_resets_after_the_window() {
+    let pool = setup_test_db().await;
+    let limiter = limiter(&pool, "test", 3, 1_000).await;
+    for _ in 0..3 {
+        assert!(!limiter.check_limited_at("ip1", 1_000).await);
+    }
+    assert!(
+        limiter.check_limited_at("ip1", 1_100).await,
+        "4th is refused"
+    );
+    assert!(!limiter.check_limited_at("ip2", 1_100).await, "per key");
+    // The window is measured from the first request and is inclusive.
+    assert!(limiter.check_limited_at("ip1", 1_300).await);
+    assert!(!limiter.check_limited_at("ip1", 1_301).await, "new window");
+    assert!(!limiter.check_limited_at("ip1", 1_302).await);
+}
+
+#[tokio::test]
+async fn persistent_limiter_resets_when_the_clock_goes_back() {
+    let pool = setup_test_db().await;
+    let limiter = limiter(&pool, "test", 1, 5_000).await;
+    assert!(!limiter.check_limited_at("ip1", 5_000).await);
+    assert!(limiter.check_limited_at("ip1", 5_010).await);
+    // Clock stepped back before the window's start: a new window, not one
+    // that stays shut until the clock catches up.
+    assert!(!limiter.check_limited_at("ip1", 4_000).await);
+}
+
+#[tokio::test]
+async fn persistent_limiter_survives_a_restart() {
+    // A limiter loaded from the same database is what a restart builds: it
+    // must see the counts the previous one wrote.
+    let pool = setup_test_db().await;
+    let before = limiter(&pool, "booking", 2, 1_000).await;
+    assert!(!before.check_limited_at("ip1", 1_000).await);
+    assert!(!before.check_limited_at("ip1", 1_000).await);
+    drop(before);
+    let after = limiter(&pool, "booking", 2, 1_010).await;
+    assert!(after.check_limited_at("ip1", 1_010).await);
+    // Buckets do not share counts (the MCP invite limit has its own).
+    let other = limiter(&pool, "mcp-invite", 2, 1_010).await;
+    assert!(!other.check_limited_at("ip1", 1_010).await);
+    // A window that closed while the server was down is not reloaded.
+    let later = limiter(&pool, "booking", 2, 1_400).await;
+    assert!(!later.check_limited_at("ip1", 1_400).await);
+}
+
+#[tokio::test]
+async fn persistent_limiter_refused_requests_never_write() {
+    let pool = setup_test_db().await;
+    let limiter = limiter(&pool, "test", 3, 1_000).await;
+    for _ in 0..3 {
+        limiter.check_limited_at("ip1", 1_000).await;
+    }
+    assert_eq!(stored_count(&pool, "test", "ip1").await, Some(3));
+    // Swap the row for a marker: a refused request that wrote would
+    // overwrite it.
+    sqlx::query("UPDATE rate_limit_counters SET count = 99")
+        .execute(&pool)
+        .await
+        .unwrap();
+    for _ in 0..20 {
+        assert!(limiter.check_limited_at("ip1", 1_010).await);
+    }
+    assert_eq!(stored_count(&pool, "test", "ip1").await, Some(99));
+}
+
+#[tokio::test]
+async fn persistent_limiter_keeps_its_decision_when_the_database_fails() {
+    // No fail-open: with the table gone, the in-memory count still refuses.
+    let pool = setup_test_db().await;
+    let limiter = limiter(&pool, "test", 2, 1_000).await;
+    sqlx::query("DROP TABLE rate_limit_counters")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert!(!limiter.check_limited_at("ip1", 1_000).await);
+    assert!(!limiter.check_limited_at("ip1", 1_000).await);
+    assert!(limiter.check_limited_at("ip1", 1_000).await);
+}
+
+#[tokio::test]
+async fn persistent_limiter_prune_drops_only_closed_windows() {
+    let pool = setup_test_db().await;
+    let limiter = limiter(&pool, "test", 3, 1_000).await;
+    limiter.check_limited_at("old", 1_000).await;
+    limiter.check_limited_at("live", 1_200).await;
+    assert_eq!(prune_rate_limit_counters(&pool, 1_301).await.unwrap(), 1);
+    let keys: Vec<String> = sqlx::query_scalar("SELECT key FROM rate_limit_counters")
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+    assert_eq!(keys, vec!["live".to_string()]);
+}
+
+#[test]
+fn client_ip_groups_ipv6_by_64() {
+    let _lock = crate::test_support::ENV_LOCK.blocking_lock();
+    let _env = crate::test_support::EnvGuard::new();
+    let key = |xff: &str| {
+        let mut headers = HeaderMap::new();
+        headers.insert(PEER_ADDR_HEADER, "127.0.0.1".parse().unwrap());
+        headers.insert("x-forwarded-for", xff.parse().unwrap());
+        client_ip_for_rate_limit(&headers)
+    };
+    assert_eq!(key("2001:db8:1:2::1"), "2001:db8:1:2::/64");
+    assert_eq!(
+        key("2001:db8:1:2::1"),
+        key("2001:db8:1:2:aaaa:bbbb:cccc:dddd")
+    );
+    assert_ne!(key("2001:db8:1:2::1"), key("2001:db8:1:3::1"));
+}
+
+#[tokio::test]
+async fn booking_rate_limit_is_kept_across_a_restart() {
+    let _lock = crate::test_support::ENV_LOCK.lock().await;
+    let _env = crate::test_support::EnvGuard::new();
+    // Ten booking POSTs from one address on one server, the eleventh on a
+    // fresh server over the same database: still refused. The limit keys on
+    // the rightmost X-Forwarded-For value, so a forged leftmost one does
+    // not buy a new budget.
+    let (app, pool, _, _) = setup_test_app().await;
+    let post = |xff: &str| {
+        axum::http::Request::builder()
+            .method("POST")
+            .uri("/u/testuser/test-meeting/book")
+            .header("cookie", "__Host-calrs_csrf=c")
+            .header("x-forwarded-for", xff)
+            .header("content-type", "application/x-www-form-urlencoded")
+            .body(Body::from(
+                "_csrf=c&date=2030-01-07&time=10:00&name=&email=bad&tz=UTC",
+            ))
+            .unwrap()
+    };
+    for i in 0..10 {
+        let response = app
+            .clone()
+            .oneshot(post(&format!("10.0.0.{i}, 203.0.113.7")))
+            .await
+            .unwrap();
+        let body = body_string(response).await;
+        assert!(!body.contains("Too many booking attempts"), "request {i}");
+    }
+    let restarted = create_router(pool.clone(), std::env::temp_dir(), [0u8; 32])
+        .await
+        .layer(local_proxy_peer());
+    let response = restarted
+        .clone()
+        .oneshot(post("198.51.100.1, 203.0.113.7"))
+        .await
+        .unwrap();
+    assert!(body_string(response)
+        .await
+        .contains("Too many booking attempts"));
+    let response = restarted.oneshot(post("203.0.113.8")).await.unwrap();
+    assert!(!body_string(response)
+        .await
+        .contains("Too many booking attempts"));
+}
+
 #[tokio::test]
 async fn rate_limiter_sweeps_expired_entries() {
     // Pin that periodic eviction actually drops entries from the map so
@@ -343,12 +540,16 @@ fn verify_csrf_token_fails_when_same_length_differs_at_last_byte() {
 
 #[test]
 fn client_ip_unknown_when_no_headers() {
+    let _lock = crate::test_support::ENV_LOCK.blocking_lock();
+    let _env = crate::test_support::EnvGuard::new();
     let headers = HeaderMap::new();
     assert_eq!(client_ip_for_rate_limit(&headers), "unknown");
 }
 
 #[test]
 fn client_ip_ignores_x_real_ip() {
+    let _lock = crate::test_support::ENV_LOCK.blocking_lock();
+    let _env = crate::test_support::EnvGuard::new();
     // We deliberately do not honour X-Real-IP: in default Caddy/Nginx
     // setups the proxy does not overwrite a client-supplied value, so
     // trusting it would let the client forge their identity directly.
@@ -359,9 +560,12 @@ fn client_ip_ignores_x_real_ip() {
 
 #[test]
 fn client_ip_takes_rightmost_xff() {
+    let _lock = crate::test_support::ENV_LOCK.blocking_lock();
+    let _env = crate::test_support::EnvGuard::new();
     // The leftmost value is whatever the original client put in the
     // header; the rightmost is the trusted proxy's view of its peer.
     let mut headers = HeaderMap::new();
+    headers.insert(PEER_ADDR_HEADER, "127.0.0.1".parse().unwrap());
     headers.insert(
         "x-forwarded-for",
         "attacker-spoofed, 198.51.100.7".parse().unwrap(),
@@ -371,19 +575,211 @@ fn client_ip_takes_rightmost_xff() {
 
 #[test]
 fn client_ip_xff_single_value() {
+    let _lock = crate::test_support::ENV_LOCK.blocking_lock();
+    let _env = crate::test_support::EnvGuard::new();
     let mut headers = HeaderMap::new();
+    headers.insert(PEER_ADDR_HEADER, "127.0.0.1".parse().unwrap());
     headers.insert("x-forwarded-for", "203.0.113.10".parse().unwrap());
     assert_eq!(client_ip_for_rate_limit(&headers), "203.0.113.10");
 }
 
 #[test]
 fn client_ip_xff_trims_whitespace() {
+    let _lock = crate::test_support::ENV_LOCK.blocking_lock();
+    let _env = crate::test_support::EnvGuard::new();
     let mut headers = HeaderMap::new();
+    headers.insert(PEER_ADDR_HEADER, "127.0.0.1".parse().unwrap());
     headers.insert(
         "x-forwarded-for",
         "1.2.3.4 ,    198.51.100.7   ".parse().unwrap(),
     );
     assert_eq!(client_ip_for_rate_limit(&headers), "198.51.100.7");
+}
+
+#[test]
+fn client_ip_ignores_xff_without_a_peer() {
+    let _lock = crate::test_support::ENV_LOCK.blocking_lock();
+    let _env = crate::test_support::EnvGuard::new();
+    // Served without connection info: fail closed, the header is not
+    // believed from an unknown sender.
+    let mut headers = HeaderMap::new();
+    headers.insert("x-forwarded-for", "198.51.100.7".parse().unwrap());
+    assert_eq!(client_ip_for_rate_limit(&headers), "unknown");
+}
+
+#[test]
+fn client_ip_reads_every_xff_line_in_order() {
+    let _lock = crate::test_support::ENV_LOCK.blocking_lock();
+    let _env = crate::test_support::EnvGuard::new();
+    // HAProxy appends its own line: the client's first line must not win.
+    let mut headers = HeaderMap::new();
+    headers.insert(PEER_ADDR_HEADER, "127.0.0.1".parse().unwrap());
+    headers.append("x-forwarded-for", "6.6.6.6".parse().unwrap());
+    headers.append("x-forwarded-for", "198.51.100.7".parse().unwrap());
+    assert_eq!(client_ip_for_rate_limit(&headers), "198.51.100.7");
+}
+
+#[test]
+fn client_ip_with_non_ascii_xff_is_its_own_bucket() {
+    let _lock = crate::test_support::ENV_LOCK.blocking_lock();
+    let _env = crate::test_support::EnvGuard::new();
+    // Not the proxy's address: one client sending bytes `to_str` refuses
+    // must not be able to fill the bucket everyone behind the proxy shares.
+    let mut headers = HeaderMap::new();
+    headers.insert(PEER_ADDR_HEADER, "127.0.0.1".parse().unwrap());
+    headers.insert(
+        "x-forwarded-for",
+        axum::http::HeaderValue::from_bytes(b"1.2.3.4, \xff").unwrap(),
+    );
+    assert_eq!(client_ip_for_rate_limit(&headers), "unparseable");
+}
+
+#[test]
+fn client_ip_ignores_xff_from_an_untrusted_peer() {
+    let _lock = crate::test_support::ENV_LOCK.blocking_lock();
+    let _env = crate::test_support::EnvGuard::new();
+    // Directly exposed: the peer is a public address, so whatever it puts
+    // in X-Forwarded-For is ignored and it cannot pick a fresh bucket.
+    let mut headers = HeaderMap::new();
+    headers.insert(PEER_ADDR_HEADER, "203.0.113.50".parse().unwrap());
+    headers.insert("x-forwarded-for", "198.51.100.1".parse().unwrap());
+    assert_eq!(client_ip_for_rate_limit(&headers), "203.0.113.50");
+    assert!(client_address(&headers).is_individual());
+}
+
+#[test]
+fn client_ip_from_a_trusted_peer_without_xff_is_shared() {
+    let _lock = crate::test_support::ENV_LOCK.blocking_lock();
+    let _env = crate::test_support::EnvGuard::new();
+    let mut headers = HeaderMap::new();
+    headers.insert(PEER_ADDR_HEADER, "127.0.0.1".parse().unwrap());
+    assert_eq!(client_ip_for_rate_limit(&headers), "127.0.0.1");
+    assert!(
+        !client_address(&headers).is_individual(),
+        "a proxy that names no client is not one client (OAuth cap)"
+    );
+}
+
+#[test]
+fn client_ip_falls_back_to_the_peer_address_without_xff() {
+    let _lock = crate::test_support::ENV_LOCK.blocking_lock();
+    let _env = crate::test_support::EnvGuard::new();
+    let mut headers = HeaderMap::new();
+    headers.insert(PEER_ADDR_HEADER, "192.0.2.44".parse().unwrap());
+    assert_eq!(client_ip_for_rate_limit(&headers), "192.0.2.44");
+}
+
+#[test]
+fn client_ip_prefers_rightmost_xff_over_the_peer_address() {
+    let _lock = crate::test_support::ENV_LOCK.blocking_lock();
+    let _env = crate::test_support::EnvGuard::new();
+    // Behind a proxy the peer is the proxy itself: the header wins.
+    let mut headers = HeaderMap::new();
+    headers.insert(PEER_ADDR_HEADER, "127.0.0.1".parse().unwrap());
+    headers.insert(
+        "x-forwarded-for",
+        "attacker-spoofed, 198.51.100.7".parse().unwrap(),
+    );
+    assert_eq!(client_ip_for_rate_limit(&headers), "198.51.100.7");
+}
+
+/// A sign-in POST as it reaches the router from a socket: `ConnectInfo`
+/// carries the peer, as `into_make_service_with_connect_info` sets it.
+fn login_from(
+    peer: &str,
+    xff: Option<&str>,
+    forged_peer: Option<&str>,
+) -> axum::http::Request<Body> {
+    let mut builder = axum::http::Request::builder()
+        .method("POST")
+        .uri("/auth/login")
+        .header("cookie", "__Host-calrs_csrf=c")
+        .header("content-type", "application/x-www-form-urlencoded");
+    if let Some(xff) = xff {
+        builder = builder.header("x-forwarded-for", xff);
+    }
+    if let Some(forged) = forged_peer {
+        builder = builder.header(PEER_ADDR_HEADER, forged);
+    }
+    let mut request = builder
+        .body(Body::from(
+            "_csrf=c&email=nobody%40example.com&password=wrong",
+        ))
+        .unwrap();
+    let addr: std::net::SocketAddr = format!("{peer}:40000").parse().unwrap();
+    request
+        .extensions_mut()
+        .insert(axum::extract::ConnectInfo(addr));
+    request
+}
+
+async fn is_rate_limited(app: &axum::Router, request: axum::http::Request<Body>) -> bool {
+    let response = app.clone().oneshot(request).await.unwrap();
+    body_string(response)
+        .await
+        .contains("Too many login attempts")
+}
+
+/// Directly exposed (public peer), a client forging a new X-Forwarded-For
+/// on every attempt still exhausts its own sign-in budget.
+#[tokio::test]
+async fn sign_in_limit_ignores_xff_forged_by_an_untrusted_peer() {
+    let _lock = crate::test_support::ENV_LOCK.lock().await;
+    let _env = crate::test_support::EnvGuard::new();
+    let (app, _, _, _) = setup_test_app().await;
+    for i in 0..10 {
+        let forged = format!("198.51.100.{i}");
+        assert!(!is_rate_limited(&app, login_from("203.0.113.60", Some(&forged), None)).await);
+    }
+    assert!(
+        is_rate_limited(
+            &app,
+            login_from("203.0.113.60", Some("198.51.100.99"), None)
+        )
+        .await
+    );
+}
+
+/// Without a reverse proxy, each TCP peer gets its own sign-in budget: one
+/// client exhausting it does not lock out another, and a client cannot
+/// claim another peer through the internal header.
+#[tokio::test]
+async fn sign_in_limit_is_per_peer_without_xff() {
+    let _lock = crate::test_support::ENV_LOCK.lock().await;
+    let _env = crate::test_support::EnvGuard::new();
+    let (app, _, _, _) = setup_test_app().await;
+    for _ in 0..10 {
+        assert!(!is_rate_limited(&app, login_from("192.0.2.1", None, None)).await);
+    }
+    assert!(is_rate_limited(&app, login_from("192.0.2.1", None, None)).await);
+    assert!(
+        !is_rate_limited(&app, login_from("192.0.2.2", None, None)).await,
+        "another peer has its own bucket"
+    );
+    assert!(
+        is_rate_limited(&app, login_from("192.0.2.1", None, Some("192.0.2.3"))).await,
+        "a client-sent peer header is ignored"
+    );
+}
+
+/// With X-Forwarded-For (behind a proxy, every request from the proxy's
+/// address), the rightmost value still identifies the client.
+#[tokio::test]
+async fn sign_in_limit_keys_on_xff_when_present() {
+    let _lock = crate::test_support::ENV_LOCK.lock().await;
+    let _env = crate::test_support::EnvGuard::new();
+    let (app, _, _, _) = setup_test_app().await;
+    for _ in 0..10 {
+        let request = login_from("127.0.0.1", Some("spoof, 198.51.100.1"), None);
+        assert!(!is_rate_limited(&app, request).await);
+    }
+    let request = login_from("127.0.0.1", Some("other, 198.51.100.1"), None);
+    assert!(is_rate_limited(&app, request).await);
+    let request = login_from("127.0.0.1", Some("198.51.100.2"), None);
+    assert!(
+        !is_rate_limited(&app, request).await,
+        "same proxy, other client"
+    );
 }
 
 // --- internal_error_* sanitization helpers ---
@@ -604,7 +1000,7 @@ fn make_captcha_config(instance_url: &str, widget_url: &str) -> captcha::Captcha
     captcha::CaptchaConfig {
         instance_url: instance_url.to_string(),
         site_key: "testkey".to_string(),
-        secret: "secret".to_string(),
+        secret: "secret".to_string().into(),
         widget_url: widget_url.to_string(),
         wasm_url: None,
     }

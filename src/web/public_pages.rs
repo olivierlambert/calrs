@@ -479,7 +479,7 @@ pub(super) async fn show_group_slots(
     let mut sync_tasks = tokio::task::JoinSet::new();
     for uid in team_member_ids(&state.pool, &et_id, &team_id).await {
         let pool = state.pool.clone();
-        let key = state.secret_key;
+        let key = state.secret_key.clone();
         sync_tasks.spawn(async move {
             crate::commands::sync::sync_if_stale(&pool, &key, &uid).await;
         });
@@ -1060,7 +1060,7 @@ async fn show_dynamic_group_slots(
         let mut sync_tasks = tokio::task::JoinSet::new();
         for (uid, _, _, _, _) in &dg_users {
             let pool = state.pool.clone();
-            let key = state.secret_key;
+            let key = state.secret_key.clone();
             let uid = uid.clone();
             sync_tasks.spawn(async move {
                 crate::commands::sync::sync_if_stale(&pool, &key, &uid).await;

@@ -1233,7 +1233,7 @@ async fn api_slots(
             let mut sync_tasks = tokio::task::JoinSet::new();
             for uid in team_member_ids(&state.pool, id, team_id).await {
                 let pool = state.pool.clone();
-                let key = state.secret_key;
+                let key = state.secret_key.clone();
                 sync_tasks.spawn(async move {
                     crate::commands::sync::sync_if_stale(&pool, &key, &uid).await;
                 });

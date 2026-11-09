@@ -3,7 +3,8 @@
 
 use super::*;
 
-/// A GET from `ip` (as the trusted proxy reports it).
+/// A GET from `ip`, as the trusted local proxy that `setup_test_app`
+/// attaches as the peer reports it.
 fn get_from(uri: &str, ip: &str) -> axum::http::Request<Body> {
     axum::http::Request::builder()
         .uri(uri)
@@ -297,6 +298,10 @@ async fn the_team_answer_follows_the_team_page_rules() {
 /// One request per page view, so the per-address budget is page views.
 #[tokio::test]
 async fn next_free_is_rate_limited_per_address() {
+    // Depends on the trusted proxy rule (the test router's peer is a local
+    // proxy), which reads process-wide settings.
+    let _lock = crate::test_support::ENV_LOCK.lock().await;
+    let _env = crate::test_support::EnvGuard::new();
     let (app, _, _, _) = setup_test_app().await;
     let uri = "/u/testuser/next-free";
     for _ in 0..60 {

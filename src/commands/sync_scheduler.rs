@@ -178,7 +178,7 @@ pub struct TickReport {
 /// so no other sync of the source runs meanwhile.
 pub async fn attempt(
     pool: SqlitePool,
-    key: [u8; 32],
+    key: crate::crypto::SecretKey,
     source: DueSource,
     sync_fn: SyncFn,
     limit: Duration,
@@ -216,7 +216,7 @@ struct Running {
 /// the current tick that are still to start.
 pub struct Scheduler {
     pool: SqlitePool,
-    key: [u8; 32],
+    key: crate::crypto::SecretKey,
     cfg: SchedulerConfig,
     sync_fn: SyncFn,
     tasks: JoinSet<Attempt>,
@@ -232,10 +232,15 @@ pub struct Scheduler {
 }
 
 impl Scheduler {
-    pub fn new(pool: SqlitePool, key: [u8; 32], cfg: SchedulerConfig, sync_fn: SyncFn) -> Self {
+    pub fn new(
+        pool: SqlitePool,
+        key: impl Into<crate::crypto::SecretKey>,
+        cfg: SchedulerConfig,
+        sync_fn: SyncFn,
+    ) -> Self {
         Scheduler {
             pool,
-            key,
+            key: key.into(),
             cfg,
             sync_fn,
             tasks: JoinSet::new(),
@@ -291,7 +296,7 @@ impl Scheduler {
             };
             let handle = self.tasks.spawn(attempt(
                 self.pool.clone(),
-                self.key,
+                self.key.clone(),
                 source,
                 self.sync_fn.clone(),
                 self.cfg.source_timeout,
@@ -369,9 +374,9 @@ pub async fn run_tick(
 
 /// The background sync task of `calrs serve`: [`background_sync`], started
 /// again after [`RESTART_DELAY`] if it ever panics.
-pub async fn run_background_sync_loop(pool: SqlitePool, secret_key: [u8; 32]) {
+pub async fn run_background_sync_loop(pool: SqlitePool, secret_key: crate::crypto::SecretKey) {
     supervise(RESTART_DELAY, move || {
-        background_sync(pool.clone(), secret_key)
+        background_sync(pool.clone(), secret_key.clone())
     })
     .await;
 }
@@ -398,12 +403,14 @@ where
     }
 }
 
-async fn background_sync(pool: SqlitePool, secret_key: [u8; 32]) {
+async fn background_sync(pool: SqlitePool, secret_key: crate::crypto::SecretKey) {
     let cfg = SchedulerConfig::from_env();
     let sync_fn: SyncFn = {
         let pool = pool.clone();
+        let secret_key = secret_key.clone();
         Arc::new(move |source_id: String| {
             let pool = pool.clone();
+            let secret_key = secret_key.clone();
             Box::pin(async move {
                 sync::sync_source_by_id_locked(&pool, &secret_key, &source_id).await;
             })

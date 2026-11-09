@@ -1666,6 +1666,19 @@ document.querySelectorAll('input[type="color"]').forEach(function(picker) {
         {% if allow_private_hosts_from_env %}{{ t("admin-unset-env") }}{% endif %}
       </span>
     </div>
+    <div class="form-group">
+      <label>{{ t("admin-trusted-proxies") }}
+        {% if trusted_proxies_from_env %}<span class="hint" style="color: var(--adm-warn);">{{ t("admin-set-by-env", var="CALRS_TRUSTED_PROXIES") }}</span>{% endif %}
+      </label>
+      <input type="text" name="trusted_proxies"
+        value="{% if trusted_proxies_from_env %}{{ trusted_proxies }}{% else %}{{ trusted_proxies_db }}{% endif %}"
+        placeholder="127.0.0.1, 10.0.0.0/8, none"
+        {% if trusted_proxies_from_env %}readonly style="opacity: 0.6; cursor: not-allowed;"{% endif %}>
+      <span style="font-size: 0.8rem; color: var(--text-muted);">
+        {{ t("admin-trusted-proxies-help") }}
+        {% if trusted_proxies_from_env %}{{ t("admin-unset-env") }}{% endif %}
+      </span>
+    </div>
     {% include "week_start_select.html" %}
     <div class="form-group">
       <label for="german_formal">{{ t("admin-german-formal") }}</label>

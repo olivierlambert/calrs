@@ -94,39 +94,39 @@ async fn can_manage_event_type_personal_owner_cannot_manage_unrelated_team_event
 }
 
 #[tokio::test]
-async fn find_manageable_event_type_by_slug_personal_wins_collision() {
-    // If the user has both a personal event and a team-admin event sharing
-    // the same slug, the personal event must resolve first (deterministic).
+async fn manageable_ids_by_slug_lists_personal_and_team_collisions() {
+    // A personal event type and a team one the user admins can share a
+    // slug: both are listed, so the caller sees the slug is ambiguous.
     let pool = setup_test_db().await;
     let user_id = insert_role_user(&pool, "u@x", "user").await;
     let personal_et = insert_personal_et(&pool, &user_id, "demo").await;
     let (_, team_et) = insert_team_with_et(&pool, "team1", "demo", &[(&user_id, "admin")]).await;
-    let resolved = find_manageable_event_type_by_slug(&pool, &user_id, "demo")
-        .await
-        .expect("should resolve");
-    assert_eq!(resolved.0, personal_et);
-    assert_ne!(resolved.0, team_et);
-    assert!(resolved.2.is_none(), "personal event has no team_id");
+    let user = user_for(&pool, &user_id).await;
+    let mut ids = manageable_event_type_ids_by_slug(&pool, &user, "demo").await;
+    ids.sort();
+    let mut expected = vec![personal_et, team_et];
+    expected.sort();
+    assert_eq!(ids, expected);
 }
 
 #[tokio::test]
-async fn find_manageable_event_type_by_slug_member_does_not_resolve() {
-    // Regular team members should not resolve team event types via this
-    // helper — only team admins do.
+async fn manageable_ids_by_slug_skips_teams_the_user_only_belongs_to() {
+    // Regular team members do not manage the team's event types.
     let pool = setup_test_db().await;
     let user_id = insert_role_user(&pool, "m@x", "user").await;
     let _ = insert_team_with_et(&pool, "team1", "demo", &[(&user_id, "member")]).await;
-    assert!(find_manageable_event_type_by_slug(&pool, &user_id, "demo")
+    let user = user_for(&pool, &user_id).await;
+    assert!(manageable_event_type_ids_by_slug(&pool, &user, "demo")
         .await
-        .is_none());
+        .is_empty());
 }
 
 #[tokio::test]
 async fn overrides_page_returns_200() {
-    let (app, _, session, _) = setup_test_app().await;
+    let (app, _, session, et_id) = setup_test_app().await;
     let response = app
         .oneshot(get_authed(
-            "/dashboard/event-types/test-meeting/overrides",
+            &format!("/dashboard/event-types/{et_id}/overrides"),
             &session,
         ))
         .await
@@ -140,6 +140,192 @@ async fn overrides_page_returns_200() {
     assert!(
         body.contains("Test Meeting"),
         "Should show event type title"
+    );
+    assert!(
+        body.contains(&format!(
+            "action=\"/dashboard/event-types/{et_id}/overrides\""
+        )),
+        "the add form posts to the id URL"
+    );
+}
+
+#[tokio::test]
+async fn overrides_legacy_slug_redirects_to_id_when_unambiguous() {
+    let (app, _, session, et_id) = setup_test_app().await;
+    let response = app
+        .oneshot(get_authed(
+            "/dashboard/event-types/test-meeting/overrides",
+            &session,
+        ))
+        .await
+        .unwrap();
+    assert!(response.status().is_redirection());
+    assert_eq!(
+        response.headers()["location"],
+        format!("/dashboard/event-types/{et_id}/overrides").as_str()
+    );
+}
+
+/// Two users both own an `intro` event type (#85, FINDING-15). The global
+/// admin of `setup_test_app` reaches each by id, the shared slug resolves to
+/// neither, and a write lands only on the event type the URL names.
+#[tokio::test]
+async fn overrides_slug_shared_by_two_users_is_not_guessed_for_an_admin() {
+    let (app, pool, session, admin_et) = setup_test_app().await;
+    sqlx::query("UPDATE event_types SET slug = 'intro' WHERE id = ?")
+        .bind(&admin_et)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let other_id = insert_role_user(&pool, "other@x", "user").await;
+    let other_et = insert_personal_et(&pool, &other_id, "intro").await;
+    sqlx::query("UPDATE event_types SET title = 'Other Intro' WHERE id = ?")
+        .bind(&other_et)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let response = app
+        .clone()
+        .oneshot(get_authed(
+            "/dashboard/event-types/intro/overrides",
+            &session,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 404, "an ambiguous slug is not guessed");
+
+    let response = app
+        .clone()
+        .oneshot(get_authed(
+            &format!("/dashboard/event-types/{other_et}/overrides"),
+            &session,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    assert!(body_string(response).await.contains("Other Intro"));
+
+    let csrf = "test-csrf-collide";
+    let response = app
+        .clone()
+        .oneshot(post_form(
+            "/dashboard/event-types/intro/overrides",
+            &session,
+            csrf,
+            &format!("_csrf={csrf}&date=2026-06-15&override_type=blocked"),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 404);
+    let response = app
+        .oneshot(post_form(
+            &format!("/dashboard/event-types/{other_et}/overrides"),
+            &session,
+            csrf,
+            &format!("_csrf={csrf}&date=2026-06-16&override_type=blocked"),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        response.headers()["location"],
+        format!("/dashboard/event-types/{other_et}/overrides").as_str()
+    );
+    let rows: Vec<(String, String)> =
+        sqlx::query_as("SELECT event_type_id, date FROM availability_overrides")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(rows, vec![(other_et, "2026-06-16".to_string())]);
+}
+
+/// A team admin of two teams that both have a `demo` event type reaches
+/// each by id, not by the shared slug, and never another team's.
+#[tokio::test]
+async fn overrides_slug_shared_by_two_teams_is_not_guessed_for_a_team_admin() {
+    let (app, pool, _, _) = setup_test_app().await;
+    let (user_id, session) =
+        insert_test_user_with_session(&pool, "Team Admin", "ta@example.com", "ta").await;
+    let (_, et_a) = insert_team_with_et(&pool, "team-a", "demo", &[(&user_id, "admin")]).await;
+    let (_, et_b) = insert_team_with_et(&pool, "team-b", "demo", &[(&user_id, "admin")]).await;
+    let (_, et_c) = insert_team_with_et(&pool, "team-c", "solo", &[(&user_id, "member")]).await;
+
+    let response = app
+        .clone()
+        .oneshot(get_authed(
+            "/dashboard/event-types/demo/overrides",
+            &session,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 404);
+
+    for et in [&et_a, &et_b] {
+        let response = app
+            .clone()
+            .oneshot(get_authed(
+                &format!("/dashboard/event-types/{et}/overrides"),
+                &session,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200, "team admin opens {et} by id");
+    }
+
+    // Member only: neither the id nor the slug opens it, and no write lands.
+    for key in [et_c.as_str(), "solo"] {
+        let response = app
+            .clone()
+            .oneshot(get_authed(
+                &format!("/dashboard/event-types/{key}/overrides"),
+                &session,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 404);
+    }
+    let csrf = "test-csrf-team-collide";
+    let response = app
+        .oneshot(post_form(
+            &format!("/dashboard/event-types/{et_c}/overrides"),
+            &session,
+            csrf,
+            &format!("_csrf={csrf}&date=2026-06-15&override_type=blocked"),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 404);
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM availability_overrides")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 0);
+}
+
+/// Deleting an override returns to its own event type's page, by id.
+#[tokio::test]
+async fn delete_override_redirects_to_the_id_url() {
+    let (app, pool, session, et_id) = setup_test_app().await;
+    let override_id = uuid::Uuid::new_v4().to_string();
+    sqlx::query("INSERT INTO availability_overrides (id, event_type_id, date, is_blocked) VALUES (?, ?, '2026-07-01', 1)")
+        .bind(&override_id)
+        .bind(&et_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let csrf = "test-csrf-del-redirect";
+    let response = app
+        .oneshot(post_form(
+            &format!("/dashboard/event-types/test-meeting/overrides/{override_id}/delete"),
+            &session,
+            csrf,
+            &format!("_csrf={csrf}"),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        response.headers()["location"],
+        format!("/dashboard/event-types/{et_id}/overrides").as_str()
     );
 }
 
@@ -742,7 +928,7 @@ async fn create_event_type_with_multiple_windows() {
 // --- Overrides page for nonexistent event type ---
 
 #[tokio::test]
-async fn overrides_nonexistent_event_type_redirects() {
+async fn overrides_nonexistent_event_type_is_not_found() {
     let (app, _, session, _) = setup_test_app().await;
     let response = app
         .oneshot(get_authed(
@@ -751,10 +937,7 @@ async fn overrides_nonexistent_event_type_redirects() {
         ))
         .await
         .unwrap();
-    assert!(
-        response.status().is_redirection(),
-        "Should redirect for nonexistent event type"
-    );
+    assert_eq!(response.status(), 404);
 }
 
 // --- Overrides: multiple custom hours on same date ---

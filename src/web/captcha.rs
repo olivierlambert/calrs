@@ -5,7 +5,8 @@ pub const DEFAULT_WIDGET_URL: &str = "https://cdn.jsdelivr.net/npm/cap-widget";
 pub struct CaptchaConfig {
     pub instance_url: String,
     pub site_key: String,
-    pub secret: String,
+    /// Kept in `AppState` for the life of the process, so wiped when dropped.
+    pub secret: zeroize::Zeroizing<String>,
     pub widget_url: String,
     /// Where the widget fetches its WASM solver, exposed to it as
     /// `window.CAP_CUSTOM_WASM_URL`. `None` keeps the widget's default (the
@@ -286,7 +287,7 @@ mod tests {
         let mut cfg = CaptchaConfig {
             instance_url: "https://cap.example.com".to_string(),
             site_key: "key".to_string(),
-            secret: "s".to_string(),
+            secret: "s".to_string().into(),
             widget_url: DEFAULT_WIDGET_URL.to_string(),
             wasm_url: None,
         };
@@ -309,7 +310,7 @@ mod tests {
         let cfg = CaptchaConfig {
             instance_url: "https://cap.example.com/".to_string(),
             site_key: "mykey".to_string(),
-            secret: "s".to_string(),
+            secret: "s".to_string().into(),
             widget_url: DEFAULT_WIDGET_URL.to_string(),
             wasm_url: None,
         };
@@ -321,7 +322,7 @@ mod tests {
         let cfg = CaptchaConfig {
             instance_url: "https://cap.example.com".to_string(),
             site_key: "mykey".to_string(),
-            secret: "s".to_string(),
+            secret: "s".to_string().into(),
             widget_url: DEFAULT_WIDGET_URL.to_string(),
             wasm_url: None,
         };
@@ -341,7 +342,7 @@ mod tests {
         let cfg = Some(CaptchaConfig {
             instance_url: "https://cap.example.com".to_string(),
             site_key: "key".to_string(),
-            secret: "secret".to_string(),
+            secret: "secret".to_string().into(),
             widget_url: DEFAULT_WIDGET_URL.to_string(),
             wasm_url: None,
         });
@@ -353,7 +354,7 @@ mod tests {
         let cfg = Some(CaptchaConfig {
             instance_url: "https://cap.example.com".to_string(),
             site_key: "key".to_string(),
-            secret: "secret".to_string(),
+            secret: "secret".to_string().into(),
             widget_url: DEFAULT_WIDGET_URL.to_string(),
             wasm_url: None,
         });

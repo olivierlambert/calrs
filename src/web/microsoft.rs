@@ -204,7 +204,11 @@ pub(super) async fn microsoft_callback(
         return microsoft_failure(&state, auth.lang, "microsoft-error-sync", Back::Sources);
     }
     {
-        let (pool, key, source_id) = (state.pool.clone(), state.secret_key, source_id.clone());
+        let (pool, key, source_id) = (
+            state.pool.clone(),
+            state.secret_key.clone(),
+            source_id.clone(),
+        );
         tokio::spawn(async move {
             crate::commands::sync::sync_source_by_id(&pool, &key, &source_id).await;
         });

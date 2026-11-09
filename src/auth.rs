@@ -1205,7 +1205,7 @@ async fn build_oidc_client_with_redirect(
         .map(|s| crate::crypto::decrypt_value(secret_key, s))
         .transpose()
         .map_err(|e| anyhow::anyhow!("OIDC client secret decryption failed: {}", e))?
-        .map(ClientSecret::new);
+        .map(|s| ClientSecret::new(s.to_string()));
 
     let http_client = build_http_client()?;
     let provider_metadata = CoreProviderMetadata::discover_async(issuer_url, &http_client)
@@ -3638,7 +3638,7 @@ mod tests {
         let ews = crate::ews::global::EwsGlobalConfig {
             url: "https://mail.company.com/EWS/Exchange.asmx".to_string(),
             service_username: "svc".to_string(),
-            service_password: "pw".to_string(),
+            service_password: "pw".to_string().into(),
             lock_user_sources: false,
             auto_provision: true,
             domain_override: None,

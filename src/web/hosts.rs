@@ -372,7 +372,7 @@ pub(super) async fn sync_hosts(state: &Arc<AppState>, hosts: &RescheduleHosts, w
         .chain(&hosts.claimant)
     {
         let pool = state.pool.clone();
-        let key = state.secret_key;
+        let key = state.secret_key.clone();
         let user_id = user_id.clone();
         sync_tasks.spawn(async move {
             if wait {

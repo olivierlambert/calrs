@@ -31,6 +31,7 @@ mod sms;
 #[cfg(test)]
 mod test_support;
 mod time_off;
+mod trusted_proxies;
 mod tzid;
 mod utils;
 mod web;
@@ -177,20 +178,21 @@ async fn main() -> Result<()> {
             // A Twilio trial flag left on a full account, in the log at once.
             tokio::spawn({
                 let pool = pool.clone();
-                async move { sms::check_twilio_trial_at_startup(&pool, &secret_key).await }
+                let key = secret_key.clone();
+                async move { sms::check_twilio_trial_at_startup(&pool, &key).await }
             });
             // Spawn background reminder task
             let reminder_pool = pool.clone();
-            let reminder_key = secret_key;
+            let reminder_key = secret_key.clone();
             tokio::spawn(web::run_reminder_loop(reminder_pool, reminder_key));
             // Background calendar sync, in a task of its own so a slow
             // calendar server never delays reminders (#388).
             tokio::spawn(commands::sync_scheduler::run_background_sync_loop(
                 pool.clone(),
-                secret_key,
+                secret_key.clone(),
             ));
             // Outgoing booking webhooks (#168): delivered off the request path.
-            tokio::spawn(web::run_webhook_loop(pool.clone(), secret_key));
+            tokio::spawn(web::run_webhook_loop(pool.clone(), secret_key.clone()));
 
             let router = web::create_router(pool, data_dir, secret_key).await;
             let addr = std::net::SocketAddr::from((host, port));
@@ -212,9 +214,14 @@ async fn main() -> Result<()> {
                 tracing::info!("Shutdown signal received, stopping gracefully...");
             };
 
-            axum::serve(listener, router)
-                .with_graceful_shutdown(shutdown)
-                .await?;
+            // The peer address is the rate limiters' fallback when no
+            // reverse proxy sets X-Forwarded-For (`client_ip_for_rate_limit`).
+            axum::serve(
+                listener,
+                router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+            )
+            .with_graceful_shutdown(shutdown)
+            .await?;
             // Booking emails are sent in the background after the response;
             // let the ones still in flight finish before the runtime stops.
             web::drain_emails(std::time::Duration::from_secs(30)).await;

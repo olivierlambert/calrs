@@ -531,7 +531,7 @@ async fn a_source_already_being_synced_is_not_synced_twice() {
     assert_eq!(
         attempt(
             pool.clone(),
-            [0u8; 32],
+            [0u8; 32].into(),
             picked.clone(),
             sync_fn.clone(),
             Duration::from_secs(5)
@@ -548,7 +548,7 @@ async fn a_source_already_being_synced_is_not_synced_twice() {
     assert_eq!(
         attempt(
             pool.clone(),
-            [0u8; 32],
+            [0u8; 32].into(),
             picked,
             sync_fn,
             Duration::from_secs(5)

@@ -48,7 +48,7 @@ pub fn trial_mode_enabled() -> bool {
 
 pub struct TwilioProvider {
     account_sid: String,
-    auth_token: String,
+    auth_token: zeroize::Zeroizing<String>,
     from: String,
     base_url: String,
     trial: bool,
@@ -70,7 +70,7 @@ impl TwilioProvider {
     fn cache_key(&self) -> u64 {
         use std::hash::{Hash, Hasher};
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        (&self.base_url, &self.account_sid, &self.auth_token).hash(&mut hasher);
+        (&self.base_url, &self.account_sid, self.auth_token.as_str()).hash(&mut hasher);
         hasher.finish()
     }
 
@@ -83,7 +83,7 @@ impl TwilioProvider {
         );
         let response = super::http_client()
             .get(&url)
-            .basic_auth(&self.account_sid, Some(&self.auth_token))
+            .basic_auth(&self.account_sid, Some(self.auth_token.as_str()))
             .send()
             .await
             .map_err(super::request_error)?;
@@ -315,7 +315,7 @@ impl SmsProvider for TwilioProvider {
 
         let response = super::http_client()
             .post(&url)
-            .basic_auth(&self.account_sid, Some(&self.auth_token))
+            .basic_auth(&self.account_sid, Some(self.auth_token.as_str()))
             .form(&params)
             .send()
             .await
@@ -449,7 +449,7 @@ mod tests {
     fn the_cache_key_follows_the_configuration() {
         let provider = |sid: &str, token: &str| TwilioProvider {
             account_sid: sid.to_string(),
-            auth_token: token.to_string(),
+            auth_token: token.to_string().into(),
             from: "+15551234567".to_string(),
             base_url: "https://api.twilio.com".to_string(),
             trial: true,
@@ -527,7 +527,7 @@ mod tests {
     fn trial_provider(base_url: String) -> TwilioProvider {
         TwilioProvider {
             account_sid: "AC123".to_string(),
-            auth_token: format!("token-{base_url}"),
+            auth_token: format!("token-{base_url}").into(),
             from: "+15551234567".to_string(),
             base_url,
             trial: true,

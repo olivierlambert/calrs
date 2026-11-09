@@ -22,9 +22,29 @@ Login attempts are rate-limited per IP address:
 
 - **10 attempts** per **15-minute window**
 - After the limit, further attempts return an error without checking credentials
-- The client IP is read from the `X-Forwarded-For` header (set by your reverse proxy)
+- The client address is the TCP peer, or, when the peer is a trusted proxy, the address that proxy reports in `X-Forwarded-For` (see below)
 
-> **Important:** Make sure your reverse proxy sets `X-Forwarded-For` correctly. Without it, rate limiting falls back to a single "unknown" bucket and won't be effective.
+The same rule identifies the client for every per-address limit (sign-in, two-factor codes, bookings, OAuth). An IPv6 client counts by its /64, so rotating addresses inside it does not buy a new budget.
+
+### Trusted proxies
+
+calrs believes `X-Forwarded-For` only from a **trusted proxy**. It joins every `X-Forwarded-For` line in the order they arrived (HAProxy adds a line of its own rather than extending the client's) and reads the list right to left, skipping the hops that are themselves trusted proxies; the first address that is not one is the client. A port on a hop (`198.51.100.7:5678`, `[2001:db8::1]:443`) is dropped. A hop that is not an address at all stops the walk, and every such request shares one bucket of its own, never the proxy's. A peer that is not trusted is the client itself, and whatever `X-Forwarded-For` it sends is ignored, so a client cannot claim a fresh address on every attempt. `X-Real-IP` and `Forwarded` (RFC 7239) are ignored: configure your proxy to set `X-Forwarded-For`.
+
+The trusted list is, in order of precedence:
+
+1. `CALRS_TRUSTED_PROXIES`: a comma or space separated list of addresses and CIDR ranges (`127.0.0.1, 10.0.0.0/8, fd00::/8`), or `none` to trust no peer. A `/0` range (`0.0.0.0/0`, `::/0`) is refused, since it would trust every peer. An unusable or refused value trusts no peer and logs an error.
+2. **Trusted proxies** in the admin panel (System settings), same format. Empty means the default.
+3. The default: loopback (`127.0.0.0/8`, `::1`), private (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`), unique local (`fc00::/7`) and link-local (`169.254.0.0/16`, `fe80::/10`).
+
+What this means for common setups:
+
+- **Caddy or Nginx on the same host, or on the same Docker network**: works out of the box, the proxy's address is in the default list. Make sure it sets `X-Forwarded-For` (Caddy does; Nginx needs the line below).
+- **Docker's userland proxy** (ports published over IPv6, or hairpin connections from the host): every client arrives from the bridge gateway, a trusted address that sends no header, so all clients share one rate-limit bucket and one person mistyping a password can lock everyone out for 15 minutes. Put the reverse proxy in front, or publish the port with the userland proxy disabled so calrs sees real client addresses.
+- **calrs exposed directly on a LAN, no proxy**: by default LAN peers are trusted, so a LAN client could forge `X-Forwarded-For`. Set `CALRS_TRUSTED_PROXIES=none`.
+- **Behind a proxy, with LAN users**: the default trusts every private address, so a LAN user whose request goes through the proxy can still add a forged private hop that calrs skips. List only the proxy's own address (`CALRS_TRUSTED_PROXIES=127.0.0.1`, or its Docker address) rather than relying on the default ranges.
+- **`none` behind a proxy** turns every client into the proxy's address: one bucket for everyone, and the OAuth per-address client cap (see the MCP docs) then counts every registration as coming from one address. Use `none` only when nothing sits in front of calrs.
+- **calrs exposed directly on the internet**: public peers are never trusted by default, so each client is counted by its own address.
+- **A proxy on a public address** (a load balancer, a CDN): list its addresses or ranges, otherwise every client is counted as the proxy.
 
 ### Nginx
 
@@ -42,6 +62,10 @@ Booking submissions are rate-limited per IP address:
 
 - **10 attempts** per **5-minute window**
 - Applies to all booking handlers (user, team, and legacy)
+- The client is identified as for sign-in (see [Trusted proxies](#trusted-proxies))
+- The counts are also stored in the database (`rate_limit_counters`) and read back at startup, so restarting calrs does not reset them; closed windows are pruned every 5 minutes
+
+Login and the other limits are kept in memory and start over when calrs restarts.
 
 ## CSRF protection
 
@@ -115,6 +139,8 @@ Tokens are UUID v4 (128-bit random), stored with unique indexes in the database.
 ### CalDAV credential storage
 
 CalDAV and SMTP passwords are encrypted at rest using **AES-256-GCM**. The encryption key is auto-generated at `$DATA_DIR/secret.key` on first run, or can be provided via the `CALRS_SECRET_KEY` environment variable. Legacy hex-encoded passwords (from pre-v0.10.0) are auto-migrated to encrypted format on startup. Protect your `secret.key` file with filesystem permissions.
+
+In memory, the key and the decrypted credentials calrs holds are kept in buffers that are wiped when released (`zeroize`): the key and its long-lived copies, the plaintext returned by every decryption, the CalDAV, EWS and SMTP passwords and SMS gateway secrets in calrs's own configuration and client structures, OAuth access tokens, and the captcha, meeting webhook and EWS service-account secrets the server keeps for its whole life; the AES key schedule is wiped too. This narrows what a core dump or a later memory disclosure could reveal. It does not reach the copies that libraries make while using a credential (the HTTP client's request headers, the SMTP client's credentials, the OpenID Connect client secret) or the `CALRS_SECRET_KEY` value in the process environment, which the operating system keeps for the life of the process.
 
 ### No brute-force account lockout
 

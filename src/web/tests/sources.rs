@@ -114,7 +114,9 @@ async fn update_source_changes_fields_and_keeps_password_when_blank() {
     assert_eq!(row.1, "https://192.0.2.10/dav/new/");
     assert_eq!(row.2, "newuser");
     // Decrypt the stored blob and confirm the password is unchanged.
-    let pw = crate::crypto::decrypt_password(&[0u8; 32], &row.3).unwrap();
+    let pw = crate::crypto::decrypt_password(&[0u8; 32], &row.3)
+        .unwrap()
+        .to_string();
     assert_eq!(pw, "old-pw", "blank password must keep the existing one");
 }
 
@@ -144,7 +146,9 @@ async fn update_source_rotates_password() {
         .fetch_one(&pool)
         .await
         .unwrap();
-    let pw = crate::crypto::decrypt_password(&[0u8; 32], &enc.0).unwrap();
+    let pw = crate::crypto::decrypt_password(&[0u8; 32], &enc.0)
+        .unwrap()
+        .to_string();
     assert_eq!(
         pw, "new-pw-rotated",
         "non-blank password must replace the existing one"

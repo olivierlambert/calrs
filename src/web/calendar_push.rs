@@ -947,8 +947,8 @@ pub(super) async fn resource_write_candidates(
     service_username: Option<&str>,
     service_password_enc: Option<&str>,
     preferred_user_id: Option<&str>,
-) -> Vec<(String, String)> {
-    let mut out: Vec<(String, String)> = Vec::new();
+) -> Vec<(String, zeroize::Zeroizing<String>)> {
+    let mut out: Vec<(String, zeroize::Zeroizing<String>)> = Vec::new();
 
     if let (Some(u), Some(enc)) = (service_username, service_password_enc) {
         if !u.is_empty() {

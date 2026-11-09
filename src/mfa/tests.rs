@@ -60,7 +60,7 @@ async fn setup_secret(pool: &SqlitePool, token: &str) -> String {
             .await
             .unwrap();
     assert!(stored.starts_with("enc:v1:"));
-    crypto::decrypt_value(&KEY, &stored).unwrap()
+    crypto::decrypt_value(&KEY, &stored).unwrap().to_string()
 }
 
 fn code(secret: &str, offset: i64) -> String {

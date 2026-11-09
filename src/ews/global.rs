@@ -21,7 +21,8 @@ use sqlx::SqlitePool;
 pub struct EwsGlobalConfig {
     pub url: String,
     pub service_username: String,
-    pub service_password: String,
+    /// Kept in `AppState` for the life of the process, so wiped when dropped.
+    pub service_password: zeroize::Zeroizing<String>,
     pub lock_user_sources: bool,
     pub auto_provision: bool,
     /// Optional mailbox-domain override, for an AD whose login addresses
@@ -1008,7 +1009,7 @@ mod tests {
         EwsGlobalConfig {
             url: "https://mail.example.com/EWS/Exchange.asmx".to_string(),
             service_username: "svc".to_string(),
-            service_password: "pw".to_string(),
+            service_password: "pw".to_string().into(),
             lock_user_sources: false,
             auto_provision: true,
             domain_override: domain_override.map(|(from, to)| DomainOverride {
