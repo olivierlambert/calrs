@@ -238,7 +238,7 @@ async fn invites_of_an_event_type_are_paged() {
         .unwrap();
     }
     let names = |body: &str| -> Vec<String> {
-        body.split("<strong style=\"font-size: 0.9rem;\">")
+        body.split("<span class=\"inv-name\">")
             .skip(1)
             .map(|rest| rest[..rest.find('<').unwrap()].to_string())
             .collect()
@@ -540,6 +540,29 @@ async fn searches_reach_every_page() {
     assert_eq!(teams.matches("class=\"ui-row et-row").count(), 10);
     let paged = page(&app, &session, "/dashboard/event-types?q=crew").await;
     assert!(unescape(&paged).contains("href=\"/dashboard/event-types?q=crew&page=2\""));
+
+    // Teams: by name or link, on every page, kept by the page links, and a
+    // member only ever searches the teams they belong to. Names sort
+    // bytewise, so a lowercase one past "crew-" lands on page 2.
+    sqlx::query("UPDATE teams SET name = 'zulu shift' WHERE slug = 'crew-54'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let plain = page(&app, &session, "/dashboard/teams").await;
+    assert!(!plain.contains("zulu shift"));
+    let found = page(&app, &session, "/dashboard/teams?q=ZULU").await;
+    assert!(found.contains("zulu shift"));
+    assert_eq!(found.matches("class=\"ui-row et-row\"").count(), 1);
+    assert!(found.contains("name=\"q\" value=\"ZULU\""));
+    let by_link = page(&app, &session, "/dashboard/teams?q=crew-54").await;
+    assert_eq!(by_link.matches("class=\"ui-row et-row\"").count(), 1);
+    let paged = page(&app, &session, "/dashboard/teams?q=crew").await;
+    assert!(unescape(&paged).contains("href=\"/dashboard/teams?q=crew&page=2\""));
+    let (_, outsider) =
+        insert_test_user_with_session(&pool, "Outsider", "outsider@example.com", "outsider").await;
+    let none = page(&app, &outsider, "/dashboard/teams?q=crew").await;
+    assert_eq!(none.matches("class=\"ui-row et-row\"").count(), 0);
+    assert!(none.contains("Nothing matches your search."));
 
     // Invite Links: the title, the host or the team.
     for i in 0..55 {

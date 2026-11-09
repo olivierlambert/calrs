@@ -644,6 +644,7 @@ teams-empty-admin = { $link } pour collaborer avec votre équipe.
 teams-empty-admin-link-label = Créez-en une
 teams-empty-member = Les équipes sont créées par les administrateurs. Demandez au vôtre d'en créer une et de vous y ajouter.
 teams-subtitle = Des personnes qui partagent des rendez-vous, attribués à tour de rôle ou en commun.
+teams-search-placeholder = Filtrer par nom ou lien
 
 # Dashboard invite links (templates/dashboard_internal.html)
 
@@ -936,7 +937,7 @@ invites-back-teams = Retour aux équipes
 invites-back-event-types = Retour aux types d'événement
 invites-intro = Envoyez des liens d'invitation pour { $title }
 invites-capped = <strong>La saisie a été limitée à { $max } destinataires par envoi.</strong> Envoyez le reste dans un autre lot.
-invites-failed-hint = — consultez les journaux du serveur pour en savoir plus.
+invites-failed-hint = Consultez les journaux du serveur pour en savoir plus.
 invites-quick-link = Lien rapide
 invites-quick-link-help = Générez un lien à usage unique et copiez-le dans votre presse-papiers.
 invites-get-link = Obtenir un lien
@@ -1065,7 +1066,7 @@ team-form-submit = Créer l'équipe
 # Team settings (templates/team_settings.html)
 
 team-settings-page-title = Paramètres
-team-settings-subtitle = Paramètres de l'équipe — les administrateurs de l'équipe peuvent les modifier.
+team-settings-subtitle = Paramètres de l'équipe : les administrateurs de l'équipe peuvent les modifier.
 team-settings-public-url = URL publique
 team-settings-public-url-help = N'importe qui peut réserver via ce lien.
 team-settings-invite-link = Lien d'invitation

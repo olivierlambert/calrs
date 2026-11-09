@@ -644,6 +644,7 @@ teams-empty-admin = { $link } para colaborar com sua equipe.
 teams-empty-admin-link-label = Crie uma
 teams-empty-member = As equipes são criadas pelos administradores. Peça a eles que criem uma e adicionem você como membro.
 teams-subtitle = Pessoas que compartilham reuniões, agendadas em rodízio ou todas juntas.
+teams-search-placeholder = Filtrar por nome ou link
 
 # Dashboard invite links (templates/dashboard_internal.html)
 
@@ -936,7 +937,7 @@ invites-back-teams = Voltar às equipes
 invites-back-event-types = Voltar aos tipos de evento
 invites-intro = Envie links de convite para { $title }
 invites-capped = <strong>A entrada foi limitada a { $max } destinatários por envio.</strong> Envie o restante em outra leva.
-invites-failed-hint = — consulte os logs do servidor para mais detalhes.
+invites-failed-hint = Consulte os logs do servidor para mais detalhes.
 invites-quick-link = Link rápido
 invites-quick-link-help = Gere um link de uso único e copie-o para a área de transferência.
 invites-get-link = Obter link

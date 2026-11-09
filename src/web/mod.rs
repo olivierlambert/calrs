@@ -1523,7 +1523,7 @@ async fn build_groups_ctx(
 }
 
 /// Build sidebar context for dashboard templates.
-fn sidebar_context(auth_user: &crate::auth::AuthUser, active: &str) -> minijinja::Value {
+pub(crate) fn sidebar_context(auth_user: &crate::auth::AuthUser, active: &str) -> minijinja::Value {
     let user = &auth_user.user;
     let (impersonating, _, _) = impersonation_ctx(auth_user);
     let effective_role = if impersonating {

@@ -1,8 +1,14 @@
 {% extends "dashboard_base.html" %}
 {% block title %}{{ t("team-form-heading") }}, calrs{% endblock %}
+{% block main_class %}has-cards{% endblock %}
 {% block dashboard_content %}
 {% import "partials/icons.html" as ic %}
 <a href="/dashboard/teams" class="page-back">{{ ic.icon("arrow-left", 14) }}{{ t("teams-heading") }}</a>
+<header class="page-header">
+  <div class="page-header-text">
+    <h1 class="page-title">{{ t("team-form-heading") }}</h1>
+  </div>
+</header>
 
 {% if error %}
   <div class="notice notice--error error" role="alert">{{ ic.icon("alert") }}<span>{{ error }}</span></div>
@@ -11,8 +17,9 @@
 <form method="POST">
 
 <!-- Profile -->
-<div class="card">
-  <h1 style="margin-bottom: 1rem;">{{ t("team-form-heading") }}</h1>
+<section class="card" aria-labelledby="tf-profile">
+  <div class="card-head"><h2 id="tf-profile">{{ t("team-settings-profile") }}</h2></div>
+  <div class="card-body">
 
   <div class="form-group">
     <label for="name">{{ t("team-form-name") }}</label>
@@ -54,12 +61,14 @@
     </div>
     <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">{{ t("team-form-visibility-help") }}</span>
   </fieldset>
-</div>
+  </div>
+</section>
 
 <!-- Members -->
-<div class="card" style="margin-top: 1rem;">
-  <h2>{{ t("team-form-members") }}</h2>
-  <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 0.75rem;">{{ t("team-form-members-help") }}</p>
+<section class="card" aria-labelledby="tf-members">
+  <div class="card-head"><h2 id="tf-members">{{ t("team-form-members") }}</h2></div>
+  <div class="card-body">
+  <p style="color: var(--text-secondary); font-size: 13.5px; margin-bottom: 0.75rem;">{{ t("team-form-members-help") }}</p>
 
   <!-- Selected members + groups (pills) -->
   <div id="selected-pills" style="display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.75rem;"></div>
@@ -70,13 +79,13 @@
 
   <!-- Unified search bar -->
   <div style="position: relative;">
-    <input type="text" id="member-search" autocomplete="off" placeholder="{{ t('team-form-search-placeholder') }}" style="width: 100%; padding: 0.625rem 1rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.9rem; font-family: inherit; background: var(--surface); color: var(--text);">
+    <input type="text" id="member-search" autocomplete="off" placeholder="{{ t('team-form-search-placeholder') }}" aria-label="{{ t('team-form-search-placeholder') }}" style="width: 100%; padding: 0.625rem 1rem; border: 1px solid var(--border-hover); border-radius: var(--r-control); font-size: 0.9rem; font-family: inherit; background: var(--paper); color: var(--text);">
     <div id="search-results" style="display: none; position: absolute; top: 100%; left: 0; right: 0; background: var(--surface); border: 1px solid var(--border); border-top: none; border-radius: 0 0 var(--radius) var(--radius); max-height: 300px; overflow-y: auto; z-index: 10; box-shadow: var(--shadow-float);"></div>
   </div>
-</div>
+  </div>
+</section>
 
-<!-- Save button -->
-<div style="margin-top: 1.25rem;">
+<div class="form-savebar">
   <button type="submit" class="btn">{{ t("team-form-submit") }}</button>
 </div>
 

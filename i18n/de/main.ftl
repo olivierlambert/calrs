@@ -644,6 +644,7 @@ teams-empty-admin = { $link }, um mit deinem Team zusammenzuarbeiten.
 teams-empty-admin-link-label = Lege eines an
 teams-empty-member = Teams werden von der Administration angelegt. Bitte sie, eines anzulegen und dich als Mitglied hinzuzufügen.
 teams-subtitle = Personen, die Termine teilen, reihum oder alle gemeinsam gebucht.
+teams-search-placeholder = Nach Name oder Link filtern
 
 # Dashboard invite links (templates/dashboard_internal.html)
 
@@ -936,7 +937,7 @@ invites-back-teams = Zurück zu den Teams
 invites-back-event-types = Zurück zu den Terminarten
 invites-intro = Einladungslinks für { $title } versenden
 invites-capped = <strong>Die Eingabe wurde auf { $max } Empfänger pro Absendung begrenzt.</strong> Sende den Rest in einem weiteren Durchgang.
-invites-failed-hint = — Einzelheiten findest du in den Serverprotokollen.
+invites-failed-hint = Einzelheiten findest du in den Serverprotokollen.
 invites-quick-link = Schnelllink
 invites-quick-link-help = Erzeuge einen Einmal-Link und kopiere ihn in die Zwischenablage.
 invites-get-link = Link erzeugen
@@ -1065,7 +1066,7 @@ team-form-submit = Team erstellen
 # Team settings (templates/team_settings.html)
 
 team-settings-page-title = Einstellungen
-team-settings-subtitle = Teameinstellungen — Teamadministratoren können sie bearbeiten.
+team-settings-subtitle = Teameinstellungen: Teamadministratoren können sie bearbeiten.
 team-settings-public-url = Öffentliche URL
 team-settings-public-url-help = Über diesen Link kann jeder buchen.
 team-settings-invite-link = Einladungslink

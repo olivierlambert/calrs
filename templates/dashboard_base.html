@@ -318,11 +318,16 @@
      lift off it, by filling the main_class block with "has-cards". */
   .dashboard-main.has-cards { background: var(--bg); }
   .dashboard-main.has-cards .form-savebar { background: var(--bg); }
+  /* One space (--card-pad) above the body (under the band, or at the top
+     of a card without one), under the body, and between the band and the
+     body, so content sits centred in its card. A row's own padding is the
+     same top and bottom, so a list keeps that balance too. */
   .dashboard-main .card {
+    --card-pad: 1.1rem;
     --card-px: 1.4rem;
-    --card-pt: 1.25rem;
-    --card-pb: 1.3rem;
-    --card-gap: 1rem;
+    --card-pt: var(--card-pad);
+    --card-pb: var(--card-pad);
+    --card-gap: var(--card-pad);
     --card-bg: var(--surface);
     --card-band: color-mix(in srgb, var(--text) 4%, var(--surface));
     --card-rule: color-mix(in srgb, var(--border) 50%, var(--card-bg));
@@ -381,8 +386,22 @@
   .card-part + .card-part, .card-body > * + .card-part { margin-top: 2.1rem; }
   .card-body > :last-child, .card-body > :last-child > .form-group:last-child { margin-bottom: 0; }
   .card-body > .ledger > li:last-child, .card-body.ledger > li:last-child, .card-body .figs tr:last-child > * { border-bottom: 0; }
+  /* A list that opens or closes a card body drops its outer row padding:
+     the card's own space (--card-pad) is then the margin on both sides,
+     as for a form or a paragraph. The last row is the last one of its
+     kind, so a hidden "no matches" line after it does not count. */
+  .card-body.ui-list > .ui-row:first-child,
+  .card-body > :is(.ui-list, .ledger):first-child > :is(.ui-row, .tt-row, .tt-day):first-child,
+  .card-body .directory-list > .directory-entry:first-child { padding-top: 0; }
+  .card-body.ui-list > .ui-row:not(:has(~ .ui-row)),
+  :is(.card-body, .card-body > .card-part:last-child) > :is(.ui-list, .ledger):last-child > :is(.ui-row, .tt-row):not(:has(~ :is(.ui-row, .tt-row))),
+  .card-body .directory-list > .directory-entry:not(:has(~ .directory-entry)) { padding-bottom: 0; }
+  /* A list in a card part ends on its last row too; a list that ends on
+     its hidden "no matches" line ends on the row before it. */
+  .card-part > .ledger > li:last-child { border-bottom: 0; }
+  :is(.card-body, .card-part) > .ledger > li:has(+ [data-filter-empty]:last-child) { border-bottom: 0; }
   @media (max-width: 700px) {
-    .dashboard-main .card { --card-px: 1.05rem; --card-pt: 1.05rem; --card-pb: 1.1rem; --card-gap: 0.85rem; }
+    .dashboard-main .card { --card-px: 1.05rem; --card-pad: 0.95rem; }
   }
   .dashboard-main a.card:hover, .dashboard-main .card.card-link:hover { transform: none; box-shadow: none; border-color: var(--rule-strong); }
 
@@ -418,9 +437,11 @@
   .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 
   /* ---- Masthead: title and one plain sentence, the main action right ---- */
+  /* The page's buttons sit on the title's line, centred on it, whatever
+     the description under the title runs to. */
   .page-header {
     display: flex;
-    align-items: flex-end;
+    align-items: flex-start;
     justify-content: space-between;
     gap: 0.75rem 1.5rem;
     flex-wrap: wrap;
@@ -430,7 +451,7 @@
   .page-title { font-size: 2rem; font-weight: 640; letter-spacing: -0.01em; line-height: 1.08; margin: 0; }
   .page-subtitle { color: var(--text-secondary); font-size: 14.5px; line-height: 1.5; margin-top: 0.4rem; max-width: 64ch; }
   .page-subtitle strong { color: var(--ink); font-weight: 600; }
-  .page-actions { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
+  .page-actions { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; min-height: calc(2rem * 1.08); }
   .page-back { display: inline-flex; align-items: center; gap: 0.35rem; color: var(--text-muted); font-size: 13px; text-decoration: none; margin-bottom: 0.6rem; }
   .page-back:hover { color: var(--ink); }
   .page-back:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--r-control); }
@@ -445,11 +466,6 @@
   .sec-h a:hover, .sec-link:hover { color: var(--ink); text-decoration: underline; }
   .sec-note { font-size: 12.5px; color: var(--text-muted); margin: 0; }
 
-  /* Card header, still used inside fieldsets. Counts are muted figures. */
-  .card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 0.75rem; flex-wrap: wrap; margin-bottom: 0.5rem; }
-  .card-title { display: flex; align-items: baseline; gap: 0.35rem; font-size: 15px; font-weight: 640; color: var(--ink); margin: 0; }
-  .count-pill { color: var(--text-muted); font-weight: 500; font-variant-numeric: tabular-nums; }
-  .count-pill--attention { color: var(--warning); }
 
   /* ---- Status marks: solid, hatched, hollow, flat ---- */
   .g { width: 0.7rem; height: 0.7rem; display: inline-block; flex-shrink: 0; }
@@ -478,7 +494,10 @@
   .ui-row-meta a { color: inherit; text-decoration: none; }
   .ui-row-meta a:hover { color: var(--ink); text-decoration: underline; }
   .ui-row-sub { color: var(--text-muted); font-size: 12.5px; margin-top: 0.15rem; }
-  .ui-row-actions { display: flex; align-items: center; gap: 0.35rem; flex-wrap: wrap; justify-content: flex-end; flex-shrink: 0; }
+  /* A row's trailing actions centre on its text block (a list row is one
+     or two lines). Tall records (bookings, webhooks, tokens, sources)
+     keep theirs on their first line instead. */
+  .ui-row-actions { display: flex; align-items: center; gap: 0.35rem; flex-wrap: wrap; justify-content: flex-end; flex-shrink: 0; align-self: center; }
   .ui-row.is-muted .ui-row-title, .ui-row.is-muted .tt-time { color: var(--text-muted); }
   @media (max-width: 600px) {
     .ui-row { flex-wrap: wrap; }
@@ -1352,7 +1371,8 @@ document.querySelectorAll('input[type=file][data-max-bytes]').forEach(function(i
       return;
     }
     if (key === '/') {
-      var search = document.querySelector('[data-search]');
+      // The first search on screen: a tabbed page (admin) hides the others.
+      var search = Array.prototype.find.call(document.querySelectorAll('[data-search]'), function(el) { return el.offsetParent !== null; });
       if (search) { e.preventDefault(); search.focus(); if (search.select) search.select(); }
       return;
     }

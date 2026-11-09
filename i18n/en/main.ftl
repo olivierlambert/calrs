@@ -669,6 +669,7 @@ teams-empty-admin = { $link } to collaborate with your team.
 teams-empty-admin-link-label = Create one
 teams-empty-member = Teams are created by administrators. Ask your admin to create one and add you as a member.
 teams-subtitle = People who share meetings, booked round robin or all together.
+teams-search-placeholder = Filter by name or link
 
 # Dashboard invite links (templates/dashboard_internal.html)
 
@@ -961,7 +962,7 @@ invites-back-teams = Back to teams
 invites-back-event-types = Back to event types
 invites-intro = Send invite links for { $title }
 invites-capped = <strong>Input was capped at { $max } recipients per submission.</strong> Submit the rest in another batch.
-invites-failed-hint = — check server logs for details.
+invites-failed-hint = Check the server logs for details.
 invites-quick-link = Quick link
 invites-quick-link-help = Generate a single-use link and copy it to your clipboard.
 invites-get-link = Get link
@@ -1090,7 +1091,7 @@ team-form-submit = Create team
 # Team settings (templates/team_settings.html)
 
 team-settings-page-title = Settings
-team-settings-subtitle = Team settings — team admins can edit these.
+team-settings-subtitle = Team settings: team admins can edit these.
 team-settings-public-url = Public URL
 team-settings-public-url-help = Anyone can book via this link.
 team-settings-invite-link = Invite link

@@ -718,6 +718,7 @@ teams-empty-admin = { $link }, aby współpracować ze swoim zespołem.
 teams-empty-admin-link-label = Utwórz jakiś
 teams-empty-member = Zespoły tworzą administratorzy. Poproś ich o utworzenie zespołu i dodanie cię jako członka.
 teams-subtitle = Osoby, które dzielą spotkania, przydzielane rotacyjnie lub wspólnie.
+teams-search-placeholder = Filtruj po nazwie lub linku
 
 # Dashboard invite links (templates/dashboard_internal.html)
 
@@ -1014,7 +1015,7 @@ invites-back-teams = Wróć do zespołów
 invites-back-event-types = Wróć do typów wydarzeń
 invites-intro = Wyślij linki z zaproszeniem do { $title }
 invites-capped = <strong>Wpis ograniczono do { $max } odbiorców na jedno wysłanie.</strong> Resztę wyślij w kolejnej turze.
-invites-failed-hint = — szczegóły znajdziesz w logach serwera.
+invites-failed-hint = Szczegóły znajdziesz w logach serwera.
 invites-quick-link = Szybki link
 invites-quick-link-help = Wygeneruj jednorazowy link i skopiuj go do schowka.
 invites-get-link = Pobierz link
@@ -1151,7 +1152,7 @@ team-form-submit = Utwórz zespół
 # Team settings (templates/team_settings.html)
 
 team-settings-page-title = Ustawienia
-team-settings-subtitle = Ustawienia zespołu — mogą je edytować administratorzy zespołu.
+team-settings-subtitle = Ustawienia zespołu: mogą je edytować administratorzy zespołu.
 team-settings-public-url = Adres publiczny
 team-settings-public-url-help = Przez ten link może rezerwować każdy.
 team-settings-invite-link = Link z zaproszeniem

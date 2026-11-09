@@ -18,7 +18,7 @@
 {% import "partials/icons.html" as ic %}
 <div class="ui-search card-search">
   {{ ic.icon("search", 15) }}
-  <input type="search"{% if id %} id="{{ id }}"{% endif %}{% if name %} name="{{ name }}" value="{{ value }}"{% endif %}{% if maxlength %} maxlength="{{ maxlength }}"{% endif %} placeholder="{{ placeholder }}" aria-label="{{ placeholder }}" data-search{% if filter %} data-filter{% endif %}>
+  <input type="search"{% if id %} id="{{ id }}"{% endif %}{% if name %} name="{{ name }}" value="{{ value }}"{% endif %}{% if maxlength %} maxlength="{{ maxlength }}"{% endif %} placeholder="{{ placeholder }}" aria-label="{{ placeholder }}" autocomplete="off" data-search{% if filter %} data-filter{% endif %}>
   <span class="kbd">/</span>
 </div>
 {%- endmacro %}

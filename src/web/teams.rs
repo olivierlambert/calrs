@@ -23,13 +23,23 @@ pub(super) async fn dashboard_teams(
     let user = &auth_user.user;
     let is_admin = user.role == "admin";
 
+    // Searched on the server: the name and the link.
+    let q = listing::bounded_search(query.get("q").map(String::as_str).unwrap_or_default());
     // Admins list every team, anyone else the teams they belong to.
     let scope = |head: &'static str| {
         let mut qb = sqlx::QueryBuilder::new(head);
         qb.push(" FROM teams t");
         if !is_admin {
-            qb.push(" JOIN team_members tm2 ON tm2.team_id = t.id WHERE tm2.user_id = ");
+            qb.push(" JOIN team_members tm2 ON tm2.team_id = t.id AND tm2.user_id = ");
             qb.push_bind(user.id.clone());
+        }
+        if !q.is_empty() {
+            let pattern = listing::ci_glob(&q);
+            qb.push(" WHERE (t.name GLOB ");
+            qb.push_bind(pattern.clone());
+            qb.push(" OR t.slug GLOB ");
+            qb.push_bind(pattern);
+            qb.push(")");
         }
         qb
     };
@@ -43,7 +53,18 @@ pub(super) async fn dashboard_teams(
         ),
         "t.name, t.id",
         PageParams::from_query(&query, "page"),
-        |n| listing::href("/dashboard/teams", &[listing::page_part("page", n)], ""),
+        |n| {
+            let search = if q.is_empty() {
+                String::new()
+            } else {
+                format!("q={}", urlencoding::encode(&q))
+            };
+            listing::href(
+                "/dashboard/teams",
+                &[search, listing::page_part("page", n)],
+                "",
+            )
+        },
     )
     .await
     {
@@ -105,6 +126,8 @@ pub(super) async fn dashboard_teams(
             lang => auth_user.lang,
             teams => teams_ctx,
             pager => listed.pager,
+            q => q,
+            search_max => listing::MAX_SEARCH_CHARS,
             is_admin => is_admin,
             impersonating => impersonating,
             impersonating_name => impersonating_name,

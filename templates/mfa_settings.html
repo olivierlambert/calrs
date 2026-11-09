@@ -1,0 +1,52 @@
+{% extends "dashboard_base.html" %}
+{% block title %}{{ t("mfa-title") }}, calrs{% endblock %}
+{% block main_class %}has-cards{% endblock %}
+{% block dashboard_content %}
+{% import "partials/icons.html" as ic %}
+{#- The signed-in owner's two-factor settings, in the dashboard. The login
+    challenge, enrolment and recovery codes stay on auth/mfa.html, which is
+    reached before a session exists. #}
+<a href="/dashboard/settings" class="page-back">{{ ic.icon("arrow-left", 14) }}{{ t("mfa-back") }}</a>
+<header class="page-header">
+  <div class="page-header-text">
+    <h1 class="page-title">{{ t("mfa-title") }}</h1>
+    <p class="page-subtitle"><span class="mfa-state {{ 'is-on' if active else 'is-off' }}">{{ t("mfa-enabled") if active else t("mfa-disabled") }}</span></p>
+  </div>
+</header>
+
+<style>
+  .mfa-state.is-on { color: var(--success); font-weight: 600; }
+  .mfa-help { color: var(--text-secondary); font-size: 13.5px; margin: 0 0 1rem; max-width: 62ch; }
+  .mfa-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 0.25rem; }
+  .mfa-actions .btn { width: auto; }
+</style>
+
+<section class="card" aria-labelledby="mfa-h">
+  <div class="card-head"><h2 id="mfa-h">{{ t("mfa-manage") }}</h2></div>
+  <div class="card-body">
+    <p class="mfa-help">{{ t("mfa-changes-help") }}</p>
+    {% if mandatory %}<p class="mfa-help">{{ t("mfa-required-help") }}</p>{% endif %}
+    <form method="post" action="/dashboard/settings/mfa">
+      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+      <div class="form-group">
+        <label for="password">{{ t("login-password") }}</label>
+        <input type="password" name="password" id="password" required autocomplete="current-password">
+      </div>
+      {% if active %}
+      <div class="form-group">
+        <label for="code">{{ t("mfa-code") }}</label>
+        <input type="text" name="code" id="code" required autocomplete="one-time-code" maxlength="32" spellcheck="false">
+      </div>
+      <div class="mfa-actions">
+        <button class="btn" name="action" value="regenerate">{{ t("mfa-regenerate") }}</button>
+        {% if not mandatory %}<button class="ui-btn ui-btn--danger" name="action" value="disable">{{ t("mfa-disable") }}</button>{% endif %}
+      </div>
+      {% else %}
+      <div class="mfa-actions">
+        <button class="btn" name="action" value="enable">{{ t("mfa-enable") }}</button>
+      </div>
+      {% endif %}
+    </form>
+  </div>
+</section>
+{% endblock %}
