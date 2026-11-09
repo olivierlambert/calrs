@@ -558,6 +558,8 @@ overview-ruler-booked = Gebucht
 overview-ruler-pending = Wartet auf Entscheidung
 overview-ruler-unavailable = Nicht verfügbar (dein Kalender)
 overview-key-open = Offen für Buchungen
+overview-ruler-unreadable = Serientermin, den calrs nicht lesen kann
+overview-ruler-unreadable-tip = Sicherheitshalber als belegt gewertet. Die Diagnose zeigt, welcher Termin es ist.
 overview-figures-title = Letzte 30 Tage
 
 # Dashboard bookings (templates/dashboard_bookings.html)
@@ -1162,6 +1164,7 @@ etf-dynamic-group-note = Es werden nur Benutzer angezeigt, die dynamische Gruppe
 etf-dynamic-group-url = URL des Gruppenlinks
 etf-watcher-teams = Beobachtende Teams
 etf-watcher-teams-help = Ausgewählte Teams werden bei neuen Buchungen benachrichtigt. Mitglieder können eine Buchung übernehmen, um daran teilzunehmen.
+etf-watcher-team-locked = Nicht dein Team, es bleibt eingetragen
 etf-save = Änderungen speichern
 etf-create = Terminart erstellen
 etf-js-loading = Wird geladen...

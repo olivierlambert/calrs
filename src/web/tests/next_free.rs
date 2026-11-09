@@ -370,6 +370,60 @@ async fn the_next_free_slug_is_reserved() {
     );
 }
 
+/// The reservation refuses only a new or changed slug: an event type that
+/// still holds `next-free` (the upgrade renames them) can be saved as it is,
+/// and no other event type may take it.
+#[tokio::test]
+async fn the_next_free_slug_stays_saveable_where_it_is_held() {
+    let (app, pool, session, et_id) = setup_test_app().await;
+    sqlx::query("UPDATE event_types SET slug = 'next-free' WHERE id = ?")
+        .bind(&et_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let account: String = sqlx::query_scalar("SELECT account_id FROM event_types WHERE id = ?")
+        .bind(&et_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        slug_conflict(&pool, "next-free", &account, None, Some(&et_id)).await,
+        None
+    );
+    assert_eq!(
+        slug_conflict(&pool, "next-free", &account, None, Some("another")).await,
+        Some("form-error-event-type-slug-taken")
+    );
+
+    // Renaming another personal event type to it is refused on edit.
+    sqlx::query("UPDATE event_types SET slug = 'test-meeting' WHERE id = ?")
+        .bind(&et_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let csrf = "nf-csrf";
+    let body = format!(
+        "_csrf={csrf}&title=Test&slug=next-free&duration_min=30&location_type=link&avail_days=1&avail_start=09%3A00&avail_end=17%3A00"
+    );
+    let response = app
+        .clone()
+        .oneshot(post_form(
+            "/dashboard/event-types/test-meeting/edit",
+            &session,
+            csrf,
+            &body,
+        ))
+        .await
+        .unwrap();
+    assert!(!response.status().is_redirection());
+    let slug: String = sqlx::query_scalar("SELECT slug FROM event_types WHERE id = ?")
+        .bind(&et_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(slug, "test-meeting");
+}
+
 #[tokio::test]
 async fn team_page_shows_each_type_roster_and_first_names() {
     let (app, pool, _, _) = setup_test_app().await;

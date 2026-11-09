@@ -568,6 +568,8 @@ overview-ruler-booked = Booked
 overview-ruler-pending = Waiting for a decision
 overview-ruler-unavailable = Unavailable (your calendar)
 overview-key-open = Open for bookings
+overview-ruler-unreadable = Repeating event calrs cannot read
+overview-ruler-unreadable-tip = Counted as busy to be safe. The troubleshoot view shows which event it is.
 overview-figures-title = Last 30 days
 
 # Dashboard bookings (templates/dashboard_bookings.html)
@@ -1172,6 +1174,7 @@ etf-dynamic-group-note = Only users who allow dynamic group links are shown.
 etf-dynamic-group-url = Group link URL
 etf-watcher-teams = Watcher teams
 etf-watcher-teams-help = Selected teams will be notified when bookings are made. Members can claim bookings to join as an attendee.
+etf-watcher-team-locked = Not one of your teams, so it stays attached
 etf-save = Save changes
 etf-create = Create event type
 etf-js-loading = Loading...

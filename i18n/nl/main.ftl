@@ -559,6 +559,8 @@ overview-ruler-booked = Geboekt
 overview-ruler-pending = Wacht op een beslissing
 overview-ruler-unavailable = Niet beschikbaar (je agenda)
 overview-key-open = Open voor boekingen
+overview-ruler-unreadable = Herhalende afspraak die calrs niet kan lezen
+overview-ruler-unreadable-tip = Voor de zekerheid als bezet gerekend. Probleemoplossing laat zien om welke afspraak het gaat.
 overview-figures-title = Laatste 30 dagen
 
 # Dashboard bookings (templates/dashboard_bookings.html)
@@ -1163,6 +1165,7 @@ etf-dynamic-group-note = Alleen gebruikers die dynamische groepslinks toestaan, 
 etf-dynamic-group-url = URL van groepslink
 etf-watcher-teams = Meekijkende teams
 etf-watcher-teams-help = Geselecteerde teams krijgen een melding als er geboekt wordt. Leden kunnen boekingen overnemen om als deelnemer aan te sluiten.
+etf-watcher-team-locked = Niet een van je teams, het blijft gekoppeld
 etf-save = Wijzigingen opslaan
 etf-create = Afspraaktype aanmaken
 etf-js-loading = Laden...

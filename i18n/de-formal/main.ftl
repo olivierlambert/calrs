@@ -233,6 +233,7 @@ team-settings-time-off-help = Geplante Abwesenheiten der Mitglieder, in Ihrer Ze
 etf-required-members-help = Alle angehakten Mitglieder müssen frei sein, damit ein Zeitfenster angeboten wird. Nehmen Sie den Haken bei Mitgliedern weg, die ausgeschlossen werden sollen (ihre Verfügbarkeit wird dann ignoriert).
 etf-timezone-help = Die Zeiten unten werden in dieser Zeitzone ausgelegt. Wählen Sie bei Team-Terminarten die Arbeitszeitzone des Teams (nicht zwingend die der erstellenden Person).
 etf-reset-default-title = Diese Zeiten durch die Standardverfügbarkeit aus Ihrem Profil ersetzen
+etf-watcher-team-locked = Nicht Ihr Team, es bleibt eingetragen
 etf-availability-prefilled = Vorbelegt aus Ihrer { $link }. Sie können sie hier für diese Terminart überschreiben.
 etf-requires-confirmation-help = Buchungen bleiben ausstehend, bis Sie sie im Dashboard bestätigen.
 etf-conflict-calendars-help = Wählen Sie, welche Kalender auf Konflikte geprüft werden. Ohne Auswahl werden Ihre Kalender geprüft, die als belegt zählen, nicht aber von Kollegen geteilte: Wählen Sie alle Kalender aus, die blockieren sollen, auch geteilte.
