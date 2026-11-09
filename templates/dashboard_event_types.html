@@ -1,5 +1,6 @@
 {% extends "dashboard_base.html" %}
 {% block title %}{{ t("event-types-page-title") }}, calrs{% endblock %}
+{% block main_class %}has-cards{% endblock %}
 {% block dashboard_content %}
 {% import "partials/icons.html" as ic %}
 <style>
@@ -12,6 +13,7 @@
 .action-menu-dropdown .danger.is-armed { color: var(--paper); }
 .action-menu-dropdown hr { border: 0; border-top: 1px solid var(--border); margin: 0.3rem 0.2rem; }
 .et-row { align-items: center; }
+@media (max-width: 480px) { .et-row { align-items: flex-start; } }
 .et-row .ui-switch { margin-top: 0; }
 .et-switch-slot { width: 2.125rem; flex-shrink: 0; }
 .et-row .ui-row-title strong { font-weight: 600; }
@@ -31,8 +33,9 @@
   </div>
 </header>
 
-<section class="sec">
+<section class="card">
   {% if has_any %}
+  <div class="card-head is-tools">
   <div class="ui-toolbar">
     <div class="ui-search">
       {{ ic.icon("search", 15) }}
@@ -40,7 +43,8 @@
       <span class="kbd">/</span>
     </div>
   </div>
-  <div class="ui-list" data-filter-list>
+  </div>
+  <div class="ui-list card-body" data-filter-list>
     {% for et in all_event_types %}
     {% set et_path = ("/team/" ~ et.team_slug) if et.is_team else ("/u/" ~ username) %}
     <div class="ui-row et-row{% if not et.enabled %} is-muted{% endif %}" data-filter-text="{{ et.title }} {{ et.slug }} {{ et.team_name }}">

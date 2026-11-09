@@ -1,5 +1,6 @@
 {% extends "dashboard_base.html" %}
 {% block title %}{{ t("directory-title") }}, calrs{% endblock %}
+{% block main_class %}has-cards{% endblock %}
 {% block dashboard_content %}
 {% import "partials/icons.html" as ic %}
 <style>
@@ -14,8 +15,8 @@
     <p class="page-subtitle">{{ t("directory-help") }}</p>
   </div>
 </header>
-<section class="sec">
-  <form method="get" action="/dashboard/directory" class="directory-search-form" role="search">
+<section class="card">
+  <form method="get" action="/dashboard/directory" class="directory-search-form card-head is-tools" role="search">
     <label for="directory-search" class="sr-only">{{ t("directory-search") }}</label>
     <div class="ui-search">
       {{ ic.icon("search", 15) }}
@@ -28,7 +29,9 @@
       {{ t("directory-favorites-only") }}
     </label>
   </form>
+  <div class="card-body">
   {% include "partials/directory_entries.html" %}
   {% include "partials/pager.html" %}
+  </div>
 </section>
 {% endblock %}

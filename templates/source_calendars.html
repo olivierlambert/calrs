@@ -1,5 +1,6 @@
 {% extends "dashboard_base.html" %}
 {% block title %}{{ t("source-calendars-page-title") }}, calrs{% endblock %}
+{% block main_class %}has-cards{% endblock %}
 {% block dashboard_content %}
 <style>
   .source-cal-list { display: flex; flex-direction: column; gap: 0.5rem; margin-bottom: 1.25rem; }
@@ -12,8 +13,9 @@
   .source-cal-toolbar { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.75rem; }
 </style>
 <a href="/dashboard/sources" class="back-link">&larr; {{ t("source-calendars-back") }}</a>
-<div class="card">
-  <h1>{{ t("source-calendars-heading") }}</h1>
+<section class="card" aria-labelledby="sc-title">
+  <div class="card-head"><h2 id="sc-title">{{ t("source-calendars-heading") }}</h2></div>
+  <div class="card-body">
   <p style="color: var(--text-secondary); margin-bottom: 1rem;">
     {{ t("source-calendars-help", name='<strong>' ~ (source_name | escape) ~ '</strong>') | safe }}
   </p>
@@ -42,5 +44,6 @@
   {% else %}
   <p class="empty" style="padding: 1rem;">{{ t("source-calendars-empty") }}</p>
   {% endif %}
-</div>
+  </div>
+</section>
 {% endblock %}
