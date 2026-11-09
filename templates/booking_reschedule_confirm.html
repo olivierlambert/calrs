@@ -3,7 +3,7 @@
 {% block title %}{{ t("resched-confirm-page-title") }}{% endblock %}
 
 {% block content %}
-<div class="logo">{% if company_link %}<a href="{{ company_link }}" target="_blank" rel="noopener noreferrer">{% endif %}<img src="/logo" alt="" onerror="this.closest('.logo').style.display='none'">{% if company_link %}</a>{% endif %}</div>
+{% include "partials/public_logo.html" %}
 
 <div class="card">
   <div style="display: flex; align-items: center; gap: 0.625rem; margin-bottom: 0.75rem;">

@@ -700,6 +700,7 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
     env.set_undefined_behavior(minijinja::UndefinedBehavior::Lenient);
     env.set_loader(minijinja::path_loader("templates"));
     crate::i18n::register(&mut env);
+    register_company_logo(&mut env, data_dir.clone());
 
     // Populate the process-global runtime-settings cache (base URL, private-host
     // allowlist) so synchronous readers and email/link builders see DB values.
@@ -992,6 +993,14 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
             post(admin_upload_logo).layer(DefaultBodyLimit::max(LOGO_MAX_BYTES + 64 * 1024)),
         )
         .route("/dashboard/admin/logo/delete", post(admin_delete_logo))
+        .route(
+            "/dashboard/admin/logo/dark",
+            post(admin_upload_logo_dark).layer(DefaultBodyLimit::max(LOGO_MAX_BYTES + 64 * 1024)),
+        )
+        .route(
+            "/dashboard/admin/logo/dark/delete",
+            post(admin_delete_logo_dark),
+        )
         .route("/dashboard/admin/favicon", post(admin_upload_favicon))
         .route(
             "/dashboard/admin/favicon/delete",
@@ -1045,6 +1054,7 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
         )
         // Serve logo and fonts
         .route("/logo", get(serve_logo))
+        .route("/logo/dark", get(serve_logo_dark))
         // `/favicon.ico` too: browsers request it on their own for pages
         // without a <link rel="icon">, such as a raw image or a JSON error.
         .route("/favicon", get(serve_favicon))

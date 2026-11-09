@@ -27,6 +27,12 @@ fn max_anchor_depth(html: &str) -> usize {
     max
 }
 
+/// A data directory that holds no logo, for templates rendered outside the
+/// router: they include the public logo partial, which calls `company_logo()`.
+fn no_logo_dir() -> std::path::PathBuf {
+    std::env::temp_dir().join(format!("calrs_no_logo_{}", uuid::Uuid::new_v4()))
+}
+
 /// Regression test for #239: an event-type description containing a
 /// markdown link must not produce an `<a>` nested inside the card link on
 /// the user and team profile pages, and the description link must survive.
@@ -36,6 +42,7 @@ fn profile_cards_do_not_nest_description_links() {
     env.set_undefined_behavior(minijinja::UndefinedBehavior::Lenient);
     env.set_loader(minijinja::path_loader("templates"));
     crate::i18n::register(&mut env);
+    register_company_logo(&mut env, no_logo_dir());
 
     let description =
         crate::utils::render_inline_markdown("See [the agenda](https://example.com/agenda)");
@@ -91,6 +98,7 @@ fn slots_template_links_without_reschedule_context() {
     env.set_undefined_behavior(minijinja::UndefinedBehavior::Lenient);
     env.set_loader(minijinja::path_loader("templates"));
     crate::i18n::register(&mut env);
+    register_company_logo(&mut env, no_logo_dir());
 
     let tmpl = env
         .get_template("slots.html")
@@ -153,6 +161,7 @@ fn slots_template_links_with_reschedule_context() {
     env.set_undefined_behavior(minijinja::UndefinedBehavior::Lenient);
     env.set_loader(minijinja::path_loader("templates"));
     crate::i18n::register(&mut env);
+    register_company_logo(&mut env, no_logo_dir());
 
     let tmpl = env
         .get_template("slots.html")
@@ -229,6 +238,7 @@ fn slots_template_renders_absent_prev_month_as_empty() {
     env.set_undefined_behavior(minijinja::UndefinedBehavior::Lenient);
     env.set_loader(minijinja::path_loader("templates"));
     crate::i18n::register(&mut env);
+    register_company_logo(&mut env, no_logo_dir());
     let tmpl = env
         .get_template("slots.html")
         .expect("slots.html should load");
@@ -305,6 +315,7 @@ fn book_template_phone_field_degrades_without_javascript() {
     env.set_undefined_behavior(minijinja::UndefinedBehavior::Lenient);
     env.set_loader(minijinja::path_loader("templates"));
     crate::i18n::register(&mut env);
+    register_company_logo(&mut env, no_logo_dir());
     let tmpl = env
         .get_template("book.html")
         .expect("book.html should load");
@@ -751,6 +762,7 @@ fn book_template_sets_the_custom_wasm_url_before_the_widget() {
     env.set_undefined_behavior(minijinja::UndefinedBehavior::Lenient);
     env.set_loader(minijinja::path_loader("templates"));
     crate::i18n::register(&mut env);
+    register_company_logo(&mut env, no_logo_dir());
     let tmpl = env
         .get_template("book.html")
         .expect("book.html should load");
