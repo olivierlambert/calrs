@@ -1,130 +1,157 @@
 {% extends "dashboard_base.html" %}
-{% import "partials/icons.html" as ic %}
+{% import "partials/phosphor.html" as ph %}
 {% block title %}{{ t("overview-page-title") }}, calrs{% endblock %}
 {% block container_class %}is-wide{% endblock %}
+{# The time zone notice joins the "To set up" strip below the hero. #}
+{% block tz_banner %}{% endblock %}
 {% block dashboard_content %}
 <style>
-  /* Masthead: the date is the headline, one line under it. */
-  .mast { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0.4rem 2rem; align-items: end; padding-bottom: 1.5rem; }
-  .mast h1 { font-size: 2.1rem; line-height: 1.05; font-weight: 640; letter-spacing: -0.012em; margin: 0; }
-  .mast h1 .wk { font-weight: 400; color: var(--text-muted); font-size: 0.5em; letter-spacing: 0; margin-left: 0.45rem; vertical-align: 0.35em; }
-  .mast p { grid-column: 1; color: var(--text-secondary); font-size: 15px; max-width: 64ch; margin: 0; }
-  .mast p .rel-time { font-size: inherit; color: var(--now); font-weight: 600; }
-  .mast .actions { grid-column: 2; grid-row: 1 / span 2; display: flex; gap: 0.5rem; align-self: end; flex-wrap: wrap; justify-content: flex-end; }
-  .avail-note { display: flex; align-items: baseline; gap: 0.75rem; flex-wrap: wrap; font-size: 13px; color: var(--text-secondary); padding: 0.5rem 0; border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); margin-bottom: 1.25rem; }
-  .avail-note a { color: var(--ink); }
-  .avail-note button { margin-left: auto; }
-  .avail-note[hidden] { display: none; }
+  /* The overview: a greeting, the next meeting as the one big thing, then
+     everything else quieter. No section rules here: space and a light
+     heading separate the parts. */
+  .ov {
+    /* Faces: one warm hue per person (from the name, set as --h on the
+       element), mixed into the theme's own surface so it reads on any
+       theme; the initials are in the theme's text colour. */
+    --face-mix: 26%;
+    --hero-bg: color-mix(in srgb, var(--text) 3.5%, var(--paper));
+    --dots: color-mix(in srgb, var(--text) 17%, transparent);
+  }
+  html.dark .ov {
+    --face-mix: 38%;
+    --hero-bg: color-mix(in srgb, var(--text) 5.5%, var(--paper));
+    --dots: color-mix(in srgb, var(--text) 22%, transparent);
+  }
+  .ov .sec { border-top: 0; padding-top: 0; }
+  .ov .sec + .sec, .ov .sec-gap { margin-top: 2.5rem; }
+  .ov .sec-h { margin-bottom: 0.4rem; }
+  .ov .sec-h h2 { font-size: 16px; }
 
-  /* Last 30 days: four large figures, each over a bar pair (this period,
-     then the 30 days before, both scaled to the larger). */
-  .fig-strip { margin-bottom: 2.25rem; }
-  .fig-row { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1.25rem 2rem; margin: 0.7rem 0 0; }
-  .fig { display: flex; flex-direction: column; margin: 0; min-width: 0; }
-  .fig dt { order: 2; font-size: 12.5px; color: var(--text-secondary); margin-top: 0.2rem; }
-  .fig .fig-v { order: 1; margin: 0; font-size: 2rem; line-height: 1.05; font-weight: 640; letter-spacing: -0.01em; color: var(--ink); font-variant-numeric: tabular-nums; white-space: nowrap; }
-  .fig .fig-cmp { order: 3; margin: 0.5rem 0 0; display: flex; align-items: center; gap: 0.5rem; font-size: 11.5px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
-  .fb { display: flex; flex-direction: column; gap: 2px; width: 5rem; flex-shrink: 0; }
-  .fb i { display: block; height: 4px; background: var(--data); }
-  .fb i.prev, .fb-key { background: var(--data-busy); }
-  .fb-key { display: inline-block; width: 1rem; height: 4px; }
+  .face { display: inline-grid; place-items: center; flex-shrink: 0; width: 2rem; height: 2rem; border-radius: 50%; background: color-mix(in srgb, hsl(var(--h, 24) 62% 52%) var(--face-mix), var(--surface)); color: var(--text); font-size: 12px; font-weight: 650; line-height: 1; font-stretch: 92%; font-variant-numeric: tabular-nums; user-select: none; }
+  .face--sm { width: 1.6rem; height: 1.6rem; font-size: 10.5px; }
+  .face--lg { width: 3.5rem; height: 3.5rem; font-size: 18px; }
+  .face--xl { width: 3.25rem; height: 3.25rem; font-size: 17px; }
+  .face--more { background: var(--hours); color: var(--text-secondary); box-shadow: inset 0 0 0 1px var(--rule); }
+  .face-stack { display: inline-flex; }
+  .face-stack .face + .face { margin-left: -0.6rem; box-shadow: 0 0 0 3px var(--hero-bg); }
+  .face-img { width: 3.25rem; height: 3.25rem; border-radius: 50%; object-fit: cover; flex-shrink: 0; }
 
-  /* The day ruler: bookable hours shaded, bookings and unavailable time as
-     square blocks at their true position, the now line in accent. */
-  .ruler { position: relative; margin: 0.25rem 0 2.5rem; }
-  .ruler-scale { position: relative; height: 1.4rem; border-bottom: 1px solid var(--rule-strong); }
-  .ruler-scale span { position: absolute; bottom: 0; transform: translateX(-50%); font-size: 11.5px; color: var(--text-muted); font-variant-numeric: tabular-nums; padding-bottom: 0.45rem; }
-  .ruler-scale span::after { content: ""; position: absolute; left: 50%; bottom: -1px; height: 6px; border-left: 1px solid var(--rule-strong); }
-  .ruler-scale span.half::after { height: 3px; }
-  .ruler-track { position: relative; height: 58px; border-bottom: 1px solid var(--rule); }
-  .ruler-band { position: absolute; top: 0; bottom: 0; background: var(--hours); }
-  .blk { position: absolute; top: 8px; bottom: 8px; padding: 0.3rem 0.4rem; font-size: 12px; line-height: 1.25; overflow: hidden; white-space: nowrap; text-decoration: none; }
-  .blk b { display: block; font-weight: 600; font-variant-numeric: tabular-nums; }
-  .blk.c { background: var(--booked); color: #fff; }
-  .blk.p { background: var(--paper) var(--hatch); color: var(--ink); box-shadow: inset 0 0 0 1px var(--booked); }
-  .blk.p b { display: inline-block; background: var(--paper); padding: 0 2px; margin-left: -2px; }
-  .blk.u { background: var(--data-busy); color: var(--text-secondary); top: 14px; bottom: 14px; }
-  .blk.past { opacity: 0.45; }
-  a.blk:hover, a.blk:focus-visible { outline: 1px solid var(--ink); outline-offset: 1px; }
-  .ruler-labels { position: relative; height: 2.6rem; margin-top: 0.35rem; }
-  .ruler-labels.two { height: 5.3rem; }
-  .ruler-labels span { position: absolute; font-size: 12px; line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; border-left: 1px solid var(--rule-strong); padding-left: 5px; }
-  .ruler-labels span.lane1 { top: 2.7rem; }
-  .ruler-labels span.past { opacity: 0.5; }
-  .ruler-labels strong { font-weight: 600; }
-  .ruler-labels em { font-style: normal; color: var(--text-muted); }
-  .now { position: absolute; top: -1.4rem; bottom: -4px; width: 2px; margin-left: -1px; background: var(--now); z-index: 2; pointer-events: none; }
-  .now span { position: absolute; top: -0.2rem; left: 4px; font-size: 11.5px; font-weight: 650; color: var(--now); font-variant-numeric: tabular-nums; background: var(--paper); padding: 0 3px; }
+  /* Greeting: the user's face, their name, today, one sentence. */
+  .hello { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 0.25rem 1.1rem; align-items: center; margin-bottom: 1.75rem; }
+  .hello h1 { font-size: 2.1rem; line-height: 1.1; font-weight: 640; font-stretch: 94%; letter-spacing: -0.012em; margin: 0; }
+  .hello-date { margin: 0.15rem 0 0; color: var(--text-muted); font-size: 13.5px; }
+  .hello-sum { grid-column: 2 / 4; margin: 0.35rem 0 0; color: var(--text-secondary); font-size: 16.5px; line-height: 1.5; max-width: 62ch; }
+  .hello .actions { grid-column: 3; grid-row: 1; display: flex; gap: 0.5rem; flex-wrap: wrap; justify-content: flex-end; align-self: start; }
 
-  /* This week: seven day columns on one hour axis. */
-  .wk-sec { margin-bottom: 2.75rem; }
-  .wv { --wv-axis: 2.2rem; margin-top: 0.6rem; }
-  .wv-row { display: grid; grid-template-columns: var(--wv-axis) repeat(7, minmax(0, 1fr)); }
-  .wv-d { font-size: 12.5px; color: var(--text-secondary); padding: 0.3rem 0.45rem 0.35rem; border-top: 2px solid transparent; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .wv-d b { font-weight: 600; color: var(--ink); font-variant-numeric: tabular-nums; margin-left: 0.15rem; }
-  .wv-d.is-today, .wv-d.is-today b { color: var(--now); }
-  .wv-d.is-today { border-top-color: var(--now); }
-  .wv-d.is-past { color: var(--text-muted); }
-  .wv-d.is-past b { color: var(--text-secondary); }
-  .wv-body { position: relative; border-top: 1px solid var(--rule-strong); border-bottom: 1px solid var(--rule-strong); }
-  .wv-axis { position: relative; }
-  .wv-axis span { position: absolute; right: 0.45rem; transform: translateY(-50%); font-size: 11px; line-height: 1; color: var(--text-muted); font-variant-numeric: tabular-nums; }
-  .wv-axis span:first-child { transform: none; margin-top: 3px; }
-  .wv-axis span:last-child { transform: translateY(-100%); margin-top: -3px; }
-  .wv-gl { position: absolute; left: var(--wv-axis); right: 0; border-top: 1px solid var(--rule); pointer-events: none; }
-  .wv-col { position: relative; border-left: 1px solid var(--rule); }
-  .wv-open { position: absolute; left: 0; right: 0; background: var(--hours); }
-  .wv-u { position: absolute; left: 3px; right: 3px; background: var(--data-busy); }
-  .wv-col.is-past .wv-u { opacity: 0.6; }
-  .wb { position: absolute; box-sizing: border-box; min-height: 3px; padding: 1px 4px; border: 1px solid var(--paper); font-size: 11.5px; line-height: 1.3; text-decoration: none; }
-  .wb.c { background: var(--booked); color: #fff; }
-  .wb.p { background: var(--paper) var(--hatch); color: var(--ink); box-shadow: inset 0 0 0 1px var(--booked); }
-  .wb.p .wb-in span { background: var(--paper); padding: 0 2px; }
-  .wb.past { opacity: 0.6; }
-  .wb-in { display: block; height: 100%; overflow: hidden; }
-  .wb-in span { display: block; width: fit-content; max-width: 100%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-  .wb-in b { font-weight: 600; font-variant-numeric: tabular-nums; }
-  .wb:hover, .wb:focus-visible { z-index: 4; opacity: 1; outline: 1px solid var(--ink); outline-offset: 0; }
-  .wtip { position: absolute; top: 0; left: calc(100% + 6px); z-index: 6; width: max-content; max-width: 15rem; padding: 0.5rem 0.65rem; border-radius: var(--r-float); background: var(--paper); border: 1px solid var(--rule); box-shadow: var(--shadow-float); font-size: 12px; line-height: 1.45; color: var(--text-secondary); visibility: hidden; pointer-events: none; }
-  .wtip.l { left: auto; right: calc(100% + 6px); }
-  .wtip.up { top: auto; bottom: 0; }
-  .wtip strong { display: block; color: var(--ink); font-weight: 600; }
-  .wtip .tip-row { margin-top: 0.2rem; }
-  .wb:hover .wtip, .wb:focus-visible .wtip { visibility: visible; }
-  .wv-now { position: absolute; left: -1px; right: 0; height: 2px; margin-top: -1px; background: var(--now); z-index: 3; pointer-events: none; }
-  .wv-foot span { padding: 0.35rem 0.45rem 0; font-size: 12.5px; font-weight: 600; color: var(--ink); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .wv-foot .closed { font-weight: 400; color: var(--text-muted); }
-  .wv-foot .is-today { color: var(--now); }
-  .wk-sec .key { margin-top: 0.9rem; }
+  /* Up next: the one large block on the page. Flat, no shadow. */
+  .hero { background: var(--hero-bg); border-radius: var(--r-float); padding: 1.35rem 1.6rem 1.5rem; }
+  .hero-h { margin: 0 0 0.9rem; font-size: 13.5px; font-weight: 600; color: var(--text-secondary); }
+  .hero-grid { display: grid; grid-template-columns: minmax(9rem, auto) minmax(0, 1fr) auto; gap: 1rem 2.5rem; align-items: center; }
+  .hero-when { display: flex; flex-direction: column; }
+  .hero-rel { color: var(--now-text); font-weight: 600; font-size: 14px; }
+  .hero-time { font-size: 3.4rem; line-height: 1; font-weight: 600; font-stretch: 80%; letter-spacing: -0.02em; color: var(--ink); font-variant-numeric: tabular-nums; margin-top: 0.2rem; }
+  .hero-day { color: var(--text-secondary); font-size: 13.5px; margin-top: 0.35rem; font-variant-numeric: tabular-nums; }
+  .hero-who { display: flex; align-items: center; gap: 1rem; min-width: 0; }
+  .hero-name { font-size: 1.3rem; font-weight: 620; color: var(--ink); line-height: 1.25; overflow-wrap: anywhere; }
+  .hero-what { color: var(--text-secondary); font-size: 14px; margin-top: 0.15rem; }
+  .hero-what a { color: inherit; text-decoration: none; }
+  .hero-what a:hover { color: var(--ink); text-decoration: underline; text-underline-offset: 2px; }
+  .hero-acts { display: flex; gap: 0.5rem; align-items: center; }
+  .hero-acts .ui-btn { padding: 0.55rem 1.15rem; font-size: 14px; }
+  .ov .ui-btn .nav-ic { margin-right: 0.4rem; vertical-align: -0.2em; }
+  .hero-day .nav-ic { color: var(--text-muted); margin-right: 0.15rem; }
+  .hero-empty { margin: 0; color: var(--text-secondary); font-size: 15px; max-width: 60ch; }
+  .hero-empty + .empty-actions { margin-top: 0.75rem; }
+
+  /* To set up: one quiet line under the hero ("2 things to set up"),
+     opening onto the rows, each with its action and Dismiss. */
+  .setup { margin-top: 0.9rem; font-size: 13.5px; }
+  .setup[hidden] { display: none; }
+  .setup summary { display: inline-flex; align-items: center; gap: 0.45rem; cursor: pointer; color: var(--text-secondary); list-style: none; padding: 0.2rem 0; }
+  .setup summary::-webkit-details-marker { display: none; }
+  .setup summary::after { content: ""; width: 0.38rem; height: 0.38rem; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(-45deg); margin-left: 0.15rem; }
+  .setup[open] summary::after { transform: rotate(45deg); margin-top: -0.2rem; }
+  .setup summary:hover { color: var(--ink); }
+  .setup summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--r-control); }
+  .setup ul { list-style: none; margin: 0.35rem 0 0; padding: 0 0 0 1.05rem; max-width: 760px; }
+  .setup li { display: flex; align-items: center; gap: 0.4rem 0.6rem; flex-wrap: wrap; padding: 0.4rem 0; color: var(--text-secondary); border-top: 1px solid var(--rule); }
+  .setup li[hidden] { display: none; }
+  .setup li > span:first-child { flex: 1 1 22rem; min-width: 0; }
+  .setup li a:not(.ui-btn) { color: var(--ink); }
+  .setup .tz-banner { display: none; margin: 0; padding: 0.4rem 0; border-width: 1px 0 0; border-radius: 0; font-size: inherit; }
+
+  /* People rows: a face, then who and what. */
+  .person-row { display: grid; grid-template-columns: 2rem minmax(0, 1fr) auto; gap: 0.35rem 0.85rem; align-items: center; padding: 0.7rem 0; border-bottom: 1px solid var(--rule); }
+  .person-row .face { align-self: start; margin-top: 0.1rem; }
+  .person-main { min-width: 0; }
+  .person-who { color: var(--ink); font-weight: 600; }
+  .person-who a { font-weight: 400; font-size: 13px; color: var(--text-secondary); text-decoration: none; margin-left: 0.35rem; }
+  .person-who a:hover { color: var(--ink); text-decoration: underline; }
+  .person-what { display: flex; align-items: center; gap: 0.45rem; color: var(--text-secondary); font-size: 13.5px; margin-top: 0.1rem; flex-wrap: wrap; }
+  .person-what a { color: inherit; text-decoration: none; }
+  .person-what a:hover { color: var(--ink); text-decoration: underline; }
+  .person-what time { color: var(--ink); font-weight: 600; }
+  .wait { margin-top: 2.25rem; }
+
+  .cols { display: grid; grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); gap: 3.25rem; align-items: start; margin-top: 2.5rem; }
+  .cols.one { grid-template-columns: minmax(0, 1fr); max-width: 720px; }
+
+  /* Coming up, after the hero. */
+  .soon-row { display: grid; grid-template-columns: 3.1rem 1.6rem minmax(0, 1fr) auto; gap: 0.75rem; align-items: center; padding: 0.5rem 0; border-bottom: 1px solid var(--rule); }
+  .soon-row .tt-time { font-size: 14px; }
+  .soon-main { display: flex; align-items: baseline; gap: 0.55rem; min-width: 0; }
+  .soon-main .tt-title { flex: 0 1 auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .soon-main .tt-who { flex: 1 1 0; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  /* Booking links as chips: name, duration, copy. */
+  .chips { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.35rem; }
+  .chip { display: inline-flex; align-items: center; gap: 0.55rem; padding: 0.45rem 0.6rem 0.45rem 0.75rem; border: 1px solid var(--rule); border-radius: var(--r-control); background: var(--paper); color: var(--ink); font: inherit; font-size: 13.5px; cursor: pointer; text-align: left; max-width: 100%; }
+  .chip:hover { background: var(--surface-hover); border-color: var(--rule-strong); }
+  .chip b { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .chip .d { color: var(--text-muted); font-size: 12.5px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .chip .nav-ic { color: var(--text-muted); flex-shrink: 0; }
+  .chip:hover .nav-ic { color: var(--ink); }
+  .chip.is-copied { border-color: var(--success); }
+  .chip.is-copied .nav-ic { color: var(--success); }
+  .fav-wrap .directory-list { margin-top: 0; }
+
+  /* This week: seven compact day columns. Open hours are a dotted
+     texture, bookings are bars with the guest's initials, calendar busy
+     time is a flat anonymous band, today carries the accent. */
+  .wk-scroll { position: relative; }
+  .wk { display: grid; grid-template-columns: repeat(7, minmax(2.9rem, 1fr)); gap: 0 5px; margin-top: 0.5rem; }
+  .wk-day { display: flex; flex-direction: column; min-width: 0; color: inherit; text-decoration: none; border-radius: var(--r-control); }
+  a.wk-day:hover .wk-head b, a.wk-day:focus-visible .wk-head b { text-decoration: underline; text-underline-offset: 2px; }
+  a.wk-day:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .wk-head { font-size: 12px; color: var(--text-secondary); padding: 0.3rem 0.15rem 0.35rem; border-top: 2px solid transparent; white-space: nowrap; overflow: hidden; }
+  .wk-head b { display: block; font-size: 16px; font-weight: 620; color: var(--ink); font-variant-numeric: tabular-nums; line-height: 1.2; }
+  .wk-day.is-today .wk-head { border-top-color: var(--now); color: var(--now); }
+  .wk-day.is-today .wk-head b { color: var(--now); }
+  .wk-day.is-past .wk-head, .wk-day.is-past .wk-head b { color: var(--text-muted); }
+  .wk-col { position: relative; height: 9.5rem; border-bottom: 1px solid var(--rule-strong); }
+  .wk-open { position: absolute; left: 0; right: 0; background-image: radial-gradient(var(--dots) 0.6px, transparent 0.8px); background-size: 9px 9px; background-position: 2px 2px; }
+  .wk-u { position: absolute; left: 0; right: 0; background: var(--data-busy); }
+  .wk-b { position: absolute; box-sizing: border-box; display: grid; place-items: center; overflow: hidden; border: 1px solid var(--paper); font-size: 10.5px; font-weight: 650; line-height: 1; text-decoration: none; letter-spacing: 0.02em; }
+  .wk-b.c { background: var(--bar); color: var(--on-bar); }
+  .wk-b.p { background: var(--paper) var(--hatch); color: var(--ink); box-shadow: inset 0 0 0 1px var(--bar); }
+  .wk-b.p span { background: var(--paper); padding: 0 2px; }
+  .wk-day.is-past .wk-b, .wk-b.past { opacity: 0.55; }
+  .wk-now { position: absolute; left: -3px; right: -3px; height: 2px; margin-top: -1px; background: var(--now); z-index: 3; pointer-events: none; }
+  .wk-foot { padding: 0.35rem 0.15rem 0; font-size: 12px; font-weight: 600; color: var(--ink); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-height: 1.6rem; }
+  .wk-foot.closed { font-weight: 400; color: var(--text-muted); }
+  .wk-day.is-today .wk-foot { color: var(--now); }
+  .wk-sec .key { margin-top: 0.75rem; }
+  .wk-sec .key .g.c { background: var(--bar); }
   .wk-sec .key .end { margin-left: auto; }
   .wk-sec .key a { color: var(--text-secondary); }
   .wk-sec .key a:hover { color: var(--ink); }
-  .g.o { background: var(--hours); box-shadow: inset 0 0 0 1px var(--rule); }
+  .g.o { background-image: radial-gradient(var(--dots) 0.75px, transparent 1px); background-size: 4px 4px; box-shadow: inset 0 0 0 1px var(--rule); }
 
-  /* Getting started: a numbered ledger, done rows struck through. */
-  .steps { list-style: none; margin: 0 0 2.75rem; padding: 0; counter-reset: step; }
-  .steps li { display: grid; grid-template-columns: 1.5rem minmax(0, 1fr) auto; gap: 0.75rem; align-items: baseline; padding: 0.6rem 0; border-bottom: 1px solid var(--rule); }
-  .steps li::before { counter-increment: step; content: counter(step); font-weight: 600; color: var(--text-muted); font-variant-numeric: tabular-nums; }
-  .steps li.done span { color: var(--text-muted); text-decoration: line-through; }
-
-  .cols { display: grid; grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); gap: 3rem; align-items: start; }
-  .cols.one { grid-template-columns: minmax(0, 1fr); max-width: 720px; }
-
-  /* Coming up: one line per booking. */
-  .tt-row.tight { grid-template-columns: 3.2rem 0.7rem minmax(0, 1fr) auto; align-items: center; padding: 0.45rem 0; }
-  .tt-row.tight .tt-main { display: flex; align-items: baseline; gap: 0.6rem; min-width: 0; }
-  .tt-row.tight .tt-title { flex: 0 1 auto; }
-  .tt-row.tight .tt-who { flex: 1 1 0; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-
-  /* Booking links: one line each. */
-  .link-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 0.6rem; align-items: center; padding: 0.3rem 0; border-bottom: 1px solid var(--rule); }
-  .link-row .tt-title { font-weight: 500; }
-  .link-row .d { color: var(--text-muted); font-size: 12.5px; font-variant-numeric: tabular-nums; }
-  .fav-wrap .directory-list { margin-top: 0; }
-
-  /* 12-week chart: square stacks, 2px gaps, cancelled counted under it. */
-  .chart { position: relative; margin-top: 1rem; padding-left: 1.6rem; }
-  .plot { position: relative; height: 150px; display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 0 5px; align-items: end; border-bottom: 1px solid var(--rule-strong); }
+  /* Last 30 days: one sentence, then the weeks as small square bars. */
+  .pulse { margin: 0.1rem 0 0; color: var(--text-secondary); font-size: 14.5px; line-height: 1.55; max-width: 48ch; }
+  .pulse strong { color: var(--ink); font-weight: 600; }
+  .chart { position: relative; margin-top: 1.1rem; padding-left: 1.4rem; }
+  .plot { position: relative; height: 84px; display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 0 5px; align-items: end; border-bottom: 1px solid var(--rule-strong); }
   .gl { position: absolute; left: 0; right: 0; border-top: 1px solid var(--rule); pointer-events: none; }
   .gl span { position: absolute; right: 100%; padding-right: 6px; transform: translateY(-50%); font-size: 11px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
   .bar { position: relative; display: flex; flex-direction: column; justify-content: flex-end; height: 100%; outline-offset: 2px; }
@@ -134,25 +161,26 @@
   .bar .s.p { background: var(--paper) var(--hatch); box-shadow: inset 0 0 0 1px var(--data); }
   .bar.cur .s.c { background: var(--now); }
   .bar.cur .s.p { background: var(--paper) repeating-linear-gradient(135deg, var(--now) 0 1.5px, transparent 1.5px 5px); box-shadow: inset 0 0 0 1px var(--now); }
-  .bar .tot { font-size: 11.5px; font-weight: 600; text-align: center; font-variant-numeric: tabular-nums; padding-bottom: 2px; }
+  .bar .tot { font-size: 11px; font-weight: 600; text-align: center; font-variant-numeric: tabular-nums; padding-bottom: 2px; }
   .bar.cur .tot { color: var(--now); }
   .bar:hover .stack, .bar:focus-visible .stack { filter: contrast(1.25); }
-  .xax, .xcan { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 0 5px; font-size: 11px; color: var(--text-muted); text-align: center; font-variant-numeric: tabular-nums; }
-  .xax { padding-top: 0.3rem; }
+  .xax { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 0 5px; font-size: 11px; color: var(--text-muted); text-align: center; font-variant-numeric: tabular-nums; padding-top: 0.3rem; }
   .xax span { white-space: nowrap; }
   .xax .cur { color: var(--now); font-weight: 600; }
-  .xax .cur small { display: block; font-size: 10.5px; font-weight: 500; }
-  .xcan { margin-top: 0.15rem; min-height: 1.1rem; align-items: center; }
-  .xcan span { display: inline-flex; gap: 3px; align-items: center; justify-content: center; }
-  .xcan .g { width: 0.55rem; height: 0.55rem; }
-  .tip { position: absolute; bottom: calc(100% + 6px); left: 50%; transform: translateX(-50%); z-index: 5; min-width: 9.5rem; padding: 0.5rem 0.65rem; border-radius: var(--r-float); background: var(--paper); border: 1px solid var(--rule); box-shadow: var(--shadow-float); font-size: 12px; color: var(--text-secondary); text-align: left; white-space: nowrap; visibility: hidden; pointer-events: none; }
+  .tip, .wtip { position: absolute; z-index: 6; padding: 0.5rem 0.65rem; border-radius: var(--r-float); background: var(--paper); border: 1px solid var(--rule); box-shadow: var(--shadow-float); font-size: 12px; line-height: 1.45; color: var(--text-secondary); text-align: left; visibility: hidden; pointer-events: none; letter-spacing: 0; font-weight: 400; }
+  .tip { bottom: calc(100% + 6px); left: 50%; transform: translateX(-50%); min-width: 9.5rem; white-space: nowrap; }
   .tip.start { left: 0; transform: none; }
   .tip.end { left: auto; right: 0; transform: none; }
-  .bar:hover .tip, .bar:focus-visible .tip { visibility: visible; }
+  .wtip { top: 0; left: calc(100% + 6px); width: max-content; max-width: 15rem; }
+  .wtip.l { left: auto; right: calc(100% + 6px); }
+  .wtip.up { top: auto; bottom: 0; }
+  .wtip strong { display: block; color: var(--ink); font-weight: 600; }
+  .bar:hover .tip, .bar:focus-visible .tip, .wk-b:hover .wtip, .wk-b:focus-visible .wtip { visibility: visible; }
+  .wk-b:hover, .wk-b:focus-visible { z-index: 4; opacity: 1; outline: 1px solid var(--ink); outline-offset: 0; overflow: visible; }
   .tip-title { font-weight: 600; color: var(--ink); margin-bottom: 0.25rem; }
   .tip-row { display: flex; align-items: center; gap: 0.45rem; line-height: 1.6; }
   .tip-row b { color: var(--ink); font-weight: 650; font-variant-numeric: tabular-nums; min-width: 1.4rem; }
-  .data-table { margin-top: 0.75rem; font-size: 12.5px; }
+  .data-table { margin-top: 0.6rem; font-size: 12.5px; }
   .data-table summary { cursor: pointer; color: var(--text-secondary); width: max-content; }
   .data-table summary:hover { color: var(--ink); }
   .data-table table { width: 100%; border-collapse: collapse; margin-top: 0.5rem; font-variant-numeric: tabular-nums; }
@@ -162,186 +190,154 @@
 
   @media (max-width: 1000px) {
     .cols { grid-template-columns: minmax(0, 1fr); gap: 0; }
-    .cols > div + div { margin-top: 2.75rem; }
-    .fig-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .cols > div + div { margin-top: 2.5rem; }
   }
   @media (max-width: 700px) {
-    .mast { grid-template-columns: minmax(0, 1fr); }
-    .mast h1 { font-size: 2rem; }
-    .mast .actions { grid-column: 1; grid-row: auto; justify-content: flex-start; }
-    .fig .fig-v { font-size: 1.7rem; }
-    .fb { width: 3.5rem; }
-    .ruler-scale span.odd { color: transparent; }
-    .ruler-labels { display: none; }
-    .blk { padding: 0.3rem 0.2rem; font-size: 11px; }
-    .wv-scroll { position: relative; overflow-x: auto; margin-right: -1rem; padding-right: 1rem; }
-    .wv { min-width: 34rem; }
+    .hello { grid-template-columns: auto minmax(0, 1fr); }
+    .hello h1 { font-size: 1.6rem; }
+    .hello-sum { grid-column: 1 / 3; font-size: 15.5px; }
+    .hello .actions { grid-column: 1 / 3; grid-row: auto; justify-content: flex-start; margin-top: 0.6rem; }
+    .face--xl, .face-img { width: 2.75rem; height: 2.75rem; }
+    .hero { padding: 1.1rem 1.1rem 1.25rem; }
+    .hero-grid { grid-template-columns: minmax(0, 1fr); gap: 1rem; }
+    .hero-time { font-size: 2.8rem; }
+    .hero-acts .ui-btn { flex: 1; justify-content: center; }
+    .setup ul { padding-left: 0; }
+    .person-row { grid-template-columns: 2rem minmax(0, 1fr); }
+    .person-row .tt-acts { grid-column: 2; justify-content: flex-start; }
+    .soon-row { grid-template-columns: 3rem 1.6rem minmax(0, 1fr); }
+    .soon-row .tt-acts { grid-column: 3; justify-content: flex-start; }
+    .soon-main { display: block; }
+    .soon-main .tt-title, .soon-main .tt-who { display: block; }
+    .wk-scroll { overflow-x: auto; margin-right: -1rem; padding-right: 1rem; }
+    .wk { min-width: 25rem; }
     .wk-sec .key .end { margin-left: 0; width: 100%; }
-    .chart { padding-left: 1.3rem; }
-    .plot, .xax, .xcan { gap: 0 3px; }
-    .ov .tt-row.tight { grid-template-columns: 3rem 0.7rem minmax(0, 1fr) auto; }
-    .ov .tt-row.tight .tt-acts { grid-column: auto; }
-    .tt-row.tight .tt-main { display: block; }
-    .tt-row.tight .tt-who { display: block; }
   }
 </style>
 
+{% macro face(initials, hue, size="") -%}
+<span class="face{% if size %} face--{{ size }}{% endif %}" style="--h: {{ hue }};" aria-hidden="true">{{ initials }}</span>
+{%- endmacro %}
+
 <div class="ov">
 
-<header class="mast">
-  <h1>{{ mast.date }}<span class="wk">{{ mast.week }}</span></h1>
-  {% if mast.next %}<p>{{ mast.next }}{% if not agenda[0].ongoing %}, <time class="rel-time is-plain" datetime="{{ agenda[0].start_utc }}"></time>{% endif %}.</p>{% endif %}
+<header class="hello">
+  {% if sidebar.has_avatar %}<img class="face-img" src="/avatar/{{ sidebar.user_id }}" alt="">{% else %}<span class="face face--xl" style="--h: {{ mast.hue }};" aria-hidden="true">{{ sidebar.user_initials }}</span>{% endif %}
+  <div>
+    <h1>{{ mast.greeting }}</h1>
+    <p class="hello-date">{{ mast.date_line }}</p>
+  </div>
+  <p class="hello-sum">{{ mast.sentence }}</p>
   <div class="actions">
     {% if username %}<button type="button" class="ui-btn" data-copy-path="/u/{{ username }}">{{ t("overview-copy-link") }}</button>{% endif %}
     <a class="ui-btn ui-btn--primary" href="/dashboard/event-types/new" data-shortcut="new">{{ t("overview-new-meeting-type") }}</a>
   </div>
 </header>
 
-<p class="avail-note" id="avail-banner" hidden>
-  <span>{{ t("overview-avail-banner-body") }}</span>
-  <a href="/dashboard/settings#availability">{{ t("overview-avail-banner-cta") }}</a>
-  <button type="button" class="ui-btn ui-btn--ghost ui-btn--sm" id="avail-banner-dismiss">{{ t("overview-dismiss") }}</button>
-</p>
+<section class="hero" aria-labelledby="ov-next">
+  <h2 class="hero-h" id="ov-next">{{ t("overview-hero-title") }}</h2>
+  {% if agenda %}{% set n = agenda[0] %}
+  <div class="hero-grid">
+    <div class="hero-when">
+      <span class="hero-rel">{{ n.when_words }}</span>
+      <time class="hero-time" datetime="{{ n.start_utc }}">{{ n.time }}</time>
+      <span class="hero-day">{{ ph.icon("clock", 16) }} {{ n.day_label }} {{ n.day_date }}, {{ n.time }} {{ t("overview-until", time=n.end_time) }}</span>{% if n.place %}
+      <span class="hero-day">{{ ph.icon("video-camera" if n.join_url else "map-pin", 16) }} {{ n.place }}</span>{% endif %}
+    </div>
+    <div class="hero-who">
+      <span class="face-stack">{{ face(n.initials, n.hue, "lg") }}{% if n.extra_guests %}<span class="face face--lg face--more" aria-hidden="true">+{{ n.extra_guests }}</span>{% endif %}</span>
+      <div>
+        <div class="hero-name" title="{{ n.guest_email }}">{{ n.guest_label }}</div>
+        <div class="hero-what"><a href="/dashboard/bookings/{{ n.id }}/notes?back=overview">{{ n.title }}<span class="sr-only">, {{ t("host-notes-title") }}</span></a>, {{ n.duration }}{% if n.has_host_notes %}<span class="tt-due"> {{ t("host-notes-marker") }}</span>{% endif %}</div>
+      </div>
+    </div>
+    <div class="hero-acts">
+      {% if n.join_url %}<a class="ui-btn ui-btn--primary" href="{{ n.join_url }}" target="_blank" rel="noopener noreferrer">{{ ph.icon("video-camera", 16) }}{{ t("overview-agenda-join") }}</a>{% endif %}
+    </div>
+  </div>
+  {% else %}
+  <p class="hero-empty">{{ t("overview-agenda-empty") }}</p>
+  {% if username and event_type_count > 0 %}<div class="empty-actions"><button type="button" class="ui-btn ui-btn--sm" data-copy-path="/u/{{ username }}">{{ t("overview-copy-link") }}</button></div>{% endif %}
+  {% endif %}
+</section>
 
-{% set show_start = source_count == 0 or event_type_count == 0 %}
-{% if show_start %}
-<section class="sec" aria-labelledby="ov-start">
-  <div class="sec-h"><h2 id="ov-start">{{ t("overview-getting-started") }}</h2></div>
-  <ol class="steps">
-    <li{% if source_count > 0 %} class="done"{% endif %}><span>{{ t("overview-step-connect-calendar") }}</span>{% if source_count == 0 %}<a class="ui-btn ui-btn--sm ui-btn--primary" href="/dashboard/sources/new">{{ t("overview-step-connect") }}</a>{% else %}<i></i>{% endif %}</li>
-    <li{% if event_type_count > 0 %} class="done"{% endif %}><span>{{ t("overview-step-first-event-type") }}</span>{% if event_type_count == 0 and source_count > 0 %}<a class="ui-btn ui-btn--sm ui-btn--primary" href="/dashboard/event-types/new">{{ t("overview-step-create") }}</a>{% else %}<i></i>{% endif %}</li>
-    <li{% if has_bookings %} class="done"{% endif %}><span>{{ t("overview-step-share-link") }}</span>{% if not has_bookings and username and event_type_count > 0 and source_count > 0 %}<button type="button" class="ui-btn ui-btn--sm ui-btn--primary" data-copy-path="/u/{{ username }}">{{ t("overview-copy-link") }}</button>{% else %}<i></i>{% endif %}</li>
+{# One quiet strip of chores: the next getting-started step, the time zone
+   notice and the default-hours note, each actionable and dismissible. #}
+{% set step = "calendar" if source_count == 0 else ("type" if event_type_count == 0 else "") %}
+<details class="setup" id="ov-setup"{% if not step %} hidden{% endif %} data-count-1="{{ t('overview-setup-count', count=1) }}" data-count-2="{{ t('overview-setup-count', count=2) }}" data-count-3="{{ t('overview-setup-count', count=3) }}">
+  <summary>{{ ph.icon("list-checks", 16) }}<span id="ov-setup-h">{{ t("overview-setup-count", count=1) }}</span></summary>
+  <ul id="ov-start">
+    {% if step == "calendar" %}<li data-setup="calendar"><span>{{ t("overview-step-connect-calendar") }}</span><a class="ui-btn ui-btn--sm ui-btn--primary" href="/dashboard/sources/new">{{ t("overview-step-connect") }}</a><button type="button" class="ui-btn ui-btn--sm ui-btn--ghost" data-setup-dismiss>{{ t("overview-dismiss") }}</button></li>
+    {% elif step == "type" %}<li data-setup="type"><span>{{ t("overview-step-first-event-type") }}</span><a class="ui-btn ui-btn--sm ui-btn--primary" href="/dashboard/event-types/new">{{ t("overview-step-create") }}</a><button type="button" class="ui-btn ui-btn--sm ui-btn--ghost" data-setup-dismiss>{{ t("overview-dismiss") }}</button></li>
+{% endif %}
+    <li id="tz-banner" class="tz-banner" data-display="flex" role="status"><span>{{ t("tz-banner-text", detected='<strong id="tz-detected"></strong>', current='<strong id="tz-current"></strong>') | safe }}</span><button id="tz-update" type="button" class="ui-btn ui-btn--sm">{{ t('tz-banner-update') }}</button><button id="tz-dismiss" type="button" class="ui-btn ui-btn--sm ui-btn--ghost">{{ t('tz-banner-dismiss') }}</button></li>
+    <li id="avail-banner" hidden><span>{{ t("overview-avail-banner-body") }} <a href="/dashboard/settings#availability">{{ t("overview-avail-banner-cta") }}</a></span><button type="button" class="ui-btn ui-btn--sm ui-btn--ghost" id="avail-banner-dismiss">{{ t("overview-dismiss") }}</button></li>
+  </ul>
+</details>
+
+{% if pending_bookings %}
+<section class="sec wait" aria-labelledby="ov-pending">
+  <div class="sec-h"><h2 id="ov-pending">{{ t("overview-pending-approval") }}<span class="num">{{ pending_count }}</span></h2></div>
+  <ol class="ledger">
+    {% for b in pending_bookings %}
+    <li class="person-row">
+      {{ face(b.initials, b.hue) }}
+      <div class="person-main">
+        <div class="person-who">{{ b.guest_name }}<a href="mailto:{{ b.guest_email }}">{{ b.guest_email }}</a>{% if b.guest_phone %}<a href="tel:{{ b.guest_phone }}">{{ b.guest_phone }}</a>{% endif %}</div>
+        <div class="person-what"><i class="g p" role="img" aria-label="{{ t('overview-ruler-pending') }}"></i><time>{{ b.when.day_time }}</time><span>{{ b.when.until }}</span><a href="/dashboard/bookings/{{ b.id }}/notes?back=overview">{{ b.event_title }}<span class="sr-only">, {{ t("host-notes-title") }}</span></a></div>
+        {% if b.notes %}<div class="booking-notes" tabindex="0">{{ b.notes }}</div>{% endif %}
+        {% if b.host_notes %}<div class="booking-notes host-notes" tabindex="0"><strong>{{ t("bookings-host-notes") }}</strong> {{ b.host_notes }}</div>{% endif %}
+      </div>
+      <div class="tt-acts">
+        {% if b.when.expires %}<span class="tt-due{% if b.when.expires_soon %} is-soon{% endif %}">{{ b.when.expires }}</span>{% endif %}
+        {% if b.host_notes %}<a href="/dashboard/bookings/{{ b.id }}/notes?back=overview" class="ui-btn ui-btn--sm ui-btn--ghost">{{ t("host-notes-edit") }}</a>{% endif %}
+        <form method="post" action="/dashboard/bookings/{{ b.id }}/cancel" style="margin: 0;"><button type="submit" class="ui-btn ui-btn--sm">{{ t("overview-decline") }}</button></form>
+        <form method="post" action="/dashboard/bookings/{{ b.id }}/confirm" style="margin: 0;"><button type="submit" class="ui-btn ui-btn--sm ui-btn--primary">{{ t("overview-confirm") }}</button></form>
+      </div>
+    </li>
+    {% endfor %}
   </ol>
 </section>
 {% endif %}
 
-{% if stats.has_figures %}
-<section class="sec fig-strip" aria-labelledby="ov-30">
-  <div class="sec-h"><h2 id="ov-30">{{ t("overview-figures-title") }}</h2><span class="key" aria-hidden="true"><span><i class="fb-key"></i>{{ t("overview-fig-prev-key") }}</span></span></div>
-  <dl class="fig-row">
-    {% for f in stats.figures %}
-    <div class="fig">
-      <dt>{{ f.label }}</dt>
-      <dd class="fig-v">{{ f.value }}</dd>
-      <dd class="fig-cmp" title="{{ f.cmp }}"><span class="fb" aria-hidden="true"><i style="width: {{ f.cur_pct }}%;"></i><i class="prev" style="width: {{ f.prev_pct }}%;"></i></span><span aria-hidden="true">{{ f.prev }}</span><span class="sr-only">{{ f.cmp }}</span></dd>
-    </div>
-    {% endfor %}
-  </dl>
-</section>
-{% endif %}
-
-{% if ruler %}
-<section class="ruler" aria-label="{{ ruler.aria }}" data-now-box data-from="{{ ruler.from_minute }}" data-span="{{ ruler.span_minutes }}">
-  <div class="ruler-scale" aria-hidden="true">
-    {% for tk in ruler.ticks %}<span class="{% if tk.half %}half{% endif %}{% if tk.odd_hour %} odd{% endif %}" style="left: {{ tk.left }}%;">{{ tk.label }}</span>{% endfor %}
-  </div>
-  <div class="ruler-track">
-    {% for band in ruler.bands %}<div class="ruler-band" style="left: {{ band.left }}%; width: {{ band.width }}%;"></div>{% endfor %}
-    {% for b in ruler.blocks %}
-    {% if b.kind == "u" %}<div class="blk u{% if b.past %} past{% endif %}" style="left: {{ b.left }}%; width: {{ b.width }}%;" title="{{ b.title }}"><span class="sr-only">{{ b.title }}</span></div>
-    {% elif b.listed %}<a class="blk {{ b.kind }}{% if b.past %} past{% endif %}" href="/dashboard/bookings#b-{{ b.id }}" style="left: {{ b.left }}%; width: {{ b.width }}%;" title="{{ b.title }}" aria-label="{{ b.title }}">{% if b.show_time %}<b>{{ b.time }}</b>{% endif %}</a>
-    {% else %}<div class="blk {{ b.kind }}{% if b.past %} past{% endif %}" style="left: {{ b.left }}%; width: {{ b.width }}%;" title="{{ b.title }}">{% if b.show_time %}<b aria-hidden="true">{{ b.time }}</b>{% endif %}<span class="sr-only">{{ b.title }}</span></div>{% endif %}
-    {% endfor %}
-    <div class="now" data-now{% if not ruler.now_left %} hidden{% else %} style="left: {{ ruler.now_left }}%;"{% endif %}><span>{{ ruler.now_label }}</span></div>
-  </div>
-  {% if ruler.has_labels %}
-  <div class="ruler-labels{% if ruler.two_lanes %} two{% endif %}" aria-hidden="true">
-    {% for l in ruler.labels %}<span class="lane{{ l.lane }}{% if l.past %} past{% endif %}" style="left: {{ l.left }}%; max-width: {{ l.max_width }}%;"><strong>{{ l.title }}</strong><br><em>{{ l.guest }}</em></span>{% endfor %}
-  </div>
-  {% endif %}
-</section>
-{% endif %}
-
-{% if week %}
-<section class="sec wk-sec" aria-labelledby="ov-week">
-  <div class="sec-h"><h2 id="ov-week">{{ t("overview-week-title") }}</h2>{% if week.total %}<span class="sec-note">{{ week.total }}</span>{% endif %}</div>
-  <div class="wv-scroll">
-  <div class="wv" data-now-box data-from="{{ week.from_minute }}" data-span="{{ week.span_minutes }}">
-    <div class="wv-row wv-head">
-      <span></span>
-      {% for d in week.days %}<span class="wv-d{% if d.is_today %} is-today{% endif %}{% if d.is_past %} is-past{% endif %}" title="{{ d.title }}">{{ d.weekday }}<b>{{ d.day }}</b></span>{% endfor %}
-    </div>
-    <div class="wv-row wv-body" style="height: {{ week.height }}px;">
-      <div class="wv-axis" aria-hidden="true">{% for h in week.hours %}<span style="top: {{ h.top }}%;">{{ h.label }}</span>{% endfor %}</div>
-      {% for h in week.hours %}{% if not loop.first and not loop.last %}<i class="wv-gl" style="top: {{ h.top }}%;" aria-hidden="true"></i>{% endif %}{% endfor %}
-      {% for d in week.days %}
-      <div class="wv-col{% if d.is_past %} is-past{% endif %}" role="group" aria-label="{{ d.title }}">
-        {% for o in d.bands %}<div class="wv-open" style="top: {{ o.top }}%; height: {{ o.height }}%;"></div>{% endfor %}
-        {% for u in d.busy %}<div class="wv-u" style="top: {{ u.top }}%; height: {{ u.height }}%;" title="{{ u.tip }}"><span class="sr-only">{{ u.tip }}</span></div>{% endfor %}
-        {% for b in d.blocks %}{% if b.listed %}<a class="wb {{ b.kind }}{% if b.past %} past{% endif %}" href="/dashboard/bookings#b-{{ b.id }}"{% else %}<div class="wb {{ b.kind }}{% if b.past %} past{% endif %}" tabindex="0" role="img"{% endif %} style="top: {{ b.top }}%; height: {{ b.height }}%; left: {{ b.left }}%; width: {{ b.width }}%;" aria-label="{{ b.aria }}"><span class="wb-in" aria-hidden="true">{% if b.lines >= 2 %}<span><b>{{ b.time }}</b></span>{% endif %}{% if b.lines >= 1 %}<span>{{ b.title }}</span>{% endif %}</span><span class="wtip{% if b.tip_left %} l{% endif %}{% if b.tip_up %} up{% endif %}" aria-hidden="true"><strong>{{ b.range }}</strong>{{ b.title }}<br>{{ b.guest }}<span class="tip-row"><i class="g {{ b.kind }}"></i> {{ b.status }}</span></span>{% if b.listed %}</a>{% else %}</div>{% endif %}{% endfor %}
-        {% if d.is_today %}<div class="wv-now" data-now{% if not d.now_top %} hidden{% else %} style="top: {{ d.now_top }}%;"{% endif %}></div>{% endif %}
-      </div>
-      {% endfor %}
-    </div>
-    <div class="wv-row wv-foot">
-      <span></span>
-      {% for d in week.days %}{% if d.booked %}<span{% if d.is_today %} class="is-today"{% endif %}>{{ d.booked }}</span>{% elif d.closed %}<span class="closed">{{ t("overview-week-closed") }}</span>{% else %}<span></span>{% endif %}{% endfor %}
-    </div>
-  </div>
-  </div>
-  <div class="key">
-    <span><i class="g c"></i>{{ t("overview-ruler-booked") }}</span>
-    {% if week.has_pending %}<span><i class="g p"></i>{{ t("overview-ruler-pending") }}</span>{% endif %}
-    {% if week.has_unavailable %}<span><i class="g u"></i>{{ t("overview-ruler-unavailable") }}</span>{% endif %}
-    <span><i class="g o"></i>{{ t("overview-key-open") }}</span>
-    {% if calendar_url %}<span class="end"><a href="{{ calendar_url }}"{% if calendar_external %} target="_blank" rel="noopener"{% endif %}>{{ t("overview-open-calendar") }}</a></span>{% endif %}
-  </div>
-</section>
-{% endif %}
-
 {% set has_types = stats.type_rows and stats.type_rows | length >= 2 %}
-{% set has_right = stats.has_chart_data or has_types %}
+{% set has_right = week or stats.has_chart_data or has_types %}
 <div class="cols{% if not has_right %} one{% endif %}">
   <div>
-    {% if pending_bookings %}
-    <section class="sec" aria-labelledby="ov-pending">
-      <div class="sec-h"><h2 id="ov-pending">{{ t("overview-pending-approval") }}<span class="num">{{ pending_count }}</span></h2></div>
+    {% set later = agenda[1:] if agenda else [] %}
+    {% if later or not step %}
+    <section class="sec" aria-labelledby="ov-coming">
+      <div class="sec-h"><h2 id="ov-coming">{{ t("overview-agenda-title") }}</h2><a href="/dashboard/bookings">{{ t("overview-agenda-all") }}</a></div>
+      {% if later %}
       <ol class="ledger">
-        {% for b in pending_bookings %}
-        <li class="tt-row">
-          <time class="tt-time">{{ b.when.day_time }}<small>{{ b.when.until }}</small></time>
-          <i class="g p" role="img" aria-label="{{ t('overview-ruler-pending') }}"></i>
-          <div class="tt-main">
-            <div class="tt-title"><a class="tt-link" href="/dashboard/bookings/{{ b.id }}/notes?back=overview">{{ b.event_title }}<span class="sr-only">, {{ t("host-notes-title") }}</span></a></div>
-            <div class="tt-who">{{ b.guest_name }} <a href="mailto:{{ b.guest_email }}">{{ b.guest_email }}</a>{% if b.guest_phone %} <a href="tel:{{ b.guest_phone }}">{{ b.guest_phone }}</a>{% endif %}</div>
-            {% if b.notes %}<div class="booking-notes" tabindex="0">{{ b.notes }}</div>{% endif %}
-            {% if b.host_notes %}<div class="booking-notes host-notes" tabindex="0"><strong>{{ t("bookings-host-notes") }}</strong> {{ b.host_notes }}</div>{% endif %}
-          </div>
+        {% for a in later %}
+        {% if loop.changed(a.day) %}<li class="tt-day{% if a.is_today %} is-today{% endif %}"><span>{{ a.day_label }}</span><span class="num">{{ a.day_date }}</span></li>{% endif %}
+        <li class="soon-row">
+          <time class="tt-time" datetime="{{ a.start_utc }}" title="{{ a.time }}&#8211;{{ a.end_time }}, {{ a.duration }}">{{ a.time }}</time>
+          {{ face(a.initials, a.hue, "sm") }}
+          <div class="soon-main"><span class="tt-title"><a class="tt-link" href="/dashboard/bookings/{{ a.id }}/notes?back=overview">{{ a.title }}<span class="sr-only">, {{ t("host-notes-title") }}</span></a></span><span class="tt-who" title="{{ a.guest_email }}">{{ a.guest_label }}</span></div>
           <div class="tt-acts">
-            {% if b.when.expires %}<span class="tt-due{% if b.when.expires_soon %} is-soon{% endif %}">{{ b.when.expires }}</span>{% endif %}
-            {% if b.host_notes %}<a href="/dashboard/bookings/{{ b.id }}/notes?back=overview" class="ui-btn ui-btn--sm ui-btn--ghost">{{ t("host-notes-edit") }}</a>{% endif %}
-            <form method="post" action="/dashboard/bookings/{{ b.id }}/cancel" style="margin: 0;"><button type="submit" class="ui-btn ui-btn--sm">{{ t("overview-decline") }}</button></form>
-            <form method="post" action="/dashboard/bookings/{{ b.id }}/confirm" style="margin: 0;"><button type="submit" class="ui-btn ui-btn--sm ui-btn--primary">{{ t("overview-confirm") }}</button></form>
+            {% if a.has_host_notes %}<span class="tt-due">{{ t("host-notes-marker") }}</span>{% endif %}
+            {% if a.join_url %}<a class="ui-btn ui-btn--sm ui-btn--ghost" href="{{ a.join_url }}" target="_blank" rel="noopener noreferrer">{{ ph.icon("video-camera", 16) }}{{ t("overview-agenda-join") }}</a>{% endif %}
           </div>
         </li>
         {% endfor %}
       </ol>
+      {% elif agenda %}
+      <p class="empty-line">{{ t("overview-agenda-nothing-else") }}</p>
+      {% else %}
+      <p class="empty-line">{{ t("overview-agenda-empty") }}</p>
+      {% endif %}
     </section>
     {% endif %}
 
-    {% if agenda or not show_start %}
-    <section class="sec" aria-labelledby="ov-coming">
-      <div class="sec-h"><h2 id="ov-coming">{{ t("overview-agenda-title") }}</h2><a href="/dashboard/bookings">{{ t("overview-agenda-all") }}</a></div>
-      {% if agenda %}
-      <ol class="ledger">
-        {% for a in agenda %}
-        {% if loop.changed(a.day) %}<li class="tt-day{% if a.is_today %} is-today{% endif %}"><span>{{ a.day_label }}</span><span class="num">{{ a.day_date }}</span></li>{% endif %}
-        <li class="tt-row tight{% if loop.first %} is-next{% endif %}">
-          <time class="tt-time" datetime="{{ a.start_utc }}" title="{{ a.time }}&#8211;{{ a.end_time }}, {{ a.duration }}">{{ a.time }}</time>
-          <i class="g c" role="img" aria-label="{{ t('overview-ruler-booked') }}"></i>
-          <div class="tt-main"><span class="tt-title"><a class="tt-link" href="/dashboard/bookings/{{ a.id }}/notes?back=overview">{{ a.title }}<span class="sr-only">, {{ t("host-notes-title") }}</span></a></span><span class="tt-who" title="{{ a.guest_email }}">{{ a.guest_label }}</span></div>
-          <div class="tt-acts">
-            {% if loop.first %}<span class="tt-due">{% if a.ongoing %}{{ t("overview-agenda-now") }}{% else %}<time class="rel-time is-plain" datetime="{{ a.start_utc }}"></time>{% endif %}</span>{% endif %}
-            {% if a.has_host_notes %}<span class="tt-due">{{ t("host-notes-marker") }}</span>{% endif %}
-            {% if a.join_url %}<a class="ui-btn ui-btn--sm{% if loop.first %} ui-btn--primary{% endif %}" href="{{ a.join_url }}" target="_blank" rel="noopener noreferrer">{{ t("overview-agenda-join") }}</a>{% endif %}
-          </div>
-        </li>
-        {% endfor %}
-      </ol>
-      {% else %}
-      <p class="empty-line">{{ t("overview-agenda-empty") }}</p>
-      {% if username %}<div class="empty-actions"><button type="button" class="ui-btn ui-btn--sm" data-copy-path="/u/{{ username }}">{{ t("overview-copy-link") }}</button></div>{% endif %}
-      {% endif %}
+    {% if username or own_links %}
+    <section class="sec" aria-labelledby="ov-links">
+      <div class="sec-h"><h2 id="ov-links">{{ t("overview-links-title") }}</h2><a href="/dashboard/event-types">{{ t("nav-event-types") }}</a></div>
+      <div class="chips">
+        {% if username %}<button type="button" class="chip" data-copy-path="/u/{{ username }}" title="/u/{{ username }}"><b>{{ t("overview-links-page") }}</b><span class="d">/u/{{ username }}</span>{{ ph.icon("copy", 16) }}</button>{% endif %}
+        {% for l in own_links %}<button type="button" class="chip" data-copy-path="{{ l.path }}" title="{{ l.path }}" aria-label="{{ t('dashboard-event-types-copy-title') }}: {{ l.title }}"><b>{{ l.title }}</b><span class="d">{{ l.duration }}</span>{{ ph.icon("copy", 16) }}</button>{% endfor %}
+      </div>
     </section>
     {% endif %}
 
@@ -353,32 +349,47 @@
       {% endwith %}
     </section>
     {% endif %}
-
-    {% if own_links %}
-    <section class="sec" aria-labelledby="ov-links">
-      <div class="sec-h"><h2 id="ov-links">{{ t("overview-links-title") }}</h2><a href="/dashboard/event-types">{{ t("nav-event-types") }}</a></div>
-      <ul class="ledger">
-        {% for l in own_links %}
-        <li class="link-row">
-          <span class="tt-title">{{ l.title }}</span>
-          <span class="d">{{ l.duration }}</span>
-          <button type="button" class="ui-btn ui-btn--sm ui-btn--icon ui-btn--ghost" data-copy-path="{{ l.path }}" title="{{ l.path }}" aria-label="{{ t('dashboard-event-types-copy-title') }}: {{ l.title }}">{{ ic.icon("copy", 15) }}</button>
-        </li>
-        {% endfor %}
-      </ul>
-    </section>
-    {% endif %}
   </div>
 
   {% if has_right %}
   <div>
-    {% if stats.has_chart_data %}
-    <section class="sec" aria-labelledby="ov-weekly-title">
-      <div class="sec-h"><h2 id="ov-weekly-title">{{ t("overview-chart-title") }}</h2><span class="key" aria-hidden="true"><span><i class="g x"></i>{{ t("overview-series-cancelled") }}</span></span></div>
+    {% if week %}
+    <section class="sec wk-sec" aria-labelledby="ov-week">
+      <div class="sec-h"><h2 id="ov-week">{{ t("overview-week-title") }}</h2>{% if week.total %}<span class="sec-link">{{ week.total }}</span>{% endif %}</div>
+      <div class="wk-scroll">
+      <div class="wk" data-now-box data-from="{{ week.from_minute }}" data-span="{{ week.span_minutes }}">
+        {% for d in week.days %}
+        {% if d.link %}<a class="wk-day{% if d.is_today %} is-today{% endif %}{% if d.is_past %} is-past{% endif %}" href="{{ d.link }}" title="{{ d.title }}">{% else %}<div class="wk-day{% if d.is_today %} is-today{% endif %}{% if d.is_past %} is-past{% endif %}" role="group" aria-label="{{ d.title }}">{% endif %}
+          <span class="wk-head">{{ d.weekday }}<b>{{ d.day }}</b></span>
+          <span class="wk-col">
+            {% for o in d.bands %}<span class="wk-open" style="top: {{ o.top }}%; height: {{ o.height }}%;"></span>{% endfor %}
+            {% for u in d.busy %}<span class="wk-u" style="top: {{ u.top }}%; height: {{ u.height }}%;" title="{{ u.tip }}"><span class="sr-only">{{ u.tip }}</span></span>{% endfor %}
+            {% for b in d.blocks %}<span class="wk-b {{ b.kind }}{% if b.past %} past{% endif %}"{% if not d.link %} tabindex="0"{% endif %} role="img" style="top: {{ b.top }}%; height: {{ b.height }}%; left: {{ b.left }}%; width: {{ b.width }}%;" aria-label="{{ b.aria }}">{% if b.show_initials %}<span aria-hidden="true">{{ b.initials }}</span>{% endif %}<span class="wtip{% if b.tip_left %} l{% endif %}{% if b.tip_up %} up{% endif %}" aria-hidden="true"><strong>{{ b.range }}</strong>{{ b.title }}<br>{{ b.guest }}<span class="tip-row"><i class="g {{ b.kind }}"></i> {{ b.status }}</span></span></span>{% endfor %}
+            {% if d.is_today %}<span class="wk-now" data-now{% if not d.now_top %} hidden{% else %} style="top: {{ d.now_top }}%;"{% endif %}></span>{% endif %}
+          </span>
+          {% if d.booked %}<span class="wk-foot">{{ d.booked }}</span>{% elif d.closed %}<span class="wk-foot closed">{{ t("overview-week-closed") }}</span>{% else %}<span class="wk-foot"></span>{% endif %}
+        {% if d.link %}</a>{% else %}</div>{% endif %}
+        {% endfor %}
+      </div>
+      </div>
+      <div class="key">
+        <span><i class="g c"></i>{{ t("overview-ruler-booked") }}</span>
+        {% if week.has_pending %}<span><i class="g p"></i>{{ t("overview-ruler-pending") }}</span>{% endif %}
+        {% if week.has_unavailable %}<span><i class="g u"></i>{{ t("overview-ruler-unavailable") }}</span>{% endif %}
+        <span><i class="g o"></i>{{ t("overview-key-open") }}</span>
+        {% if calendar_url %}<span class="end"><a href="{{ calendar_url }}"{% if calendar_external %} target="_blank" rel="noopener"{% endif %}>{{ t("overview-open-calendar") }}</a></span>{% endif %}
+      </div>
+    </section>
+    {% endif %}
+
+    {% if stats.has_pulse or stats.has_chart_data %}
+    <section class="sec" aria-labelledby="ov-30">
+      <div class="sec-h"><h2 id="ov-30">{{ t("overview-figures-title") }}</h2></div>
+      {% if stats.pulse %}<p class="pulse">{{ stats.pulse }}</p>{% endif %}
+      {% if stats.has_chart_data %}
       <div class="chart">
-        <div class="plot" role="group" aria-labelledby="ov-weekly-title">
+        <div class="plot" role="group" aria-label="{{ t('overview-chart-title') }}">
           <div class="gl" style="bottom: 100%;"><span>{{ stats.axis_max }}</span></div>
-          <div class="gl" style="bottom: 50%;"><span>{{ stats.axis_mid }}</span></div>
           <div class="gl" style="bottom: 0; border: 0;"><span>0</span></div>
           {% for c in stats.columns %}
           <div class="bar{% if c.current %} cur{% endif %}" tabindex="0" aria-label="{{ c.title }}: {{ t('overview-series-confirmed') }} {{ c.confirmed }}, {{ t('overview-series-pending') }} {{ c.pending }}, {{ t('overview-series-cancelled') }} {{ c.cancelled }}">
@@ -399,10 +410,7 @@
           {% endfor %}
         </div>
         <div class="xax" aria-hidden="true">
-          {% for c in stats.columns %}<span{% if c.current %} class="cur"{% endif %}>{{ c.tick }}{% if c.current %}<small>{{ t("overview-chart-now") }}</small>{% endif %}</span>{% endfor %}
-        </div>
-        <div class="xcan" aria-hidden="true">
-          {% for c in stats.columns %}<span>{% if c.cancelled > 0 %}<i class="g x"></i>{{ c.cancelled }}{% endif %}</span>{% endfor %}
+          {% for c in stats.columns %}<span{% if c.current %} class="cur"{% endif %}>{{ c.tick }}</span>{% endfor %}
         </div>
       </div>
       <details class="data-table">
@@ -414,6 +422,7 @@
           </tbody>
         </table>
       </details>
+      {% endif %}
     </section>
     {% endif %}
 
@@ -435,6 +444,18 @@
 
 <script>
 (function() {
+  var strip = document.getElementById('ov-setup');
+  // The strip shows while one of its lines does.
+  function refresh() {
+    if (!strip) return;
+    var n = Array.prototype.filter.call(strip.querySelectorAll('li'), function(li) {
+      return !li.hidden && getComputedStyle(li).display !== 'none';
+    }).length;
+    strip.hidden = n === 0;
+    var label = strip.getAttribute('data-count-' + Math.min(n, 3));
+    var head = document.getElementById('ov-setup-h');
+    if (head && label) head.textContent = label;
+  }
   // Default-availability note, dismissible once.
   var note = document.getElementById('avail-banner');
   if (note && !localStorage.getItem('calrs_avail_banner_dismissed')) note.hidden = false;
@@ -442,46 +463,48 @@
   if (dismiss) dismiss.addEventListener('click', function() {
     localStorage.setItem('calrs_avail_banner_dismissed', '1');
     note.hidden = true;
+    refresh();
   });
+  // A getting-started step can be put aside; it comes back for the next one.
+  document.querySelectorAll('[data-setup]').forEach(function(li) {
+    var key = 'calrs_setup_dismissed_' + li.dataset.setup;
+    if (localStorage.getItem(key)) li.hidden = true;
+    var b = li.querySelector('[data-setup-dismiss]');
+    if (b) b.addEventListener('click', function() { localStorage.setItem(key, '1'); li.hidden = true; refresh(); });
+  });
+  var tzDismiss = document.getElementById('tz-dismiss');
+  if (tzDismiss) tzDismiss.addEventListener('click', function() { setTimeout(refresh, 0); });
+  // The time zone check runs after this script; look again once it has.
+  refresh();
+  document.addEventListener('DOMContentLoaded', refresh);
 
   // On a narrow screen the week scrolls sideways: bring today into view.
-  var scroller = document.querySelector('.wv-scroll');
-  var todayHead = document.querySelector('.wv-d.is-today');
-  if (scroller && todayHead && scroller.scrollWidth > scroller.clientWidth) {
-    scroller.scrollLeft = Math.max(0, todayHead.offsetLeft - scroller.clientWidth / 2);
+  var scroller = document.querySelector('.wk-scroll');
+  var todayCol = document.querySelector('.wk-day.is-today');
+  if (scroller && todayCol && scroller.scrollWidth > scroller.clientWidth) {
+    scroller.scrollLeft = Math.max(0, todayCol.offsetLeft - scroller.clientWidth / 2);
   }
 
-  // The now lines (ruler and week view) move once a minute, without
-  // animation. The ruler runs left to right, the week view top to bottom.
+  // Today's now line moves once a minute, without animation, in the
+  // wall-clock minutes of the user's zone.
   var fmt = null;
   try {
     fmt = new Intl.DateTimeFormat(document.documentElement.lang || 'en', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZone: {{ sidebar.user_timezone | tojson }} });
   } catch (e) { fmt = null; }
-  var lines = [];
-  document.querySelectorAll('[data-now-box]').forEach(function(box) {
-    var line = box.querySelector('[data-now]');
-    if (line) lines.push({ line: line, from: Number(box.dataset.from), span: Number(box.dataset.span), prop: box.classList.contains('wv') ? 'top' : 'left' });
-  });
-  // The axes are in wall-clock minutes of the user's zone, so the line
-  // follows the wall clock there too, a clock change that day included.
+  var box = document.querySelector('[data-now-box]');
+  var line = box && box.querySelector('[data-now]');
+  if (!line || !fmt) return;
   function place() {
-    var now = new Date();
     var h = NaN, m = NaN;
-    fmt.formatToParts(now).forEach(function(p) {
+    fmt.formatToParts(new Date()).forEach(function(p) {
       if (p.type === 'hour') h = Number(p.value) % 24;
       if (p.type === 'minute') m = Number(p.value);
     });
-    var minute = h * 60 + m;
-    lines.forEach(function(l) {
-      var pct = (minute - l.from) / l.span * 100;
-      if (!(pct >= 0 && pct <= 100)) { l.line.hidden = true; return; }
-      l.line.hidden = false;
-      l.line.style[l.prop] = pct.toFixed(3) + '%';
-      if (l.line.firstElementChild) l.line.firstElementChild.textContent = fmt.format(now);
-    });
+    var pct = (h * 60 + m - Number(box.dataset.from)) / Number(box.dataset.span) * 100;
+    if (!(pct >= 0 && pct <= 100)) { line.hidden = true; return; }
+    line.hidden = false;
+    line.style.top = pct.toFixed(3) + '%';
   }
-  // Without Intl the lines keep the position the server rendered.
-  if (!lines.length || !fmt) return;
   place();
   setInterval(place, 60000);
 })();

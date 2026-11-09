@@ -410,10 +410,8 @@ overview-page-title = Tableau de bord
 overview-avail-banner-body = Vos horaires de travail par défaut ont été fixés du lundi au vendredi, de 9h00 à 17h00. Ils sont utilisés lorsque d'autres personnes vous incluent dans une réunion de groupe dynamique.
 overview-avail-banner-cta = Vérifier vos disponibilités
 overview-dismiss = Ignorer
-overview-getting-started = Pour commencer
 overview-step-connect-calendar = Connecter un agenda
 overview-step-first-event-type = Créer votre premier type d'événement
-overview-step-share-link = Partager votre lien de réservation
 overview-pending-approval = En attente d'approbation
 overview-confirm = Confirmer
 overview-decline = Refuser
@@ -421,7 +419,6 @@ overview-copy-link = Copier le lien de réservation
 overview-duration-h = { $hours } h
 overview-duration-m = { $minutes } min
 overview-duration-hm = { $hours } h { $minutes }
-overview-percent = { $value } %
 overview-chart-title = Rendez-vous par semaine
 overview-chart-this-week = Cette semaine
 overview-chart-week-of = Semaine du { $date }
@@ -435,7 +432,6 @@ overview-types-other = Autres types
 overview-agenda-title = À venir
 overview-agenda-today = Aujourd’hui
 overview-agenda-tomorrow = Demain
-overview-agenda-now = En cours
 overview-agenda-join = Rejoindre
 overview-agenda-empty = Aucun rendez-vous dans les 14 prochains jours. Partagez votre lien de réservation pour en recevoir.
 overview-agenda-all = Toutes les réservations
@@ -457,33 +453,86 @@ overview-open-calendar = Ouvrir votre agenda
 overview-week-title = Cette semaine
 overview-week-closed = fermé
 overview-week-total = { $booked } réservées
-overview-week-number = Semaine { $week }
 overview-week-short = S{ $week }
 overview-time-range = de { $from } à { $to }
 overview-until = jusqu'à { $time }
 overview-expires = Échéance { $when }
 overview-guest-and-more = { $name } (+{ $count })
-overview-mast-now = En cours : { $title } avec { $guest }, jusqu'à { $time }
-overview-mast-next = Ensuite : { $title } avec { $guest } à { $time }
-overview-mast-next-day = Ensuite : { $title } avec { $guest }, { $day } à { $time }
+overview-greeting-night = Bonjour, { $name }
+overview-greeting-morning = Bonjour, { $name }
+overview-greeting-afternoon = Bonjour, { $name }
+overview-greeting-evening = Bonsoir, { $name }
+overview-mast-date = { $date }, semaine { $week }
+overview-sum-now = Vous êtes avec { $guest } jusqu'à { $time }.
+overview-sum-today = Aujourd'hui, vous voyez { $guest } à { $time }.
+overview-sum-tomorrow = Demain, vous voyez { $guest } à { $time }.
+overview-sum-later = Votre prochain rendez-vous est avec { $guest } le { $day } à { $time }.
+overview-sum-more-today = { $count ->
+    [one] Un autre rendez-vous suit dans la journée.
+   *[other] { $count } autres rendez-vous suivent dans la journée.
+}
+overview-sum-none = Rien n'est réservé dans les 14 prochains jours.
+overview-sum-pending = { $count ->
+    [one] Une demande attend votre réponse.
+   *[other] { $count } demandes attendent votre réponse.
+}
+overview-sum-guests = { $count ->
+    [one] { $name } et une autre personne
+   *[other] { $name } et { $count } autres personnes
+}
+overview-hero-title = Prochain rendez-vous
+overview-when-now = En cours, jusqu'à { $time }
+overview-when-minutes = { $count ->
+    [one] dans 1 minute
+   *[other] dans { $count } minutes
+}
+overview-when-hours = { $count ->
+    [one] dans 1 heure
+   *[other] dans { $count } heures
+}
+overview-when-today-night = plus tard dans la nuit
+overview-when-today-morning = ce matin
+overview-when-today-afternoon = cet après-midi
+overview-when-today-evening = ce soir
+overview-when-tomorrow-night = demain très tôt
+overview-when-tomorrow-morning = demain matin
+overview-when-tomorrow-afternoon = demain après-midi
+overview-when-tomorrow-evening = demain soir
+overview-when-weekday-night = { $day } très tôt
+overview-when-weekday-morning = { $day } matin
+overview-when-weekday-afternoon = { $day } après-midi
+overview-when-weekday-evening = { $day } soir
+overview-when-days = { $count ->
+    [one] dans 1 jour
+   *[other] dans { $count } jours
+}
+overview-pulse-held = { $count ->
+    [one] Un rendez-vous ces 30 derniers jours, { $time } avec vos invités.
+   *[other] { $count } rendez-vous ces 30 derniers jours, { $time } avec vos invités.
+}
+overview-pulse-held-vs = { $count ->
+    [one] Un rendez-vous ces 30 derniers jours, { $time } avec vos invités, contre { $prev } les 30 jours précédents.
+   *[other] { $count } rendez-vous ces 30 derniers jours, { $time } avec vos invités, contre { $prev } les 30 jours précédents.
+}
+overview-pulse-booked = { $count ->
+    [one] Une nouvelle réservation est arrivée sur la même période.
+   *[other] { $count } nouvelles réservations sont arrivées sur la même période.
+}
+overview-pulse-booked-only = { $count ->
+    [one] Une nouvelle réservation est arrivée ces 30 derniers jours.
+   *[other] { $count } nouvelles réservations sont arrivées ces 30 derniers jours.
+}
+overview-links-page = Votre page
+overview-agenda-nothing-else = Rien d'autre dans les 14 prochains jours.
+overview-setup-count = { $count ->
+    [one] 1 élément à configurer
+   *[other] { $count } éléments à configurer
+}
 overview-ruler-booked = Réservé
 overview-ruler-pending = En attente de décision
 overview-ruler-unavailable = Indisponible (votre agenda)
 overview-key-open = Ouvert aux réservations
-overview-ruler-aria = Aujourd'hui, de { $from } à { $to }
-overview-chart-now = en cours
 overview-figures-title = 30 derniers jours
-overview-fig-booked = Rendez-vous réservés
-overview-fig-time = Temps en rendez-vous
-overview-fig-cancelled = Annulés
-overview-fig-notice = Délai moyen
-overview-fig-before = { $value } les 30 jours précédents
-overview-fig-prev-key = Les 30 jours précédents
-overview-fig-days =
-    { $count ->
-        [one] { $count } jour
-       *[other] { $count } jours
-    }
 
 # Dashboard bookings (templates/dashboard_bookings.html)
 
@@ -1335,6 +1384,8 @@ admin-sms-test-checked = Identifiants acceptés.
 admin-sms-test-error = La passerelle SMS a refusé la requête.
 admin-sms-captcha-warning = Le formulaire de réservation est public et le numéro du destinataire vient de l'invité : sans captcha, les SMS forment un relais ouvert que quelqu'un peut vous facturer. Configurez le captcha ci-dessus et restreignez les pays de destination dans les réglages de votre passerelle.
 admin-sms-sent-today = Envoyés aujourd'hui :
+admin-sms-segments-today = Segments facturés aujourd'hui :
+admin-sms-unknown-today = Sans réponse de la passerelle, comptés dans la limite :
 admin-sms-of-cap = sur { $cap }
 admin-sms-config-error = Erreur de configuration SMS :
 admin-sms-gateway = Passerelle :
@@ -1347,8 +1398,8 @@ admin-sms-docs = Documentation de l'API { $provider }
 admin-sms-country = Indicatif pays par défaut
 admin-sms-country-hint = (utilisé quand un invité saisit un numéro local)
 admin-sms-daily-cap = Limite quotidienne
-admin-sms-daily-cap-hint = (messages par jour pour toute l'instance, 0 pour aucune limite)
-admin-sms-daily-cap-help = Au-delà de la limite, calrs cesse d'envoyer des SMS et continue les e-mails : une réservation n'échoue jamais parce que le budget SMS est épuisé.
+admin-sms-daily-cap-hint = (segments SMS facturés par jour UTC pour toute l'instance, 0 pour aucune limite)
+admin-sms-daily-cap-help = Un message de 160 caractères au plus compte pour un segment, ou 70 s'il contient un caractère hors de l'alphabet GSM ; un message plus long est facturé un segment par tranche de 153 caractères (67), et les messages de test comptent aussi. Au-delà de la limite, calrs cesse d'envoyer des SMS et continue les e-mails : une réservation n'échoue jamais parce que le budget SMS est épuisé.
 admin-save-sms = Enregistrer les paramètres SMS
 admin-send-test-sms = Envoyer un message de test à
 admin-send-test-sms-hint-check = (laissez vide pour vérifier seulement les identifiants)
@@ -1889,6 +1940,8 @@ admin-sms-check-accepted = Identifiants acceptés par la passerelle.
 admin-sms-bad-number = Ce numéro de téléphone n'est pas utilisable.
 admin-sms-test-body = Message de test calrs. Votre passerelle SMS fonctionne.
 admin-sms-test-accepted = Message de test accepté par la passerelle.
+admin-sms-test-over-cap = La limite quotidienne de SMS est atteinte : le message de test n'a pas été envoyé. Les messages de test comptent dans la limite comme les autres.
+admin-sms-test-ledger-failed = L'utilisation des SMS n'a pas pu être enregistrée : le message de test n'a pas été envoyé.
 
 ## Local multi-factor authentication
 

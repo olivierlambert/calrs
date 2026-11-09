@@ -174,6 +174,11 @@ async fn main() -> Result<()> {
                      bypass the SSRF private-IP guard for CalDAV/EWS URLs"
                 );
             }
+            // A Twilio trial flag left on a full account, in the log at once.
+            tokio::spawn({
+                let pool = pool.clone();
+                async move { sms::check_twilio_trial_at_startup(&pool, &secret_key).await }
+            });
             // Spawn background reminder task
             let reminder_pool = pool.clone();
             let reminder_key = secret_key;

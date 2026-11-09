@@ -40,6 +40,7 @@ mod public_pages;
 mod questions;
 mod resources;
 mod security;
+mod sms_spend;
 mod sources;
 mod time_off;
 mod webhooks;

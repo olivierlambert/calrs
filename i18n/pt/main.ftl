@@ -410,10 +410,8 @@ overview-page-title = Painel
 overview-avail-banner-body = Seu horário de trabalho padrão foi definido de segunda a sexta, das 9h às 17h. Ele é usado quando outras pessoas incluem você em reuniões de grupo dinâmicas.
 overview-avail-banner-cta = Revise sua disponibilidade
 overview-dismiss = Dispensar
-overview-getting-started = Primeiros passos
 overview-step-connect-calendar = Conectar uma agenda
 overview-step-first-event-type = Criar seu primeiro tipo de evento
-overview-step-share-link = Compartilhar seu link de agendamento
 overview-pending-approval = Aguardando aprovação
 overview-confirm = Confirmar
 overview-decline = Recusar
@@ -421,7 +419,6 @@ overview-copy-link = Copiar link de agendamento
 overview-duration-h = { $hours } h
 overview-duration-m = { $minutes } min
 overview-duration-hm = { $hours } h { $minutes } min
-overview-percent = { $value }%
 overview-chart-title = Reuniões por semana
 overview-chart-this-week = Esta semana
 overview-chart-week-of = Semana de { $date }
@@ -435,7 +432,6 @@ overview-types-other = Outros tipos
 overview-agenda-title = Próximas
 overview-agenda-today = Hoje
 overview-agenda-tomorrow = Amanhã
-overview-agenda-now = Em andamento
 overview-agenda-join = Entrar
 overview-agenda-empty = Nenhuma reunião nos próximos 14 dias. Compartilhe seu link de agendamento para receber algumas.
 overview-agenda-all = Todos os agendamentos
@@ -457,33 +453,86 @@ overview-open-calendar = Abrir sua agenda
 overview-week-title = Esta semana
 overview-week-closed = fechado
 overview-week-total = { $booked } agendadas
-overview-week-number = Semana { $week }
 overview-week-short = S{ $week }
 overview-time-range = das { $from } às { $to }
 overview-until = até { $time }
 overview-expires = Expira { $when }
 overview-guest-and-more = { $name } e mais { $count }
-overview-mast-now = Agora: { $title } com { $guest }, até { $time }
-overview-mast-next = A seguir: { $title } com { $guest } às { $time }
-overview-mast-next-day = A seguir: { $title } com { $guest }, { $day } às { $time }
+overview-greeting-night = Olá, { $name }
+overview-greeting-morning = Bom dia, { $name }
+overview-greeting-afternoon = Boa tarde, { $name }
+overview-greeting-evening = Boa noite, { $name }
+overview-mast-date = { $date }, semana { $week }
+overview-sum-now = Sua reunião com { $guest } vai até { $time }.
+overview-sum-today = Hoje você encontra { $guest } às { $time }.
+overview-sum-tomorrow = Amanhã você encontra { $guest } às { $time }.
+overview-sum-later = Sua próxima reunião é com { $guest }, { $day }, às { $time }.
+overview-sum-more-today = { $count ->
+    [one] Depois, mais uma reunião hoje.
+   *[other] Depois, mais { $count } reuniões hoje.
+}
+overview-sum-none = Nada agendado nos próximos 14 dias.
+overview-sum-pending = { $count ->
+    [one] Uma solicitação aguarda sua resposta.
+   *[other] { $count } solicitações aguardam sua resposta.
+}
+overview-sum-guests = { $count ->
+    [one] { $name } e mais uma pessoa
+   *[other] { $name } e mais { $count } pessoas
+}
+overview-hero-title = A seguir
+overview-when-now = Agora, até { $time }
+overview-when-minutes = { $count ->
+    [one] em 1 minuto
+   *[other] em { $count } minutos
+}
+overview-when-hours = { $count ->
+    [one] em 1 hora
+   *[other] em { $count } horas
+}
+overview-when-today-night = mais tarde esta noite
+overview-when-today-morning = hoje de manhã
+overview-when-today-afternoon = hoje à tarde
+overview-when-today-evening = hoje à noite
+overview-when-tomorrow-night = amanhã de madrugada
+overview-when-tomorrow-morning = amanhã de manhã
+overview-when-tomorrow-afternoon = amanhã à tarde
+overview-when-tomorrow-evening = amanhã à noite
+overview-when-weekday-night = { $day } de madrugada
+overview-when-weekday-morning = { $day } de manhã
+overview-when-weekday-afternoon = { $day } à tarde
+overview-when-weekday-evening = { $day } à noite
+overview-when-days = { $count ->
+    [one] em 1 dia
+   *[other] em { $count } dias
+}
+overview-pulse-held = { $count ->
+    [one] Uma reunião nos últimos 30 dias, { $time } com convidados.
+   *[other] { $count } reuniões nos últimos 30 dias, { $time } com convidados.
+}
+overview-pulse-held-vs = { $count ->
+    [one] Uma reunião nos últimos 30 dias, { $time } com convidados, contra { $prev } nos 30 dias anteriores.
+   *[other] { $count } reuniões nos últimos 30 dias, { $time } com convidados, contra { $prev } nos 30 dias anteriores.
+}
+overview-pulse-booked = { $count ->
+    [one] No mesmo período chegou um novo agendamento.
+   *[other] No mesmo período chegaram { $count } novos agendamentos.
+}
+overview-pulse-booked-only = { $count ->
+    [one] Nos últimos 30 dias chegou um novo agendamento.
+   *[other] Nos últimos 30 dias chegaram { $count } novos agendamentos.
+}
+overview-links-page = Sua página
+overview-agenda-nothing-else = Nada mais nos próximos 14 dias.
+overview-setup-count = { $count ->
+    [one] 1 item para configurar
+   *[other] { $count } itens para configurar
+}
 overview-ruler-booked = Agendado
 overview-ruler-pending = Aguardando uma decisão
 overview-ruler-unavailable = Indisponível (sua agenda)
 overview-key-open = Aberto para agendamentos
-overview-ruler-aria = Hoje, das { $from } às { $to }
-overview-chart-now = agora
 overview-figures-title = Últimos 30 dias
-overview-fig-booked = Reuniões agendadas
-overview-fig-time = Tempo em reuniões
-overview-fig-cancelled = Canceladas
-overview-fig-notice = Antecedência média
-overview-fig-before = { $value } nos 30 dias anteriores
-overview-fig-prev-key = Os 30 dias anteriores
-overview-fig-days =
-    { $count ->
-        [one] 1 dia
-       *[other] { $count } dias
-    }
 
 # Dashboard bookings (templates/dashboard_bookings.html)
 
@@ -1335,6 +1384,8 @@ admin-sms-test-checked = Credenciais aceitas.
 admin-sms-test-error = O gateway de SMS recusou a requisição.
 admin-sms-captcha-warning = O formulário de agendamento é público e o número do destinatário vem do convidado, então SMS sem captcha é um relay aberto que outra pessoa pode cobrar de você. Configure o captcha acima e restrinja os países de destino nas configurações do seu gateway.
 admin-sms-sent-today = Enviados hoje:
+admin-sms-segments-today = Segmentos cobrados hoje:
+admin-sms-unknown-today = Sem resposta do gateway, contados no limite:
 admin-sms-of-cap = de { $cap }
 admin-sms-config-error = Erro na configuração de SMS:
 admin-sms-gateway = Gateway:
@@ -1347,8 +1398,8 @@ admin-sms-docs = Documentação da API do { $provider }
 admin-sms-country = Código de país padrão
 admin-sms-country-hint = (usado quando os convidados informam um número local)
 admin-sms-daily-cap = Limite diário
-admin-sms-daily-cap-hint = (mensagens por dia para toda a instância, 0 para não limitar)
-admin-sms-daily-cap-help = Passado o limite, o calrs para de enviar SMS e continua enviando e-mails, para que nenhum agendamento falhe porque o orçamento de SMS acabou.
+admin-sms-daily-cap-hint = (segmentos de SMS cobrados por dia UTC para toda a instância, 0 para não limitar)
+admin-sms-daily-cap-help = Uma mensagem de até 160 caracteres é um segmento, ou de até 70 se tiver um caractere fora do alfabeto GSM; uma mais longa é cobrada como um segmento a cada 153 caracteres (67), e as mensagens de teste também contam. Passado o limite, o calrs para de enviar SMS e continua enviando e-mails, para que nenhum agendamento falhe porque o orçamento de SMS acabou.
 admin-save-sms = Salvar as configurações de SMS
 admin-send-test-sms = Enviar uma mensagem de teste para
 admin-send-test-sms-hint-check = (deixe em branco para apenas verificar as credenciais)
@@ -1889,6 +1940,8 @@ admin-sms-check-accepted = Credenciais aceitas pelo gateway.
 admin-sms-bad-number = Esse número de telefone não é utilizável.
 admin-sms-test-body = Mensagem de teste do calrs. Seu gateway SMS funciona.
 admin-sms-test-accepted = Mensagem de teste aceita pelo gateway.
+admin-sms-test-over-cap = O limite diário de SMS foi atingido, então a mensagem de teste não foi enviada. Mensagens de teste contam para o limite diário como qualquer outra.
+admin-sms-test-ledger-failed = Não foi possível registrar o uso de SMS, então a mensagem de teste não foi enviada.
 
 ## Local multi-factor authentication
 
