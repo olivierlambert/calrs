@@ -152,6 +152,8 @@ Files: `src/web/` (see `ARCHITECTURE.md` for which file owns which page), templa
 
 **Sidebar layout** (`dashboard_base.html`): All authenticated pages use a two-column layout with a persistent left sidebar (260px). Sidebar shows user avatar (with initials fallback), name, title, and organized nav sections. Mobile responsive with hamburger menu. All dashboard sub-pages pass `sidebar => sidebar_context(&auth_user, "active-page")` to their template context.
 
+**Cards:** dashboard blocks are cards, not sections under rules (owner's choice, 2026-11-09). Use the shared component in `dashboard_base.html` (`.card` > `.card-head` with the `h2`, its `.num` count and a `.card-action`, then `.card-body`; `.card-part` with `.card-subhead` for a second titled part; `.card.is-now` for the one "now" card) and put a page made of cards on `--bg` by filling its `main_class` block with `has-cards`. The overview uses it; the other pages still use rules.
+
 **Dashboard** — split into focused pages, each extending `dashboard_base.html`:
 - `/dashboard`: overview, a greeting with one sentence about the day, the next meeting as the one large block (guest face, countdown in words, Join), a quiet "N things to set up" line, pending requests, a 7-day week strip, a 30-day sentence with the 12-week bars. Guest faces are initials on a warm hue from the name (`initials()`/`face_hue()` in `overview_stats.rs`). Faces mix the hue into the theme's `--surface`, so every preset reads. The default palette in `base.html` is warm (paper, greys, a warm charcoal in dark mode); presets and custom themes replace it as before
 - `/dashboard/event-types` — Personal + team event types (create/edit/toggle/delete/view)
