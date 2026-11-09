@@ -13,7 +13,7 @@
 {%- endif %}
 {%- for card in cards %}
 <section class="card lp-cardlist">
-  <div class="card-head"><h2>{{ card.title }}<span class="num">{{ card.count }}</span></h2></div>
+  <div class="card-head"><h2>{{ card.title }}<span class="lp-sr">, </span><span class="num">{{ card.count }}</span></h2></div>
   <div class="card-body">
     <ul class="lp-list">
       {%- for et in card.items %}

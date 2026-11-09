@@ -294,7 +294,7 @@ pub fn format_date(date: NaiveDate, lang: &str) -> String {
 
 /// A length of time as a label, in `lang`: "45 min", "2 h", "1 h 30 min"
 /// (each locale writes its own units). The one formatter for a meeting's
-/// length on pages, in emails and in texts; negative lengths read as
+/// length on pages and in emails; negative lengths read as
 /// their absolute value.
 pub fn format_duration(lang: &str, minutes: i64) -> String {
     duration_in(lang, minutes, false)
@@ -1194,6 +1194,191 @@ mod tests {
                 "{lang}: {out}"
             );
         }
+    }
+
+    /// The variables each message of `lang` reads (`{ $name }`), by id.
+    fn message_variables(lang: &str) -> HashMap<String, std::collections::BTreeSet<String>> {
+        let src = SUPPORTED_LANGS
+            .iter()
+            .find(|(code, _, _)| *code == lang)
+            .map(|(_, _, src)| *src)
+            .unwrap_or("");
+        let mut out: HashMap<String, std::collections::BTreeSet<String>> = HashMap::new();
+        let mut current: Option<String> = None;
+        for line in src.lines() {
+            let starts_message =
+                line.starts_with(|c: char| c.is_ascii_lowercase()) && line.contains(" =");
+            if starts_message {
+                current = line.split(" =").next().map(str::to_string);
+            } else if !line.starts_with(' ') {
+                current = None;
+            }
+            let Some(id) = &current else { continue };
+            let vars = out.entry(id.clone()).or_default();
+            let mut rest = line;
+            while let Some(at) = rest.find('$') {
+                rest = &rest[at + 1..];
+                let name: String = rest
+                    .chars()
+                    .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+                    .collect();
+                if !name.is_empty() {
+                    vars.insert(name);
+                }
+            }
+        }
+        out
+    }
+
+    /// The keyword names of every `t("key", name=...)` call in a template:
+    /// (key, names), names at the call's own depth only.
+    fn template_calls_with_args(src: &str) -> Vec<(String, Vec<String>)> {
+        let mut calls = Vec::new();
+        let bytes = src.as_bytes();
+        let mut i = 0;
+        while let Some(pos) = src[i..].find("t(") {
+            let start = i + pos;
+            i = start + 2;
+            if start > 0 && (bytes[start - 1].is_ascii_alphanumeric() || bytes[start - 1] == b'_') {
+                continue;
+            }
+            let rest = &src[i..];
+            let Some(quote) = rest.chars().next().filter(|c| *c == '"' || *c == '\'') else {
+                continue;
+            };
+            let Some(end) = rest[1..].find(quote) else {
+                continue;
+            };
+            let key = rest[1..1 + end].to_string();
+            // Walk the argument list to the closing parenthesis.
+            let mut depth = 1;
+            let mut names = Vec::new();
+            let mut in_str: Option<char> = None;
+            let mut word = String::new();
+            let chars: Vec<char> = rest[1 + end + 1..].chars().collect();
+            let mut k = 0;
+            while k < chars.len() && depth > 0 {
+                let c = chars[k];
+                match in_str {
+                    Some(q) if c == q => in_str = None,
+                    Some(_) => {}
+                    None => match c {
+                        '"' | '\'' => in_str = Some(c),
+                        '(' | '[' | '{' => depth += 1,
+                        ')' | ']' | '}' => depth -= 1,
+                        '=' if depth == 1 && chars.get(k + 1) != Some(&'=') && !word.is_empty() => {
+                            names.push(word.clone());
+                        }
+                        _ => {}
+                    },
+                }
+                if in_str.is_none() && (c.is_ascii_alphanumeric() || c == '_') {
+                    word.push(c);
+                } else if c != ' ' {
+                    word.clear();
+                }
+                k += 1;
+            }
+            if !names.is_empty() {
+                calls.push((key, names));
+            }
+        }
+        calls
+    }
+
+    /// The argument names of every `ta(lang, "key", [("name", ..), ..])` and
+    /// `tr1(lang, "key", "name", ..)` call in Rust code.
+    fn rust_calls_with_args(src: &str) -> Vec<(String, Vec<String>)> {
+        let mut calls = Vec::new();
+        for call in ["ta(", "tr1("] {
+            let mut i = 0;
+            while let Some(pos) = src[i..].find(call) {
+                let at = i + pos;
+                i = at + call.len();
+                if src[..at]
+                    .chars()
+                    .next_back()
+                    .is_some_and(|c| c.is_ascii_alphanumeric() || c == '_')
+                {
+                    continue;
+                }
+                let rest = &src[i..];
+                let Some(comma) = rest.find(',') else {
+                    continue;
+                };
+                let after = rest[comma + 1..].trim_start();
+                let Some(inner) = after.strip_prefix('"') else {
+                    continue;
+                };
+                let Some(end) = inner.find('"') else { continue };
+                let key = inner[..end].to_string();
+                let tail = inner[end + 1..]
+                    .trim_start()
+                    .trim_start_matches(',')
+                    .trim_start();
+                let names = if call == "tr1(" {
+                    tail.strip_prefix('"')
+                        .and_then(|t| t.split('"').next())
+                        .map(|n| vec![n.to_string()])
+                        .unwrap_or_default()
+                } else if let Some(list) = tail.strip_prefix('[') {
+                    let list = &list[..list.find(']').unwrap_or(list.len())];
+                    list.split("(\"")
+                        .skip(1)
+                        .filter_map(|t| t.split('"').next())
+                        .map(str::to_string)
+                        .collect()
+                } else {
+                    Vec::new()
+                };
+                if !names.is_empty() && looks_like_key(&key) {
+                    calls.push((key, names));
+                }
+            }
+        }
+        calls
+    }
+
+    /// A message rendered with arguments gets exactly the variables it
+    /// reads: a renamed variable (`$minutes` to `$duration`) left behind in
+    /// a caller would print `{$duration}` to the reader.
+    #[test]
+    fn messages_get_the_variables_they_read() {
+        // English must get every variable it reads; any locale may read
+        // one English does not (Spanish "list-and" picks "y" or "e").
+        let vars = message_variables("en");
+        let mut any_locale: HashMap<String, std::collections::BTreeSet<String>> = HashMap::new();
+        for (code, _, _) in SUPPORTED_LANGS {
+            for (id, names) in message_variables(code) {
+                any_locale.entry(id).or_default().extend(names);
+            }
+        }
+        let mut errors = Vec::new();
+        let mut check = |file: String, key: String, names: Vec<String>| {
+            let Some(declared) = vars.get(&key) else {
+                return;
+            };
+            let known = any_locale.get(&key).unwrap_or(declared);
+            let passed: std::collections::BTreeSet<String> = names.into_iter().collect();
+            let missing: Vec<&String> = declared.difference(&passed).collect();
+            let unknown: Vec<&String> = passed.difference(known).collect();
+            if !missing.is_empty() || !unknown.is_empty() {
+                errors.push(format!("{file}: {key} reads {declared:?}, gets {passed:?}"));
+            }
+        };
+        for path in template_files() {
+            let src = std::fs::read_to_string(&path).expect("template");
+            for (key, names) in template_calls_with_args(&src) {
+                check(path.display().to_string(), key, names);
+            }
+        }
+        for path in rust_files() {
+            let src = std::fs::read_to_string(&path).expect("source");
+            for (key, names) in rust_calls_with_args(&src) {
+                check(path.display().to_string(), key, names);
+            }
+        }
+        assert!(errors.is_empty(), "{}", errors.join("\n"));
     }
 
     /// One formatter for every length shown: short labels, long words with

@@ -29,7 +29,7 @@
   {% for g in groups %}
   <section class="card">
     <div class="card-head po-head">
-      <h2>{% if g.label %}{{ g.label }}{% elif groups | length > 1 %}{{ t("landing-other-meetings") }}{% else %}{{ t("landing-meetings") }}{% endif %}<span class="num">{{ g.items | length }}</span></h2>
+      <h2>{% if g.label %}{{ g.label }}{% elif groups | length > 1 %}{{ t("landing-other-meetings") }}{% else %}{{ t("landing-meetings") }}{% endif %}<span class="sr-only">, </span><span class="num">{{ g.items | length }}</span></h2>
       {% if g.label %}
       <div class="po-moves card-action">
         <form method="post" action="{{ action }}"><input type="hidden" name="kind" value="section"><input type="hidden" name="target" value="{{ g.label }}"><input type="hidden" name="dir" value="up"><button type="submit" class="ui-btn ui-btn--sm"{% if loop.first %} disabled{% endif %} aria-label="{{ t('page-order-section-up', section=g.label) }}" title="{{ t('page-order-up') }}">&#8593;</button></form>

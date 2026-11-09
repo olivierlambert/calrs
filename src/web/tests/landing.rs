@@ -162,7 +162,9 @@ async fn profile_lists_one_card_with_the_decision_facts_and_the_hours() {
     .unwrap();
     let page = body_string(app.oneshot(get("/u/testuser")).await.unwrap()).await;
     assert!(
-        page.contains(r#"<h2>Meetings<span class="num">1</span></h2>"#),
+        page.contains(
+            r#"<h2>Meetings<span class="lp-sr">, </span><span class="num">1</span></h2>"#
+        ),
         "{page}"
     );
     assert!(page.contains("<span>Phone call</span>"));
@@ -460,4 +462,45 @@ async fn section_suggestions_stay_with_their_owner() {
     .await;
     assert!(form.contains(r#"<option value="Mine to keep">"#), "{form}");
     assert!(!form.contains("Secret plans"));
+}
+
+/// A section name and "Based in" are the host's free text: escaped on the
+/// landing page, the arrange page and the event type form alike.
+#[tokio::test]
+async fn host_written_text_is_escaped_everywhere_it_shows() {
+    let (app, pool, session, et_id) = setup_test_app().await;
+    let payload = r#"<script>alert("x")</script>' onmouseover="y"#;
+    sqlx::query("UPDATE event_types SET section = ? WHERE id = ?")
+        .bind(payload)
+        .bind(&et_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE users SET based_in = ? WHERE username = 'testuser'")
+        .bind(payload)
+        .execute(&pool)
+        .await
+        .unwrap();
+    for (uri, authed) in [
+        ("/u/testuser", false),
+        ("/dashboard/event-types/order", true),
+        ("/dashboard/event-types/test-meeting/edit", true),
+        ("/dashboard/event-types/new", true),
+    ] {
+        let req = if authed {
+            get_authed(uri, &session)
+        } else {
+            get(uri)
+        };
+        let page = body_string(app.clone().oneshot(req).await.unwrap()).await;
+        assert!(
+            page.contains("&lt;script&gt;alert("),
+            "{uri}: payload not shown"
+        );
+        assert!(!page.contains("<script>alert("), "{uri}: unescaped");
+        assert!(
+            !page.contains(r#"" onmouseover"#),
+            "{uri}: attribute escaped"
+        );
+    }
 }

@@ -87,15 +87,23 @@
     yours: {{ t("landing-hours-yours") | tojson }}
   };
   function fill(pattern, a, b) { return pattern.replace('%1', a).replace('%2', b); }
-  // As landing::days_phrase: every day, a run of three or more Monday
-  // first as a range, else a list.
+  // As landing::days_phrase: every day, a run of three to six days as a
+  // range (wrapping past Sunday when the shift makes it so), else a list,
+  // Monday first.
   var MONDAY_FIRST = [1, 2, 3, 4, 5, 6, 0];
   function daysPhrase(days) {
+    var has = function(i) { return days.indexOf(MONDAY_FIRST[i % 7]) >= 0; };
     var sorted = MONDAY_FIRST.filter(function(d) { return days.indexOf(d) >= 0; });
     if (sorted.length === 7) return L.every;
-    var pos = sorted.map(function(d) { return MONDAY_FIRST.indexOf(d); });
-    var run = pos.every(function(x, i) { return i === 0 || x === pos[i - 1] + 1; });
-    if (run && sorted.length >= 3) return fill(L.daysRange, L.week[sorted[0]], L.week[sorted[sorted.length - 1]]);
+    if (sorted.length >= 3) {
+      for (var s = 0; s < 7; s++) {
+        if (!has(s) || has(s + 6)) continue;
+        var run = true;
+        for (var k = 0; k < sorted.length; k++) if (!has(s + k)) run = false;
+        if (run) return fill(L.daysRange, L.week[MONDAY_FIRST[s]], L.week[MONDAY_FIRST[(s + sorted.length - 1) % 7]]);
+        break;
+      }
+    }
     var names = sorted.map(function(d) { return L.week[d]; });
     if (names.length === 1) return names[0];
     return fill(L.and, names.slice(0, -1).join(', '), names[names.length - 1]);

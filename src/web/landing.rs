@@ -195,23 +195,26 @@ pub(super) async fn save_section_in(
 }
 
 /// The section names offered when editing an event type: those already
-/// used on the user's own page and on the pages of the teams they admin,
-/// plus `team_id`'s (a global admin editing a team's type).
+/// used on the pages of the teams the user admins and on `team_id`'s (a
+/// global admin editing a team's type), plus, with `personal`, on the
+/// user's own page. A team's type gets team sections only.
 pub(super) async fn section_suggestions(
     pool: &SqlitePool,
     user_id: &str,
     team_id: Option<&str>,
+    personal: bool,
 ) -> Vec<String> {
     sqlx::query_scalar(
         "SELECT DISTINCT et.section FROM event_types et
          LEFT JOIN accounts a ON a.id = et.account_id
          WHERE et.section IS NOT NULL AND et.section != ''
-           AND ((et.team_id IS NULL AND a.user_id = ?)
+           AND ((? AND et.team_id IS NULL AND a.user_id = ?)
                 OR et.team_id IN (SELECT team_id FROM team_members WHERE user_id = ? AND role = 'admin')
                 OR (? IS NOT NULL AND et.team_id = ?))
          ORDER BY et.section COLLATE NOCASE
          LIMIT 100",
     )
+    .bind(personal)
     .bind(user_id)
     .bind(user_id)
     .bind(team_id)
@@ -252,27 +255,36 @@ fn weekday_name(lang: &str, day: u32) -> String {
 }
 
 /// "Monday to Friday", "every day", "Monday, Wednesday and Friday": a run
-/// of three days or more as a range, anything else as a list.
+/// of three days or more as a range, anything else as a list. A run may
+/// wrap past the end of the week ("Friday to Monday"), which a visitor's
+/// zone can make of a host's Saturday to Tuesday.
 fn days_phrase(lang: &str, days: &[u32]) -> String {
     if days.len() == 7 {
         return crate::i18n::translate(lang, "landing-days-every", None);
     }
-    let pos: Vec<usize> = days
-        .iter()
-        .filter_map(|d| WEEK.iter().position(|w| w == d))
-        .collect();
-    let run = pos.windows(2).all(|w| w[1] == w[0] + 1);
-    if run && days.len() >= 3 {
+    if let Some((first, last)) = circular_run(days) {
         let mut args = FluentArgs::new();
-        args.set("first", FluentValue::from(weekday_name(lang, days[0])));
-        args.set(
-            "last",
-            FluentValue::from(weekday_name(lang, days[days.len() - 1])),
-        );
+        args.set("first", FluentValue::from(weekday_name(lang, first)));
+        args.set("last", FluentValue::from(weekday_name(lang, last)));
         return crate::i18n::translate(lang, "landing-days-range", Some(&args));
     }
-    let names: Vec<String> = days.iter().map(|d| weekday_name(lang, *d)).collect();
+    let sorted: Vec<u32> = WEEK.iter().copied().filter(|d| days.contains(d)).collect();
+    let names: Vec<String> = sorted.iter().map(|d| weekday_name(lang, *d)).collect();
     join_list(lang, &names)
+}
+
+/// The first and last day of `days` when they are three to six days in a
+/// row of the Monday-first week, the run allowed to wrap past Sunday.
+fn circular_run(days: &[u32]) -> Option<(u32, u32)> {
+    let n = days.len();
+    if !(3..7).contains(&n) {
+        return None;
+    }
+    let has = |i: usize| days.contains(&WEEK[i % 7]);
+    let start = (0..7).find(|&i| has(i) && !has(i + 6))?;
+    (0..n)
+        .all(|k| has(start + k))
+        .then(|| (WEEK[start], WEEK[(start + n - 1) % 7]))
 }
 
 /// The place name of a timezone: "Europe/Paris" reads "Paris".
@@ -775,6 +787,19 @@ mod tests {
         );
         assert!(usual_hours("en", &[], "Europe/Paris").is_none());
         assert!(usual_hours("en", &[rule(1, "18:00", "09:00")], "UTC").is_none());
+    }
+
+    #[test]
+    fn day_runs_may_wrap_past_sunday() {
+        assert_eq!(days_phrase("en", &[1, 2, 3, 4, 5]), "Monday to Friday");
+        assert_eq!(days_phrase("en", &[0, 1, 2, 3, 4]), "Sunday to Thursday");
+        assert_eq!(days_phrase("en", &[5, 6, 0, 1]), "Friday to Monday");
+        assert_eq!(days_phrase("en", &[6, 0]), "Saturday and Sunday");
+        assert_eq!(
+            days_phrase("en", &[1, 3, 5]),
+            "Monday, Wednesday and Friday"
+        );
+        assert_eq!(days_phrase("en", &[0, 1, 2, 3, 4, 5, 6]), "every day");
     }
 
     #[test]

@@ -381,8 +381,8 @@ email-cancel-ics-attached-html = Anulowanie kalendarza w załączniku tego e-mai
 
 # Confirmation email: notice-window policy lines (src/email.rs)
 
-email-confirm-cancel-notice = Uwaga: odwołanie wymaga co najmniej { $duration } wyprzedzenia.
-email-confirm-reschedule-notice = Uwaga: przeniesienie wymaga co najmniej { $duration } wyprzedzenia.
+email-confirm-cancel-notice = Uwaga: minimalne wyprzedzenie przy odwołaniu to { $duration }.
+email-confirm-reschedule-notice = Uwaga: minimalne wyprzedzenie przy przeniesieniu to { $duration }.
 
 # Event type form: cancel/reschedule minimum notice (templates/event_type_form.html)
 
@@ -426,14 +426,14 @@ event-type-form-saved = Zapisano.
 
 # Booking confirmation: cancel/reschedule policy notices (templates/confirmed.html)
 
-confirmed-cancel-notice-info = Odwołanie wymaga co najmniej { $duration } wyprzedzenia przed spotkaniem.
-confirmed-reschedule-notice-info = Przeniesienie wymaga co najmniej { $duration } wyprzedzenia przed spotkaniem.
+confirmed-cancel-notice-info = Minimalne wyprzedzenie przy odwołaniu spotkania to { $duration }.
+confirmed-reschedule-notice-info = Minimalne wyprzedzenie przy przeniesieniu spotkania to { $duration }.
 
 # Booking action blocked page (templates/booking_action_blocked.html)
 
 booking-blocked-title-cancel = Tej rezerwacji nie można już odwołać przez internet
 booking-blocked-title-reschedule = Tej rezerwacji nie można już przenieść przez internet
-booking-blocked-body = Gospodarz wymaga co najmniej { $duration } wyprzedzenia. Jeśli nie możesz się pojawić, napisz bezpośrednio na <a href="mailto:{ $host_email }">{ $host_email }</a>.
+booking-blocked-body = Minimalne wyprzedzenie wymagane przez gospodarza to { $duration }. Jeśli nie możesz się pojawić, napisz bezpośrednio na <a href="mailto:{ $host_email }">{ $host_email }</a>.
 
 # Dashboard event types listing (templates/dashboard_event_types.html)
 

@@ -123,8 +123,8 @@
   .lp-bio a:hover { color: var(--accent); }
   .lp-bio code { background: var(--lp-tint); padding: 0.1em 0.3em; border-radius: 3px; font-size: 0.85em; }
 
-  /* When the host usually meets (and, in layout 2, where they are and
-     what they speak): quiet lines under the name, an icon each. The
+  /* When the host usually meets, where they are based and what they
+     speak, when set: quiet lines under the name, an icon each. The
      guest's own hours, added by the page when their timezone differs,
      sit under the host's. */
   .lp-about { list-style: none; margin-top: 1rem; display: flex; flex-direction: column; gap: 0.35rem; font-size: 0.95rem; line-height: 1.45; color: var(--text-secondary); }
@@ -210,8 +210,8 @@
   .lp-req { padding-left: calc(16px + 0.45rem); color: var(--text); font-weight: 560; }
   .lp-req span:first-child { text-decoration: underline dotted; text-decoration-color: var(--lp-rule-top); text-underline-offset: 3px; }
 
-  /* Layout 2: one line on how booking works, then topics under small
-     headings, each heading over its own ruled list. */
+  /* One line on how booking works, above the cards, when the page lists
+     more than one meeting. */
   .lp-how { margin: -0.75rem 0 1.25rem; max-width: 62ch; font-size: 0.95rem; color: var(--text-secondary); }
 
   .lp-empty { padding: 1.1rem 0.75rem; color: var(--text-secondary); }
