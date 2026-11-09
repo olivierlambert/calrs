@@ -321,15 +321,19 @@ async fn invite_links_teams_and_team_event_types_are_paged() {
     all.dedup();
     assert_eq!(all.len(), 55);
 
-    // Team event types: the admin's own event type heads the first page
-    // only, the team ones are paged.
+    // Event types: one list, own event types first (Test Meeting and the 55
+    // internal ones), then the 55 team ones, counted and paged together.
+    sqlx::query("UPDATE event_types SET created_at = '2000-01-01' WHERE slug = 'test-meeting'")
+        .execute(&pool)
+        .await
+        .unwrap();
     let first = page(&app, &session, "/dashboard/event-types").await;
     assert!(first.contains("Test Meeting"));
-    assert!(first.contains("1 to 50 of 55"));
-    let second = page(&app, &session, "/dashboard/event-types?page=2").await;
-    assert!(!second.contains("Test Meeting"));
-    assert!(second.contains("51 to 55 of 55"));
-    assert_eq!(second.matches("class=\"ui-row et-row").count(), 5);
+    assert!(first.contains("1 to 50 of 111"));
+    let last = page(&app, &session, "/dashboard/event-types?page=3").await;
+    assert!(!last.contains("Test Meeting"));
+    assert!(last.contains("101 to 111 of 111"));
+    assert_eq!(last.matches("class=\"ui-row et-row").count(), 11);
 
     // A user who belongs to no team sees none of them.
     let (_, outsider_session) =
@@ -466,4 +470,252 @@ async fn admin_groups_page_search_and_page_their_members() {
     let none = page(&app, &session, "/dashboard/admin?gq=%25").await;
     assert_eq!(groups(&none), 0);
     assert!(none.contains("No groups match your filter."));
+}
+
+/// A search runs on the server over every page, and the page links keep it.
+#[tokio::test]
+async fn searches_reach_every_page() {
+    let (app, pool, session, et_id) = setup_test_app().await;
+    let me = user_id(&pool, "test@example.com").await;
+    let now = Utc::now();
+    let mut needle = String::new();
+    for i in 0..70 {
+        let id = insert_at(
+            &pool,
+            &et_id,
+            now + Duration::days(2) + Duration::hours(i),
+            "confirmed",
+        )
+        .await;
+        if i == 65 {
+            needle = id.clone();
+            sqlx::query("UPDATE bookings SET guest_name = 'Zoë Needle' WHERE id = ?")
+                .bind(&id)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+    }
+    let plain = page(&app, &session, "/dashboard/bookings").await;
+    assert!(!plain.contains(&needle), "on page 2 without a search");
+    let found = page(&app, &session, "/dashboard/bookings?q=zo%C3%AB%20NEEDLE").await;
+    let upcoming = section(&found, "bk-upcoming");
+    assert_eq!(rows(upcoming), 1);
+    assert!(upcoming.contains(&needle));
+    assert!(found.contains("name=\"q\" value=\"zoë NEEDLE\""));
+    let none = page(&app, &session, "/dashboard/bookings?q=nobody").await;
+    assert!(none.contains("Nothing matches your search."));
+    // Page links keep the search.
+    let paged = page(&app, &session, "/dashboard/bookings?q=guest").await;
+    assert!(unescape(section(&paged, "bk-upcoming"))
+        .contains("href=\"/dashboard/bookings?q=guest&bp=2#bk-upcoming\""));
+
+    // Event types: a team event type on a later page is found, and the
+    // user's own types are searched too.
+    for i in 0..55 {
+        let (_, et) = insert_team_with_et(
+            &pool,
+            &format!("crew-{i:02}"),
+            &format!("call-{i:02}"),
+            &[(&me, "member")],
+        )
+        .await;
+        if i == 54 {
+            sqlx::query("UPDATE event_types SET title = 'Quarterly review' WHERE id = ?")
+                .bind(&et)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+    }
+    let plain = page(&app, &session, "/dashboard/event-types").await;
+    assert!(!plain.contains("Quarterly review"));
+    let found = page(&app, &session, "/dashboard/event-types?q=quarterly").await;
+    assert!(found.contains("Quarterly review"));
+    assert_eq!(found.matches("class=\"ui-row et-row").count(), 1);
+    let own = page(&app, &session, "/dashboard/event-types?q=test%20meeting").await;
+    assert!(own.contains("Test Meeting"));
+    assert_eq!(own.matches("class=\"ui-row et-row").count(), 1);
+    let teams = page(&app, &session, "/dashboard/event-types?q=crew-1").await;
+    assert_eq!(teams.matches("class=\"ui-row et-row").count(), 10);
+    let paged = page(&app, &session, "/dashboard/event-types?q=crew").await;
+    assert!(unescape(&paged).contains("href=\"/dashboard/event-types?q=crew&page=2\""));
+
+    // Invite Links: the title, the host or the team.
+    for i in 0..55 {
+        let et = insert_personal_et(&pool, &me, &format!("int-{i:02}")).await;
+        sqlx::query(
+            "UPDATE event_types SET visibility = 'internal', title = ?,
+                 created_at = datetime('2030-01-01', '+' || ? || ' minutes') WHERE id = ?",
+        )
+        .bind(if i == 54 {
+            "Hidden gem".to_string()
+        } else {
+            format!("Internal {i:02}")
+        })
+        .bind(i)
+        .bind(&et)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    let plain = page(&app, &session, "/dashboard/invite-links").await;
+    assert!(!plain.contains("Hidden gem"));
+    let found = page(&app, &session, "/dashboard/invite-links?q=GEM").await;
+    assert!(found.contains("Hidden gem"));
+    assert_eq!(found.matches("class=\"ui-row et-row\"").count(), 1);
+}
+
+/// An action taken on a page of a list returns to that page, never to
+/// another site.
+#[tokio::test]
+async fn actions_return_to_the_page_they_were_taken_on() {
+    let (app, pool, session, et_id) = setup_test_app().await;
+    let now = Utc::now();
+    let mut ids = Vec::new();
+    for i in 0..3 {
+        ids.push(
+            insert_at(
+                &pool,
+                &et_id,
+                now + Duration::days(2) + Duration::hours(i),
+                "confirmed",
+            )
+            .await,
+        );
+    }
+    let post = |uri: String, body: String| {
+        let app = app.clone();
+        let session = session.clone();
+        async move {
+            let r = app
+                .oneshot(post_form(&uri, &session, "c", &format!("_csrf=c&{body}")))
+                .await
+                .unwrap();
+            assert_eq!(r.status(), 303, "{uri}");
+            r.headers()["location"].to_str().unwrap().to_string()
+        }
+    };
+    let back = urlencoding::encode("/dashboard/bookings?q=guest&bp=3#bk-upcoming").into_owned();
+    let to = post(
+        format!("/dashboard/bookings/{}/cancel", ids[0]),
+        format!("return_to={back}"),
+    )
+    .await;
+    assert_eq!(to, "/dashboard/bookings?q=guest&bp=3#bk-upcoming");
+    let evil = urlencoding::encode("https://evil.example/").into_owned();
+    let to = post(
+        format!("/dashboard/bookings/{}/cancel", ids[1]),
+        format!("return_to={evil}"),
+    )
+    .await;
+    assert_eq!(to, "/dashboard/bookings");
+    let to = post(
+        format!("/dashboard/bookings/{}/cancel", ids[2]),
+        "return_to=%2F%2Fevil.example".to_string(),
+    )
+    .await;
+    assert_eq!(to, "/dashboard/bookings");
+
+    // The bookings page hands each form the page it shows.
+    let body = page(&app, &session, "/dashboard/bookings?q=nobody&bp=2").await;
+    assert!(!body.contains("return_to\" value=\"https"));
+    let pending = insert_at(&pool, &et_id, now + Duration::days(9), "pending").await;
+    let body = page(&app, &session, "/dashboard/bookings?pp=1&rp=2").await;
+    assert!(unescape(&body)
+        .contains("name=\"return_to\" value=\"/dashboard/bookings?rp=2#bk-pending\""));
+    let _ = pending;
+
+    // A reschedule request keeps the page through its confirmation step.
+    let live = insert_at(&pool, &et_id, now + Duration::days(5), "confirmed").await;
+    let body = page(
+        &app,
+        &session,
+        &format!("/dashboard/bookings/{live}/reschedule?return_to={back}"),
+    )
+    .await;
+    assert!(unescape(&body)
+        .contains("name=\"return_to\" value=\"/dashboard/bookings?q=guest&bp=3#bk-upcoming\""));
+    let evil_page = page(
+        &app,
+        &session,
+        &format!("/dashboard/bookings/{live}/reschedule?return_to={evil}"),
+    )
+    .await;
+    assert!(!evil_page.contains("evil.example"));
+
+    // An admin's weight change returns to the group's page of the list.
+    let group = insert_group(&pool, "Ops").await;
+    let member = insert_role_user(&pool, "ops@example.com", "user").await;
+    sqlx::query("INSERT INTO user_groups (user_id, group_id, weight) VALUES (?, ?, 1)")
+        .bind(&member)
+        .bind(&group)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let admin = page(&app, &session, "/dashboard/admin?gq=ops&uq=x").await;
+    let expected = format!("/dashboard/admin?uq=x&gq=ops#group-{group}");
+    assert!(
+        unescape(&admin).contains(&format!("name=\"return_to\" value=\"{expected}\"")),
+        "{expected}"
+    );
+    let weight = format!("/dashboard/admin/groups/{group}/members/{member}/weight");
+    let to = post(
+        weight.clone(),
+        format!("weight=5&return_to={}", urlencoding::encode(&expected)),
+    )
+    .await;
+    assert_eq!(to, expected);
+    let to = post(weight, format!("weight=5&return_to={evil}")).await;
+    assert_eq!(to, "/dashboard/admin");
+}
+
+#[test]
+fn booking_errors_show_on_the_page_they_came_from() {
+    assert_eq!(
+        bookings_return(
+            Some("/dashboard/bookings?bp=2#bk-upcoming"),
+            Some("host-busy")
+        ),
+        "/dashboard/bookings?bp=2&error=host-busy#bk-upcoming"
+    );
+    assert_eq!(
+        bookings_return(Some("/dashboard"), Some("host-busy")),
+        "/dashboard/bookings?error=host-busy"
+    );
+    assert_eq!(bookings_return(Some("/dashboard"), None), "/dashboard");
+    assert_eq!(
+        bookings_return(Some("/elsewhere"), None),
+        "/dashboard/bookings"
+    );
+}
+
+#[tokio::test]
+async fn team_settings_warn_before_leaving_unsaved_changes() {
+    let (app, pool, session, _) = setup_test_app().await;
+    let (team, _) = insert_team_with_et(&pool, "guarded", "guarded-call", &[]).await;
+    let body = page(&app, &session, &format!("/dashboard/teams/{team}/settings")).await;
+    assert!(body.contains("id=\"settings-form\" data-dirty-guard"));
+}
+
+#[tokio::test]
+async fn the_reschedule_page_loads_a_capped_roster() {
+    let pool = setup_test_db().await;
+    let mut roster = Vec::new();
+    for i in 0..10 {
+        roster.push(insert_role_user(&pool, &format!("r{i}@example.com"), "user").await);
+    }
+    let members: Vec<(&str, &str)> = roster.iter().map(|id| (id.as_str(), "member")).collect();
+    let (team, et) = insert_team_with_et(&pool, "roster", "roster-call", &members).await;
+    let hosts = RescheduleHosts {
+        user_ids: roster.clone(),
+        collective: true,
+        team_id: Some(team),
+        participants: Vec::new(),
+        claimant: None,
+    };
+    let profile = reschedule_host_profile(&pool, &hosts, &et).await;
+    let team = profile.team.unwrap();
+    assert_eq!(team.members.len(), 6);
+    assert_eq!(team.total, 10);
 }

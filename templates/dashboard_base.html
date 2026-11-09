@@ -1137,7 +1137,9 @@ document.querySelectorAll('input[type=file][data-max-bytes]').forEach(function(i
     }
     var saved = null;
     try { saved = sessionStorage.getItem(key); } catch (e) { /* private mode */ }
-    if (saved && !input.value) input.value = saved;
+    // A search the server applies (a named field of a GET form) shows what
+    // the page was asked for; only a page-only filter is restored.
+    if (saved && !input.value && !input.name) input.value = saved;
     input.addEventListener('input', run);
     run();
   });

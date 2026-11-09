@@ -793,12 +793,22 @@ pub(super) async fn admin_dashboard(
                     )
                 },
             );
+            // The weight forms return to this group on this page.
+            let return_to = admin_href(
+                users_qs.clone(),
+                groups_list.query_string(
+                    groups_page.page,
+                    Some((id.as_str(), member_page_of(id, *member_count))),
+                ),
+                &format!("group-{id}"),
+            );
             context! {
                 id => id,
                 name => name,
                 member_count => member_count,
                 members => members,
                 members_pager => members_pager,
+                return_to => return_to,
             }
         })
         .collect();
@@ -3430,6 +3440,9 @@ pub(super) async fn admin_stop_impersonate(
 pub(super) struct WeightForm {
     _csrf: Option<String>,
     weight: i64,
+    /// The Groups list page the weight was changed on.
+    #[serde(default)]
+    return_to: Option<String>,
 }
 
 pub(super) async fn admin_update_member_weight(
@@ -3455,5 +3468,7 @@ pub(super) async fn admin_update_member_weight(
         weight = w,
         "admin: updated member weight"
     );
-    Redirect::to("/dashboard/admin").into_response()
+    let back = listing::return_path(form.return_to.as_deref(), "/dashboard/admin")
+        .unwrap_or_else(|| "/dashboard/admin".to_string());
+    Redirect::to(&back).into_response()
 }

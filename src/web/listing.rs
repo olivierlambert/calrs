@@ -270,6 +270,31 @@ pub(super) fn href(path: &str, parts: &[String], anchor: &str) -> String {
     }
 }
 
+/// `raw` when it is a path of this site under `prefix` (`/dashboard`,
+/// `/dashboard/admin`), so a form can say which page of a list to return
+/// to without opening a redirect to anywhere else: no scheme, no `//` or
+/// backslash host, no whitespace or control character. `None` otherwise.
+pub(super) fn return_path(raw: Option<&str>, prefix: &str) -> Option<String> {
+    let raw = raw?;
+    let rest = raw.strip_prefix(prefix)?;
+    let boundary = matches!(rest.chars().next(), None | Some('?' | '#' | '/'));
+    let clean = !raw.contains('\\')
+        && !raw.starts_with("//")
+        && raw.len() <= 2048
+        && raw.chars().all(|c| !c.is_whitespace() && !c.is_control());
+    (boundary && clean).then(|| raw.to_string())
+}
+
+/// `path` with `key=value` added to its query, before its anchor.
+pub(super) fn with_param(path: &str, key: &str, value: &str) -> String {
+    let (head, anchor) = match path.split_once('#') {
+        Some((head, anchor)) => (head, format!("#{anchor}")),
+        None => (path, String::new()),
+    };
+    let sep = if head.contains('?') { '&' } else { '?' };
+    format!("{head}{sep}{key}={}{anchor}", urlencoding::encode(value))
+}
+
 /// `key=n` for a page past the first, nothing for the first.
 pub(super) fn page_part(key: &str, page: i64) -> String {
     if page > 1 {
@@ -369,6 +394,41 @@ mod tests {
         qb.push_bind("w");
         let joined: String = qb.build_query_scalar().fetch_one(&pool).await.unwrap();
         assert_eq!(joined, "v-vw");
+    }
+
+    #[test]
+    fn return_paths_stay_on_this_site_under_their_prefix() {
+        let ok = |raw: &str| return_path(Some(raw), "/dashboard");
+        assert_eq!(ok("/dashboard").as_deref(), Some("/dashboard"));
+        assert_eq!(
+            ok("/dashboard/bookings?bp=3#bk-upcoming").as_deref(),
+            Some("/dashboard/bookings?bp=3#bk-upcoming")
+        );
+        for bad in [
+            "https://evil.example/dashboard",
+            "//evil.example/dashboard",
+            "/dashboardx",
+            "/\\evil.example",
+            "/dashboard\\..",
+            "/dashboard/bookings?q=a b",
+            "/dashboard/\n",
+            "javascript:alert(1)",
+            "",
+        ] {
+            assert_eq!(ok(bad), None, "{bad:?}");
+        }
+        assert_eq!(return_path(None, "/dashboard"), None);
+        assert_eq!(
+            return_path(Some("/dashboard/bookings"), "/dashboard/admin"),
+            None
+        );
+    }
+
+    #[test]
+    fn with_param_goes_before_the_anchor() {
+        assert_eq!(with_param("/d#a", "error", "x y"), "/d?error=x%20y#a");
+        assert_eq!(with_param("/d?p=2#a", "error", "e"), "/d?p=2&error=e#a");
+        assert_eq!(with_param("/d", "e", "1"), "/d?e=1");
     }
 
     #[test]

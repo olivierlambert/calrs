@@ -27,25 +27,43 @@ pub(super) async fn dashboard_organization(
     auth_user: crate::auth::AuthUser,
     Query(query): Query<HashMap<String, String>>,
 ) -> impl IntoResponse {
-    let mut count = sqlx::QueryBuilder::new("SELECT COUNT(*)");
-    count.push(INTERNAL_SCOPE);
-    let mut select = sqlx::QueryBuilder::new(
-        "SELECT et.id, et.slug, et.title, et.duration_min, u.name, u.username,
+    // Searched on the server: the title, the team and the host.
+    let q = listing::bounded_search(query.get("q").map(String::as_str).unwrap_or_default());
+    let scope = |head: &'static str| {
+        let mut qb = sqlx::QueryBuilder::new(head);
+        qb.push(INTERNAL_SCOPE);
+        if !q.is_empty() {
+            let pattern = listing::ci_glob(&q);
+            qb.push(" AND (et.title GLOB ");
+            qb.push_bind(pattern.clone());
+            qb.push(" OR u.name GLOB ");
+            qb.push_bind(pattern.clone());
+            qb.push(" OR (et.team_id IS NOT NULL AND t.name GLOB ");
+            qb.push_bind(pattern);
+            qb.push("))");
+        }
+        qb
+    };
+    let listed = match listing::paged::<InternalEventTypeRow>(
+        &state.pool,
+        scope("SELECT COUNT(*)"),
+        scope(
+            "SELECT et.id, et.slug, et.title, et.duration_min, u.name, u.username,
                 CASE WHEN et.team_id IS NOT NULL THEN t.name ELSE NULL END,
                 CASE WHEN et.team_id IS NOT NULL THEN t.slug ELSE NULL END,
                 et.visibility",
-    );
-    select.push(INTERNAL_SCOPE);
-    let listed = match listing::paged::<InternalEventTypeRow>(
-        &state.pool,
-        count,
-        select,
+        ),
         "et.created_at, et.id",
         PageParams::from_query(&query, "page"),
         |n| {
+            let search = if q.is_empty() {
+                String::new()
+            } else {
+                format!("q={}", urlencoding::encode(&q))
+            };
             listing::href(
                 "/dashboard/invite-links",
-                &[listing::page_part("page", n)],
+                &[search, listing::page_part("page", n)],
                 "",
             )
         },
@@ -88,6 +106,8 @@ pub(super) async fn dashboard_organization(
             sidebar => sidebar_context(&auth_user, "organization"),
             lang => auth_user.lang,
             event_types => ets_ctx,
+            q => q,
+            search_max => listing::MAX_SEARCH_CHARS,
             pager => listed.pager,
             impersonating => impersonating,
             impersonating_name => impersonating_name,

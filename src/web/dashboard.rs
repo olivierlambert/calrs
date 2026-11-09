@@ -348,18 +348,25 @@ pub(super) async fn sidebar_hints(
 
 // --- Dashboard: Event Types ---
 
-type TeamEventTypeRow = (
+/// A row of the event types page: `kind` 0 for the user's own event
+/// types, 1 for team ones (which carry the team columns), then the sort
+/// keys, then the event type.
+type EventTypeListRow = (
+    i64,
+    String,
+    String,
     String,
     String,
     String,
     i32,
     bool,
-    String,
-    String,
+    i32,
     i64,
     String,
-    String,
-    String,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
 );
 
 pub(super) async fn dashboard_event_types(
@@ -370,20 +377,6 @@ pub(super) async fn dashboard_event_types(
 ) -> impl IntoResponse {
     let user = &auth_user.user;
     let lang = crate::i18n::resolve(user.language.as_deref(), &headers);
-
-    let event_types: Vec<(String, String, String, i32, bool, i32, i64, String)> = sqlx::query_as(
-        "SELECT et.id, et.slug, et.title, et.duration_min, et.enabled, et.requires_confirmation,
-                (SELECT COUNT(*) FROM bookings b WHERE b.event_type_id = et.id AND b.status IN ('confirmed', 'pending')) as active_bookings,
-                et.visibility
-         FROM event_types et
-         JOIN accounts a ON a.id = et.account_id
-         WHERE a.user_id = ? AND et.team_id IS NULL
-         ORDER BY et.created_at",
-    )
-    .bind(&user.id)
-    .fetch_all(&state.pool)
-    .await
-    .unwrap_or_default();
 
     let is_admin = user.role == "admin";
 
@@ -402,32 +395,74 @@ pub(super) async fn dashboard_event_types(
         ids.into_iter().map(|(id,)| id).collect()
     };
 
-    // Team event types: every team's for an admin, the user's teams'
-    // otherwise, paged. The user's own event types head the first page.
-    let scope = |head: &'static str| {
+    // One list, paged and searched on the server: the user's own event
+    // types first, then the team ones (every team's for an admin, the
+    // user's teams' otherwise), by team name.
+    let q = listing::bounded_search(query.get("q").map(String::as_str).unwrap_or_default());
+    let pattern = (!q.is_empty()).then(|| listing::ci_glob(&q));
+    let union = |head: &'static str| {
         let mut qb = sqlx::QueryBuilder::new(head);
-        qb.push(" FROM event_types et JOIN teams t ON t.id = et.team_id");
-        if !is_admin {
+        qb.push(
+            " FROM (SELECT 0 AS kind, '' AS sort_team, et.created_at AS created, et.id AS id,
+                    et.slug AS slug, et.title AS title, et.duration_min AS duration_min,
+                    et.enabled AS enabled, et.requires_confirmation AS requires_confirmation,
+                    (SELECT COUNT(*) FROM bookings b WHERE b.event_type_id = et.id
+                        AND b.status IN ('confirmed', 'pending')) AS active_bookings,
+                    et.visibility AS visibility, NULL AS team_name, NULL AS team_slug,
+                    NULL AS team_id, NULL AS scheduling_mode
+             FROM event_types et JOIN accounts a ON a.id = et.account_id
+             WHERE et.team_id IS NULL AND a.user_id = ",
+        );
+        qb.push_bind(user.id.clone());
+        if let Some(pattern) = &pattern {
+            qb.push(" AND (et.title GLOB ");
+            qb.push_bind(pattern.clone());
+            qb.push(" OR et.slug GLOB ");
+            qb.push_bind(pattern.clone());
+            qb.push(")");
+        }
+        qb.push(
+            " UNION ALL
+             SELECT 1, t.name, et.created_at, et.id, et.slug, et.title, et.duration_min,
+                    et.enabled, et.requires_confirmation,
+                    (SELECT COUNT(*) FROM bookings b WHERE b.event_type_id = et.id
+                        AND b.status IN ('confirmed', 'pending')),
+                    et.visibility, t.name, t.slug, t.id, et.scheduling_mode
+             FROM event_types et JOIN teams t ON t.id = et.team_id",
+        );
+        if is_admin {
+            qb.push(" WHERE 1");
+        } else {
             qb.push(" JOIN team_members tm ON tm.team_id = t.id WHERE tm.user_id = ");
             qb.push_bind(user.id.clone());
         }
+        if let Some(pattern) = &pattern {
+            qb.push(" AND (et.title GLOB ");
+            qb.push_bind(pattern.clone());
+            qb.push(" OR et.slug GLOB ");
+            qb.push_bind(pattern.clone());
+            qb.push(" OR t.name GLOB ");
+            qb.push_bind(pattern.clone());
+            qb.push(")");
+        }
+        qb.push(") listed");
         qb
     };
-    let team_page = match listing::paged::<TeamEventTypeRow>(
+    let listed = match listing::paged::<EventTypeListRow>(
         &state.pool,
-        scope("SELECT COUNT(*)"),
-        scope(
-            "SELECT et.id, et.slug, et.title, et.duration_min, et.enabled, t.name, t.slug,
-                    (SELECT COUNT(*) FROM bookings b WHERE b.event_type_id = et.id
-                        AND b.status IN ('confirmed', 'pending')),
-                    et.visibility, t.id, et.scheduling_mode",
-        ),
-        "t.name, et.created_at, et.id",
+        union("SELECT COUNT(*)"),
+        union("SELECT *"),
+        "kind, sort_team, created, id",
         PageParams::from_query(&query, "page"),
         |n| {
+            let search = if q.is_empty() {
+                String::new()
+            } else {
+                format!("q={}", urlencoding::encode(&q))
+            };
             listing::href(
                 "/dashboard/event-types",
-                &[listing::page_part("page", n)],
+                &[search, listing::page_part("page", n)],
                 "",
             )
         },
@@ -435,15 +470,9 @@ pub(super) async fn dashboard_event_types(
     .await
     {
         Ok(page) => page,
-        Err(e) => return internal_error_html("load team event types", &e),
+        Err(e) => return internal_error_html("load event types", &e),
     };
-    let team_event_types = &team_page.rows;
-    let has_any = !event_types.is_empty() || team_page.total > 0;
-    let event_types = if team_page.page > 1 {
-        Vec::new()
-    } else {
-        event_types
-    };
+    let has_any = listed.total > 0 || !q.is_empty();
 
     // Whether user can create new team event types (global admin or team admin of at least one team)
     let can_create_team_et = is_admin || !admin_team_ids.is_empty();
@@ -477,11 +506,7 @@ pub(super) async fn dashboard_event_types(
     // Bookable date range badge per event type: the range, and whether it is
     // still ahead, running, or over. One query for the listed event types,
     // with the same timezone fallback as `get_host_tz`.
-    let listed_ids: Vec<&String> = event_types
-        .iter()
-        .map(|row| &row.0)
-        .chain(team_event_types.iter().map(|row| &row.0))
-        .collect();
+    let listed_ids: Vec<&String> = listed.rows.iter().map(|row| &row.3).collect();
     let mut date_range_map: HashMap<String, (String, &'static str)> = HashMap::new();
     if !listed_ids.is_empty() {
         let placeholders = vec!["?"; listed_ids.len()].join(", ");
@@ -524,42 +549,49 @@ pub(super) async fn dashboard_event_types(
     }
     let date_range_for = |etid: &str| date_range_map.get(etid).cloned().unwrap_or_default();
 
-    // Build a single unified list: personal event types first, then team ones
+    // One list: personal event types first, then team ones.
     let mut all_et_ctx: Vec<minijinja::Value> = Vec::new();
-
-    for (id, slug, title, duration, enabled, req_conf, active_bookings, vis) in &event_types {
-        all_et_ctx.push(context! {
-            id => id, slug => slug, title => title, duration_min => duration,
-            enabled => enabled, requires_confirmation => *req_conf != 0,
-            active_bookings => active_bookings, visibility => vis,
-            is_team => false, can_manage => true,
-            edit_url => format!("/dashboard/event-types/{}/edit", slug),
-            toggle_url => format!("/dashboard/event-types/{}/toggle", slug),
-            delete_url => format!("/dashboard/event-types/{}/delete", slug),
-            duplicate_url => format!("/dashboard/event-types/{}/duplicate", slug),
-            overrides_url => overrides_url(id),
-            embed_url => format!("/dashboard/event-types/{}/embed", slug),
-            resource_names => resource_names_for(id),
-            date_range => date_range_for(id).0,
-            date_range_state => date_range_for(id).1,
-            view_url => if vis != "private" { user.username.as_ref().map(|u| format!("/u/{}/{}", u, slug)) } else { None::<String> },
-        });
-    }
-
     for (
+        kind,
+        _,
+        _,
         id,
         slug,
         title,
         duration,
         enabled,
-        team_name,
-        team_slug,
+        req_conf,
         active_bookings,
         vis,
+        team_name,
+        team_slug,
         team_id,
         scheduling_mode,
-    ) in team_event_types
+    ) in &listed.rows
     {
+        let team = match (*kind, team_name, team_slug, team_id) {
+            (1, Some(name), Some(slug), Some(id)) => Some((name, slug, id)),
+            _ => None,
+        };
+        let Some((team_name, team_slug, team_id)) = team else {
+            all_et_ctx.push(context! {
+                id => id, slug => slug, title => title, duration_min => duration,
+                enabled => enabled, requires_confirmation => *req_conf != 0,
+                active_bookings => active_bookings, visibility => vis,
+                is_team => false, can_manage => true,
+                edit_url => format!("/dashboard/event-types/{}/edit", slug),
+                toggle_url => format!("/dashboard/event-types/{}/toggle", slug),
+                delete_url => format!("/dashboard/event-types/{}/delete", slug),
+                duplicate_url => format!("/dashboard/event-types/{}/duplicate", slug),
+                overrides_url => overrides_url(id),
+                embed_url => format!("/dashboard/event-types/{}/embed", slug),
+                resource_names => resource_names_for(id),
+                date_range => date_range_for(id).0,
+                date_range_state => date_range_for(id).1,
+                view_url => if vis != "private" { user.username.as_ref().map(|u| format!("/u/{}/{}", u, slug)) } else { None::<String> },
+            });
+            continue;
+        };
         let can_manage = is_admin || admin_team_ids.contains(team_id);
         all_et_ctx.push(context! {
             id => id, slug => slug, title => title, duration_min => duration,
@@ -590,7 +622,9 @@ pub(super) async fn dashboard_event_types(
             username => user.username,
             all_event_types => all_et_ctx,
             has_any => has_any,
-            pager => team_page.pager,
+            q => q,
+            search_max => listing::MAX_SEARCH_CHARS,
+            pager => listed.pager,
             can_create_team_et => can_create_team_et,
             webhooks_allowed => webhooks_allowed,
             impersonating => impersonating,
@@ -635,9 +669,11 @@ pub(super) async fn dashboard_bookings(
     let pages = BookingPages::from_query(&query);
     let pool = &state.pool;
     let user_id = user.id.as_str();
-    let scoped = |sql: &'static str| {
+    // A section's query: its scope for the user, then the search.
+    let scoped = |sql: &'static str, team: bool| {
         let mut qb = sqlx::QueryBuilder::new("");
         listing::push_with_binds(&mut qb, sql, user_id);
+        pages.push_search(&mut qb, team);
         qb
     };
 
@@ -645,8 +681,8 @@ pub(super) async fn dashboard_bookings(
     // stops at a hidden limit.
     let pending = listing::paged::<PendingRow>(
         pool,
-        scoped(PENDING_COUNT),
-        scoped(PENDING_SELECT),
+        scoped(PENDING_COUNT, false),
+        scoped(PENDING_SELECT, false),
         "b.start_at, b.id",
         PageParams::new(pages.get(BookingSection::Pending)),
         |n| pages.section_href(BookingSection::Pending, n),
@@ -654,8 +690,8 @@ pub(super) async fn dashboard_bookings(
     .await;
     let upcoming = listing::paged::<UpcomingRow>(
         pool,
-        scoped(UPCOMING_COUNT),
-        scoped(UPCOMING_SELECT),
+        scoped(UPCOMING_COUNT, false),
+        scoped(UPCOMING_SELECT, false),
         UPCOMING_ORDER,
         PageParams::new(pages.get(BookingSection::Upcoming)),
         |n| pages.section_href(BookingSection::Upcoming, n),
@@ -667,8 +703,12 @@ pub(super) async fn dashboard_bookings(
     // since migration 046's backfill).
     let claimable = listing::paged::<ClaimableRow>(
         pool,
-        scoped(CLAIMABLE_COUNT),
-        scoped(CLAIMABLE_SELECT),
+        scoped(CLAIMABLE_COUNT, true),
+        {
+            let mut qb = scoped(CLAIMABLE_SELECT, true);
+            qb.push(" GROUP BY b.id");
+            qb
+        },
         "b.start_at, b.id",
         PageParams::new(pages.get(BookingSection::Claimable)),
         |n| pages.section_href(BookingSection::Claimable, n),
@@ -686,7 +726,7 @@ pub(super) async fn dashboard_bookings(
         user_id,
         "b.status = 'confirmed' AND datetime(b.start_at) < datetime('now')",
         "b.start_at DESC, b.id",
-        pages,
+        &pages,
         BookingSection::Recent,
     )
     .await;
@@ -695,7 +735,7 @@ pub(super) async fn dashboard_bookings(
         user_id,
         "b.status IN ('cancelled', 'declined')",
         "b.start_at, b.id",
-        pages,
+        &pages,
         BookingSection::Cancelled,
     )
     .await;
@@ -874,6 +914,19 @@ pub(super) async fn dashboard_bookings(
                 recent => recent.total,
                 cancelled => cancelled.total,
             },
+            // The search, applied to every section on the server.
+            q => pages.q.clone(),
+            search_max => listing::MAX_SEARCH_CHARS,
+            // Where each section's actions return: the page they were
+            // taken on, scrolled to the section.
+            returns => context! {
+                pending => pages.href(BookingSection::Pending.anchor()),
+                upcoming => pages.href(BookingSection::Upcoming.anchor()),
+            },
+            reschedule_query => format!(
+                "?return_to={}",
+                urlencoding::encode(&pages.href(BookingSection::Upcoming.anchor()))
+            ),
             pagers => context! {
                 pending => pending.pager,
                 claimable => claimable.pager,
@@ -978,40 +1031,76 @@ impl BookingSection {
     }
 }
 
-/// The page each section of the bookings page shows, as carried in the URL.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(super) struct BookingPages([i64; 5]);
+/// The page each section of the bookings page shows and the search
+/// applied to all of them (`q`), as carried in the URL.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(super) struct BookingPages {
+    pages: [i64; 5],
+    q: String,
+}
 
 impl BookingPages {
     pub(super) fn from_query(query: &HashMap<String, String>) -> Self {
-        Self(BookingSection::ALL.map(|s| PageParams::from_query(query, s.key()).page))
+        Self {
+            pages: BookingSection::ALL.map(|s| PageParams::from_query(query, s.key()).page),
+            q: listing::bounded_search(query.get("q").map(String::as_str).unwrap_or_default()),
+        }
+    }
+
+    /// The search as a bound `GLOB` pattern over the guest's name and
+    /// email and the event type's title (and the watching team's name for
+    /// claimable bookings), nothing when there is no search.
+    fn push_search(&self, qb: &mut sqlx::QueryBuilder<'_, sqlx::Sqlite>, team: bool) {
+        if self.q.is_empty() {
+            return;
+        }
+        let pattern = listing::ci_glob(&self.q);
+        let mut columns = vec!["b.guest_name", "b.guest_email", "et.title"];
+        if team {
+            columns.push("t.name");
+        }
+        qb.push(" AND (");
+        for (i, column) in columns.iter().enumerate() {
+            if i > 0 {
+                qb.push(" OR ");
+            }
+            qb.push(*column);
+            qb.push(" GLOB ");
+            qb.push_bind(pattern.clone());
+        }
+        qb.push(")");
     }
 
     fn slot(section: BookingSection) -> usize {
         section as usize
     }
 
-    pub(super) fn get(self, section: BookingSection) -> i64 {
-        self.0[Self::slot(section)].max(1)
+    pub(super) fn get(&self, section: BookingSection) -> i64 {
+        self.pages[Self::slot(section)].max(1)
     }
 
     pub(super) fn with(mut self, section: BookingSection, page: i64) -> Self {
-        self.0[Self::slot(section)] = page;
+        self.pages[Self::slot(section)] = page;
         self
     }
 
     /// `/dashboard/bookings` on these pages, scrolled to `anchor`.
-    pub(super) fn href(self, anchor: &str) -> String {
-        let parts: Vec<String> = BookingSection::ALL
-            .iter()
-            .map(|s| listing::page_part(s.key(), self.get(*s)))
-            .collect();
+    pub(super) fn href(&self, anchor: &str) -> String {
+        let mut parts: Vec<String> = Vec::new();
+        if !self.q.is_empty() {
+            parts.push(format!("q={}", urlencoding::encode(&self.q)));
+        }
+        parts.extend(
+            BookingSection::ALL
+                .iter()
+                .map(|s| listing::page_part(s.key(), self.get(*s))),
+        );
         listing::href("/dashboard/bookings", &parts, anchor)
     }
 
     /// Page `page` of `section`, every other section where it was.
-    fn section_href(self, section: BookingSection, page: i64) -> String {
-        self.with(section, page).href(section.anchor())
+    fn section_href(&self, section: BookingSection, page: i64) -> String {
+        self.clone().with(section, page).href(section.anchor())
     }
 }
 
@@ -1084,15 +1173,17 @@ const UPCOMING_SELECT: &str = concat!(
 
 /// Counted and grouped by booking: a user in two teams watching the same
 /// event type holds a token through each, and the booking is listed once.
+/// With `MIN(t.name)` the only aggregate, SQLite reads the bare
+/// `bct.token` from the same row, so the team named is one the token was
+/// reached through. The handler appends the search, then `GROUP BY b.id`.
 const CLAIMABLE_COUNT: &str = concat!("SELECT COUNT(DISTINCT b.id)", claimable_scope!());
 const CLAIMABLE_SELECT: &str = concat!(
     "SELECT b.id, b.guest_name, b.guest_email,
         CASE b.time_version WHEN 1 THEN b.start_at ELSE rtrim(b.start_at, 'Z') END,
         CASE b.time_version WHEN 1 THEN b.end_at ELSE rtrim(b.end_at, 'Z') END,
-        et.title, MIN(t.name), MIN(bct.token), COALESCE(NULLIF(et.timezone, ''), 'UTC'),
+        et.title, MIN(t.name), bct.token, COALESCE(NULLIF(et.timezone, ''), 'UTC'),
         COALESCE(NULLIF(b.guest_timezone, ''), 'UTC'), COALESCE(b.notes, '')",
-    claimable_scope!(),
-    " GROUP BY b.id"
+    claimable_scope!()
 );
 
 /// The page of the bookings page's Upcoming section that lists each of
@@ -1147,7 +1238,7 @@ async fn hosted_bookings(
     user_id: &str,
     filter: &'static str,
     order: &'static str,
-    pages: BookingPages,
+    pages: &BookingPages,
     section: BookingSection,
 ) -> Result<listing::Page<HostedBookingRow>, sqlx::Error> {
     let scope = |head: &'static str| {
@@ -1162,6 +1253,7 @@ async fn hosted_bookings(
         qb.push(filter);
         qb.push(" AND ");
         listing::push_with_binds(&mut qb, NOTE_HOSTS, user_id);
+        pages.push_search(&mut qb, false);
         qb
     };
     listing::paged(
@@ -1839,6 +1931,34 @@ pub(super) async fn serve_avatar(
 pub(super) struct CancelForm {
     pub(super) _csrf: Option<String>,
     pub(super) reason: Option<String>,
+    /// The dashboard page the action was taken on (`bookings_return`).
+    #[serde(default)]
+    pub(super) return_to: Option<String>,
+}
+
+/// A booking action's form: the CSRF token and the page to return to.
+#[derive(Deserialize)]
+pub(super) struct BookingActionForm {
+    pub(super) _csrf: Option<String>,
+    #[serde(default)]
+    pub(super) return_to: Option<String>,
+}
+
+/// Where a booking action returns: the dashboard page the form came from
+/// (a page and search of the bookings page, or the overview), checked to
+/// be a dashboard path of this site, else the bookings page. A refusal
+/// (`error`) is shown on the bookings page, on the page it came from.
+pub(super) fn bookings_return(raw: Option<&str>, error: Option<&str>) -> String {
+    let back = listing::return_path(raw, "/dashboard");
+    match error {
+        Some(error) => {
+            let base = back
+                .filter(|p| p.starts_with("/dashboard/bookings"))
+                .unwrap_or_else(|| "/dashboard/bookings".to_string());
+            listing::with_param(&base, "error", error)
+        }
+        None => back.unwrap_or_else(|| "/dashboard/bookings".to_string()),
+    }
 }
 
 pub(super) async fn cancel_booking(
@@ -1852,7 +1972,7 @@ pub(super) async fn cancel_booking(
         return resp;
     }
     host_cancel_booking(&state, &auth_user.user, &booking_id, form.reason).await;
-    Redirect::to("/dashboard/bookings").into_response()
+    Redirect::to(&bookings_return(form.return_to.as_deref(), None)).into_response()
 }
 
 /// What `host_cancel_booking` did.
@@ -2086,9 +2206,9 @@ pub(super) async fn confirm_booking(
     auth_user: crate::auth::AuthUser,
     headers: HeaderMap,
     Path(booking_id): Path<String>,
-    Form(csrf): Form<CsrfForm>,
+    Form(form): Form<BookingActionForm>,
 ) -> impl IntoResponse {
-    if let Err(resp) = verify_csrf_token(&headers, &csrf._csrf) {
+    if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
         return resp;
     }
     let user = &auth_user.user;
@@ -2143,7 +2263,9 @@ pub(super) async fn confirm_booking(
         sms_phone_mode,
     ) = match booking {
         Some(b) => b,
-        None => return Redirect::to("/dashboard/bookings").into_response(),
+        None => {
+            return Redirect::to(&bookings_return(form.return_to.as_deref(), None)).into_response()
+        }
     };
     // Read before the status flip below, which stamps it. A booking that was
     // confirmed before is a guest reschedule awaiting approval: its guest is
@@ -2202,9 +2324,17 @@ pub(super) async fn confirm_booking(
     if !hosts_free {
         tracing::warn!(booking_id = %bid, "approval refused: host no longer free");
         if approval_hosts_awaiting_first_sync(&state.pool, &approval_hosts).await {
-            return Redirect::to("/dashboard/bookings?error=host-not-synced").into_response();
+            return Redirect::to(&bookings_return(
+                form.return_to.as_deref(),
+                Some("host-not-synced"),
+            ))
+            .into_response();
         }
-        return Redirect::to("/dashboard/bookings?error=host-busy").into_response();
+        return Redirect::to(&bookings_return(
+            form.return_to.as_deref(),
+            Some("host-busy"),
+        ))
+        .into_response();
     }
 
     if has_resources {
@@ -2218,7 +2348,11 @@ pub(super) async fn confirm_booking(
                 Err(e) => return internal_error_response("availability check", &e),
                 Ok(crate::resources::ResourceCheck::Busy) => {
                     tracing::warn!(booking_id = %bid, "approval refused: required resource no longer available");
-                    return Redirect::to("/dashboard/bookings?error=resource-busy").into_response();
+                    return Redirect::to(&bookings_return(
+                        form.return_to.as_deref(),
+                        Some("resource-busy"),
+                    ))
+                    .into_response();
                 }
                 Ok(crate::resources::ResourceCheck::Free { assigned }) => {
                     let _ =
@@ -2245,7 +2379,7 @@ pub(super) async fn confirm_booking(
             .unwrap_or(0);
     drop(booking_guard);
     if flipped == 0 {
-        return Redirect::to("/dashboard/bookings").into_response();
+        return Redirect::to(&bookings_return(form.return_to.as_deref(), None)).into_response();
     }
 
     tracing::info!(booking_id = %bid, "booking confirmed by host");
@@ -2425,5 +2559,5 @@ pub(super) async fn confirm_booking(
         });
     }
 
-    Redirect::to("/dashboard/bookings").into_response()
+    Redirect::to(&bookings_return(form.return_to.as_deref(), None)).into_response()
 }

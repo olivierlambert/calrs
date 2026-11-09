@@ -34,11 +34,13 @@
 <section class="sec">
   {% if has_any %}
   <div class="ui-toolbar">
-    <div class="ui-search">
+    {#- Searches every page on the server (Enter); typing narrows the rows
+        on this page at once. #}
+    <form method="get" action="/dashboard/event-types" class="ui-search" role="search">
       {{ ic.icon("search", 15) }}
-      <input type="search" data-search data-filter placeholder="{{ t('event-types-search-placeholder') }}" aria-label="{{ t('event-types-search-placeholder') }}">
+      <input type="search" name="q" value="{{ q }}" maxlength="{{ search_max }}" data-search data-filter placeholder="{{ t('event-types-search-placeholder') }}" aria-label="{{ t('event-types-search-placeholder') }}">
       <span class="kbd">/</span>
-    </div>
+    </form>
   </div>
   <div class="ui-list" data-filter-list>
     {% for et in all_event_types %}
@@ -118,7 +120,7 @@
       </div>
     </div>
     {% endfor %}
-    <p class="ui-filter-empty" data-filter-empty hidden>{{ t("dash-no-matches") }}</p>
+    <p class="ui-filter-empty" data-filter-empty{% if all_event_types %} hidden{% endif %}>{{ t("dash-no-matches") }}</p>
   </div>
   {% include "partials/pager.html" %}
   {% else %}

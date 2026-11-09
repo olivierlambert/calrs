@@ -433,7 +433,7 @@
             {% if g.members %}
             <div class="group-members">
               {% for m in g.members %}
-              <form method="POST" action="/dashboard/admin/groups/{{ g.id }}/members/{{ m.user_id }}/weight" class="adm-weight">
+              <form method="POST" action="/dashboard/admin/groups/{{ g.id }}/members/{{ m.user_id }}/weight" class="adm-weight"><input type="hidden" name="return_to" value="{{ g.return_to }}">
                 <span class="adm-weight-name">{{ m.name }}</span>
                 <label>{{ t("admin-weight") }} <input type="number" name="weight" value="{{ m.weight }}" min="1" max="100"></label>
                 <button type="submit" class="adm-btn adm-btn-sm">{{ t("source-write-save") }}</button>
