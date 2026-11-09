@@ -4,6 +4,23 @@
 {% block container_class %}is-wide{% endblock %}
 {# The time zone notice joins the "To set up" strip below the hero. #}
 {% block tz_banner %}{% endblock %}
+{# Card style preview (temporary): ?cards=a|b|c picks a treatment and
+   remembers it, ?cards=none goes back to the current look. Set in the head
+   so the page never paints twice. #}
+{% block head %}
+<script>
+(function() {
+  var v = null;
+  try {
+    var q = new URLSearchParams(location.search).get('cards');
+    if (q === 'a' || q === 'b' || q === 'c') localStorage.setItem('calrs_cards', q);
+    else if (q !== null) localStorage.removeItem('calrs_cards');
+    v = localStorage.getItem('calrs_cards');
+  } catch (e) { v = null; }
+  if (v === 'a' || v === 'b' || v === 'c') document.documentElement.classList.add('cards', 'cards-' + v);
+})();
+</script>
+{% endblock %}
 {% block dashboard_content %}
 <style>
   /* The overview: a greeting, the next meeting as the one big thing, then
@@ -92,6 +109,9 @@
   .person-what a:hover { color: var(--ink); text-decoration: underline; }
   .person-what time { color: var(--ink); font-weight: 600; }
   .wait { margin-top: 2.25rem; }
+  /* Wrappers the card preview uses; they change nothing on their own. */
+  .pr-top { display: contents; }
+  .ov .sec + .ov-grp { margin-top: 2.5rem; }
 
   .cols { display: grid; grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); gap: 3.25rem; align-items: start; margin-top: 2.5rem; }
   .cols.one { grid-template-columns: minmax(0, 1fr); max-width: 720px; }
@@ -217,6 +237,149 @@
     .wk { min-width: 25rem; }
     .wk-sec .key .end { margin-left: 0; width: 100%; }
   }
+  /* ================================================================
+     Card treatments (preview, ?cards=a|b|c sets html.cards-*). Without
+     a class nothing below applies and the page keeps its current look.
+     The page goes onto --bg and each block becomes a --surface sheet
+     with a 1px --border hairline; no shadow anywhere.
+       a  Sheet: the title inside the sheet's head.
+       b  Index card: the title on a tab cut from the card's outline.
+       c  Ticket: Up next and each request are tickets with a notched,
+          dashed tear line; the other blocks are sheets as in a.
+     ================================================================ */
+  html.cards .dashboard-main { background: var(--bg); }
+  html.cards .ov {
+    --sheet-r: 10px;
+    --sheet-gap: 1.25rem;
+    --sheet-faint: color-mix(in srgb, var(--border) 50%, var(--surface));
+    --hero-bg: color-mix(in srgb, var(--accent) 4%, var(--surface));
+  }
+  html.dark.cards .ov { --hero-bg: color-mix(in srgb, var(--accent) 7%, var(--surface)); }
+
+  /* Three blocks: Up next with the requests, Coming up with the week,
+     the links with the figures. 7fr / 5fr, the overview's own grid. */
+  html.cards .ov-top { display: grid; grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); gap: 0 var(--sheet-gap); align-items: stretch; }
+  html.cards .ov-top > .hero { grid-column: 1 / -1; }
+  html.cards .ov-top.has-wait > .hero { grid-column: 1; grid-row: 1; }
+  html.cards .ov-top > .wait { grid-column: 2; grid-row: 1; margin-top: 0; }
+  html.cards .ov-top > .setup { grid-column: 1 / -1; grid-row: 2; }
+  html.cards .cols { grid-auto-flow: row dense; gap: var(--sheet-gap); margin-top: var(--sheet-gap); align-items: stretch; }
+  html.cards .cols:not(.one) > div { display: contents; }
+  html.cards .cols:not(.one) > div:first-child > * { grid-column: 1; }
+  html.cards .cols:not(.one) > div + div > * { grid-column: 2; }
+  html.cards .ov .cols > div > * + * { margin-top: 0; }
+  html.cards .ov .cols.one > div > * + * { margin-top: var(--sheet-gap); }
+
+  /* The sheet. */
+  html.cards .ov .sheet { background: var(--surface); border: 1px solid var(--border); border-radius: var(--sheet-r); padding: 1.05rem 1.35rem 1.2rem; min-width: 0; --rule: var(--sheet-faint); }
+  html.cards .ov .sheet.is-tint { background: var(--hero-bg); --rule: color-mix(in srgb, var(--border) 50%, var(--hero-bg)); }
+  html.cards .ov .sheet .sec + .sec { margin-top: 1.9rem; }
+  html.cards .ov .sheet .sec-h { margin-bottom: 0.3rem; }
+  html.cards .ov .hero-h { margin-bottom: 0.85rem; }
+  html.cards .ov .sheet .ledger > li:last-child,
+  html.cards .ov .sheet .directory-entry:last-of-type,
+  html.cards .ov .sheet .figs tr:last-child > * { border-bottom: 0; }
+  html.cards .ov .sheet .chip { border-color: var(--border); }
+  html.cards .ov .sheet .chip:hover { border-color: var(--rule-strong); }
+  html.cards .ov .tt-day:first-child { padding-top: 0.35rem; }
+  html.cards .ov .wk { grid-template-columns: repeat(7, minmax(2.5rem, 1fr)); }
+
+  /* Requests sit beside Up next, so a row puts its actions under it. */
+  html.cards .ov .wait .person-row { grid-template-columns: 2rem minmax(0, 1fr); }
+  html.cards .ov .wait .person-row .tt-acts { grid-column: 2; justify-content: flex-start; margin-top: 0.35rem; }
+  html.cards .ov .wait .tt-due { margin-right: auto; }
+  html.cards .ov .wait .person-row:last-child { padding-bottom: 0.1rem; }
+
+  /* b, Index card: the title rides on a tab that is part of the card's
+     outline. The tab covers the card's top line under it, so the line
+     runs to the tab's edges; the head's link sits beside the tab. */
+  html.cards-b .ov { --tab-h: 2.05rem; }
+  html.cards-b .ov .sheet { position: relative; margin-top: var(--tab-h); border-top-left-radius: 6px; }
+  html.cards-b .ov .ov-top > .sheet, html.cards-b .ov .cols .sheet { margin-top: var(--tab-h); }
+  html.cards-b .ov .sheet .sheet-h, html.cards-b .ov .sheet-h { position: absolute; bottom: 100%; left: 0.85rem; right: 0.85rem; margin: 0; display: flex; align-items: flex-end; justify-content: space-between; gap: 0.75rem; flex-wrap: nowrap; pointer-events: none; }
+  html.cards-b .ov .sheet-h > * { pointer-events: auto; }
+  html.cards-b .ov .sheet-h > a, html.cards-b .ov .sheet-h > .sec-link { padding-bottom: 0.5rem; white-space: nowrap; flex-shrink: 0; }
+  html.cards-b .ov .sheet-h h2, html.cards-b .ov h2.sheet-h {
+    box-sizing: border-box; height: calc(var(--tab-h) + 1px); margin: 0 0 -1px; padding: 0.5rem 0.9rem 0;
+    max-width: min(100%, 22rem); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    font-size: 13.5px; line-height: 1.2; font-weight: 640; color: var(--ink);
+    background: var(--surface); border: 1px solid var(--border); border-bottom: 0; border-radius: 7px 7px 0 0;
+  }
+  html.cards-b .ov .sheet > h2.sheet-h { right: auto; display: block; }
+  html.cards-b .ov .sheet.is-tint > h2.sheet-h { background: color-mix(in srgb, var(--accent) 12%, var(--surface)); border-color: color-mix(in srgb, var(--accent) 30%, var(--border)); color: var(--now-text); }
+  html.cards-b .ov .sheet.is-tint { border-color: color-mix(in srgb, var(--accent) 30%, var(--border)); }
+  html.cards-b .ov .ov-grp .sec:first-child { padding-top: 0.1rem; }
+
+  /* c, Ticket: head and body are two boxes; a notch is cut at each end
+     of the seam (half in the head, half in the body), an arc drawn
+     around it in the border colour, and the head's dashed bottom edge
+     is the tear line between the notches. */
+  html.cards-c .ov .sheet.ticket, html.cards-c .ov .sheet.tickets { background: none; border: 0; border-radius: 0; padding: 0; }
+  html.cards-c .ov .ticket { --n: 7px; --tk-bg: var(--surface); --tk-line: var(--border); }
+  html.cards-c .ov .hero.ticket { --tk-bg: var(--hero-bg); --tk-line: color-mix(in srgb, var(--accent) 22%, var(--border)); }
+  html.cards-c .ov .ticket > .ticket-h, html.cards-c .ov .ticket > .ticket-b { position: relative; background: var(--tk-bg); border: 1px solid var(--tk-line); }
+  html.cards-c .ov .ticket > .ticket-h {
+    border-bottom: 1px dashed color-mix(in srgb, var(--tk-line) 70%, var(--text-muted));
+    border-radius: var(--sheet-r) var(--sheet-r) 0 0;
+    -webkit-mask: radial-gradient(circle at 0 100%, transparent var(--n), #000 calc(var(--n) + 0.5px)) left top / 51% 100% no-repeat, radial-gradient(circle at 100% 100%, transparent var(--n), #000 calc(var(--n) + 0.5px)) right top / 51% 100% no-repeat;
+    mask: radial-gradient(circle at 0 100%, transparent var(--n), #000 calc(var(--n) + 0.5px)) left top / 51% 100% no-repeat, radial-gradient(circle at 100% 100%, transparent var(--n), #000 calc(var(--n) + 0.5px)) right top / 51% 100% no-repeat;
+  }
+  html.cards-c .ov .ticket > .ticket-b {
+    border-top: 0;
+    border-radius: 0 0 var(--sheet-r) var(--sheet-r);
+    -webkit-mask: radial-gradient(circle at 0 0, transparent var(--n), #000 calc(var(--n) + 0.5px)) left top / 51% 100% no-repeat, radial-gradient(circle at 100% 0, transparent var(--n), #000 calc(var(--n) + 0.5px)) right top / 51% 100% no-repeat;
+    mask: radial-gradient(circle at 0 0, transparent var(--n), #000 calc(var(--n) + 0.5px)) left top / 51% 100% no-repeat, radial-gradient(circle at 100% 0, transparent var(--n), #000 calc(var(--n) + 0.5px)) right top / 51% 100% no-repeat;
+  }
+  html.cards-c .ov .ticket > .ticket-h::before, html.cards-c .ov .ticket > .ticket-h::after,
+  html.cards-c .ov .ticket > .ticket-b::before, html.cards-c .ov .ticket > .ticket-b::after {
+    content: ""; position: absolute; box-sizing: border-box; width: calc(2 * var(--n) + 2px); height: calc(2 * var(--n) + 2px);
+    border: 1px solid var(--tk-line); border-radius: 50%; pointer-events: none;
+  }
+  html.cards-c .ov .ticket > .ticket-h::before { left: calc(-2px - var(--n)); bottom: calc(-2px - var(--n)); }
+  html.cards-c .ov .ticket > .ticket-h::after { right: calc(-2px - var(--n)); bottom: calc(-2px - var(--n)); }
+  html.cards-c .ov .ticket > .ticket-b::before { left: calc(-2px - var(--n)); top: calc(-1px - var(--n)); }
+  html.cards-c .ov .ticket > .ticket-b::after { right: calc(-2px - var(--n)); top: calc(-1px - var(--n)); }
+
+  html.cards-c .ov .hero.ticket { display: flex; flex-direction: column; }
+  html.cards-c .ov .hero > .hero-h { margin: 0; padding: 0.8rem 1.5rem 0.7rem; }
+  html.cards-c .ov .hero > .hero-body { flex: 1; padding: 1.2rem 1.5rem 1.4rem; }
+
+  html.cards-c .ov .wait .sec-h { margin-bottom: 0.6rem; }
+  html.cards-c .ov .wait .ledger > li + li { margin-top: 0.75rem; }
+  html.cards-c .ov .wait .person-row.ticket { display: block; padding: 0; border: 0; }
+  html.cards-c .ov .wait .pr-top { display: grid; grid-template-columns: 2rem minmax(0, 1fr); gap: 0.35rem 0.85rem; padding: 0.85rem 1.1rem 0.8rem; }
+  html.cards-c .ov .wait .person-row .tt-acts { margin: 0; padding: 0.6rem 1.1rem; justify-content: flex-end; }
+
+  /* The preview switcher, temporary. */
+  .cards-switch { position: fixed; z-index: 50; left: calc(232px + 1rem); bottom: 0.9rem; display: flex; align-items: center; gap: 0.15rem; padding: 0.25rem; font-size: 12.5px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-float); }
+  .cards-switch span { color: var(--text-muted); padding: 0 0.4rem; }
+  .cards-switch a { color: var(--text-secondary); text-decoration: none; padding: 0.2rem 0.5rem; border-radius: var(--r-control); white-space: nowrap; }
+  .cards-switch a:hover { background: var(--surface-hover); color: var(--ink); }
+  .cards-switch a[aria-current="true"] { background: var(--ink); color: var(--surface); }
+
+  @media (max-width: 1240px) {
+    html.cards .ov-top.has-wait > .hero, html.cards .ov-top > .wait { grid-column: 1 / -1; grid-row: auto; }
+    html.cards .ov-top > .wait { margin-top: var(--sheet-gap); }
+    html.cards-b .ov .ov-top > .wait { margin-top: calc(var(--sheet-gap) + var(--tab-h)); }
+    html.cards .ov-top > .setup { grid-row: auto; }
+  }
+  @media (max-width: 1180px) {
+    html.cards .cols { grid-template-columns: minmax(0, 1fr); }
+    html.cards .cols:not(.one) > div > *, html.cards .cols:not(.one) > div + div > * { grid-column: 1; }
+    html.cards .cols > div + div { margin-top: 0; }
+  }
+  @media (max-width: 768px) {
+    .cards-switch { left: 0.6rem; bottom: 0.6rem; }
+    .cards-switch span { display: none; }
+  }
+  @media (max-width: 700px) {
+    html.cards .ov .sheet { padding: 0.9rem 1rem 1rem; }
+    html.cards .wk-scroll { margin-right: 0; padding-right: 0; }
+    html.cards-c .ov .hero > .hero-h { padding: 0.75rem 1.1rem 0.65rem; }
+    html.cards-c .ov .hero > .hero-body { padding: 1rem 1.1rem 1.15rem; }
+    html.cards-c .ov .wait .pr-top { padding: 0.8rem 0.9rem 0.75rem; }
+    html.cards-c .ov .wait .person-row .tt-acts { padding: 0.55rem 0.9rem; }
+  }
 </style>
 
 {% macro face(initials, hue, size="") -%}
@@ -238,8 +401,10 @@
   </div>
 </header>
 
-<section class="hero" aria-labelledby="ov-next">
-  <h2 class="hero-h" id="ov-next">{{ t("overview-hero-title") }}</h2>
+<div class="ov-top{% if pending_bookings %} has-wait{% endif %}">
+<section class="hero sheet is-tint ticket" aria-labelledby="ov-next">
+  <h2 class="hero-h sheet-h ticket-h" id="ov-next">{{ t("overview-hero-title") }}</h2>
+  <div class="hero-body ticket-b">
   {% if agenda %}{% set n = agenda[0] %}
   <div class="hero-grid">
     <div class="hero-when">
@@ -263,6 +428,7 @@
   <p class="hero-empty">{{ t("overview-agenda-empty") }}</p>
   {% if username and event_type_count > 0 %}<div class="empty-actions"><button type="button" class="ui-btn ui-btn--sm" data-copy-path="/u/{{ username }}">{{ t("overview-copy-link") }}</button></div>{% endif %}
   {% endif %}
+  </div>
 </section>
 
 {# One quiet strip of chores: the next getting-started step, the time zone
@@ -280,11 +446,12 @@
 </details>
 
 {% if pending_bookings %}
-<section class="sec wait" aria-labelledby="ov-pending">
-  <div class="sec-h"><h2 id="ov-pending">{{ t("overview-pending-approval") }}<span class="num">{{ pending_count }}</span></h2></div>
+<section class="sec wait sheet tickets" aria-labelledby="ov-pending">
+  <div class="sec-h sheet-h"><h2 id="ov-pending">{{ t("overview-pending-approval") }}<span class="num">{{ pending_count }}</span></h2></div>
   <ol class="ledger">
     {% for b in pending_bookings %}
-    <li class="person-row">
+    <li class="person-row ticket">
+      <div class="pr-top ticket-h">
       {{ face(b.initials, b.hue) }}
       <div class="person-main">
         <div class="person-who">{{ b.guest_name }}<a href="mailto:{{ b.guest_email }}">{{ b.guest_email }}</a>{% if b.guest_phone %}<a href="tel:{{ b.guest_phone }}">{{ b.guest_phone }}</a>{% endif %}</div>
@@ -292,7 +459,8 @@
         {% if b.notes %}<div class="booking-notes" tabindex="0">{{ b.notes }}</div>{% endif %}
         {% if b.host_notes %}<div class="booking-notes host-notes" tabindex="0"><strong>{{ t("bookings-host-notes") }}</strong> {{ b.host_notes }}</div>{% endif %}
       </div>
-      <div class="tt-acts">
+      </div>
+      <div class="tt-acts ticket-b">
         {% if b.when.expires %}<span class="tt-due{% if b.when.expires_soon %} is-soon{% endif %}">{{ b.when.expires }}</span>{% endif %}
         {% if b.host_notes %}<a href="/dashboard/bookings/{{ b.id }}/notes?back=overview" class="ui-btn ui-btn--sm ui-btn--ghost">{{ t("host-notes-edit") }}</a>{% endif %}
         <form method="post" action="/dashboard/bookings/{{ b.id }}/cancel" style="margin: 0;"><button type="submit" class="ui-btn ui-btn--sm">{{ t("overview-decline") }}</button></form>
@@ -303,6 +471,7 @@
   </ol>
 </section>
 {% endif %}
+</div>
 
 {% set has_types = stats.type_rows and stats.type_rows | length >= 2 %}
 {% set has_right = week or stats.has_chart_data or has_types %}
@@ -310,8 +479,8 @@
   <div>
     {% set later = agenda[1:] if agenda else [] %}
     {% if later or not step %}
-    <section class="sec" aria-labelledby="ov-coming">
-      <div class="sec-h"><h2 id="ov-coming">{{ t("overview-agenda-title") }}</h2><a href="/dashboard/bookings">{{ t("overview-agenda-all") }}</a></div>
+    <section class="sec sheet" aria-labelledby="ov-coming">
+      <div class="sec-h sheet-h"><h2 id="ov-coming">{{ t("overview-agenda-title") }}</h2><a href="/dashboard/bookings">{{ t("overview-agenda-all") }}</a></div>
       {% if later %}
       <ol class="ledger">
         {% for a in later %}
@@ -335,9 +504,11 @@
     </section>
     {% endif %}
 
+    {% if username or own_links or favorites %}
+    <div class="ov-grp sheet">
     {% if username or own_links %}
     <section class="sec" aria-labelledby="ov-links">
-      <div class="sec-h"><h2 id="ov-links">{{ t("overview-links-title") }}</h2><a href="/dashboard/event-types">{{ t("nav-event-types") }}</a></div>
+      <div class="sec-h sheet-h"><h2 id="ov-links">{{ t("overview-links-title") }}</h2><a href="/dashboard/event-types">{{ t("nav-event-types") }}</a></div>
       <div class="chips">
         {% if username %}<button type="button" class="chip" data-copy-path="/u/{{ username }}" title="/u/{{ username }}"><b>{{ t("overview-links-page") }}</b><span class="d">/u/{{ username }}</span>{{ ph.icon("copy", 16) }}</button>{% endif %}
         {% for l in own_links %}<button type="button" class="chip" data-copy-path="{{ l.path }}" title="{{ l.path }}" aria-label="{{ t('dashboard-event-types-copy-title') }}: {{ l.title }}"><b>{{ l.title }}</b><span class="d">{{ l.duration }}</span>{{ ph.icon("copy", 16) }}</button>{% endfor %}
@@ -347,19 +518,21 @@
 
     {% if favorites %}
     <section class="sec fav-wrap" aria-labelledby="ov-favs">
-      <div class="sec-h"><h2 id="ov-favs">{{ t("directory-favorites") }}</h2>{% if favorites_total > favorites | length %}<a href="/dashboard/directory?favorites=true">{{ t("directory-all-favorites") }}</a>{% else %}<a href="/dashboard/directory">{{ t("directory-browse") }}</a>{% endif %}</div>
+      <div class="sec-h{% if not (username or own_links) %} sheet-h{% endif %}"><h2 id="ov-favs">{{ t("directory-favorites") }}</h2>{% if favorites_total > favorites | length %}<a href="/dashboard/directory?favorites=true">{{ t("directory-all-favorites") }}</a>{% else %}<a href="/dashboard/directory">{{ t("directory-browse") }}</a>{% endif %}</div>
       {% with directory_entries=favorites, favorites_only=true %}
         {% include "partials/directory_entries.html" %}
       {% endwith %}
     </section>
+    {% endif %}
+    </div>
     {% endif %}
   </div>
 
   {% if has_right %}
   <div>
     {% if week %}
-    <section class="sec wk-sec" aria-labelledby="ov-week">
-      <div class="sec-h"><h2 id="ov-week">{{ t("overview-week-title") }}</h2>{% if week.total %}<span class="sec-link">{{ week.total }}</span>{% endif %}</div>
+    <section class="sec wk-sec sheet" aria-labelledby="ov-week">
+      <div class="sec-h sheet-h"><h2 id="ov-week">{{ t("overview-week-title") }}</h2>{% if week.total %}<span class="sec-link">{{ week.total }}</span>{% endif %}</div>
       <div class="wk-scroll">
       <div class="wk" data-now-box data-from="{{ week.from_minute }}" data-span="{{ week.span_minutes }}">
         {% for d in week.days %}
@@ -387,9 +560,11 @@
     </section>
     {% endif %}
 
+    {% if stats.has_pulse or stats.has_chart_data or has_types %}
+    <div class="ov-grp sheet">
     {% if stats.has_pulse or stats.has_chart_data %}
     <section class="sec" aria-labelledby="ov-30">
-      <div class="sec-h"><h2 id="ov-30">{{ t("overview-figures-title") }}</h2></div>
+      <div class="sec-h sheet-h"><h2 id="ov-30">{{ t("overview-figures-title") }}</h2></div>
       {% if stats.pulse %}<p class="pulse">{{ stats.pulse }}</p>{% endif %}
       {% if stats.has_chart_data %}
       <div class="chart">
@@ -433,7 +608,7 @@
 
     {% if has_types %}
     <section class="sec" aria-labelledby="ov-types">
-      <div class="sec-h"><h2 id="ov-types">{{ t("overview-types-title") }}</h2></div>
+      <div class="sec-h{% if not (stats.has_pulse or stats.has_chart_data) %} sheet-h{% endif %}"><h2 id="ov-types">{{ t("overview-types-title") }}</h2></div>
       <table class="figs">
         <tbody>
           {% for r in stats.type_rows %}<tr><th scope="row">{{ r.title }}</th><td class="n">{{ r.count }}</td><td class="bar-c" aria-hidden="true"><div class="tb" style="width: {{ r.width }}%;"></div></td></tr>{% endfor %}
@@ -441,13 +616,29 @@
       </table>
     </section>
     {% endif %}
+    </div>
+    {% endif %}
   </div>
   {% endif %}
 </div>
 
+<nav class="cards-switch" aria-label="Card style preview">
+  <span>Cards</span>
+  <a href="?cards=none" data-cards="">Current</a>
+  <a href="?cards=a" data-cards="a">A Sheet</a>
+  <a href="?cards=b" data-cards="b">B Index card</a>
+  <a href="?cards=c" data-cards="c">C Ticket</a>
+</nav>
+
 </div>
 
 <script>
+(function() {
+  var cur = (document.documentElement.className.match(/\bcards-([abc])\b/) || [])[1] || '';
+  document.querySelectorAll('.cards-switch a').forEach(function(a) {
+    if (a.dataset.cards === cur) a.setAttribute('aria-current', 'true');
+  });
+})();
 (function() {
   var strip = document.getElementById('ov-setup');
   // The strip shows while one of its lines does.
