@@ -1165,6 +1165,7 @@ etf-dynamic-group-url = Rühmalingi aadress
 etf-watcher-teams = Jälgivad meeskonnad
 etf-watcher-teams-help = Valitud meeskondi teavitatakse igast broneeringust. Nende liikmed saavad broneeringu üle võtta, et sellel osaleda.
 etf-watcher-team-locked = See pole sinu meeskond, see jääb alles
+etf-watcher-team-private = Privaatne meeskond
 etf-save = Salvesta muudatused
 etf-create = Loo sündmuse tüüp
 etf-js-loading = Laadimine...

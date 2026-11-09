@@ -1249,6 +1249,7 @@ etf-dynamic-group-url = Adres linku grupowego
 etf-watcher-teams = Zespoły obserwujące
 etf-watcher-teams-help = Wybrane zespoły dostaną powiadomienie o każdej rezerwacji. Ich członkowie mogą przejąć rezerwację, aby w niej uczestniczyć.
 etf-watcher-team-locked = To nie twój zespół, pozostaje przypisany
+etf-watcher-team-private = Zespół prywatny
 etf-save = Zapisz zmiany
 etf-create = Utwórz typ wydarzenia
 etf-js-loading = Wczytywanie...

@@ -2264,18 +2264,18 @@ async fn watchable_team_ids(
 }
 
 /// Watcher teams attached to `et_id` that `user` may not change, because
-/// they are not among [`watchable_teams`] (id, name), by name. The edit form
-/// shows them as read-only rows and the save keeps them (#405). Empty for a
-/// global admin.
+/// they are not among [`watchable_teams`] (id, name, private), by name. The
+/// edit form shows them as read-only rows and the save keeps them (#405).
+/// Empty for a global admin.
 async fn locked_watcher_teams(
     pool: &SqlitePool,
     user: &crate::models::User,
     et_id: &str,
-) -> Vec<(String, String)> {
+) -> Vec<(String, String, bool)> {
     let watchable = watchable_team_ids(pool, user).await;
-    let attached: Vec<(String, String)> = sqlx::query_as(
-        "SELECT t.id, t.name FROM event_type_watchers w JOIN teams t ON t.id = w.team_id \
-         WHERE w.event_type_id = ? ORDER BY t.name",
+    let attached: Vec<(String, String, bool)> = sqlx::query_as(
+        "SELECT t.id, t.name, t.visibility = 'private' FROM event_type_watchers w \
+         JOIN teams t ON t.id = w.team_id WHERE w.event_type_id = ? ORDER BY t.name",
     )
     .bind(et_id)
     .fetch_all(pool)
@@ -2283,20 +2283,29 @@ async fn locked_watcher_teams(
     .unwrap_or_default();
     attached
         .into_iter()
-        .filter(|(id, _)| !watchable.contains(id))
+        .filter(|(id, _, _)| !watchable.contains(id))
         .collect()
 }
 
-/// [`locked_watcher_teams`] as template context.
+/// [`locked_watcher_teams`] as template context. A private team's name is
+/// not shown to someone outside it: it reads "A private team".
 async fn form_locked_watcher_teams(
     pool: &SqlitePool,
     user: &crate::models::User,
     et_id: &str,
+    lang: &str,
 ) -> Vec<minijinja::Value> {
     locked_watcher_teams(pool, user, et_id)
         .await
-        .iter()
-        .map(|(id, name)| context! { id => id, name => name })
+        .into_iter()
+        .map(|(id, name, private)| {
+            let name = if private {
+                crate::i18n::translate(lang, "etf-watcher-team-private", None)
+            } else {
+                name
+            };
+            context! { id => id, name => name }
+        })
         .collect()
 }
 
@@ -2501,7 +2510,9 @@ async fn render_event_type_form_error(
         _ => form_watcher_teams(pool, user).await,
     };
     let locked_watcher_teams = match target {
-        FormTarget::EditTeam { et_id, .. } => form_locked_watcher_teams(pool, user, et_id).await,
+        FormTarget::EditTeam { et_id, .. } => {
+            form_locked_watcher_teams(pool, user, et_id, auth_user.lang).await
+        }
         _ => Vec::new(),
     };
     let priority_members = match target {
@@ -3457,7 +3468,8 @@ pub(super) async fn edit_group_event_type_form(
     };
 
     let watcher_teams_ctx = form_watcher_teams(&state.pool, user).await;
-    let locked_watcher_teams_ctx = form_locked_watcher_teams(&state.pool, user, &et_id).await;
+    let locked_watcher_teams_ctx =
+        form_locked_watcher_teams(&state.pool, user, &et_id, auth_user.lang).await;
 
     // Load selected watcher team IDs
     let selected_watchers: Vec<(String,)> =
@@ -3826,7 +3838,7 @@ pub(super) async fn update_group_event_type(
         locked_watcher_teams(&state.pool, user, &et_id)
             .await
             .into_iter()
-            .map(|(id, _)| id)
+            .map(|(id, _, _)| id)
             .collect();
 
     // The event type, its booking questions (#210) and its watchers are

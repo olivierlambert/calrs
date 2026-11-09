@@ -1166,6 +1166,7 @@ etf-dynamic-group-url = URL van groepslink
 etf-watcher-teams = Meekijkende teams
 etf-watcher-teams-help = Geselecteerde teams krijgen een melding als er geboekt wordt. Leden kunnen boekingen overnemen om als deelnemer aan te sluiten.
 etf-watcher-team-locked = Niet een van je teams, het blijft gekoppeld
+etf-watcher-team-private = Een privéteam
 etf-save = Wijzigingen opslaan
 etf-create = Afspraaktype aanmaken
 etf-js-loading = Laden...

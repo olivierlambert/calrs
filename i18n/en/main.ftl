@@ -1175,6 +1175,7 @@ etf-dynamic-group-url = Group link URL
 etf-watcher-teams = Watcher teams
 etf-watcher-teams-help = Selected teams will be notified when bookings are made. Members can claim bookings to join as an attendee.
 etf-watcher-team-locked = Not one of your teams, so it stays attached
+etf-watcher-team-private = A private team
 etf-save = Save changes
 etf-create = Create event type
 etf-js-loading = Loading...

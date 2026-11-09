@@ -806,6 +806,22 @@ async fn edit_keeps_watcher_teams_the_editor_is_not_in() {
         .execute(&pool)
         .await
         .unwrap();
+    // Board: a private team the lead is not in, also watching. Its name
+    // is not shown to the lead.
+    let board = uuid::Uuid::new_v4().to_string();
+    sqlx::query(
+        "INSERT INTO teams (id, name, slug, visibility) VALUES (?, 'Secret Board', 'board', 'private')",
+    )
+    .bind(&board)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO event_type_watchers (event_type_id, team_id) VALUES (?, ?)")
+        .bind(&team_et)
+        .bind(&board)
+        .execute(&pool)
+        .await
+        .unwrap();
 
     let html = body_string(
         app.clone()
@@ -822,6 +838,14 @@ async fn edit_keeps_watcher_teams_the_editor_is_not_in() {
     );
     assert!(!html.contains(&format!(r#"class="watcher-team-check" value="{sales}""#)));
     assert!(html.contains("Not one of your teams, so it stays attached"));
+    assert!(html.contains(&format!(
+        r#"<input type="hidden" class="watcher-team-locked" value="{board}">"#
+    )));
+    assert!(html.contains("A private team"));
+    assert!(
+        !html.contains("Secret Board"),
+        "a private team's name stays hidden"
+    );
 
     // The lead ticks their own team: the form posts only the checked box.
     save(
@@ -833,11 +857,11 @@ async fn edit_keeps_watcher_teams_the_editor_is_not_in() {
     .await;
     let mut kept = watchers(&pool, &team_et).await;
     kept.sort();
-    let mut expected = vec![sales.clone(), team_id.clone()];
+    let mut expected = vec![sales.clone(), team_id.clone(), board.clone()];
     expected.sort();
     assert_eq!(kept, expected);
 
-    // Unticking it again, with nothing else posted, still keeps Sales.
+    // Unticking it again, with nothing else posted, still keeps both.
     save(
         &app,
         &edit_uri(&team_id, "team-sync"),
@@ -845,7 +869,11 @@ async fn edit_keeps_watcher_teams_the_editor_is_not_in() {
         &[("slug", "team-sync"), ("watcher_team_ids", "")],
     )
     .await;
-    assert_eq!(watchers(&pool, &team_et).await, vec![sales.clone()]);
+    let mut kept = watchers(&pool, &team_et).await;
+    kept.sort();
+    let mut expected = vec![sales.clone(), board.clone()];
+    expected.sort();
+    assert_eq!(kept, expected);
 
     // A global admin sees Sales as an ordinary checkbox and may remove it.
     let (admin, admin_session) =
@@ -863,6 +891,11 @@ async fn edit_keeps_watcher_teams_the_editor_is_not_in() {
     )
     .await;
     assert!(!html.contains("watcher-team-locked\" value"));
+    assert!(
+        html.contains("Secret Board"),
+        "a global admin sees every name"
+    );
+    assert!(!html.contains("A private team"));
     save(
         &app,
         &edit_uri(&team_id, "team-sync"),

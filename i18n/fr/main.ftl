@@ -1165,6 +1165,7 @@ etf-dynamic-group-url = URL du lien de groupe
 etf-watcher-teams = Équipes observatrices
 etf-watcher-teams-help = Les équipes sélectionnées seront notifiées à chaque réservation. Leurs membres peuvent prendre en charge une réservation pour y participer.
 etf-watcher-team-locked = Vous n'êtes pas dans cette équipe, elle reste en place
+etf-watcher-team-private = Une équipe privée
 etf-save = Enregistrer les modifications
 etf-create = Créer le type d'événement
 etf-js-loading = Chargement...
