@@ -568,7 +568,13 @@ async fn arrange_render(
     Html(
         tmpl.render(context! {
             lang => auth_user.lang,
-            sidebar => sidebar_context(auth_user, "event-types"),
+            sidebar => sidebar_context(
+                auth_user,
+                match scope {
+                    Scope::Personal { .. } => "event-types",
+                    Scope::Team { .. } => "teams",
+                },
+            ),
             heading => title,
             page_url => page_url,
             action => action,

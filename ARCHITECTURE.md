@@ -135,7 +135,9 @@ with `use super::*` and sees those fixtures and every item of `web`:
 `security`, `auth_pages`, `branding`, `format`, `availability`, `resources`,
 `hosts`, `event_types`, `invites`, `booking`, `public_pages`,
 `booking_actions`, `booking_notes`, `dashboard`, `sources`, `admin`, `emails`,
-`ews_global`, `page_language`, `guards`, `api`, `api_doc`, `oauth`, `mcp`, `questions`, plus `booking_time`, `pending_hold`,
+`ews_global`, `page_language`, `guards`, `api`, `api_doc`, `api_answers`, `oauth`, `mcp`, `questions`, `landing`, `pagination`,
+`directory`, `overview_stats`, `admin_stats`, `event_type_create`, `sms_spend`, `concurrency`, `google_copies`,
+`calendar_week_start`, `guest_footer`, plus `booking_time`, `pending_hold`,
 `writeback_failures`, `write_destinations`, `organizer`, `duplicate_event_type`, `time_off` and `webhooks`.
 
 ### `src/email/`
@@ -157,9 +159,9 @@ Call sites use `crate::email::name` whatever file `name` lives in.
 | Path | Owns |
 |---|---|
 | `migrations/` | SQL migrations: `001` to `081` numbered, then `YYYYMMDDHHMMSS_description.sql`, embedded by `build.rs` |
-| `templates/` | minijinja templates (`base.html`, `dashboard_base.html` and the pages extending them) |
+| `templates/` | minijinja templates (`base.html`, `dashboard_base.html` and the pages extending them); `partials/` holds the shared pieces: the landing page partials (`landing_*.html`), `card_list.html` (list cards with the search in the band), `pager.html`, `phosphor.html` and `icons.html`, `public_logo.html`, `directory_entries.html` |
 | `i18n/{lang}/main.ftl` | Translations, English is the source of truth |
-| `assets/` | Files embedded in the binary (logo, fonts: Inter for guest pages, Archivo for the dashboard, `embed.js`, vendored intl-tel-input) |
+| `assets/` | Files embedded in the binary (logo, fonts: Inter for booking pages, Archivo for the dashboard and landing pages, `embed.js`, vendored intl-tel-input, Phosphor icons, Swagger UI) |
 | `docs/src/` | User documentation (mdBook) |
 
 ## Key concepts and who owns them

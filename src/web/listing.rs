@@ -273,13 +273,21 @@ pub(super) fn href(path: &str, parts: &[String], anchor: &str) -> String {
 /// `raw` when it is a path of this site under `prefix` (`/dashboard`,
 /// `/dashboard/admin`), so a form can say which page of a list to return
 /// to without opening a redirect to anywhere else: no scheme, no `//` or
-/// backslash host, no whitespace or control character. `None` otherwise.
+/// backslash host, no whitespace or control character, and no `.` or `..`
+/// segment (also percent-encoded), which the browser would resolve out of
+/// `prefix`. `None` otherwise.
 pub(super) fn return_path(raw: Option<&str>, prefix: &str) -> Option<String> {
     let raw = raw?;
     let rest = raw.strip_prefix(prefix)?;
     let boundary = matches!(rest.chars().next(), None | Some('?' | '#' | '/'));
+    let path = raw.split(['?', '#']).next().unwrap_or("");
+    let dot_segment = path.split('/').any(|segment| {
+        let segment = segment.to_ascii_lowercase().replace("%2e", ".");
+        segment == "." || segment == ".."
+    });
     let clean = !raw.contains('\\')
         && !raw.starts_with("//")
+        && !dot_segment
         && raw.len() <= 2048
         && raw.chars().all(|c| !c.is_whitespace() && !c.is_control());
     (boundary && clean).then(|| raw.to_string())
@@ -408,6 +416,13 @@ mod tests {
             "https://evil.example/dashboard",
             "//evil.example/dashboard",
             "/dashboardx",
+            "/dashboard/../u/x",
+            "/dashboard/..//evil.example",
+            "/dashboard/%2e%2e/u/x",
+            "/dashboard/.%2E/u/x",
+            "/dashboard/./bookings",
+            "/dashboard/bookings/..",
+            "/dashboard/..?x=1",
             "/\\evil.example",
             "/dashboard\\..",
             "/dashboard/bookings?q=a b",

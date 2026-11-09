@@ -72,7 +72,7 @@ When an event type has **requires confirmation** enabled:
 3. Host receives an "approval request" email with **Approve** and **Decline** buttons
 4. Host can approve/decline in two ways:
    - **From the email** — click the Approve or Decline button (no login required, token-based)
-   - **From the dashboard** — go to **Pending approval** section and click Confirm or Decline
+   - **From the dashboard**: in the **Waiting for your decision** section of the bookings page, click Confirm or Decline
 5. On confirm: status becomes `confirmed`, guest receives confirmation email with `.ics`, booking is pushed to CalDAV. Auto meeting links (Jitsi, webhook, Google Meet) are generated at this moment, not while the booking is pending.
 6. On decline: status becomes `declined`, guest receives a decline notification with optional reason
 

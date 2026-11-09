@@ -2617,8 +2617,8 @@ async fn render_event_type_form_error(
             form_visibility => form.visibility.as_deref().unwrap_or("public"),
             form_location_type => form.location_type.as_deref().unwrap_or("link"),
             form_section => form.section.as_deref().unwrap_or(""),
-            section_suggestions => section_suggestions(pool, &user.id, is_group.then_some(form_team_id), !is_group).await,
-            order_url => if is_group {
+            section_suggestions => section_suggestions(pool, &user.id, (!form_team_id.is_empty()).then_some(form_team_id), form_team_id.is_empty()).await,
+            order_url => if !form_team_id.is_empty() {
                 format!("/dashboard/teams/{form_team_id}/order")
             } else {
                 "/dashboard/event-types/order".to_string()
@@ -2942,7 +2942,10 @@ pub(super) async fn new_group_event_type_form(
             form_location_type => "link",
             form_section => "",
             section_suggestions => section_suggestions(&state.pool, &user.id, None, false).await,
-            order_url => "",
+            order_url => groups
+                .first()
+                .map(|(id, _)| format!("/dashboard/teams/{id}/order"))
+                .unwrap_or_default(),
             form_location_value => "",
             form_meeting_pattern_override => "",
             form_avail_schedule => user_avail,
