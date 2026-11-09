@@ -18,6 +18,7 @@ mod ews;
 mod google_calendar;
 mod google_meet;
 mod i18n;
+mod leads;
 mod mfa;
 mod microsoft_oauth;
 mod models;
@@ -180,6 +181,11 @@ async fn main() -> Result<()> {
             tokio::spawn(web::run_reminder_loop(reminder_pool, reminder_key));
             // Outgoing booking webhooks (#168): delivered off the request path.
             tokio::spawn(web::run_webhook_loop(pool.clone(), secret_key));
+
+            // Spawn lead-capture maintenance task: purges expired
+            // partial_bookings and emails hosts about abandoned ones.
+            let purge_pool = pool.clone();
+            tokio::spawn(web::run_lead_purge_loop(purge_pool, secret_key));
 
             let router = web::create_router(pool, data_dir, secret_key).await;
             let addr = std::net::SocketAddr::from((host, port));

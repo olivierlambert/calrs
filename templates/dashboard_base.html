@@ -659,6 +659,7 @@
         <div class="sidebar-section-label">{{ t("nav-section-scheduling") }}</div>
         {{ nav_link("/dashboard", "nav-overview", "overview") }}
         {{ nav_link("/dashboard/bookings", "nav-bookings", "bookings", "bookings") }}
+        <a href="/dashboard/leads" class="sidebar-link{% if sidebar.active == 'leads' %} active{% endif %}"{% if sidebar.active == 'leads' %} aria-current="page"{% endif %}><span>{{ t("nav-leads") }}</span> <span id="leads-badge" hidden title="{{ t('leads-badge-title') }}" style="margin-left: auto; background: var(--accent); color: #fff; border-radius: var(--radius); padding: 0 0.45rem; font-size: 0.7rem; font-weight: 700; line-height: 1.4;"></span></a>
         {{ nav_link("/dashboard/event-types", "nav-event-types", "event-types") }}
         {{ nav_link("/dashboard/teams", "nav-teams", "teams") }}
       </div>
@@ -1249,6 +1250,19 @@ document.querySelectorAll('input[type=file][data-max-bytes]').forEach(function(i
       if (create) { e.preventDefault(); create.click(); }
     }
   });
+})();
+</script>
+<script>
+// Sidebar badge: open leads nobody has followed up yet. Quiet on failure.
+(function() {
+  var badge = document.getElementById('leads-badge');
+  if (!badge || !window.fetch) return;
+  fetch('/dashboard/leads/badge', { credentials: 'same-origin' })
+    .then(function(r) { return r.ok ? r.json() : null; })
+    .then(function(d) {
+      if (d && d.count > 0) { badge.textContent = d.count > 99 ? '99+' : d.count; badge.hidden = false; }
+    })
+    .catch(function() {});
 })();
 </script>
 {% endblock %}

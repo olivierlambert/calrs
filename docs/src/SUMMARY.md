@@ -15,6 +15,7 @@
 - [Shared Resources](./resources.md)
 - [SMS Notifications](./sms.md)
 - [Webhooks](./webhooks.md)
+- [Lead Capture](./lead-capture.md)
 - [Authentication](./authentication.md)
 - [MCP Integration](./mcp.md)
 - [REST API](./api.md)

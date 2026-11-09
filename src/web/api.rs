@@ -1741,6 +1741,8 @@ async fn create_booking_inner(
         time: &time,
         // A manager booking for a guest: no booking questions (#210).
         fields: None,
+        // The API captures no leads.
+        lead_id: None,
     };
     let resolve_tz = move |_: Tz| guest_tz;
     let team: Option<Option<String>> =
