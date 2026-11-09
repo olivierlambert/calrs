@@ -352,6 +352,8 @@ fn loopback_redirect_matching_only_relaxes_the_port() {
 
 #[test]
 fn rate_keys_group_ipv6_by_64_and_keep_ipv4_whole() {
+    let _lock = crate::test_support::ENV_LOCK.blocking_lock();
+    let _env = crate::test_support::EnvGuard::new();
     let key = |ip: &str| {
         let mut headers = HeaderMap::new();
         headers.insert(crate::web::PEER_ADDR_HEADER, "127.0.0.1".parse().unwrap());

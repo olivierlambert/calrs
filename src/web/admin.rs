@@ -976,7 +976,7 @@ pub(super) async fn admin_dashboard(
             allow_private_hosts_db => crate::settings::private_host_allowlist_db().join(", "),
             allow_private_hosts_from_env => crate::settings::allow_private_hosts_from_env(),
             trusted_proxies => crate::trusted_proxies::current().describe(),
-            trusted_proxies_db => crate::trusted_proxies::saved(),
+            trusted_proxies_db => crate::trusted_proxies::saved(&state.pool).await,
             trusted_proxies_from_env => crate::trusted_proxies::set_by_env(),
             german_formal => state.german_formal.load(std::sync::atomic::Ordering::Relaxed),
             week_start_setting => context! { value => week_start::site(&state.pool).await },

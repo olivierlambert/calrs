@@ -228,6 +228,8 @@ async fn persistent_limiter_prune_drops_only_closed_windows() {
 
 #[test]
 fn client_ip_groups_ipv6_by_64() {
+    let _lock = crate::test_support::ENV_LOCK.blocking_lock();
+    let _env = crate::test_support::EnvGuard::new();
     let key = |xff: &str| {
         let mut headers = HeaderMap::new();
         headers.insert(PEER_ADDR_HEADER, "127.0.0.1".parse().unwrap());
@@ -244,6 +246,8 @@ fn client_ip_groups_ipv6_by_64() {
 
 #[tokio::test]
 async fn booking_rate_limit_is_kept_across_a_restart() {
+    let _lock = crate::test_support::ENV_LOCK.lock().await;
+    let _env = crate::test_support::EnvGuard::new();
     // Ten booking POSTs from one address on one server, the eleventh on a
     // fresh server over the same database: still refused. The limit keys on
     // the rightmost X-Forwarded-For value, so a forged leftmost one does
@@ -536,12 +540,16 @@ fn verify_csrf_token_fails_when_same_length_differs_at_last_byte() {
 
 #[test]
 fn client_ip_unknown_when_no_headers() {
+    let _lock = crate::test_support::ENV_LOCK.blocking_lock();
+    let _env = crate::test_support::EnvGuard::new();
     let headers = HeaderMap::new();
     assert_eq!(client_ip_for_rate_limit(&headers), "unknown");
 }
 
 #[test]
 fn client_ip_ignores_x_real_ip() {
+    let _lock = crate::test_support::ENV_LOCK.blocking_lock();
+    let _env = crate::test_support::EnvGuard::new();
     // We deliberately do not honour X-Real-IP: in default Caddy/Nginx
     // setups the proxy does not overwrite a client-supplied value, so
     // trusting it would let the client forge their identity directly.
@@ -552,6 +560,8 @@ fn client_ip_ignores_x_real_ip() {
 
 #[test]
 fn client_ip_takes_rightmost_xff() {
+    let _lock = crate::test_support::ENV_LOCK.blocking_lock();
+    let _env = crate::test_support::EnvGuard::new();
     // The leftmost value is whatever the original client put in the
     // header; the rightmost is the trusted proxy's view of its peer.
     let mut headers = HeaderMap::new();
@@ -565,6 +575,8 @@ fn client_ip_takes_rightmost_xff() {
 
 #[test]
 fn client_ip_xff_single_value() {
+    let _lock = crate::test_support::ENV_LOCK.blocking_lock();
+    let _env = crate::test_support::EnvGuard::new();
     let mut headers = HeaderMap::new();
     headers.insert(PEER_ADDR_HEADER, "127.0.0.1".parse().unwrap());
     headers.insert("x-forwarded-for", "203.0.113.10".parse().unwrap());
@@ -573,6 +585,8 @@ fn client_ip_xff_single_value() {
 
 #[test]
 fn client_ip_xff_trims_whitespace() {
+    let _lock = crate::test_support::ENV_LOCK.blocking_lock();
+    let _env = crate::test_support::EnvGuard::new();
     let mut headers = HeaderMap::new();
     headers.insert(PEER_ADDR_HEADER, "127.0.0.1".parse().unwrap());
     headers.insert(
@@ -584,6 +598,8 @@ fn client_ip_xff_trims_whitespace() {
 
 #[test]
 fn client_ip_ignores_xff_without_a_peer() {
+    let _lock = crate::test_support::ENV_LOCK.blocking_lock();
+    let _env = crate::test_support::EnvGuard::new();
     // Served without connection info: fail closed, the header is not
     // believed from an unknown sender.
     let mut headers = HeaderMap::new();
@@ -593,6 +609,8 @@ fn client_ip_ignores_xff_without_a_peer() {
 
 #[test]
 fn client_ip_reads_every_xff_line_in_order() {
+    let _lock = crate::test_support::ENV_LOCK.blocking_lock();
+    let _env = crate::test_support::EnvGuard::new();
     // HAProxy appends its own line: the client's first line must not win.
     let mut headers = HeaderMap::new();
     headers.insert(PEER_ADDR_HEADER, "127.0.0.1".parse().unwrap());
@@ -603,6 +621,8 @@ fn client_ip_reads_every_xff_line_in_order() {
 
 #[test]
 fn client_ip_with_non_ascii_xff_is_its_own_bucket() {
+    let _lock = crate::test_support::ENV_LOCK.blocking_lock();
+    let _env = crate::test_support::EnvGuard::new();
     // Not the proxy's address: one client sending bytes `to_str` refuses
     // must not be able to fill the bucket everyone behind the proxy shares.
     let mut headers = HeaderMap::new();
@@ -616,6 +636,8 @@ fn client_ip_with_non_ascii_xff_is_its_own_bucket() {
 
 #[test]
 fn client_ip_ignores_xff_from_an_untrusted_peer() {
+    let _lock = crate::test_support::ENV_LOCK.blocking_lock();
+    let _env = crate::test_support::EnvGuard::new();
     // Directly exposed: the peer is a public address, so whatever it puts
     // in X-Forwarded-For is ignored and it cannot pick a fresh bucket.
     let mut headers = HeaderMap::new();
@@ -627,6 +649,8 @@ fn client_ip_ignores_xff_from_an_untrusted_peer() {
 
 #[test]
 fn client_ip_from_a_trusted_peer_without_xff_is_shared() {
+    let _lock = crate::test_support::ENV_LOCK.blocking_lock();
+    let _env = crate::test_support::EnvGuard::new();
     let mut headers = HeaderMap::new();
     headers.insert(PEER_ADDR_HEADER, "127.0.0.1".parse().unwrap());
     assert_eq!(client_ip_for_rate_limit(&headers), "127.0.0.1");
@@ -638,6 +662,8 @@ fn client_ip_from_a_trusted_peer_without_xff_is_shared() {
 
 #[test]
 fn client_ip_falls_back_to_the_peer_address_without_xff() {
+    let _lock = crate::test_support::ENV_LOCK.blocking_lock();
+    let _env = crate::test_support::EnvGuard::new();
     let mut headers = HeaderMap::new();
     headers.insert(PEER_ADDR_HEADER, "192.0.2.44".parse().unwrap());
     assert_eq!(client_ip_for_rate_limit(&headers), "192.0.2.44");
@@ -645,6 +671,8 @@ fn client_ip_falls_back_to_the_peer_address_without_xff() {
 
 #[test]
 fn client_ip_prefers_rightmost_xff_over_the_peer_address() {
+    let _lock = crate::test_support::ENV_LOCK.blocking_lock();
+    let _env = crate::test_support::EnvGuard::new();
     // Behind a proxy the peer is the proxy itself: the header wins.
     let mut headers = HeaderMap::new();
     headers.insert(PEER_ADDR_HEADER, "127.0.0.1".parse().unwrap());
@@ -696,6 +724,8 @@ async fn is_rate_limited(app: &axum::Router, request: axum::http::Request<Body>)
 /// on every attempt still exhausts its own sign-in budget.
 #[tokio::test]
 async fn sign_in_limit_ignores_xff_forged_by_an_untrusted_peer() {
+    let _lock = crate::test_support::ENV_LOCK.lock().await;
+    let _env = crate::test_support::EnvGuard::new();
     let (app, _, _, _) = setup_test_app().await;
     for i in 0..10 {
         let forged = format!("198.51.100.{i}");
@@ -715,6 +745,8 @@ async fn sign_in_limit_ignores_xff_forged_by_an_untrusted_peer() {
 /// claim another peer through the internal header.
 #[tokio::test]
 async fn sign_in_limit_is_per_peer_without_xff() {
+    let _lock = crate::test_support::ENV_LOCK.lock().await;
+    let _env = crate::test_support::EnvGuard::new();
     let (app, _, _, _) = setup_test_app().await;
     for _ in 0..10 {
         assert!(!is_rate_limited(&app, login_from("192.0.2.1", None, None)).await);
@@ -734,6 +766,8 @@ async fn sign_in_limit_is_per_peer_without_xff() {
 /// address), the rightmost value still identifies the client.
 #[tokio::test]
 async fn sign_in_limit_keys_on_xff_when_present() {
+    let _lock = crate::test_support::ENV_LOCK.lock().await;
+    let _env = crate::test_support::EnvGuard::new();
     let (app, _, _, _) = setup_test_app().await;
     for _ in 0..10 {
         let request = login_from("127.0.0.1", Some("spoof, 198.51.100.1"), None);

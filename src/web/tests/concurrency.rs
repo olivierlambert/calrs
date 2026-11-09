@@ -116,6 +116,8 @@ async fn a_burst_of_bookings_is_answered_quickly_and_never_double_books_the_host
 /// calendar could not be read, so they are not known to be free.
 #[tokio::test]
 async fn an_unreadable_calendar_refuses_the_booking() {
+    let _lock = crate::test_support::ENV_LOCK.lock().await;
+    let _env = crate::test_support::EnvGuard::new();
     let (app, pool, _session, et_id) = setup_test_app().await;
     sqlx::query("ALTER TABLE events RENAME TO events_gone")
         .execute(&pool)
@@ -324,6 +326,8 @@ async fn the_submit_time_slot_check_never_fetches_a_resource_feed() {
 /// grid degrades and keeps showing slots.
 #[tokio::test]
 async fn unreadable_slot_settings_refuse_the_booking() {
+    let _lock = crate::test_support::ENV_LOCK.lock().await;
+    let _env = crate::test_support::EnvGuard::new();
     let (app, pool, _session, et_id) = setup_test_app().await;
     sqlx::query("ALTER TABLE availability_overrides RENAME TO availability_overrides_gone")
         .execute(&pool)

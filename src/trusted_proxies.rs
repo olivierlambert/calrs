@@ -199,12 +199,22 @@ pub fn current() -> TrustedProxies {
 }
 
 /// The saved value as the admin form shows it, empty when none is saved.
-pub fn saved() -> String {
-    FROM_DB
-        .read()
-        .ok()
-        .and_then(|g| g.as_ref().map(TrustedProxies::describe))
-        .unwrap_or_default()
+/// Read from this instance's database rather than the process-wide cache,
+/// so the form always shows what was stored.
+pub async fn saved(pool: &sqlx::SqlitePool) -> String {
+    let raw: Option<String> =
+        sqlx::query_scalar("SELECT trusted_proxies FROM auth_config WHERE id = 'singleton'")
+            .fetch_optional(pool)
+            .await
+            .ok()
+            .flatten()
+            .flatten();
+    match raw.as_deref().map(str::trim).filter(|r| !r.is_empty()) {
+        None => String::new(),
+        Some(raw) => TrustedProxies::parse(raw)
+            .map(|list| list.describe())
+            .unwrap_or_else(|_| raw.to_string()),
+    }
 }
 
 /// Caches the saved value (`auth_config.trusted_proxies`). NULL or empty

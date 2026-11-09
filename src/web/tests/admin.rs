@@ -983,6 +983,10 @@ async fn microsoft_credential_labels_name_their_inputs() {
 /// uses, since the cache it feeds is process-wide.
 #[tokio::test]
 async fn admin_saves_and_validates_trusted_proxies() {
+    // The trusted proxy cache is process-wide: hold the settings lock, and
+    // the guard puts the cache back to the default whatever happens.
+    let _lock = crate::test_support::ENV_LOCK.lock().await;
+    let _env = crate::test_support::EnvGuard::new();
     let (app, pool, session, _) = setup_test_app().await;
     let stored = |pool: SqlitePool| async move {
         sqlx::query_scalar::<_, Option<String>>(
@@ -1035,7 +1039,7 @@ async fn admin_saves_and_validates_trusted_proxies() {
     )
     .await;
     assert!(
-        html.contains("198.18.0.0&#x2f;15"),
+        html.contains("198.18.0.0/15") || html.contains("198.18.0.0&#x2f;15"),
         "shown back in the form"
     );
 

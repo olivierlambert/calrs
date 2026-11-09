@@ -14,10 +14,16 @@ pub(crate) static ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_n
 
 /// The runtime-settings variables. Anything added here is also cleared and
 /// restored by [`EnvGuard`].
-const VARS: [&str; 2] = ["CALRS_BASE_URL", "CALRS_ALLOW_PRIVATE_HOSTS"];
+const VARS: [&str; 3] = [
+    "CALRS_BASE_URL",
+    "CALRS_ALLOW_PRIVATE_HOSTS",
+    "CALRS_TRUSTED_PROXIES",
+];
 
 /// Clears the runtime-settings env vars for the duration of a test and puts
 /// them back afterwards, so one test cannot leak an override into the next.
+/// It also resets the process-wide trusted proxy cache to the default on
+/// both ends, since a test saving that setting fills it for every test.
 /// Hold [`ENV_LOCK`] for as long as you hold this.
 pub(crate) struct EnvGuard {
     old: Vec<(&'static str, Option<String>)>,
@@ -32,12 +38,14 @@ impl EnvGuard {
         for n in VARS {
             std::env::remove_var(n);
         }
+        crate::trusted_proxies::set_from_db(None);
         Self { old }
     }
 }
 
 impl Drop for EnvGuard {
     fn drop(&mut self) {
+        crate::trusted_proxies::set_from_db(None);
         for (n, v) in &self.old {
             match v {
                 Some(v) => std::env::set_var(n, v),
