@@ -228,6 +228,32 @@ base-powered-by = Powered by
 profile-pick-event-type-invite = Pick an event type to book a time.
 profile-no-event-type = No event types available yet.
 
+# Public landing pages (/u/{username}, /team/{slug}). In landing-next-free,
+# %1 is the time, filled in by the page itself.
+landing-duration-h = { $hours } h
+landing-duration-aria =
+    { $minutes ->
+        [one] { $minutes } minute
+       *[other] { $minutes } minutes
+    }
+landing-duration-hm = { $hours } h { $minutes }
+landing-duration-aria-h =
+    { $hours ->
+        [one] { $hours } hour
+       *[other] { $hours } hours
+    }
+landing-duration-aria-hm =
+    { $hours ->
+        [one] { $hours } hour
+       *[other] { $hours } hours
+    } { $minutes ->
+        [one] { $minutes } minute
+       *[other] { $minutes } minutes
+    }
+landing-next-free = Next: %1
+landing-with-one-of = with one of
+landing-with-everyone = with everyone
+
 # Month and weekday names + per-locale date format patterns.
 # Used by server-side date formatters in src/i18n.rs.
 
@@ -420,10 +446,8 @@ overview-page-title = Overview
 overview-avail-banner-body = Your default working hours have been set to Mon–Fri, 9:00–17:00. These are used when others include you in dynamic group meetings.
 overview-avail-banner-cta = Review your availability
 overview-dismiss = Dismiss
-overview-getting-started = Getting started
 overview-step-connect-calendar = Connect a calendar
 overview-step-first-event-type = Create your first event type
-overview-step-share-link = Share your booking link
 overview-pending-approval = Waiting for your decision
 overview-confirm = Approve
 overview-decline = Decline
@@ -431,7 +455,6 @@ overview-copy-link = Copy booking link
 overview-duration-h = { $hours } h
 overview-duration-m = { $minutes } min
 overview-duration-hm = { $hours } h { $minutes } min
-overview-percent = { $value }%
 overview-chart-title = Meetings per week
 overview-chart-this-week = This week
 overview-chart-week-of = Week of { $date }
@@ -445,7 +468,6 @@ overview-types-other = Other types
 overview-agenda-title = Coming up
 overview-agenda-today = Today
 overview-agenda-tomorrow = Tomorrow
-overview-agenda-now = In progress
 overview-agenda-join = Join
 overview-agenda-empty = No meetings in the next 14 days. Share your booking link to get some.
 overview-agenda-all = All bookings
@@ -467,33 +489,86 @@ overview-open-calendar = Open your calendar
 overview-week-title = This week
 overview-week-closed = closed
 overview-week-total = { $booked } booked
-overview-week-number = Week { $week }
 overview-week-short = W{ $week }
 overview-time-range = { $from } to { $to }
 overview-until = to { $time }
 overview-expires = Expires { $when }
 overview-guest-and-more = { $name }, { $count } more
-overview-mast-now = Now: { $title } with { $guest }, until { $time }
-overview-mast-next = Next: { $title } with { $guest } at { $time }
-overview-mast-next-day = Next: { $title } with { $guest }, { $day } at { $time }
+overview-greeting-night = Hello, { $name }
+overview-greeting-morning = Good morning, { $name }
+overview-greeting-afternoon = Good afternoon, { $name }
+overview-greeting-evening = Good evening, { $name }
+overview-mast-date = { $date }, week { $week }
+overview-sum-now = You are meeting { $guest } until { $time }.
+overview-sum-today = Today you meet { $guest } at { $time }.
+overview-sum-tomorrow = Tomorrow you meet { $guest } at { $time }.
+overview-sum-later = Your next meeting is with { $guest } on { $day } at { $time }.
+overview-sum-more-today = { $count ->
+    [one] One more meeting follows later today.
+   *[other] { $count } more meetings follow later today.
+}
+overview-sum-none = Nothing is booked in the next 14 days.
+overview-sum-pending = { $count ->
+    [one] One request is waiting for your answer.
+   *[other] { $count } requests are waiting for your answer.
+}
+overview-sum-guests = { $count ->
+    [one] { $name } and one other
+   *[other] { $name } and { $count } others
+}
+overview-hero-title = Up next
+overview-when-now = Now, until { $time }
+overview-when-minutes = { $count ->
+    [one] in 1 minute
+   *[other] in { $count } minutes
+}
+overview-when-hours = { $count ->
+    [one] in 1 hour
+   *[other] in { $count } hours
+}
+overview-when-today-night = later tonight
+overview-when-today-morning = this morning
+overview-when-today-afternoon = this afternoon
+overview-when-today-evening = this evening
+overview-when-tomorrow-night = early tomorrow
+overview-when-tomorrow-morning = tomorrow morning
+overview-when-tomorrow-afternoon = tomorrow afternoon
+overview-when-tomorrow-evening = tomorrow evening
+overview-when-weekday-night = early { $day } morning
+overview-when-weekday-morning = { $day } morning
+overview-when-weekday-afternoon = { $day } afternoon
+overview-when-weekday-evening = { $day } evening
+overview-when-days = { $count ->
+    [one] in 1 day
+   *[other] in { $count } days
+}
+overview-pulse-held = { $count ->
+    [one] One meeting in the last 30 days, { $time } with guests.
+   *[other] { $count } meetings in the last 30 days, { $time } with guests.
+}
+overview-pulse-held-vs = { $count ->
+    [one] One meeting in the last 30 days, { $time } with guests, against { $prev } the 30 days before.
+   *[other] { $count } meetings in the last 30 days, { $time } with guests, against { $prev } the 30 days before.
+}
+overview-pulse-booked = { $count ->
+    [one] One new booking came in over the same period.
+   *[other] { $count } new bookings came in over the same period.
+}
+overview-pulse-booked-only = { $count ->
+    [one] One new booking came in over the last 30 days.
+   *[other] { $count } new bookings came in over the last 30 days.
+}
+overview-links-page = Your page
+overview-agenda-nothing-else = Nothing else in the next 14 days.
+overview-setup-count = { $count ->
+    [one] 1 thing to set up
+   *[other] { $count } things to set up
+}
 overview-ruler-booked = Booked
 overview-ruler-pending = Waiting for a decision
 overview-ruler-unavailable = Unavailable (your calendar)
 overview-key-open = Open for bookings
-overview-ruler-aria = Today, { $from } to { $to }
-overview-chart-now = now
 overview-figures-title = Last 30 days
-overview-fig-booked = Meetings booked
-overview-fig-time = Time in meetings
-overview-fig-cancelled = Cancelled
-overview-fig-notice = Average notice
-overview-fig-before = { $value } the 30 days before
-overview-fig-prev-key = The 30 days before
-overview-fig-days =
-    { $count ->
-        [one] 1 day
-       *[other] { $count } days
-    }
 
 # Dashboard bookings (templates/dashboard_bookings.html)
 
@@ -1174,6 +1249,9 @@ admin-action-refused = Action refused:
 admin-error-last-admin = This is the last enabled admin. Promote or enable another admin first.
 admin-logo = Company logo
 admin-logo-help = Displayed on public booking pages. PNG, JPEG, GIF or WebP, max 2 MB.
+admin-logo-light = Light theme
+admin-logo-dark = Dark theme
+admin-logo-dark-help = Optional. Shown when the visitor uses the dark theme; without it the light logo is used in both themes.
 admin-logo-refused = The logo was not saved. Upload a PNG, JPEG, GIF or WebP image of at most 2 MB.
 admin-favicon = Favicon
 admin-favicon-help = Shown in browser tabs and bookmarks. Recommended: a square PNG of at least 32×32 pixels, max 512 KB. Without one, the calrs crab is shown.

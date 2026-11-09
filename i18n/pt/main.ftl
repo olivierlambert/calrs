@@ -219,6 +219,32 @@ base-powered-by = Desenvolvido com
 profile-pick-event-type-invite = Escolha um tipo de evento para agendar um horário.
 profile-no-event-type = Ainda não há tipos de evento disponíveis.
 
+# Public landing pages (/u/{username}, /team/{slug}). In landing-next-free,
+# %1 is the time, filled in by the page itself.
+landing-duration-h = { $hours } h
+landing-duration-aria =
+    { $minutes ->
+        [one] { $minutes } minuto
+       *[other] { $minutes } minutos
+    }
+landing-duration-hm = { $hours } h { $minutes }
+landing-duration-aria-h =
+    { $hours ->
+        [one] { $hours } hora
+       *[other] { $hours } horas
+    }
+landing-duration-aria-hm =
+    { $hours ->
+        [one] { $hours } hora
+       *[other] { $hours } horas
+    } { $minutes ->
+        [one] { $minutes } minuto
+       *[other] { $minutes } minutos
+    }
+landing-next-free = Próximo: %1
+landing-with-one-of = com um de
+landing-with-everyone = com todos
+
 # Month and weekday names + per-locale date format patterns.
 # Used by server-side date formatters in src/i18n.rs.
 
@@ -410,10 +436,8 @@ overview-page-title = Painel
 overview-avail-banner-body = Seu horário de trabalho padrão foi definido de segunda a sexta, das 9h às 17h. Ele é usado quando outras pessoas incluem você em reuniões de grupo dinâmicas.
 overview-avail-banner-cta = Revise sua disponibilidade
 overview-dismiss = Dispensar
-overview-getting-started = Primeiros passos
 overview-step-connect-calendar = Conectar uma agenda
 overview-step-first-event-type = Criar seu primeiro tipo de evento
-overview-step-share-link = Compartilhar seu link de agendamento
 overview-pending-approval = Aguardando aprovação
 overview-confirm = Confirmar
 overview-decline = Recusar
@@ -421,7 +445,6 @@ overview-copy-link = Copiar link de agendamento
 overview-duration-h = { $hours } h
 overview-duration-m = { $minutes } min
 overview-duration-hm = { $hours } h { $minutes } min
-overview-percent = { $value }%
 overview-chart-title = Reuniões por semana
 overview-chart-this-week = Esta semana
 overview-chart-week-of = Semana de { $date }
@@ -435,7 +458,6 @@ overview-types-other = Outros tipos
 overview-agenda-title = Próximas
 overview-agenda-today = Hoje
 overview-agenda-tomorrow = Amanhã
-overview-agenda-now = Em andamento
 overview-agenda-join = Entrar
 overview-agenda-empty = Nenhuma reunião nos próximos 14 dias. Compartilhe seu link de agendamento para receber algumas.
 overview-agenda-all = Todos os agendamentos
@@ -457,33 +479,86 @@ overview-open-calendar = Abrir sua agenda
 overview-week-title = Esta semana
 overview-week-closed = fechado
 overview-week-total = { $booked } agendadas
-overview-week-number = Semana { $week }
 overview-week-short = S{ $week }
 overview-time-range = das { $from } às { $to }
 overview-until = até { $time }
 overview-expires = Expira { $when }
 overview-guest-and-more = { $name } e mais { $count }
-overview-mast-now = Agora: { $title } com { $guest }, até { $time }
-overview-mast-next = A seguir: { $title } com { $guest } às { $time }
-overview-mast-next-day = A seguir: { $title } com { $guest }, { $day } às { $time }
+overview-greeting-night = Olá, { $name }
+overview-greeting-morning = Bom dia, { $name }
+overview-greeting-afternoon = Boa tarde, { $name }
+overview-greeting-evening = Boa noite, { $name }
+overview-mast-date = { $date }, semana { $week }
+overview-sum-now = Sua reunião com { $guest } vai até { $time }.
+overview-sum-today = Hoje você encontra { $guest } às { $time }.
+overview-sum-tomorrow = Amanhã você encontra { $guest } às { $time }.
+overview-sum-later = Sua próxima reunião é com { $guest }, { $day }, às { $time }.
+overview-sum-more-today = { $count ->
+    [one] Depois, mais uma reunião hoje.
+   *[other] Depois, mais { $count } reuniões hoje.
+}
+overview-sum-none = Nada agendado nos próximos 14 dias.
+overview-sum-pending = { $count ->
+    [one] Uma solicitação aguarda sua resposta.
+   *[other] { $count } solicitações aguardam sua resposta.
+}
+overview-sum-guests = { $count ->
+    [one] { $name } e mais uma pessoa
+   *[other] { $name } e mais { $count } pessoas
+}
+overview-hero-title = A seguir
+overview-when-now = Agora, até { $time }
+overview-when-minutes = { $count ->
+    [one] em 1 minuto
+   *[other] em { $count } minutos
+}
+overview-when-hours = { $count ->
+    [one] em 1 hora
+   *[other] em { $count } horas
+}
+overview-when-today-night = mais tarde esta noite
+overview-when-today-morning = hoje de manhã
+overview-when-today-afternoon = hoje à tarde
+overview-when-today-evening = hoje à noite
+overview-when-tomorrow-night = amanhã de madrugada
+overview-when-tomorrow-morning = amanhã de manhã
+overview-when-tomorrow-afternoon = amanhã à tarde
+overview-when-tomorrow-evening = amanhã à noite
+overview-when-weekday-night = { $day } de madrugada
+overview-when-weekday-morning = { $day } de manhã
+overview-when-weekday-afternoon = { $day } à tarde
+overview-when-weekday-evening = { $day } à noite
+overview-when-days = { $count ->
+    [one] em 1 dia
+   *[other] em { $count } dias
+}
+overview-pulse-held = { $count ->
+    [one] Uma reunião nos últimos 30 dias, { $time } com convidados.
+   *[other] { $count } reuniões nos últimos 30 dias, { $time } com convidados.
+}
+overview-pulse-held-vs = { $count ->
+    [one] Uma reunião nos últimos 30 dias, { $time } com convidados, contra { $prev } nos 30 dias anteriores.
+   *[other] { $count } reuniões nos últimos 30 dias, { $time } com convidados, contra { $prev } nos 30 dias anteriores.
+}
+overview-pulse-booked = { $count ->
+    [one] No mesmo período chegou um novo agendamento.
+   *[other] No mesmo período chegaram { $count } novos agendamentos.
+}
+overview-pulse-booked-only = { $count ->
+    [one] Nos últimos 30 dias chegou um novo agendamento.
+   *[other] Nos últimos 30 dias chegaram { $count } novos agendamentos.
+}
+overview-links-page = Sua página
+overview-agenda-nothing-else = Nada mais nos próximos 14 dias.
+overview-setup-count = { $count ->
+    [one] 1 item para configurar
+   *[other] { $count } itens para configurar
+}
 overview-ruler-booked = Agendado
 overview-ruler-pending = Aguardando uma decisão
 overview-ruler-unavailable = Indisponível (sua agenda)
 overview-key-open = Aberto para agendamentos
-overview-ruler-aria = Hoje, das { $from } às { $to }
-overview-chart-now = agora
 overview-figures-title = Últimos 30 dias
-overview-fig-booked = Reuniões agendadas
-overview-fig-time = Tempo em reuniões
-overview-fig-cancelled = Canceladas
-overview-fig-notice = Antecedência média
-overview-fig-before = { $value } nos 30 dias anteriores
-overview-fig-prev-key = Os 30 dias anteriores
-overview-fig-days =
-    { $count ->
-        [one] 1 dia
-       *[other] { $count } dias
-    }
 
 # Dashboard bookings (templates/dashboard_bookings.html)
 
@@ -1164,6 +1239,9 @@ admin-action-refused = Ação recusada:
 admin-error-last-admin = Este é o último administrador ativo. Promova ou reative outro administrador primeiro.
 admin-logo = Logotipo da empresa
 admin-logo-help = Aparece nas páginas de agendamento públicas. PNG, JPEG, GIF ou WebP, no máximo 2 MB.
+admin-logo-light = Tema claro
+admin-logo-dark = Tema escuro
+admin-logo-dark-help = Opcional. Aparece quando o visitante usa o tema escuro; sem ele, o logotipo claro é usado nos dois temas.
 admin-logo-refused = O logotipo não foi salvo. Envie uma imagem PNG, JPEG, GIF ou WebP de no máximo 2 MB.
 admin-favicon = Favicon
 admin-favicon-help = Aparece nas abas do navegador e nos favoritos. Recomendado: um PNG quadrado de pelo menos 32×32 pixels, no máximo 512 KB. Sem um, aparece o caranguejo do calrs.

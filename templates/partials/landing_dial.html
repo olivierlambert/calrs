@@ -1,0 +1,35 @@
+{#- A meeting's length, for `d` minutes, as clock faces in the Phosphor
+    "clock" geometry (256 grid, 16-unit strokes, round caps): one face per
+    hour, its elapsed sector tinted from twelve o'clock and a fine hand at
+    the sector's end, like a stopwatch. A full hour is a fully tinted face
+    with the hand at twelve; 1 h 30 is a full face and a half one; at most
+    three faces, so from three hours on the label alone carries the rest.
+    No trigonometry: the sector is a dash of `pathLength` 100 and the hand
+    a rotated line (6 degrees a minute).
+
+    Its colour (the row's --eh) comes from landing_hue.html.
+    Include with `{% with d = et.duration_min %}`. -#}
+{%- set hours = d // 60 -%}
+{%- set rest = d % 60 -%}
+{%- set full = [hours, 3] | min -%}
+{%- set part = (rest * 100 / 60) if (d < 180 and rest > 0) else 0 -%}
+{%- set count = full + (1 if part > 0 else 0) -%}
+{%- if d < 60 -%}{%- set aria = t("landing-duration-aria", minutes=d) -%}
+{%- elif rest == 0 -%}{%- set aria = t("landing-duration-aria-h", hours=hours) -%}
+{%- else -%}{%- set aria = t("landing-duration-aria-hm", hours=hours, minutes=rest) -%}{%- endif -%}
+<span class="lp-dur" role="img" aria-label="{{ aria }}">
+  <span class="lp-dials lp-dials-{{ count }}" aria-hidden="true">
+    {%- for i in range(count) %}
+    {%- set f = 100 if i < full else part %}
+    <svg class="lp-dial" viewBox="0 0 256 256" focusable="false">
+      <circle class="lp-dial-face" cx="128" cy="128" r="96"/>
+      <circle class="lp-dial-sector" cx="128" cy="128" r="44" pathLength="100" stroke-dasharray="{{ f }} 100" transform="rotate(-90 128 128)"/>
+      <path class="lp-dial-ticks" d="M128 46v18M210 128h-14M128 210v-14M46 128h14"/>
+      <circle class="lp-dial-rim" cx="128" cy="128" r="96"/>
+      <line class="lp-dial-hand" x1="128" y1="128" x2="128" y2="62" transform="rotate({{ (f * 3.6) | round | int }} 128 128)"/>
+      <circle class="lp-dial-pin" cx="128" cy="128" r="12"/>
+    </svg>
+    {%- endfor %}
+  </span>
+  <span class="lp-dur-label lp-num" aria-hidden="true">{% if d < 60 %}{{ t("overview-duration-m", minutes=d) }}{% elif rest == 0 %}{{ t("landing-duration-h", hours=hours) }}{% else %}{{ t("landing-duration-hm", hours=hours, minutes=rest) }}{% endif %}</span>
+</span>

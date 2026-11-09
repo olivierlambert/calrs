@@ -89,6 +89,7 @@ Every user-facing string goes through Fluent (`i18n/`).
 |---|---|
 | `mod.rs` | `AppState`, `create_router` (every route), middleware (CSRF, CSP, embed), rate limiter, client IP, error helpers, sidebar context, booking error page helpers |
 | `public_pages.rs` | Public GET pages: user and team profiles, slot pickers, booking forms, dynamic group links, legacy redirects |
+| `next_free.rs` | The landing pages' "next free" hints, one request per page view: `GET /u/{username}/next-free` and `/team/{team_slug}/next-free`, for every type the page lists the first free start within 60 days and the guest's free days of the coming week; cache only, a minute's answer cache, the landing page's visibility rules, per-IP limited |
 | `booking.rs` | Booking form POST handlers for every URL shape, input validation, location resolution, SMS phone mode. The personal and team handlers are thin: `book_personal` and `book_team` do the booking (shared with the REST API) and return a `BookingRefusal` the handler renders as before |
 | `booking_actions.rs` | Token pages reached from emails: approve, decline, guest cancel, reschedule (guest and host), claim, ICS |
 | `availability.rs` | Slot computation, busy times, frequency limits, user working hours, timezone helpers, horizon, troubleshoot view |
@@ -106,7 +107,7 @@ Every user-facing string goes through Fluent (`i18n/`).
 | `ews_admin.rs` | Global Exchange impersonation: admin card, its save, confirm-address and remove-all handlers, the lock on user sources, guards on managed sources |
 | `dashboard.rs` | Dashboard overview, event types and bookings lists, host cancel/confirm, settings, avatar |
 | `booking_notes.rs` | Host notes on a booking (#173): who may read and edit them (`note_booking`, the one gate), the notes page and its POST |
-| `overview_stats.rs` | Dashboard overview data: masthead sentence, the day ruler (bookable hours from event type rules and overrides, calrs bookings, anonymous calendar busy time), the week list, the 12-week chart, the 30-day figures (tests in `tests/overview_stats.rs`). The dashboard identity (tokens, timetable rows, status marks) lives in `templates/dashboard_base.html`; `tests/guards.rs` fails if its tells come back |
+| `overview_stats.rs` | Dashboard overview data: the greeting and its day sentence, guest faces (initials and a warm hue from the name), the next meeting's countdown in words, the week strip (bookable hours from event type rules and overrides, calrs bookings, anonymous calendar busy time), the 12-week chart, the 30-day sentence (tests in `tests/overview_stats.rs`). The dashboard identity (tokens, timetable rows, status marks) lives in `templates/dashboard_base.html`; `tests/guards.rs` fails if its tells come back |
 | `directory.rs` | Searchable booking directory, visibility checks, personal meeting favorites and dashboard shortcuts |
 | `event_types.rs` | Event type forms (personal and team), availability overrides, form parsing helpers |
 | `invites.rs` | Invite Links page, invite management, bulk invites, quick links |

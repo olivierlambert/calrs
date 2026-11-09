@@ -20,7 +20,7 @@ fn wednesday_noon() -> NaiveDateTime {
 }
 
 #[test]
-fn compute_buckets_weeks_deltas_and_rates() {
+fn compute_buckets_weeks_and_the_30_days() {
     let now = wednesday_noon();
     let rows = vec![
         // Two confirmed meetings this week, one in the past, one ahead.
@@ -74,13 +74,10 @@ fn compute_buckets_weeks_deltas_and_rates() {
 
     // Created in the last 30 days: Oct 20, Nov 1, Oct 25, Nov 3, Nov 2.
     assert_eq!(s.booked30, 5);
-    assert_eq!(s.booked_prev30, 1);
-    // Held in the last 30 days: only the Nov 2 meeting (Nov 5 is ahead).
+    // Held in the last 30 days: only the Nov 2 meeting (Nov 5 is ahead);
+    // the 30 days before held the Sep 20 one.
     assert_eq!((s.held30, s.minutes30), (1, 30));
-    assert_eq!((s.held_prev30, s.minutes_prev30), (1, 45));
-    assert_eq!(s.cancelled30, 1);
-    // Notice of the bookings made in the last 30 days, start minus creation.
-    assert_eq!(s.notice_count, 5);
+    assert_eq!(s.held_prev30, 1);
     assert_eq!(s.by_type, vec![("Intro".to_string(), 3)]);
     // January is outside the chart; everything else starts inside it.
     assert_eq!(s.chart_total, 6);
@@ -127,28 +124,15 @@ fn stats_context_formats_in_the_reader_language() {
     ];
     let s = ov::compute(&rows, now, WeekStart::Mon);
     let ctx = ov::stats_context(&s, "fr");
-    let figures = ctx.get_attr("figures").unwrap();
-    let fig = |i: usize, attr: &str| {
-        figures
-            .get_item(&minijinja::Value::from(i))
-            .unwrap()
-            .get_attr(attr)
-            .unwrap()
-            .to_string()
-    };
-    assert_eq!(fig(1, "value"), "1 h 30");
-    assert_eq!(fig(1, "cmp"), "30 min les 30 jours précédents");
-    // One of the two meetings due was cancelled, none the month before:
-    // the rate, and a bar pair with the previous bar empty.
-    assert_eq!(fig(2, "value"), "50\u{202f}%");
-    assert_eq!(fig(2, "prev"), "0\u{202f}%");
-    assert_eq!(fig(2, "cmp"), "0\u{202f}% les 30 jours précédents");
-    assert_eq!(fig(2, "cur_pct"), "100.00");
-    assert_eq!(fig(2, "prev_pct"), "0.00");
-    // Booked in the last 30 days: two, against one the month before.
-    assert_eq!(fig(0, "value"), "2");
-    assert_eq!(fig(0, "prev_pct"), "50.00");
-    assert!(ctx.get_attr("has_figures").unwrap().is_true());
+    // One meeting held (1 h 30) against one the month before, and the two
+    // bookings made in the last 30 days, in French.
+    assert_eq!(
+        ctx.get_attr("pulse").unwrap().to_string(),
+        "Un rendez-vous ces 30 derniers jours, 1 h 30 avec vos invités, \
+         contre 1 les 30 jours précédents. 2 nouvelles réservations sont \
+         arrivées sur la même période."
+    );
+    assert!(ctx.get_attr("has_pulse").unwrap().is_true());
     // Weeks are numbered in French: the first tick carries the prefix.
     let columns = ctx.get_attr("columns").unwrap();
     let ticks: Vec<String> = (0..ov::WEEKS)
@@ -166,6 +150,37 @@ fn stats_context_formats_in_the_reader_language() {
     assert_eq!(ticks.last().map(String::as_str), Some("45"));
     assert_eq!(ov::duration_label("en", 45), "45 min");
     assert_eq!(ov::duration_label("de", 120), "2 Std.");
+}
+
+#[test]
+fn pulse_hides_empty_parts_and_comparisons() {
+    let mut s = ov::OverviewStats::default();
+    // Nothing in 60 days: no sentence, and the section is not drawn.
+    assert_eq!(ov::pulse_sentence(&s, "en"), "");
+    assert!(!ov::stats_context(&s, "en")
+        .get_attr("has_pulse")
+        .unwrap()
+        .is_true());
+    // Bookings came in but no meeting took place yet.
+    s.booked30 = 1;
+    assert_eq!(
+        ov::pulse_sentence(&s, "en"),
+        "One new booking came in over the last 30 days."
+    );
+    // No earlier meetings: no comparison, rather than "0" or a dash.
+    s.held30 = 8;
+    s.minutes30 = 240;
+    let line = ov::pulse_sentence(&s, "en");
+    assert_eq!(
+        line,
+        "8 meetings in the last 30 days, 4 h with guests. \
+         One new booking came in over the same period."
+    );
+    assert!(!line.contains("before"));
+    s.held_prev30 = 5;
+    assert!(ov::pulse_sentence(&s, "en").starts_with(
+        "8 meetings in the last 30 days, 4 h with guests, against 5 the 30 days before."
+    ));
 }
 
 /// Give a user an account with a unique email, so `insert_personal_et`
@@ -326,9 +341,6 @@ async fn stats_count_only_the_meetings_the_user_hosts() {
     for g in ["Mine", "Assigned", "Collective", "Claimed"] {
         assert!(guests.contains(&g.to_string()), "{g} in {guests:?}");
     }
-    assert!(ov::has_any_booking(&pool, &me).await);
-    let lonely = insert_role_user(&pool, "lonely@example.com", "user").await;
-    assert!(!ov::has_any_booking(&pool, &lonely).await);
 }
 
 #[tokio::test]
@@ -401,6 +413,16 @@ async fn agenda_keeps_ongoing_drops_past_and_only_links_web_urls() {
         agenda[1].get_attr("join_url").unwrap().to_string(),
         "https://meet.example/x"
     );
+    // The place: the video service's host for a link, the location as
+    // written otherwise (here the refused javascript: value, shown as text).
+    assert_eq!(
+        agenda[1].get_attr("place").unwrap().to_string(),
+        "meet.example"
+    );
+    assert_eq!(
+        agenda[0].get_attr("place").unwrap().to_string(),
+        "javascript:alert(1)"
+    );
 }
 
 #[tokio::test]
@@ -472,7 +494,7 @@ async fn overview_page_for_a_new_account_shows_one_next_step_and_no_zeros() {
     let steps = body
         .split("id=\"ov-start\"")
         .nth(1)
-        .and_then(|rest| rest.split("</ol>").next())
+        .and_then(|rest| rest.split("</ul>").next())
         .unwrap();
     assert_eq!(steps.matches("ui-btn--primary").count(), 1, "one next step");
     assert!(!body.contains("id=\"ov-30\""));
@@ -480,7 +502,10 @@ async fn overview_page_for_a_new_account_shows_one_next_step_and_no_zeros() {
     assert!(!body.contains("id=\"ov-types\""));
     assert!(!body.contains("id=\"ov-coming\""));
     // The week still shows the hours open for bookings.
-    assert!(body.contains("class=\"wv-open\""));
+    assert!(body.contains("class=\"wk-open\""));
+    // The hero says there is nothing yet; the greeting is the user's.
+    assert!(body.contains("Nothing is booked in the next 14 days."));
+    assert!(body.contains(", Test</h1>"), "greeting with the first name");
 }
 
 #[tokio::test]
@@ -505,13 +530,14 @@ async fn overview_page_for_a_quiet_account_keeps_one_line_and_hides_empty_sectio
             .unwrap(),
     )
     .await;
-    assert!(!body.contains("id=\"ov-start\""));
+    // No getting-started step: the set-up line is hidden unless the time
+    // zone or default-hours notes show up in the browser.
+    assert!(!body.contains("data-setup="));
+    assert!(body.contains("id=\"ov-setup\" hidden"));
     assert!(!body.contains("id=\"ov-30\""));
     assert!(!body.contains("id=\"ov-weekly-title\""));
     assert!(body.contains("No meetings in the next 14 days"));
     assert!(body.contains("data-copy-path=\"/u/testuser\""));
-    // With nothing on the right, the page is one column.
-    assert!(body.contains("class=\"cols one\""));
     // One way out to the calendar, from the week's key.
     assert!(body.contains("Open your calendar"));
 }
@@ -609,6 +635,14 @@ fn week_view_lays_out_the_week_on_one_hour_axis() {
     assert_eq!(attr(&block(0), "id"), "a");
     assert!(block(0).get_attr("past").unwrap().is_true());
     assert_eq!(attr(&day(0), "booked"), "1 h 30 min");
+    // A day with a booking on the bookings page links to it; a closed,
+    // empty day does not. Bars carry the guest's initials.
+    assert_eq!(attr(&day(0), "link"), "/dashboard/bookings#d-2026-11-02");
+    assert!(day(5).get_attr("link").unwrap().is_none());
+    // A day with only a pending request: the bookings page has no day line
+    // for it, so no link.
+    assert!(day(1).get_attr("link").unwrap().is_none());
+    assert_eq!(attr(&block(0), "initials"), "AL");
     // The tooltip carries time, title, guest and status.
     let tuesday = day(1)
         .get_attr("blocks")
@@ -656,28 +690,205 @@ fn week_view_lays_out_the_week_on_one_hour_axis() {
     assert!(ov::week_context("en", &[], &[], &[], &[], paris, now, WeekStart::Mon).is_none());
 }
 
-#[test]
-fn masthead_keeps_to_the_date_and_one_line() {
-    let today = NaiveDate::from_ymd_opt(2026, 11, 7).unwrap();
-    let quiet = ov::masthead_context("en", today, None);
-    assert_eq!(
-        quiet.get_attr("date").unwrap().to_string(),
-        "Saturday, November 7"
-    );
-    assert!(quiet.get_attr("next").unwrap().is_none());
-    let next = minijinja::context! {
+fn next_meeting(day: &str, ongoing: bool, extra: i64) -> minijinja::Value {
+    minijinja::context! {
         title => "Intro call",
         guest_name => "Jonas Weber",
-        day => "2026-11-09",
-        day_short => "Mon 9",
+        extra_guests => extra,
+        day => day,
         time => "10:00",
-        ongoing => false,
-    };
-    let mast = ov::masthead_context("en", today, Some(&next));
+        end_time => "10:30",
+        ongoing => ongoing,
+    }
+}
+
+#[test]
+fn greeting_follows_the_users_clock() {
+    assert_eq!(ov::greeting("en", 7, "Olivier"), "Good morning, Olivier");
+    assert_eq!(ov::greeting("en", 12, "Olivier"), "Good afternoon, Olivier");
+    assert_eq!(ov::greeting("en", 18, "Olivier"), "Good evening, Olivier");
+    assert_eq!(ov::greeting("en", 23, "Olivier"), "Good evening, Olivier");
+    // No "Good evening" in the small hours.
+    assert_eq!(ov::greeting("en", 2, "Olivier"), "Hello, Olivier");
+    assert_eq!(ov::greeting("fr", 20, "Olivier"), "Bonsoir, Olivier");
+    let mast = ov::masthead_context("en", dt(2026, 11, 7, 9, 30), "Olivier", None, 0, 0);
     assert_eq!(
-        mast.get_attr("next").unwrap().to_string(),
-        "Next: Intro call with Jonas Weber, Mon 9 at 10:00"
+        mast.get_attr("greeting").unwrap().to_string(),
+        "Good morning, Olivier"
     );
+    assert_eq!(
+        mast.get_attr("date_line").unwrap().to_string(),
+        "Saturday, November 7, week 45"
+    );
+}
+
+#[test]
+fn day_sentence_tells_the_next_meeting_and_the_requests() {
+    let today = NaiveDate::from_ymd_opt(2026, 11, 7).unwrap();
+    let sentence = |next: Option<&minijinja::Value>, more: i64, pending: i64| {
+        ov::day_sentence("en", today, next, more, pending)
+    };
+    // Tomorrow, one request.
+    let tomorrow = next_meeting("2026-11-08", false, 0);
+    assert_eq!(
+        sentence(Some(&tomorrow), 0, 1),
+        "Tomorrow you meet Jonas Weber at 10:00. One request is waiting for your answer."
+    );
+    // Today, with more meetings and several requests: real plurals.
+    let today_next = next_meeting("2026-11-07", false, 0);
+    assert_eq!(
+        sentence(Some(&today_next), 1, 0),
+        "Today you meet Jonas Weber at 10:00. One more meeting follows later today."
+    );
+    assert_eq!(
+        sentence(Some(&today_next), 3, 2),
+        "Today you meet Jonas Weber at 10:00. 3 more meetings follow later today. \
+         2 requests are waiting for your answer."
+    );
+    // Going on now, with additional attendees.
+    let now = next_meeting("2026-11-07", true, 2);
+    assert_eq!(
+        sentence(Some(&now), 0, 0),
+        "You are meeting Jonas Weber and 2 others until 10:30."
+    );
+    // Later: the full date.
+    let later = next_meeting("2026-11-17", false, 1);
+    assert_eq!(
+        sentence(Some(&later), 0, 0),
+        "Your next meeting is with Jonas Weber and one other on Tuesday, November 17 at 10:00."
+    );
+    // No meetings at all, and pending requests only.
+    assert_eq!(
+        sentence(None, 0, 0),
+        "Nothing is booked in the next 14 days."
+    );
+    assert_eq!(
+        sentence(None, 0, 3),
+        "Nothing is booked in the next 14 days. 3 requests are waiting for your answer."
+    );
+    // Polish needs few and many.
+    let pl = |pending| ov::day_sentence("pl", today, None, 0, pending);
+    assert!(
+        pl(2).ends_with("2 prośby czekają na twoją odpowiedź."),
+        "{}",
+        pl(2)
+    );
+    assert!(
+        pl(5).ends_with("5 próśb czeka na twoją odpowiedź."),
+        "{}",
+        pl(5)
+    );
+    // Formal German addresses the reader with Sie.
+    assert_eq!(
+        ov::day_sentence("de-formal", today, Some(&tomorrow), 0, 1),
+        "Morgen treffen Sie Jonas Weber um 10:00. Eine Anfrage wartet auf Ihre Antwort."
+    );
+}
+
+#[test]
+fn when_words_count_down_in_words() {
+    let now = dt(2026, 11, 4, 12, 0); // Wednesday noon
+    let at = |d, h, m| dt(2026, 11, d, h, m);
+    // Wall-clock difference stands in for the UTC one in a zone without
+    // a clock change.
+    let w = |start: NaiveDateTime| {
+        ov::when_words(
+            "en",
+            start,
+            start + Duration::minutes(30),
+            now,
+            (start - now).num_minutes(),
+        )
+    };
+    assert_eq!(w(at(4, 12, 25)), "in 25 minutes");
+    assert_eq!(w(at(4, 12, 1)), "in 1 minute");
+    assert_eq!(w(at(4, 13, 0)), "in 1 hour");
+    assert_eq!(w(at(4, 14, 40)), "in 3 hours");
+    assert_eq!(w(at(4, 18, 30)), "this evening");
+    assert_eq!(w(at(5, 9, 0)), "tomorrow morning");
+    assert_eq!(w(at(5, 15, 30)), "tomorrow afternoon");
+    assert_eq!(w(at(9, 15, 30)), "Monday afternoon");
+    assert_eq!(w(at(14, 10, 0)), "in 10 days");
+    // 03:00 is night, not evening.
+    assert_eq!(w(at(5, 3, 0)), "early tomorrow");
+    assert_eq!(w(at(7, 3, 0)), "early Saturday morning");
+    assert_eq!(
+        ov::when_words("en", at(4, 11, 45), at(4, 12, 15), now, -15),
+        "Now, until 12:15"
+    );
+    assert_eq!(
+        ov::when_words("de", at(10, 9, 0), at(10, 10, 0), now, 6 * 1440),
+        "Dienstagmorgen"
+    );
+}
+
+#[test]
+fn when_words_count_across_midnight_by_the_clock_difference() {
+    // 23:50, a meeting at 00:20: half an hour, not "tomorrow evening".
+    let now = dt(2026, 11, 4, 23, 50);
+    let start = dt(2026, 11, 5, 0, 20);
+    let words = ov::when_words("en", start, start + Duration::minutes(30), now, 30);
+    assert_eq!(words, "in 30 minutes");
+    // 21:00, a meeting at 01:30: four and a half hours, at night.
+    let now = dt(2026, 11, 4, 21, 0);
+    let start = dt(2026, 11, 5, 1, 30);
+    let words = ov::when_words("en", start, start + Duration::minutes(30), now, 270);
+    assert_eq!(words, "early tomorrow");
+    // 00:10, a meeting at 04:30 the same night.
+    let now = dt(2026, 11, 5, 0, 10);
+    let start = dt(2026, 11, 5, 4, 30);
+    let words = ov::when_words("en", start, start + Duration::minutes(30), now, 260);
+    assert_eq!(words, "later tonight");
+}
+
+#[tokio::test]
+async fn the_countdown_is_measured_in_real_time_across_a_clock_change() {
+    // Paris leaves summer time on 2026-10-25 at 03:00 (back to 02:00).
+    // Seen at 01:30 summer time (23:30 UTC), a meeting at 03:30 winter time
+    // (02:30 UTC) is three hours away, though the wall clock says two.
+    let pool = setup_test_db().await;
+    let me = insert_role_user(&pool, "me@example.com", "user").await;
+    let et = insert_personal_et(&pool, &me, "call").await;
+    let start = chrono::NaiveDate::from_ymd_opt(2026, 10, 25)
+        .unwrap()
+        .and_hms_opt(2, 30, 0)
+        .unwrap()
+        .and_utc();
+    insert_stat_booking(&pool, &et, "Night Owl", start, "confirmed", None, None).await;
+    let now = start - Duration::hours(3);
+    let paris: Tz = "Europe/Paris".parse().unwrap();
+    let agenda = ov::agenda(&pool, &me, paris, now, "en").await;
+    assert_eq!(agenda.len(), 1);
+    assert_eq!(agenda[0].get_attr("time").unwrap().to_string(), "03:30");
+    assert_eq!(
+        agenda[0].get_attr("when_words").unwrap().to_string(),
+        "In 3 hours"
+    );
+    assert!(!agenda[0].get_attr("ongoing").unwrap().is_true());
+}
+
+#[test]
+fn faces_are_initials_on_a_stable_warm_hue() {
+    assert_eq!(ov::initials("Nina Rossi"), "NR");
+    assert_eq!(ov::initials("  jonas  "), "J");
+    assert_eq!(ov::initials("Anna Maria von Keller"), "AK");
+    assert_eq!(ov::initials("(Guest) Ana"), "GA");
+    assert_eq!(ov::initials("łucja żak"), "ŁŻ");
+    assert_eq!(ov::initials(""), "");
+    // The same person always gets the same hue, whatever the spacing or case.
+    assert_eq!(ov::face_hue("Nina Rossi"), ov::face_hue(" nina  ROSSI "));
+    let hues: std::collections::BTreeSet<u16> = [
+        "Nina Rossi",
+        "Paul Durand",
+        "Camille Dubois",
+        "Lea Bernard",
+        "Jeanne Martin",
+        "Jonas Weber",
+    ]
+    .iter()
+    .map(|n| ov::face_hue(n))
+    .collect();
+    assert!(hues.len() >= 3, "names spread over the palette: {hues:?}");
 }
 
 fn hm(h: u32, m: u32) -> NaiveTime {
@@ -726,39 +937,6 @@ fn open_minutes_merges_types_and_follows_overrides_and_zones() {
     assert_eq!(ov::open_minutes(&[a], monday, ny)[0], (180, 360));
 }
 
-#[test]
-fn ruler_widens_to_fit_and_keeps_calendar_events_anonymous() {
-    let blocks = vec![
-        ov::RulerBlock {
-            start: 6 * 60,
-            end: 6 * 60 + 30,
-            kind: "c",
-            id: "b1".into(),
-            listed: true,
-            title: "Early call".into(),
-            guest: "Ana".into(),
-        },
-        ov::RulerBlock {
-            start: 10 * 60,
-            end: 11 * 60,
-            kind: "u",
-            id: String::new(),
-            listed: false,
-            title: String::new(),
-            guest: String::new(),
-        },
-    ];
-    let ctx = ov::ruler_context("en", &[(540, 1080)], &blocks, 9 * 60).unwrap();
-    // 06:00 is before the default 07:00 start: the scale starts at 06.
-    assert_eq!(ctx.get_attr("from_minute").unwrap().as_i64(), Some(360));
-    let rendered = ctx.get_attr("blocks").unwrap().to_string();
-    assert!(rendered.contains("Early call"));
-    let labels = ctx.get_attr("labels").unwrap();
-    assert_eq!(labels.len(), Some(1), "only bookings get a label");
-    // Nothing open and nothing booked: no ruler at all.
-    assert!(ov::ruler_context("en", &[], &[], 600).is_none());
-}
-
 #[tokio::test]
 async fn calendar_busy_leaves_out_written_back_bookings() {
     let pool = setup_test_db().await;
@@ -802,57 +980,6 @@ async fn calendar_busy_leaves_out_written_back_bookings() {
     let from = day.and_time(NaiveTime::MIN);
     let busy = ov::fetch_calendar_busy(&pool, &me, Tz::UTC, from, from + Duration::days(1)).await;
     assert_eq!(busy, vec![(dt(2026, 11, 2, 12, 0), dt(2026, 11, 2, 13, 0))]);
-}
-
-fn ruler_block(start: i64, end: i64, id: &str) -> ov::RulerBlock {
-    ov::RulerBlock {
-        start,
-        end,
-        kind: "c",
-        id: id.into(),
-        listed: true,
-        title: format!("Meeting {id}"),
-        guest: "Ana".into(),
-    }
-}
-
-/// Every label's room as (left, max_width), in percent of the track.
-fn label_rooms(ctx: &minijinja::Value) -> Vec<(f64, f64)> {
-    let labels = ctx.get_attr("labels").unwrap();
-    (0..labels.len().unwrap())
-        .map(|i| {
-            let l = labels.get_item_by_index(i).unwrap();
-            let num = |k: &str| l.get_attr(k).unwrap().to_string().parse::<f64>().unwrap();
-            (num("left"), num("max_width"))
-        })
-        .collect()
-}
-
-#[test]
-fn ruler_labels_near_the_end_of_the_span_never_panic() {
-    // 19:40 to 20:00 on the default 07:00 to 20:00 span: the label starts
-    // past 96% of the track, which used to panic in f64::clamp.
-    let open = [(9 * 60, 17 * 60)];
-    let late = [ruler_block(19 * 60 + 40, 20 * 60, "late")];
-    let ctx = ov::ruler_context("en", &open, &late, 12 * 60).unwrap();
-    assert_eq!(
-        ctx.get_attr("span_minutes").unwrap().as_i64(),
-        Some(13 * 60)
-    );
-    // One ending at the very end of the span, and one at midnight, with a
-    // label lane shared by several bookings.
-    let blocks = [
-        ruler_block(19 * 60, 20 * 60, "a"),
-        ruler_block(19 * 60 + 50, 20 * 60, "b"),
-        ruler_block(23 * 60 + 50, 24 * 60, "c"),
-    ];
-    for blocks in [&late[..], &blocks[..]] {
-        let ctx = ov::ruler_context("en", &open, blocks, 12 * 60).unwrap();
-        for (left, room) in label_rooms(&ctx) {
-            assert!(room >= 0.0, "room {room} at {left}");
-            assert!(left + room <= 100.0 + 1e-6, "room {room} at {left}");
-        }
-    }
 }
 
 /// A collective team event type with `me` and `other` as members, `other`
@@ -912,7 +1039,6 @@ async fn members_excluded_from_a_collective_type_see_neither_its_bookings_nor_it
         assert_eq!(day.len(), expected, "ruler bookings for {user}");
         let agenda = ov::agenda(&pool, user, Tz::UTC, Utc::now(), "en").await;
         assert_eq!(agenda.len(), expected, "agenda for {user}");
-        assert_eq!(ov::has_any_booking(&pool, user).await, expected == 1);
         let hours = ov::load_event_type_hours(&pool, user).await;
         assert_eq!(hours.len(), expected, "open hours for {user}");
     }
@@ -972,12 +1098,16 @@ async fn overview_links_only_the_bookings_the_bookings_page_lists() {
             .unwrap(),
     )
     .await;
-    assert!(body.contains(&format!("href=\"/dashboard/bookings#b-{own}\"")));
+    // The week strip links days, not single bookings, and only to a day
+    // line the bookings page draws: neither a pending request nor a booking
+    // that page does not list makes today a link.
+    assert!(!body.contains(&format!("#b-{own}")));
     assert!(
         !body.contains(&format!("#b-{team}")),
         "no link to a row that is not there"
     );
-    // The unlinked block keeps its tooltip.
+    assert!(!body.contains("href=\"/dashboard/bookings#d-"));
+    // The blocks keep their description.
     assert!(body.contains(", T, Team Call, Booked\""));
 
     let bookings = body_string(
@@ -1177,4 +1307,23 @@ async fn an_owner_off_the_collective_roster_does_not_see_its_bookings() {
             assert_eq!(agenda.len(), expected, "agenda for {user}");
         }
     }
+}
+
+#[tokio::test]
+async fn week_strip_day_links_land_on_a_day_line_of_the_bookings_page() {
+    let (app, pool, session, et_id) = setup_test_app().await;
+    sqlx::query("UPDATE users SET timezone = 'UTC' WHERE email = 'test@example.com'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let day = (Utc::now() + Duration::days(2)).date_naive();
+    let start = day.and_hms_opt(12, 0, 0).unwrap().and_utc();
+    insert_stat_booking(&pool, &et_id, "Day Guest", start, "confirmed", None, None).await;
+    let bookings = body_string(
+        app.oneshot(get_authed("/dashboard/bookings", &session))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(bookings.contains(&format!("id=\"d-{day}\"")), "{day}");
 }

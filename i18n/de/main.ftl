@@ -219,6 +219,32 @@ base-powered-by = Läuft mit
 profile-pick-event-type-invite = Wähle eine Terminart, um einen Termin zu buchen.
 profile-no-event-type = Noch keine Terminarten verfügbar.
 
+# Public landing pages (/u/{username}, /team/{slug}). In landing-next-free,
+# %1 is the time, filled in by the page itself.
+landing-duration-h = { $hours } Std.
+landing-duration-aria =
+    { $minutes ->
+        [one] { $minutes } Minute
+       *[other] { $minutes } Minuten
+    }
+landing-duration-hm = { $hours } Std. { $minutes }
+landing-duration-aria-h =
+    { $hours ->
+        [one] { $hours } Stunde
+       *[other] { $hours } Stunden
+    }
+landing-duration-aria-hm =
+    { $hours ->
+        [one] { $hours } Stunde
+       *[other] { $hours } Stunden
+    } { $minutes ->
+        [one] { $minutes } Minute
+       *[other] { $minutes } Minuten
+    }
+landing-next-free = Nächster Termin: %1
+landing-with-one-of = mit einem von
+landing-with-everyone = mit allen
+
 # Month and weekday names + per-locale date format patterns.
 # Used by server-side date formatters in src/i18n.rs.
 
@@ -410,10 +436,8 @@ overview-page-title = Dashboard
 overview-avail-banner-body = Deine Standardarbeitszeiten wurden auf Mo–Fr, 9:00–17:00 Uhr gesetzt. Sie gelten, wenn andere dich in dynamische Gruppentermine einbeziehen.
 overview-avail-banner-cta = Verfügbarkeit prüfen
 overview-dismiss = Ausblenden
-overview-getting-started = Erste Schritte
 overview-step-connect-calendar = Kalender verbinden
 overview-step-first-event-type = Erste Terminart anlegen
-overview-step-share-link = Buchungslink teilen
 overview-pending-approval = Warten auf Bestätigung
 overview-confirm = Bestätigen
 overview-decline = Ablehnen
@@ -421,7 +445,6 @@ overview-copy-link = Buchungslink kopieren
 overview-duration-h = { $hours } Std.
 overview-duration-m = { $minutes } Min.
 overview-duration-hm = { $hours } Std. { $minutes } Min.
-overview-percent = { $value } %
 overview-chart-title = Termine pro Woche
 overview-chart-this-week = Diese Woche
 overview-chart-week-of = Woche vom { $date }
@@ -435,7 +458,6 @@ overview-types-other = Weitere Terminarten
 overview-agenda-title = Als Nächstes
 overview-agenda-today = Heute
 overview-agenda-tomorrow = Morgen
-overview-agenda-now = Läuft gerade
 overview-agenda-join = Beitreten
 overview-agenda-empty = Keine Termine in den nächsten 14 Tagen. Teile deinen Buchungslink, um welche zu bekommen.
 overview-agenda-all = Alle Buchungen
@@ -457,33 +479,86 @@ overview-open-calendar = Deinen Kalender öffnen
 overview-week-title = Diese Woche
 overview-week-closed = geschlossen
 overview-week-total = { $booked } gebucht
-overview-week-number = KW { $week }
 overview-week-short = KW { $week }
 overview-time-range = { $from } bis { $to }
 overview-until = bis { $time }
 overview-expires = Läuft ab { $when }
 overview-guest-and-more = { $name } und { $count } weitere
-overview-mast-now = Jetzt: { $title } mit { $guest }, bis { $time }
-overview-mast-next = Als Nächstes: { $title } mit { $guest } um { $time }
-overview-mast-next-day = Als Nächstes: { $title } mit { $guest }, { $day } um { $time }
+overview-greeting-night = Hallo, { $name }
+overview-greeting-morning = Guten Morgen, { $name }
+overview-greeting-afternoon = Guten Tag, { $name }
+overview-greeting-evening = Guten Abend, { $name }
+overview-mast-date = { $date }, KW { $week }
+overview-sum-now = Gerade läuft dein Termin mit { $guest }, bis { $time }.
+overview-sum-today = Heute triffst du { $guest } um { $time }.
+overview-sum-tomorrow = Morgen triffst du { $guest } um { $time }.
+overview-sum-later = Dein nächster Termin ist mit { $guest } am { $day } um { $time }.
+overview-sum-more-today = { $count ->
+    [one] Danach folgt heute noch ein Termin.
+   *[other] Danach folgen heute noch { $count } Termine.
+}
+overview-sum-none = In den nächsten 14 Tagen ist nichts gebucht.
+overview-sum-pending = { $count ->
+    [one] Eine Anfrage wartet auf deine Antwort.
+   *[other] { $count } Anfragen warten auf deine Antwort.
+}
+overview-sum-guests = { $count ->
+    [one] { $name } und eine weitere Person
+   *[other] { $name } und { $count } weitere Personen
+}
+overview-hero-title = Als Nächstes
+overview-when-now = Läuft gerade, bis { $time }
+overview-when-minutes = { $count ->
+    [one] in 1 Minute
+   *[other] in { $count } Minuten
+}
+overview-when-hours = { $count ->
+    [one] in 1 Stunde
+   *[other] in { $count } Stunden
+}
+overview-when-today-night = später in der Nacht
+overview-when-today-morning = heute Morgen
+overview-when-today-afternoon = heute Nachmittag
+overview-when-today-evening = heute Abend
+overview-when-tomorrow-night = morgen sehr früh
+overview-when-tomorrow-morning = morgen früh
+overview-when-tomorrow-afternoon = morgen Nachmittag
+overview-when-tomorrow-evening = morgen Abend
+overview-when-weekday-night = { $day } sehr früh
+overview-when-weekday-morning = { $day }morgen
+overview-when-weekday-afternoon = { $day }nachmittag
+overview-when-weekday-evening = { $day }abend
+overview-when-days = { $count ->
+    [one] in 1 Tag
+   *[other] in { $count } Tagen
+}
+overview-pulse-held = { $count ->
+    [one] Ein Termin in den letzten 30 Tagen, { $time } mit Gästen.
+   *[other] { $count } Termine in den letzten 30 Tagen, { $time } mit Gästen.
+}
+overview-pulse-held-vs = { $count ->
+    [one] Ein Termin in den letzten 30 Tagen, { $time } mit Gästen, gegenüber { $prev } in den 30 Tagen davor.
+   *[other] { $count } Termine in den letzten 30 Tagen, { $time } mit Gästen, gegenüber { $prev } in den 30 Tagen davor.
+}
+overview-pulse-booked = { $count ->
+    [one] Im selben Zeitraum kam eine neue Buchung herein.
+   *[other] Im selben Zeitraum kamen { $count } neue Buchungen herein.
+}
+overview-pulse-booked-only = { $count ->
+    [one] In den letzten 30 Tagen kam eine neue Buchung herein.
+   *[other] In den letzten 30 Tagen kamen { $count } neue Buchungen herein.
+}
+overview-links-page = Deine Seite
+overview-agenda-nothing-else = Sonst nichts in den nächsten 14 Tagen.
+overview-setup-count = { $count ->
+    [one] 1 offener Einrichtungsschritt
+   *[other] { $count } offene Einrichtungsschritte
+}
 overview-ruler-booked = Gebucht
 overview-ruler-pending = Wartet auf Entscheidung
 overview-ruler-unavailable = Nicht verfügbar (dein Kalender)
 overview-key-open = Offen für Buchungen
-overview-ruler-aria = Heute, { $from } bis { $to }
-overview-chart-now = jetzt
 overview-figures-title = Letzte 30 Tage
-overview-fig-booked = Gebuchte Termine
-overview-fig-time = Zeit in Terminen
-overview-fig-cancelled = Storniert
-overview-fig-notice = Durchschnittlicher Vorlauf
-overview-fig-before = { $value } in den 30 Tagen davor
-overview-fig-prev-key = Die 30 Tage davor
-overview-fig-days =
-    { $count ->
-        [one] 1 Tag
-       *[other] { $count } Tage
-    }
 
 # Dashboard bookings (templates/dashboard_bookings.html)
 
@@ -1164,6 +1239,9 @@ admin-action-refused = Aktion abgelehnt:
 admin-error-last-admin = Das ist der letzte aktive Admin. Stufe zuerst einen anderen Benutzer hoch oder aktiviere einen anderen Admin.
 admin-logo = Firmenlogo
 admin-logo-help = Wird auf öffentlichen Buchungsseiten angezeigt. PNG, JPEG, GIF oder WebP, max. 2 MB.
+admin-logo-light = Helles Design
+admin-logo-dark = Dunkles Design
+admin-logo-dark-help = Optional. Wird angezeigt, wenn Besucher das dunkle Design nutzen; ohne dieses Logo wird in beiden Designs das helle Logo verwendet.
 admin-logo-refused = Das Logo wurde nicht gespeichert. Lade ein PNG-, JPEG-, GIF- oder WebP-Bild mit höchstens 2 MB hoch.
 admin-favicon = Favicon
 admin-favicon-help = Erscheint im Browser-Tab und in Lesezeichen. Empfohlen: ein quadratisches PNG ab 32×32 Pixel, max. 512 KB. Ohne eigenes Favicon erscheint die calrs-Krabbe.

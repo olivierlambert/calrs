@@ -1,0 +1,207 @@
+{#- Shared head for the two public landing pages (/u/{username} and
+    /team/{slug}). The host is set like a business card on a tint of the
+    brand accent; below it, each meeting is one ruled line led by
+    stopwatch faces of its length, coloured by that length. People get the
+    overview's per-person hue. Colours come from the theme variables only
+    (hues are mixed into them), so light, dark, every preset and custom
+    themes follow. Archivo is the dashboard's face; the booking pages keep
+    Inter, and the two never meet on one page. -#}
+<style>
+  @font-face {
+    font-family: 'Archivo';
+    font-style: normal;
+    font-weight: 100 900;
+    font-stretch: 62% 125%;
+    font-display: swap;
+    src: url(/fonts/archivo-latin-ext.woff2) format('woff2');
+    unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+  }
+  @font-face {
+    font-family: 'Archivo';
+    font-style: normal;
+    font-weight: 100 900;
+    font-stretch: 62% 125%;
+    font-display: swap;
+    src: url(/fonts/archivo-latin.woff2) format('woff2');
+    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+  }
+
+  :root {
+    --lp-tint: color-mix(in srgb, var(--text) 4%, var(--bg));
+    --lp-face: color-mix(in srgb, var(--text) 9%, var(--surface));
+    --lp-rule: color-mix(in srgb, var(--text) 13%, var(--bg));
+    --lp-rule-top: color-mix(in srgb, var(--text) 30%, var(--bg));
+    --band: color-mix(in srgb, var(--accent) 7%, var(--bg));
+    --face-mix: 26%;
+  }
+  /* The colour of a meeting's length (--eh, set on its row from a fixed
+     cool-to-warm scale, see landing_dial.html), mixed into the theme: the
+     dial's tint, its outline and ticks, its hand. Declared on the row
+     itself, since a custom property resolves where it is declared. */
+  .lp-row {
+    --dial-tint: color-mix(in srgb, hsl(var(--eh, 220) 60% 55%) 26%, var(--surface));
+    --dial-line: color-mix(in srgb, hsl(var(--eh, 220) 55% 40%) 72%, var(--text));
+    --dial-hand: hsl(var(--eh, 220) 60% 40%);
+  }
+  html.dark {
+    --lp-tint: color-mix(in srgb, var(--text) 6%, var(--bg));
+    --lp-face: color-mix(in srgb, var(--text) 14%, var(--surface));
+    --lp-rule: color-mix(in srgb, var(--text) 14%, var(--bg));
+    --band: color-mix(in srgb, var(--accent) 12%, var(--bg));
+    --face-mix: 38%;
+  }
+  html.dark .lp-row {
+    --dial-tint: color-mix(in srgb, hsl(var(--eh, 220) 55% 60%) 38%, var(--surface));
+    --dial-line: color-mix(in srgb, hsl(var(--eh, 220) 55% 70%) 70%, var(--text));
+    --dial-hand: hsl(var(--eh, 220) 65% 72%);
+  }
+
+  body {
+    font-family: 'Archivo', system-ui, sans-serif;
+    background: var(--bg);
+    font-size: 15px;
+    line-height: 1.5;
+    padding: 3rem 1.25rem 2.5rem;
+    align-items: flex-start;
+  }
+  .container { max-width: 700px; margin-top: 0; margin-bottom: 0; }
+  .lp-num { font-variant-numeric: tabular-nums; }
+
+  /* The header: logo and the host's card on a tint of the brand accent,
+     edge to edge (a tint, not a gradient). */
+  .lp-top {
+    background: var(--band);
+    box-shadow: 0 0 0 100vmax var(--band);
+    clip-path: inset(-3rem -100vmax 0 -100vmax);
+    padding-bottom: 2.25rem;
+    margin-bottom: 2.5rem;
+  }
+  /* The tenant logo (partials/public_logo.html, light and dark), quiet and
+     left. Its images keep base.html's display rules, which pick the one
+     for the theme. */
+  .lp-top .logo { text-align: left; margin-bottom: 2.5rem; }
+  .lp-top .logo img { max-height: 56px; max-width: 240px; object-fit: contain; vertical-align: top; }
+
+  /* The host, set like a business card. Photo and name share the first
+     line; the bio and the team's faces sit under the name. */
+  .lp-card { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 0 1.5rem; align-items: center; }
+  .lp-card > .lp-face { grid-row: 1; grid-column: 1; }
+  .lp-card > .lp-id { grid-row: 1; grid-column: 2; }
+  .lp-card > .lp-more { grid-row: 2; grid-column: 2; }
+  .lp-face {
+    width: 88px;
+    height: 88px;
+    border-radius: 50%;
+    overflow: hidden;
+    background: var(--lp-face);
+    color: var(--text-secondary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 650;
+    font-size: 1.6rem;
+    font-stretch: 92%;
+    flex-shrink: 0;
+  }
+  /* One hue per person (--h, the overview's face_hue), mixed into the
+     theme's surface; the initials stay in the text colour. */
+  .lp-face[style*="--h"] { background: color-mix(in srgb, hsl(var(--h) 62% 52%) var(--face-mix), var(--surface)); color: var(--text); }
+  .lp-face img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  /* A team's own picture is a mark, not a person: square, 6px corners. */
+  .lp-face.lp-face-team { border-radius: 6px; }
+  .lp-name { font-size: 2.5rem; line-height: 1.05; font-weight: 640; font-stretch: 82%; letter-spacing: -0.012em; margin: 0; color: var(--text); }
+  .lp-title { margin-top: 0.35rem; font-size: 1.0625rem; color: var(--text-secondary); }
+  .lp-bio { margin-top: 1rem; max-width: 60ch; color: var(--text-secondary); font-size: 0.975rem; line-height: 1.6; }
+  .lp-bio a { color: var(--text); text-decoration: underline; text-underline-offset: 2px; text-decoration-thickness: 1px; }
+  .lp-bio a:hover { color: var(--accent); }
+  .lp-bio code { background: var(--lp-tint); padding: 0.1em 0.3em; border-radius: 3px; font-size: 0.85em; }
+
+  /* Team members: a row of faces, each with a first name under it. */
+  .lp-members { display: flex; flex-wrap: wrap; gap: 0.9rem 1.25rem; margin-top: 1.25rem; list-style: none; }
+  .lp-member { max-width: 6.5rem; display: flex; flex-direction: column; align-items: flex-start; gap: 0.35rem; }
+  .lp-member .lp-face { width: 44px; height: 44px; font-size: 0.85rem; }
+  .lp-member-name { font-size: 0.8rem; line-height: 1.2; color: var(--text-secondary); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .lp-member-more .lp-face { color: var(--text-muted); font-variant-numeric: tabular-nums; }
+
+  /* The timetable: one ruled line per meeting. The list runs 0.75rem wider
+     than the text on each side, so the hover tint has room and the dials
+     still line up with the photo above. */
+  .lp-list { border-top: 1px solid var(--lp-rule-top); list-style: none; margin: 0 -0.75rem; }
+  .lp-row {
+    position: relative;
+    display: grid;
+    grid-template-columns: 5rem minmax(0, 1fr) auto;
+    gap: 0 1.25rem;
+    align-items: start;
+    padding: 1rem 0.75rem;
+    border-bottom: 1px solid var(--lp-rule);
+    transition: background-color 120ms ease;
+  }
+  .lp-row:hover, .lp-row:focus-within { background: var(--lp-tint); }
+
+  /* The length of a meeting as clock dials, one per hour (see
+     landing_dial.html), with the exact length written under them. */
+  .lp-dur { display: flex; flex-direction: column; align-items: center; gap: 0.3rem; }
+  .lp-dials { display: flex; gap: 4px; align-items: center; height: 36px; }
+  .lp-dial { display: block; width: 36px; height: 36px; }
+  .lp-dials-2 .lp-dial { width: 30px; height: 30px; }
+  .lp-dials-3 .lp-dial { width: 24px; height: 24px; }
+  .lp-dial-face { fill: var(--surface); }
+  .lp-dial-sector { fill: none; stroke: var(--dial-tint); stroke-width: 88; }
+  .lp-dial-rim { fill: none; stroke: var(--dial-line); stroke-width: 16; }
+  .lp-dial-ticks { fill: none; stroke: var(--dial-line); stroke-width: 12; stroke-linecap: round; }
+  .lp-dial-hand { stroke: var(--dial-hand); stroke-width: 14; stroke-linecap: round; }
+  .lp-dial-pin { fill: var(--dial-hand); }
+  .lp-dur-label { font-size: 0.85rem; font-weight: 600; line-height: 1.2; color: var(--text); white-space: nowrap; text-align: center; }
+
+  .lp-main { min-width: 0; padding-top: 0.35rem; }
+  .lp-et-title { font-size: 1.125rem; font-weight: 600; line-height: 1.3; color: var(--text); text-decoration: none; }
+  /* The title link covers the whole row, so the row is the link; links in
+     the description are lifted above that layer and keep their target. */
+  .lp-et-title::after { content: ""; position: absolute; inset: 0; }
+  .lp-et-title:focus-visible { outline: none; }
+  .lp-et-title:focus-visible::after { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .lp-row:hover .lp-et-title, .lp-et-title:focus-visible { text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 3px; }
+  .lp-vis { margin-left: 0.5rem; font-size: 0.8rem; font-weight: 400; color: var(--text-secondary); }
+  .lp-desc { margin-top: 0.3rem; color: var(--text-secondary); font-size: 0.925rem; line-height: 1.5; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .lp-desc a { position: relative; z-index: 1; color: var(--text); }
+  .lp-desc a:hover { color: var(--accent); }
+  .lp-with { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.55rem; font-size: 0.85rem; color: var(--text-secondary); }
+  /* Read by screen readers, not shown: the names behind the faces. */
+  .lp-sr { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+  .lp-with-faces { display: flex; gap: 0.25rem; }
+  .lp-with .lp-face { width: 22px; height: 22px; font-size: 0.55rem; }
+  .lp-side { display: flex; flex-direction: column; align-items: flex-end; gap: 0.5rem; padding-top: 0.45rem; }
+  .lp-next { font-size: 0.875rem; color: var(--text-secondary); white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .lp-next b { color: var(--text); font-weight: 600; }
+  .lp-next[hidden], .lp-days[hidden] { display: none; }
+  .lp-days { display: none; }
+
+  .lp-empty { padding: 1.1rem 0.75rem; border-bottom: 1px solid var(--lp-rule); color: var(--text-secondary); }
+
+  .lp-foot { margin-top: 2.5rem; margin-bottom: 2.5rem; font-size: 0.8rem; color: var(--text-muted); }
+  .lp-foot a { color: var(--text-muted); text-decoration: none; }
+  .lp-foot a:hover { color: var(--text); }
+  .lp-foot img { width: 17px; height: 14px; vertical-align: -2px; margin-left: 0.2rem; }
+
+  /* The coming week as seven small day markers, shown only when
+     landing_script.html's show_week_strip is on. */
+  .lp-days:not([hidden]) { display: flex; gap: 3px; }
+  .lp-day { display: flex; flex-direction: column; align-items: center; gap: 2px; width: 14px; font-size: 0.625rem; line-height: 1; color: var(--text-muted); }
+  .lp-day i { display: block; width: 10px; height: 10px; box-shadow: inset 0 0 0 1px var(--lp-rule-top); }
+  .lp-day.is-free i { background: var(--dial-hand); box-shadow: none; }
+
+
+  @media (max-width: 560px) {
+    body { padding: 2.25rem 1rem 2rem; }
+    .lp-top { clip-path: inset(-2.25rem -100vmax 0 -100vmax); }
+    .lp-top .logo { margin-bottom: 2rem; }
+    .lp-card { gap: 0 1rem; }
+    .lp-card > .lp-more { grid-column: 1 / -1; }
+    .lp-face { width: 72px; height: 72px; font-size: 1.35rem; }
+    .lp-name { font-size: 2rem; }
+    .lp-row { grid-template-columns: 5rem minmax(0, 1fr); gap: 0 0.85rem; min-height: 44px; }
+    .lp-dur { grid-row: span 2; }
+    .lp-side { grid-column: 2; align-items: flex-start; padding-top: 0.4rem; }
+  }
+</style>

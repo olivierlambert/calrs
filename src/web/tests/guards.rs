@@ -1169,3 +1169,39 @@ async fn h() {
         ]
     );
 }
+
+/// The vendored Phosphor icons keep their MIT licence and their README, and
+/// the template macro carries each SVG's markup unchanged: an icon edited by
+/// hand, or added without its source file, fails here.
+#[test]
+fn vendored_phosphor_icons_keep_their_licence() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let licence = include_str!("../../../assets/phosphor/LICENSE");
+    assert!(licence.starts_with("MIT License"));
+    assert!(licence.contains("Copyright (c) 2023 Phosphor Icons"));
+    let readme = include_str!("../../../assets/phosphor/README.md");
+    assert!(readme.contains("Version: **2.1.1**"));
+    assert!(readme.contains("Licence: MIT"));
+    let partial = std::fs::read_to_string(root.join("templates/partials/phosphor.html"))
+        .expect("read the icon partial");
+    let mut names = Vec::new();
+    for entry in std::fs::read_dir(root.join("assets/phosphor/regular")).expect("read icons") {
+        let path = entry.expect("icon entry").path();
+        let name = path.file_stem().unwrap().to_string_lossy().to_string();
+        let svg = std::fs::read_to_string(&path).expect("read icon");
+        let start = svg.find('>').expect("svg open tag") + 1;
+        let end = svg.rfind("</svg>").expect("svg close tag");
+        let inner: String = svg[start..end].lines().map(str::trim).collect();
+        assert!(
+            partial.contains(&format!("name == \"{name}\" -%}}{inner}")),
+            "{name}: templates/partials/phosphor.html is out of step, run assets/phosphor/gen_partial.py"
+        );
+        names.push(name);
+    }
+    assert!(names.len() >= 10, "found {names:?}");
+    assert_eq!(
+        partial.matches("name == \"").count(),
+        names.len(),
+        "every icon in the partial has its SVG in assets/phosphor/regular"
+    );
+}

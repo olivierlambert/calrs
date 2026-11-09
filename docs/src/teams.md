@@ -58,7 +58,7 @@ Additional team-specific options:
 
 ## Public team pages
 
-- **Public teams:** `/team/{slug}` — shows team profile with avatar, description, members, and event types
+- **Public teams:** `/team/{slug}` shows the team profile with avatar, description, members (faces with their first names), and event types. Each meeting says who the guest meets: "with one of" and the members' faces for round robin, "with everyone" for collective (members excluded with weight 0 are left out), and when it is next free
 - **Private teams:** `/team/{slug}?invite={token}` — same page, but requires a valid invite token
 - **Slot picker:** `/team/{slug}/{event-slug}` — shows available slots based on the scheduling mode. The sidebar displays the team avatar and stacked member avatars (members excluded via weight 0 are hidden)
 - **Legacy redirects:** `/g/{slug}` redirects to `/team/{slug}`, `/t/{token}` redirects to `/team/{slug}?invite={token}`
@@ -110,7 +110,7 @@ When a booking lands on a watched event type:
 
 **Typical setup:** a customer self-serves through a public event type, and a rotating support team watches it. Whoever has bandwidth grabs the booking — no round-robin assumptions, no manual dispatch.
 
-Configuration: in the event type editor, scroll to **Booking watchers** and pick one or more teams. Watchers can be set on any scheduling mode; they're independent from the round-robin / collective assignment.
+Configuration: in the event type editor, or on the create form once a team is picked, scroll to **Booking watchers** and pick one or more teams. Watchers can be set on any scheduling mode; they're independent from the round-robin / collective assignment.
 
 ## Multi-timezone teams
 
