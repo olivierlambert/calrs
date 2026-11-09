@@ -329,10 +329,22 @@ async fn setup_test_app() -> (Router, SqlitePool, String, String) {
     // The router (and every clone a test makes) holds the directory, so it
     // is removed once the last one is dropped.
     let data_dir = std::sync::Arc::new(TestDataDir::new());
+    // A peer, as a socket would give: a trusted local proxy, so tests that
+    // set X-Forwarded-For pick their client address.
     let router = create_router(pool.clone(), data_dir.to_path_buf(), [0u8; 32])
         .await
-        .layer(axum::Extension(data_dir));
+        .layer(axum::Extension(data_dir))
+        .layer(local_proxy_peer());
     (router, pool, session_token, et_id)
+}
+
+/// The connection info a router gets from `calrs serve`, for a router
+/// driven without a socket: a reverse proxy on the same host.
+fn local_proxy_peer() -> axum::extract::connect_info::MockConnectInfo<std::net::SocketAddr> {
+    axum::extract::connect_info::MockConnectInfo(std::net::SocketAddr::from((
+        [127, 0, 0, 1],
+        40_000,
+    )))
 }
 
 /// A data directory under the system temp dir, removed when dropped. Keep
