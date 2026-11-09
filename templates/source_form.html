@@ -2,13 +2,22 @@
 
 {% block title %}{% if editing %}{{ t("source-form-title-edit") }}{% else %}{{ t("source-form-title-add") }}{% endif %}, calrs{% endblock %}
 
+{% block main_class %}has-cards{% endblock %}
 {% block dashboard_content %}
 {% import "partials/icons.html" as ic %}
 <a href="/dashboard/sources" class="page-back">{{ ic.icon("arrow-left", 14) }}{{ t("sources-heading") }}</a>
 
+<header class="page-header">
+  <div class="page-header-text">
+    <h1 class="page-title">{% if editing %}{{ t("source-form-heading-edit") }}{% else %}{{ t("source-form-heading-add") }}{% endif %}</h1>
+    <p class="page-subtitle">{% if editing %}{{ t("source-form-subtitle-edit") }}{% else %}{{ t("source-form-subtitle-add") }}{% endif %}</p>
+  </div>
+</header>
+
 {% if not editing %}
-<div class="card" style="margin-bottom: 1.25rem;">
-  <h2>{{ t("microsoft-calendar-title") }}</h2>
+<section class="card" aria-labelledby="ms-title">
+  <div class="card-head"><h2 id="ms-title">{{ t("microsoft-calendar-title") }}</h2></div>
+  <div class="card-body">
   <p class="subtitle">{{ t("microsoft-calendar-help") }}</p>
   {% if microsoft_oauth2_configured %}
   <form method="post" action="/dashboard/sources/microsoft/connect" style="margin-top: 1rem;">
@@ -17,12 +26,13 @@
   {% else %}
   <div class="notice notice--info" style="margin-top: 1rem;"><span>{{ t("microsoft-calendar-unconfigured") }}</span></div>
   {% endif %}
-</div>
+  </div>
+</section>
 {% endif %}
 
-<div class="card">
-  <h1>{% if editing %}{{ t("source-form-heading-edit") }}{% else %}{{ t("source-form-heading-add") }}{% endif %}</h1>
-  <p class="subtitle">{% if editing %}{{ t("source-form-subtitle-edit") }}{% else %}{{ t("source-form-subtitle-add") }}{% endif %}</p>
+<section class="card" aria-labelledby="src-title">
+  <div class="card-head"><h2 id="src-title">{{ t("source-form-server-title") }}</h2></div>
+  <div class="card-body">
 
   {% if error %}
     <div class="notice notice--error error" role="alert" style="margin-top: 1rem;">{{ ic.icon("alert") }}<span>{{ error }}</span></div>
@@ -120,7 +130,7 @@
         </div>
       </div>
 
-      <div style="border-top: 1px solid var(--border); padding-top: 1.25rem; margin-top: 0.5rem;">
+      <div style="margin-top: 1.25rem;">
         <label style="display: flex; align-items: center; gap: 0.625rem; cursor: pointer; padding: 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); transition: all 0.15s ease;">
           <input type="checkbox" name="no_test" style="accent-color: var(--ink); width: 1.125rem; height: 1.125rem;">
           <div>
@@ -133,7 +143,8 @@
       <button type="submit" class="btn" style="margin-top: 1.5rem;">{% if editing %}{{ t("source-form-save") }}{% else %}{{ t("source-form-add") }}{% endif %}</button>
     </div>
   </form>
-</div>
+  </div>
+</section>
 
 <script>
 (function() {

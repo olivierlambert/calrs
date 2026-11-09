@@ -1,5 +1,6 @@
 {% extends "dashboard_base.html" %}
 {% block title %}{{ t("embed-page-title", title=event_type_title) }}, calrs{% endblock %}
+{% block main_class %}has-cards{% endblock %}
 {% block dashboard_content %}
 <style>
   /* The embed page is preview-heavy, so let it use more horizontal space than
@@ -9,15 +10,18 @@
   .embed-wrap { display: grid; grid-template-columns: 320px 1fr; gap: 1.25rem; align-items: start; }
   @media (max-width: 900px) { .embed-wrap { grid-template-columns: 1fr; } }
 
-  .embed-tabs { display: flex; gap: 0.25rem; margin-bottom: 1rem; border-bottom: 1px solid var(--border); }
+  .embed-tabs { display: flex; gap: 0.25rem; }
   .embed-tab {
     appearance: none; background: none; border: 0; padding: 0.625rem 0.875rem;
     font: inherit; font-size: 0.85rem; font-weight: 500; cursor: pointer;
-    color: var(--text-secondary); border-bottom: 2px solid transparent;
-    margin-bottom: -1px; transition: all 0.15s ease;
+    color: var(--text-secondary); border-radius: var(--r-control);
+    transition: all 0.15s ease;
   }
   .embed-tab:hover { color: var(--text); }
-  .embed-tab.active { color: var(--ink); border-bottom-color: var(--ink); font-weight: 600; }
+  .embed-tab.active { color: var(--ink); background: var(--card-bg); box-shadow: inset 0 0 0 1px var(--border); font-weight: 600; }
+  .embed-config-card .card-head.is-tools { padding-top: 0.45rem; padding-bottom: 0.45rem; }
+  .embed-config-card .embed-tab { white-space: nowrap; padding: 0.4rem 0.6rem; }
+  .embed-wrap .card { margin-bottom: 1.25rem; }
 
   .embed-config .form-row { margin-bottom: 0.875rem; }
   .embed-config label { display: block; font-size: 0.8rem; font-weight: 600; margin-bottom: 0.25rem; color: var(--text-secondary); }
@@ -69,12 +73,14 @@
   .embed-section-label { font-size: 0.7rem; font-weight: 700; color: var(--text-muted); margin: 0 0 0.4rem; }
 </style>
 
-<div class="card">
-  <div style="display:flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
-    <h1 style="margin-bottom: 0;">{{ t("embed-heading", title=event_type_title) }}</h1>
-    <a href="/dashboard/event-types" style="color: var(--text-secondary); font-size: 0.85rem; text-decoration: none;">&larr; {{ t("overrides-back-event-types") }}</a>
+<header class="page-header">
+  <div class="page-header-text">
+    <h1 class="page-title">{{ t("embed-heading", title=event_type_title) }}</h1>
+    <p class="page-subtitle">{{ t("embed-subtitle") }}</p>
   </div>
-  <p class="subtitle" style="margin-bottom: 1rem;">{{ t("embed-subtitle") }}</p>
+  <div class="page-actions"><a href="/dashboard/event-types" class="ui-btn">{{ t("overrides-back-event-types") }}</a></div>
+</header>
+<div>
 
   {% if visibility != "public" %}
   <div class="error" style="margin-bottom: 1rem;">
@@ -93,15 +99,17 @@
     {{ t("embed-need-username", path='<code>/u/&lt;' ~ (t("embed-username-placeholder") | escape) ~ '&gt;/' ~ (event_type_slug | escape) ~ '</code>', link='<a href="/dashboard/settings" style="color: var(--ink);">' ~ (t("embed-need-username-link") | escape) ~ '</a>') | safe }}
   </div>
   {% else %}
+  <div class="embed-wrap">
+    <!-- LEFT: config -->
+    <section class="card embed-config-card">
+  <div class="card-head is-tools">
   <div class="embed-tabs" role="tablist">
     <button type="button" class="embed-tab active" data-variant="inline">{{ t("embed-tab-inline") }}</button>
     <button type="button" class="embed-tab" data-variant="floating">{{ t("embed-tab-floating") }}</button>
     <button type="button" class="embed-tab" data-variant="element">{{ t("embed-tab-element") }}</button>
   </div>
-
-  <div class="embed-wrap">
-    <!-- LEFT: config -->
-    <div class="embed-config">
+  </div>
+    <div class="embed-config card-body">
       <div class="form-row">
         <label for="cfg-layout">{{ t("embed-layout") }}</label>
         <select id="cfg-layout">
@@ -196,17 +204,22 @@
         </div>
       </div>
     </div>
+    </section>
 
     <!-- RIGHT: code + preview -->
     <div>
-      <h2 class="embed-section-label">{{ t("embed-snippet") }}</h2>
-      <div style="position: relative; margin-bottom: 1rem;">
+      <section class="card" aria-labelledby="em-snippet">
+      <div class="card-head"><h2 id="em-snippet">{{ t("embed-snippet") }}</h2></div>
+      <div class="card-body" style="position: relative;">
         <pre class="embed-code-block" id="snippet-output">{{ t("embed-loading") }}</pre>
         <button type="button" class="embed-copy-btn" id="copy-btn">{{ t("settings-copy") }}</button>
       </div>
+      </section>
 
-      <h2 class="embed-section-label">{{ t("embed-preview") }}</h2>
-      <div class="embed-preview-frame" id="preview-frame"></div>
+      <section class="card" aria-labelledby="em-preview">
+      <div class="card-head"><h2 id="em-preview">{{ t("embed-preview") }}</h2></div>
+      <div class="card-body"><div class="embed-preview-frame" id="preview-frame"></div></div>
+      </section>
     </div>
   </div>
   {% endif %}
@@ -313,7 +326,7 @@
   function snippetElement() {
     return [
       '<!-- calrs element-click embed -->',
-      '<!-- ' + EMBED_I18N.attrComment.replace(/--/g, '—') + ' -->',
+      '<!-- ' + EMBED_I18N.attrComment.replace(/--/g, '\u2014') + ' -->',
       '<!--   data-calrs-link="' + snippetBase + calPath + '" -->',
       '<!--   data-calrs-config=\'' + buildConfigJs() + '\' -->',
       '<script src="' + snippetBase + '/embed.js" defer><' + '/script>'
@@ -408,7 +421,7 @@
       frame.appendChild(btn);
       previewBtn = btn;
     } else {
-      // element-click — render demo trigger elements so the user can try the
+      // element-click: render demo trigger elements so the user can try the
       // modal. On a real site they'd add data-calrs-link to their own markup;
       // here we just wire the click directly to the same modal simulation.
       var wrap = document.createElement('div');

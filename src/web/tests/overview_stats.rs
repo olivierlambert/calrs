@@ -1537,3 +1537,36 @@ async fn upcoming_pages_match_the_bookings_page() {
         );
     }
 }
+
+#[tokio::test]
+async fn overview_figures_without_a_week_keep_the_two_column_grid() {
+    // A booking made today for a date past this week gives the 30-day
+    // sentence but no chart, and with no open hours there is no week
+    // strip: the figures card is still a right-hand card, so the grid
+    // must keep its two columns instead of squeezing it into a third.
+    let (app, pool, session, et_id) = setup_test_app().await;
+    sqlx::query("DELETE FROM availability_rules")
+        .execute(&pool)
+        .await
+        .unwrap();
+    insert_stat_booking(
+        &pool,
+        &et_id,
+        "Later Guest",
+        Utc::now() + Duration::days(16),
+        "confirmed",
+        None,
+        None,
+    )
+    .await;
+    let body = body_string(
+        app.oneshot(get_authed("/dashboard", &session))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(body.contains("id=\"ov-30\""), "the 30-day sentence shows");
+    assert!(!body.contains("card wk-sec"), "no week strip");
+    assert!(body.contains("class=\"ov-grid\""), "two-column grid");
+    assert!(!body.contains("ov-grid one"));
+}

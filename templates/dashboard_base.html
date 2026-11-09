@@ -282,18 +282,108 @@
   .booking-answers dt:first-child { border-top: 0; padding-top: 0; }
   .booking-answers dd { margin: 0.1rem 0 0.35rem; color: var(--text); white-space: pre-wrap; overflow-wrap: anywhere; }
 
-  /* Fieldsets: the one place a box survives in the flow (settings and
-     forms). 1px rule, 6px radius, no shadow. */
+  /* ---- Card: the dashboard's block (owner's choice, 2026-11-09) ----
+     A --surface sheet with a 1px --border hairline and 10px corners, no
+     shadow, no stripe. Blocks are cards; rules only separate rows.
+
+       <section class="card" aria-labelledby="x">
+         <div class="card-head">
+           <h2 id="x">Title<span class="num">3</span></h2>
+           <a class="card-action" href="...">All bookings</a>
+         </div>
+         <div class="card-body">...</div>
+       </section>
+
+     .card-head   a band tinted 4% toward the text (5% in dark) that
+                  follows the card's top corners; head and body part by
+                  colour, never by a line. Title one step up (16.5px),
+                  the count (.num inside the h2) and the action slot
+                  (.card-action, a link or plain text) on its baseline.
+     .card-body   the content. Its rows (ledger, list, table rows) sit on
+                  the faint hairline (--card-rule, half --border); a
+                  list's last row drops its rule. Notices and controls
+                  keep the full --border.
+     .card-part   a second titled part in the same body, headed by
+                  .card-subhead (same type, no band).
+     .card.is-now the "now" card (Up next): accent-tinted body and a
+                  stronger accent band. One per page at most.
+     .card-head.is-tools  a band holding a list's search and filters
+                  instead of a title; every list page is built this way:
+                  search in the band, rows in the body, the pager in a
+                  .card-foot. See partials/card_list.html (search macro).
+     details.card > summary.card-head  a collapsible card; closed, the
+                  band is the whole card.
+     A card without a head keeps plain padding (the settings fieldsets).
+     A page made of cards puts its main column on --bg so the sheets
+     lift off it, by filling the main_class block with "has-cards". */
+  .dashboard-main.has-cards { background: var(--bg); }
+  .dashboard-main.has-cards .form-savebar { background: var(--bg); }
   .dashboard-main .card {
-    background: var(--paper);
-    border: 1px solid var(--rule);
-    border-radius: var(--r-float);
+    --card-px: 1.4rem;
+    --card-pt: 1.25rem;
+    --card-pb: 1.3rem;
+    --card-gap: 1rem;
+    --card-bg: var(--surface);
+    --card-band: color-mix(in srgb, var(--text) 4%, var(--surface));
+    --card-rule: color-mix(in srgb, var(--border) 50%, var(--card-bg));
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
     box-shadow: none;
-    padding: 1.25rem 1.5rem;
+    padding: var(--card-pt) var(--card-px) var(--card-pb);
     margin-bottom: 1.25rem;
+    min-width: 0;
+  }
+  html.dark .dashboard-main .card { --card-band: color-mix(in srgb, var(--text) 5%, var(--surface)); }
+  .dashboard-main .card.is-now {
+    --card-bg: color-mix(in srgb, var(--accent) 4%, var(--surface));
+    --card-band: color-mix(in srgb, var(--accent) 9%, var(--surface));
+  }
+  html.dark .dashboard-main .card.is-now {
+    --card-bg: color-mix(in srgb, var(--accent) 7%, var(--surface));
+    --card-band: color-mix(in srgb, var(--accent) 14%, var(--surface));
   }
   .dashboard-main .card > h2:first-child { color: var(--ink); font-size: 15px; }
-  @media (max-width: 480px) { .dashboard-main .card { padding: 1rem; } }
+  .card-head, .card-subhead { display: flex; align-items: baseline; justify-content: space-between; gap: 0.35rem 1rem; flex-wrap: wrap; }
+  .card-head {
+    margin: calc(-1 * var(--card-pt)) calc(-1 * var(--card-px)) var(--card-gap);
+    padding: 0.8rem var(--card-px) 0.75rem;
+    background: var(--card-band);
+    border-radius: 9px 9px 0 0;
+  }
+  .card-subhead { margin-bottom: var(--card-gap); }
+  /* A head can carry a list's tools (search, filters) instead of a title. */
+  .card-head.is-tools { align-items: center; padding-top: 0.6rem; padding-bottom: 0.6rem; }
+  .card-head.is-tools > .ui-toolbar, .card-head.is-tools > form { margin: 0; flex: 1 1 auto; }
+  .card-head.is-tools, .card-head.is-tools > form { display: flex; align-items: center; gap: 0.5rem 1rem; flex-wrap: wrap; }
+  .card-search { flex: 1 1 16rem; max-width: 30rem; }
+  .card-search input { background: var(--card-bg); }
+  .card-head .ui-btn, .card-head select { flex-shrink: 0; }
+  .card-foot { margin-top: var(--card-gap); }
+  .card-foot:empty { display: none; }
+  .card-foot .ui-pager { margin-top: 0; }
+  /* The last row of a card needs no rule under it: the card's edge ends it. */
+  /* Rows inside a card part on the faint hairline; notices, controls and
+     the old fieldset cards keep the full --border. */
+  .card-body :is(.ui-row, .tt-row, .tt-day, .soon-row, .person-row, .wh-item, .app-item, .source-item, .dest-row, .ts-row, .directory-entry, .q-row),
+  .card-body :is(.figs, .data-table) :is(th, td) { border-color: var(--card-rule); }
+  .card-body > .ui-list > .ui-row:last-of-type, .card-body.ui-list > .ui-row:last-of-type, .card :is(.ui-row, .wh-item, .app-item, .source-item, .dest-row, .ts-row, .directory-entry):last-of-type { border-bottom: 0; }
+  /* A collapsible card: <details class="card"> with <summary class="card-head">.
+     Closed, the band is the whole card. */
+  summary.card-head { cursor: pointer; list-style: none; }
+  summary.card-head::-webkit-details-marker { display: none; }
+  summary.card-head:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  details.card:not([open]) > summary.card-head { margin-bottom: calc(-1 * var(--card-pb)); border-radius: 9px; }
+  .dashboard-main .card-head h2, .dashboard-main .card-subhead h2, .dashboard-main .card-subhead h3 { margin: 0; min-width: 0; font-size: 16.5px; font-weight: 640; line-height: 1.3; color: var(--ink); letter-spacing: -0.005em; }
+  .card-head h2 .num, .card-subhead :is(h2, h3) .num { color: var(--text-muted); font-weight: 500; font-size: 15px; margin-left: 0.35rem; font-variant-numeric: tabular-nums; }
+  .card-action { font-size: 13px; color: var(--text-secondary); text-decoration: none; white-space: nowrap; }
+  a.card-action:hover { color: var(--ink); text-decoration: underline; }
+  .card-part + .card-part, .card-body > * + .card-part { margin-top: 2.1rem; }
+  .card-body > :last-child, .card-body > :last-child > .form-group:last-child { margin-bottom: 0; }
+  .card-body > .ledger > li:last-child, .card-body.ledger > li:last-child, .card-body .figs tr:last-child > * { border-bottom: 0; }
+  @media (max-width: 700px) {
+    .dashboard-main .card { --card-px: 1.05rem; --card-pt: 1.05rem; --card-pb: 1.1rem; --card-gap: 0.85rem; }
+  }
   .dashboard-main a.card:hover, .dashboard-main .card.card-link:hover { transform: none; box-shadow: none; border-color: var(--rule-strong); }
 
   /* Tags: a quiet word in a 1px frame, never a pill. */
@@ -732,7 +822,7 @@
     </div>
   </nav>
 
-  <main class="dashboard-main" id="main-content" tabindex="-1">
+  <main class="dashboard-main {% block main_class %}{% endblock %}" id="main-content" tabindex="-1">
     <div class="container {% block container_class %}{% endblock %}">
       {# The overview moves this notice into its own "To set up" strip,
          with the same ids, so the script below drives either copy. #}
