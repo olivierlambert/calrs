@@ -194,8 +194,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 | Booking questions | 2.0.0-beta.3 | Custom questions on the booking form, consent checkboxes included, with answers in emails, the calendar, webhooks and the API (#210) |
 | Host notes and time off | 2.0.0-beta.3 | Private notes on a booking for its hosts (#173), and time off that blocks every event type (#46) |
 | Write calendar per event type | 2.0.0-beta.3 | Send an event type's confirmed bookings to a calendar of its own (#47) |
+| A warmer dashboard | 2.0.0-beta.4 | A greeting, your next meeting first, faces for every guest, and one sentence about your day (#403) |
+| Landing pages as a timetable | 2.0.0-beta.4 | Host and team pages set like a business card, meetings as a timetable with clock dials coloured by length and the next free time (#406) |
+| Dark theme logo | 2.0.0-beta.4 | A second company logo for the dark theme (#404, by @optimistic5) |
+| Booking answers through the API | 2.0.0-beta.4 | `POST /api/v1/bookings` carries answers to booking questions, with consents recorded as attested (#398) |
 
 ## [Unreleased]
+
+## [2.0.0-beta.4] - 2026-11-09
+
+Fourth pre-release of 2.0, and the last planned before a release candidate: every item agreed for 2.0 is now in. A warmer dashboard (#403) and redesigned public landing pages (#406), booking answers through the REST API (#398), a dark theme logo (#404), background sync that scales to thousands of sources (#388), and a long list of correctness fixes: recurring events far from their start, BYSETPOS, YEARLY and RDATE rules (#376), clock changes (#377), invite limits, claimed bookings and collective exclusions (#373, #374, #375), team event types losing their settings on create (#400), and the Exchange client moved onto the shared XML parser (#369). Security: outbound calendar requests now connect only to addresses they checked (#363), `X-Forwarded-For` is believed only from trusted proxies, and the remaining items of the 2026 audit are closed (#85), with the HTTP client moved to reqwest 0.12. Seven migrations. **Read the upgrade notes below**, and back up your database before upgrading, as for any pre-release.
+
+Docker: this version is published as `:2.0.0-beta.4` and `:next`. `:latest` stays on the 1.23 line until 2.0 is final.
+
+Thanks to @optimistic5 for the dark theme logo, and to everyone testing the betas. Please try this one on a copy of your database and tell us what breaks.
 
 ### Added
 
@@ -402,6 +414,29 @@ Please report what looks wrong, reads badly in your language, or is slow on your
 
 - Migration 080 adds `users.last_login_at`, filled from the sessions each user still has, then stamped at each completed sign-in (after the MFA code when MFA applies).
 - Migration 081 only adds and replaces indexes. On a large database it takes a few seconds at the first start.
+
+## [1.23.3] - 2026-11-09
+
+Security release for the 1.23 line. It backports three fixes from the 2.0 work; please upgrade. No migrations. Read the two upgrade notes below before upgrading.
+
+**Upgrade notes:**
+
+- **`CALRS_TRUSTED_PROXIES`** (new). The rate limits now believe `X-Forwarded-For` only from a trusted proxy. By default calrs trusts loopback, private (RFC 1918), unique local and link-local addresses, so Caddy or Nginx on the same host or Docker network keeps working unchanged. If nothing sits in front of calrs, set `CALRS_TRUSTED_PROXIES=none`, otherwise clients on the LAN are trusted as proxies. Behind a proxy on a public address (load balancer, CDN), list its addresses or ranges, or every client is counted as the proxy. Behind a proxy with users on the LAN, list only the proxy's own address (`CALRS_TRUSTED_PROXIES=127.0.0.1`, or its Docker address). A range trusting everyone (`0.0.0.0/0`, `::/0`) is refused. `calrs serve` logs the list in force when it starts.
+- **Calendar sources on a private IP literal need the allowlist.** CalDAV and EWS sources, resource feeds and resource calendars are now checked at every request, not only when saved. This supersedes the 1.23.1 upgrade note, which said CalDAV and EWS sources were only checked when saved and so kept syncing: that is no longer true. One whose URL names a private or reserved IP address (for instance `http://10.0.0.5/` or `http://[fd12::1]/`), or whose host name now resolves to one, stops syncing until it is on the private-host allowlist (`CALRS_ALLOW_PRIVATE_HOSTS` or Admin panel, System settings). List an address as the address itself, without brackets: `CALRS_ALLOW_PRIVATE_HOSTS=fd12::1,10.0.0.5`. Behind an outbound proxy (`HTTPS_PROXY`), make sure the proxy refuses internal destinations, or list internal calendar hosts in `NO_PROXY` so calrs checks them itself. The CLI now reads the allowlist and base URL stored in the database for every command, not only `serve`.
+
+### Security
+
+- **Rate limits trust `X-Forwarded-For` only from trusted proxies** - The per-address limits on sign-in, two-factor codes and bookings took the client's address from `X-Forwarded-For` without checking who sent the header. The address now comes from the connection; the header is read only when the connection comes from a trusted proxy, every line of it in order, right to left past the trusted hops, with ports dropped. A hop that is not an address puts the request in a bucket of its own, never the proxy's. `X-Real-IP` and `Forwarded` are still ignored. IPv6 clients now count by their /64.
+- **Outbound calendar requests connect only to addresses they checked** (#363) - The private-address check on CalDAV, EWS and resource feed URLs and the request that followed it could see different addresses. These requests (CalDAV and EWS sources, Autodiscover, resource feeds and resource calendars, `calrs resource probe`) now resolve the host at each connection, refuse it when any address is private or reserved unless the host is on the private-host allowlist, and connect only to the addresses they checked. Hosts a server names on its own, a CalDAV href on another host or a redirect, go through the same check, and private IP literals are checked against the allowlist at every request. A refused request stores a generic error on the sources page and in the owner's alert email and logs the address at warn level; the check when a URL is saved no longer shows the address a host name resolved to either. Allowlist entries that are IP addresses now match any spelling of the address (`fd00:0::1` and `fd00::1`). Calendar requests still honour `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY` and `NO_PROXY`; a request through a proxy is resolved by the proxy, so filtering private addresses for it is the proxy's job, which calrs logs at startup, and a URL naming the proxy's own host is refused unless allowlisted.
+- **The captcha verification and the meeting webhook no longer follow redirects** - so the captcha secret and the signed webhook body only ever go to the configured host. The SMS gateways already followed none.
+
+## [1.23.2] - 2026-11-08
+
+Patch release for the 1.23 line. No migrations, no configuration change.
+
+### Fixed
+
+- **A booking is refused when its availability cannot be read** (#390) - Under heavy load an availability read could fail, and the booking was then accepted as if the host were free. It is now refused with a try-again page and nothing is created. This covers the calendar, existing bookings, working hours, team members, date overrides, the booking window and required resources, for new bookings on every page (personal, team round robin and collective, group links, legacy links), guest reschedules, and approvals from the dashboard or the email link. `calrs booking create` also stops with an error when a required resource cannot be checked. Slot pages keep showing times as before.
 
 ## [1.23.1] - 2026-11-08
 

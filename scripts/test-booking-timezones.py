@@ -82,7 +82,9 @@ for server_zone in ('UTC', 'Europe/Berlin'):
         expected = dt.datetime.combine(day, dt.time(10), ZoneInfo('Europe/Paris')).astimezone(dt.timezone.utc)
         assert start == expected.strftime('%Y-%m-%dT%H:%M:%SZ'), row
         assert version == 1
-        assert '10:00 AM' in request('GET', '/dashboard/bookings', admin=True)[1]
+        # The bookings list shows 24-hour times since 2.0.0-beta.1 (9946749).
+        page = request('GET', '/dashboard/bookings', admin=True)[1]
+        assert '>10:00<small>' in page and 'datetime="' + expected.strftime('%Y-%m-%dT%H:%M:%SZ') + '"' in page
         ics = request('GET', '/booking/ics/' + cancel)[1]
         assert 'DTSTART:' + expected.strftime('%Y%m%dT%H%M%SZ') in ics
         # A later event-zone change must not move an existing UTC booking.
