@@ -148,7 +148,7 @@ cal.example.com {
 |---|---|---|
 | `CALRS_DATA_DIR` | SQLite database directory | `/var/lib/calrs` (Docker/systemd) or XDG (dev) |
 | `CALRS_BASE_URL` | Public URL (required for OIDC callbacks and email action links) | `http://localhost:3000` |
-| `CALRS_ALLOW_PRIVATE_HOSTS` | Comma-separated hostnames allowed to resolve to private IPs for CalDAV/EWS (SSRF opt-out) | _(none)_ |
+| `CALRS_ALLOW_PRIVATE_HOSTS` | Comma-separated hostnames or IP addresses allowed to resolve to private IPs for CalDAV/EWS (SSRF opt-out) | _(none)_ |
 | `CALRS_TRUSTED_PROXIES` | Comma or space separated addresses and CIDR ranges of the reverse proxies whose `X-Forwarded-For` calrs believes for its rate limits, or `none` to trust no peer. A `/0` range is refused. See [Trusted proxies](./security.md#trusted-proxies) | loopback, private, unique local and link-local ranges |
 | `CALRS_SYNC_MIN_AGE` | Minimum time in seconds between two background syncs of the same calendar source, e.g. `900` for every 15 minutes. Booking pages still refresh a host's calendars on demand once they are 5 minutes old, and a source due its daily full resync is synced anyway. Capped at `86400` (one day). A failing source is retried at this interval too, so the email warning its owner (sent after three failures) comes later: after about 30 minutes at `900` | `0` (no minimum: each source about once an hour, see below) |
 | `CALRS_SYNC_CONCURRENCY` | How many calendar sources the background sync may sync at once, never more than one per server. Capped at `8`: syncs share the database's five connections with web requests | `4` |
