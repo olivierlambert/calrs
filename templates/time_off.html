@@ -1,5 +1,6 @@
 {% extends "dashboard_base.html" %}
 {% block title %}{{ t("time-off-page-title") }}, calrs{% endblock %}
+{% block main_class %}has-cards{% endblock %}
 {% block dashboard_content %}
 {% import "partials/icons.html" as ic %}
 <style>
@@ -27,8 +28,9 @@
 <div class="notice notice--success" data-flash="success">{{ flash }}</div>
 {% endif %}
 
-<section class="sec">
-  <div class="sec-h"><h2>{{ t("time-off-upcoming") }}{% if periods %}<span class="sec-count">{{ periods | length }}</span>{% endif %}</h2></div>
+<section class="card">
+  <div class="card-head"><h2>{{ t("time-off-upcoming") }}{% if periods %}<span class="num">{{ periods | length }}</span>{% endif %}</h2></div>
+  <div class="card-body">
   {% if periods %}
   <ul class="ui-list">
     {% for p in periods %}
@@ -56,11 +58,13 @@
   <p class="empty-line">{{ t("time-off-empty") }}</p>
   {% endif %}
   <p class="to-kept">{{ t("time-off-kept-notice") }} {{ t("time-off-pending-notice") }}</p>
+  </div>
 </section>
 
 {% if not impersonating %}
-<section class="sec">
-  <div class="sec-h"><h2>{{ t("time-off-add-heading") }}</h2></div>
+<section class="card">
+  <div class="card-head"><h2>{{ t("time-off-add-heading") }}</h2></div>
+  <div class="card-body">
   {% if error %}
   <div class="notice notice--error" role="alert">{{ ic.icon("alert") }}<span>{{ error }}</span></div>
   {% endif %}
@@ -91,6 +95,7 @@
     <p class="to-help">{{ t("time-off-label-help") }} {{ t("time-off-team-admins-notice") }}</p>
     <button type="submit" class="ui-btn ui-btn--primary">{{ t("time-off-add-submit") }}</button>
   </form>
+  </div>
 </section>
 {% endif %}
 

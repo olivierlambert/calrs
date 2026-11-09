@@ -1,0 +1,24 @@
+{# The list card: one way to build every list page (owner's pattern,
+   2026-11-09, first on the event types page).
+
+     <section class="card">
+       <div class="card-head is-tools">            the band holds the tools
+         {{ cl.search(placeholder) }}              a search, then any filter
+         ...selects, checkboxes, buttons...        chips, selects or a submit
+       </div>
+       <div class="card-body ui-list">...rows...</div>
+       <div class="card-foot">{% include "partials/pager.html" %}</div>
+     </section>
+
+   search() takes the input's attributes: `name`/`value` for a search sent
+   with a GET form (the server filters), `filter=true` for the in-page
+   filter of dashboard_base.html (data-search data-filter, rows marked
+   data-filter-text). The search input keeps the "/" shortcut. #}
+{% macro search(placeholder, name="", value="", id="", maxlength="", filter=false) -%}
+{% import "partials/icons.html" as ic %}
+<div class="ui-search card-search">
+  {{ ic.icon("search", 15) }}
+  <input type="search"{% if id %} id="{{ id }}"{% endif %}{% if name %} name="{{ name }}" value="{{ value }}"{% endif %}{% if maxlength %} maxlength="{{ maxlength }}"{% endif %} placeholder="{{ placeholder }}" aria-label="{{ placeholder }}" data-search{% if filter %} data-filter{% endif %}>
+  <span class="kbd">/</span>
+</div>
+{%- endmacro %}

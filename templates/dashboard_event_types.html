@@ -1,7 +1,9 @@
 {% extends "dashboard_base.html" %}
 {% block title %}{{ t("event-types-page-title") }}, calrs{% endblock %}
+{% block main_class %}has-cards{% endblock %}
 {% block dashboard_content %}
 {% import "partials/icons.html" as ic %}
+{% import "partials/card_list.html" as cl %}
 <style>
 .action-menu { position: relative; }
 .action-menu-dropdown { display: none; position: absolute; right: 0; top: calc(100% + 4px); background: var(--paper); border: 1px solid var(--rule); border-radius: var(--r-float); box-shadow: var(--shadow-float); z-index: 20; min-width: 190px; padding: 0.3rem; }
@@ -12,6 +14,7 @@
 .action-menu-dropdown .danger.is-armed { color: var(--paper); }
 .action-menu-dropdown hr { border: 0; border-top: 1px solid var(--border); margin: 0.3rem 0.2rem; }
 .et-row { align-items: center; }
+@media (max-width: 480px) { .et-row { align-items: flex-start; } }
 .et-row .ui-switch { margin-top: 0; }
 .et-switch-slot { width: 2.125rem; flex-shrink: 0; }
 .et-row .ui-row-title strong { font-weight: 600; }
@@ -31,16 +34,12 @@
   </div>
 </header>
 
-<section class="sec">
+<section class="card">
   {% if has_any %}
-  <div class="ui-toolbar">
-    <div class="ui-search">
-      {{ ic.icon("search", 15) }}
-      <input type="search" data-search data-filter placeholder="{{ t('event-types-search-placeholder') }}" aria-label="{{ t('event-types-search-placeholder') }}">
-      <span class="kbd">/</span>
-    </div>
+  <div class="card-head is-tools">
+    {{ cl.search(t("event-types-search-placeholder"), filter=true) }}
   </div>
-  <div class="ui-list" data-filter-list>
+  <div class="ui-list card-body" data-filter-list>
     {% for et in all_event_types %}
     {% set et_path = ("/team/" ~ et.team_slug) if et.is_team else ("/u/" ~ username) %}
     <div class="ui-row et-row{% if not et.enabled %} is-muted{% endif %}" data-filter-text="{{ et.title }} {{ et.slug }} {{ et.team_name }}">

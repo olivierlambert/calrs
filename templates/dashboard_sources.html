@@ -1,5 +1,6 @@
 {% extends "dashboard_base.html" %}
 {% block title %}{{ t("sources-page-title") }}, calrs{% endblock %}
+{% block main_class %}has-cards{% endblock %}
 {% block dashboard_content %}
 {% import "partials/icons.html" as ic %}
 <style>
@@ -59,7 +60,7 @@
 {% if lock_user_sources and not is_admin %}
 <div class="notice notice--info" role="status">{{ ic.icon("shield") }}<span>{{ t("sources-locked-notice") }}</span></div>
 {% endif %}
-<section class="sec">
+<section class="card">
   {% if error %}<div class="notice notice--error" role="alert" style="margin-bottom: 1rem;">{{ ic.icon("alert", 14) }}<span>{{ error }}</span></div>{% endif %}
   {% if sources %}
     {% for s in sources %}
@@ -139,8 +140,9 @@
   {% endif %}
 </section>
 {% if destinations %}
-<section class="sec" id="destinations" aria-labelledby="dest-title">
-  <div class="sec-h"><h2 id="dest-title">{{ t("sources-destinations-heading") }}</h2></div>
+<section class="card" id="destinations" aria-labelledby="dest-title">
+  <div class="card-head"><h2 id="dest-title">{{ t("sources-destinations-heading") }}</h2></div>
+  <div class="card-body">
   <p class="dest-help">{{ t("sources-destinations-help") }}</p>
   {% if destinations_status == "saved" %}
   <div class="notice notice--success" role="status" style="margin-bottom: 0.5rem;">{{ t("sources-destinations-saved") }}</div>
@@ -163,6 +165,7 @@
     {% endfor %}
     <div class="dest-actions"><button type="submit" class="ui-btn ui-btn--sm ui-btn--primary">{{ t("source-calendars-save") }}</button></div>
   </form>
+  </div>
 </section>
 {% endif %}
 {% endblock %}
