@@ -18,9 +18,9 @@ mod ews_admin;
 mod format;
 mod hosts;
 mod invites;
+mod leads;
 mod listing;
 mod mcp;
-mod leads;
 pub mod meeting;
 mod microsoft;
 mod notify;
@@ -86,7 +86,6 @@ use format::*;
 pub(crate) use hosts::booking_host_identity;
 use hosts::*;
 use invites::*;
-use microsoft::*;
 pub use leads::run_lead_purge_loop;
 use leads::{
     admin_ctx as lead_admin_ctx, admin_update_lead_capture, admin_update_legal_mentions,
@@ -94,6 +93,7 @@ use leads::{
     lead_archive, lead_badge, lead_capture_record, lead_delete, lead_delete_all, lead_export,
     lead_set_contacted, lead_unarchive, page_ctx as lead_page_ctx,
 };
+use microsoft::*;
 pub use notify::drain_emails;
 pub use notify::run_reminder_loop;
 pub(crate) use notify::spawn_emails;
