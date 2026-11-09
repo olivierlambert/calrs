@@ -247,6 +247,7 @@ duration-long-d =
     }
 # Public landing pages (/u/{username}, /team/{slug}).
 landing-with-one-of = con uno de
+faces-and-more = y { $count } más
 landing-with-everyone = con todos
 landing-hours = Disponible normalmente { $days }, de { $start } a { $end } (hora de { $zone })
 landing-days-range = de { $first } a { $last }
@@ -1472,9 +1473,6 @@ admin-guest-footer-default-help = Se usa cuando un tipo de evento no tiene pie d
 admin-guest-footer-allow-all = Permitir que cualquier usuario defina un pie de página en sus tipos de evento
 admin-guest-footer-allow-all-help = Desactivado por defecto: el pie de página sale en nombre de esta instancia, así que solo los administradores pueden escribirlo. Un pie de página definido en un tipo de evento sustituye al predeterminado de arriba.
 admin-save-guest-footer = Guardar el pie de página
-admin-page-of = Página %1 de %2
-admin-show-more-js = Mostrar %1 más
-admin-show-fewer = Mostrar menos
 
 # Admin panel: overview, section tabs, users table (templates/admin.html)
 
@@ -1641,12 +1639,6 @@ admin-sms-env-error-help = Corrige las variables de entorno <code>CALRS_SMS_*</c
 admin-sms-env-managed = Gestionado mediante <strong>variables de entorno</strong> (tienen prioridad sobre la base de datos). Cambia las variables <code>CALRS_SMS_*</code>, o quítalas para gestionar los SMS desde aquí.
 admin-sms-env-help = También puedes configurarlo con variables de entorno (que tienen prioridad sobre esto): <code>CALRS_SMS_PROVIDER</code>, <code>CALRS_SMS_API_KEY</code>, <code>CALRS_SMS_API_SECRET</code>, <code>CALRS_SMS_SENDER</code>, <code>CALRS_SMS_BASE_URL</code>, <code>CALRS_SMS_DAILY_CAP</code>, <code>CALRS_SMS_DEFAULT_COUNTRY_CODE</code>.
 admin-sms-trial-warning = <strong>El modo de prueba de Twilio está activado</strong> (<code>CALRS_SMS_TWILIO_TRIAL</code>). Los invitados reciben la plantilla predefinida de Twilio <code>sms_appointment_reminders</code> en lugar del mensaje real, y solo se llega a los números verificados en tu consola de Twilio. Es una ayuda para probar con cuentas de prueba. Quita la variable antes de aceptar reservas.
-
-admin-show-more =
-    { $count ->
-        [one] Mostrar { $count } más
-       *[other] Mostrar { $count } más
-    }
 
 # Calendar source form: backend picker (templates/source_form.html)
 

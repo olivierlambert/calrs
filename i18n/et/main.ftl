@@ -247,6 +247,7 @@ duration-long-d =
     }
 # Public landing pages (/u/{username}, /team/{slug}).
 landing-with-one-of = ühega neist
+faces-and-more = ja veel { $count }
 landing-with-everyone = kõigiga
 landing-hours = Tavaliselt saadaval { $days }, { $start }–{ $end } ({ $zone } aja järgi)
 landing-days-range = { $first }–{ $last }
@@ -1469,9 +1470,6 @@ admin-guest-footer-default-help = Kasutatakse, kui sündmuse tüübil pole oma j
 admin-guest-footer-allow-all = Luba igal kasutajal määrata jalus oma sündmuse tüüpidele
 admin-guest-footer-allow-all-help = Vaikimisi väljas: jalus lahkub selle serveri nime all, seega saavad selle kirjutada ainult administraatorid. Sündmuse tüübil määratud jalus asendab ülaltoodud vaikejaluse.
 admin-save-guest-footer = Salvesta jalus
-admin-page-of = Lehekülg %1 / %2
-admin-show-more-js = Näita veel %1
-admin-show-fewer = Näita vähem
 
 # Admin panel: overview, section tabs, users table (templates/admin.html)
 
@@ -1638,12 +1636,6 @@ admin-sms-env-error-help = Paranda keskkonnamuutujad <code>CALRS_SMS_*</code> v�
 admin-sms-env-managed = Hallatakse <strong>keskkonnamuutujatega</strong> (need on andmebaasist ülimuslikud). Muuda muutujaid <code>CALRS_SMS_*</code> või eemalda need, et hallata SMS-i siit.
 admin-sms-env-help = Teise võimalusena seadista keskkonnamuutujatega (need on siinsest ülimuslikud): <code>CALRS_SMS_PROVIDER</code>, <code>CALRS_SMS_API_KEY</code>, <code>CALRS_SMS_API_SECRET</code>, <code>CALRS_SMS_SENDER</code>, <code>CALRS_SMS_BASE_URL</code>, <code>CALRS_SMS_DAILY_CAP</code>, <code>CALRS_SMS_DEFAULT_COUNTRY_CODE</code>.
 admin-sms-trial-warning = <strong>Twilio prooviredžiim on sees</strong> (<code>CALRS_SMS_TWILIO_TRIAL</code>). Külalised saavad tegeliku sõnumi asemel Twilio eelmääratud malli <code>sms_appointment_reminders</code> ja kohale jõuavad ainult sinu Twilio konsoolis kinnitatud numbrid. See on abivahend proovikontode testimiseks. Eemalda muutuja, enne kui hakkad broneeringuid vastu võtma.
-
-admin-show-more =
-    { $count ->
-        [one] Näita veel { $count }
-       *[other] Näita veel { $count }
-    }
 
 # Calendar source form: backend picker (templates/source_form.html)
 

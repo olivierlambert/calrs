@@ -2,6 +2,13 @@
 
 use super::*;
 
+/// Faces a team's public page shows before "+N": the team's own row, and
+/// each event type's "with one of" roster.
+const TEAM_PROFILE_FACES: i64 = 12;
+const TEAM_ROSTER_FACES: i64 = 8;
+/// Faces next to the team's name on its slot page.
+pub(super) const SLOT_PAGE_FACES: i64 = 6;
+
 pub(super) fn parse_dynamic_group_usernames(
     combined: &str,
     lang: &str,
@@ -217,13 +224,24 @@ pub(super) async fn team_profile_page(
     let event_types = without_expired(&state.pool, event_types, |row| &row.5).await;
     let lang = crate::i18n::detect_from_headers(&headers);
 
-    let members: Vec<(String, String, Option<String>)> = sqlx::query_as(
-        "SELECT u.id, u.name, u.avatar_path FROM users u \
-         JOIN team_members tm ON tm.user_id = u.id \
-         WHERE tm.team_id = ? AND u.enabled = 1 \
-         ORDER BY u.name",
+    // A capped set of faces and how many there are in all: a public page
+    // never lists a large team in full.
+    let members_total: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM users u JOIN team_members tm ON tm.user_id = u.id
+         WHERE tm.team_id = ? AND u.enabled = 1",
     )
     .bind(&team_id)
+    .fetch_one(&state.pool)
+    .await
+    .unwrap_or(0);
+    let members: Vec<(String, String, Option<String>)> = sqlx::query_as(
+        "SELECT u.id, u.name, u.avatar_path FROM users u
+         JOIN team_members tm ON tm.user_id = u.id
+         WHERE tm.team_id = ? AND u.enabled = 1
+         ORDER BY u.name, u.id LIMIT ?",
+    )
+    .bind(&team_id)
+    .bind(TEAM_PROFILE_FACES)
     .fetch_all(&state.pool)
     .await
     .unwrap_or_default();
@@ -245,16 +263,39 @@ pub(super) async fn team_profile_page(
     };
 
     // Each type's roster as its slot page resolves it (enabled members not
-    // excluded by a zero weight), so "with one of" / "with everyone" names
-    // the people a guest can actually meet.
+    // excluded by a zero weight, as `team_member_ids`), so "with one of" /
+    // "with everyone" names the people a guest can actually meet: its first
+    // faces and how many there are, for every type in one query.
+    let et_ids: Vec<&str> = event_types.iter().map(|row| row.5.as_str()).collect();
+    let roster_rows: Vec<(String, String, String, Option<String>, i64)> = sqlx::query_as(
+        "SELECT et_id, id, name, avatar_path, total FROM (
+             SELECT et.id AS et_id, u.id AS id, u.name AS name, u.avatar_path AS avatar_path,
+                    ROW_NUMBER() OVER (PARTITION BY et.id ORDER BY u.name, u.id) AS rn,
+                    COUNT(*) OVER (PARTITION BY et.id) AS total
+             FROM event_types et
+             JOIN team_members tm ON tm.team_id = ?
+             JOIN users u ON u.id = tm.user_id
+             LEFT JOIN event_type_member_weights etw
+                 ON etw.user_id = u.id AND etw.event_type_id = et.id
+             WHERE et.id IN (SELECT value FROM json_each(?)) AND u.enabled = 1
+               AND COALESCE(etw.weight, 1) > 0)
+         WHERE rn <= ?
+         ORDER BY et_id, rn",
+    )
+    .bind(&team_id)
+    .bind(serde_json::to_string(&et_ids).unwrap_or_else(|_| "[]".to_string()))
+    .bind(TEAM_ROSTER_FACES)
+    .fetch_all(&state.pool)
+    .await
+    .unwrap_or_default();
     let mut et_ctx: Vec<(Option<String>, minijinja::Value)> = Vec::with_capacity(event_types.len());
     for row in &event_types {
-        let roster = team_member_ids(&state.pool, &row.5, &team_id).await;
-        let et_members: Vec<minijinja::Value> = members
+        let faces: Vec<_> = roster_rows.iter().filter(|r| r.0 == row.5).collect();
+        let et_members: Vec<minijinja::Value> = faces
             .iter()
-            .filter(|(id, _, _)| roster.contains(id))
-            .map(member_ctx)
+            .map(|r| member_ctx(&(r.1.clone(), r.2.clone(), r.3.clone())))
             .collect();
+        let et_members_total = faces.first().map_or(0, |r| r.4);
         et_ctx.push((
             row.9.clone(),
             context! {
@@ -267,6 +308,7 @@ pub(super) async fn team_profile_page(
                 location_type => &row.7,
                 requires_confirmation => row.8 != 0,
                 members => et_members,
+                members_total => et_members_total,
             },
         ));
     }
@@ -297,6 +339,7 @@ pub(super) async fn team_profile_page(
             cards => landing_cards(lang, et_ctx),
             topic_count => topic_count,
             hours => team_hours,
+            members_total => members_total,
             invite_token => invite_token_for_template,
             company_link => state.company_link.read().await.clone(),
             lang => lang,
@@ -556,23 +599,26 @@ pub(super) async fn show_group_slots(
             .unwrap_or(None)
             .flatten();
 
-    // Fetch active team members for sidebar display (exclude members with weight=0)
-    let team_members_rows: Vec<(String, String, Option<String>)> = sqlx::query_as(
-        "SELECT u.id, u.name, u.avatar_path FROM users u \
-         JOIN team_members tm ON tm.user_id = u.id \
-         LEFT JOIN event_type_member_weights etw ON etw.user_id = u.id AND etw.event_type_id = ? \
-         WHERE tm.team_id = ? AND u.enabled = 1 AND COALESCE(etw.weight, 1) > 0 \
-         ORDER BY u.name",
+    // Active team members for the sidebar (members with weight 0 left out):
+    // the first faces and how many there are in all.
+    let team_members_rows: Vec<(String, String, Option<String>, i64)> = sqlx::query_as(
+        "SELECT u.id, u.name, u.avatar_path, COUNT(*) OVER () FROM users u
+         JOIN team_members tm ON tm.user_id = u.id
+         LEFT JOIN event_type_member_weights etw ON etw.user_id = u.id AND etw.event_type_id = ?
+         WHERE tm.team_id = ? AND u.enabled = 1 AND COALESCE(etw.weight, 1) > 0
+         ORDER BY u.name, u.id LIMIT ?",
     )
     .bind(&et_id)
     .bind(&team_id)
+    .bind(SLOT_PAGE_FACES)
     .fetch_all(&state.pool)
     .await
     .unwrap_or_default();
+    let team_members_total = team_members_rows.first().map_or(0, |r| r.3);
 
     let team_members_ctx: Vec<minijinja::Value> = team_members_rows
         .iter()
-        .map(|(uid, uname, ap)| {
+        .map(|(uid, uname, ap, _)| {
             context! {
                 id => uid,
                 name => uname,
@@ -605,6 +651,7 @@ pub(super) async fn show_group_slots(
             team_has_avatar => team_avatar_path.is_some(),
             team_initials => compute_initials(&team_name),
             team_members => team_members_ctx,
+            team_members_total => team_members_total,
             days => days_ctx,
             available_dates => available_dates,
             month_label => month_label,

@@ -93,7 +93,7 @@
   </form>
 
   {% if invites %}
-  <h2 style="font-size: 1rem; margin-bottom: 0.75rem;">{{ t("invites-sent-heading") }}</h2>
+  <h2 id="invites-sent" style="font-size: 1rem; margin-bottom: 0.75rem;">{{ t("invites-sent-heading") }}</h2>
   <div style="display: flex; flex-direction: column; gap: 0.5rem;">
     {% for inv in invites %}
     <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); {% if inv.is_expired or inv.is_used %}opacity: 0.6;{% endif %}">
@@ -125,6 +125,7 @@
     </div>
     {% endfor %}
   </div>
+  {% include "partials/pager.html" %}
   {% else %}
   <div class="empty" style="padding: 1.5rem 1rem;">
     <div class="empty-icon">&#9993;</div>

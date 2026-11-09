@@ -1697,7 +1697,9 @@ pub(super) async fn guest_reschedule_slots(
     let reschedule_base = format!("/booking/reschedule/{}", token);
 
     // Empty unless the booking belongs to a whole roster, in which case the
-    // sidebar renders the team card instead of a single host.
+    // sidebar renders the team card instead of a single host: its first
+    // faces and how many there are.
+    let team_members_total = host.team.as_ref().map_or(0, |team| team.total);
     let team_members_ctx: Vec<minijinja::Value> = host
         .team
         .as_ref()
@@ -1742,6 +1744,7 @@ pub(super) async fn guest_reschedule_slots(
             team_has_avatar => host.has_avatar,
             team_initials => compute_initials(&host.name),
             team_members => team_members_ctx,
+            team_members_total => team_members_total,
             days => days_ctx,
             available_dates => available_dates,
             month_label => month_label,
@@ -2606,8 +2609,11 @@ pub(super) async fn host_reschedule_slots(
     State(state): State<Arc<AppState>>,
     auth_user: crate::auth::AuthUser,
     Path(booking_id): Path<String>,
+    Query(query): Query<HashMap<String, String>>,
 ) -> impl IntoResponse {
     let user = &auth_user.user;
+    // The bookings page (page, search) the host came from.
+    let return_to = bookings_return(query.get("return_to").map(String::as_str), None);
     // Dashboard handler: no Accept-Language available, so honour the user's
     // saved preference and fall back to English. Once the dashboard is
     // translated this should switch to crate::i18n::resolve(...).
@@ -2628,7 +2634,7 @@ pub(super) async fn host_reschedule_slots(
 
     let (bid, guest_name, guest_email, start_at, end_at, event_title) = match booking {
         Some(b) => b,
-        None => return Redirect::to("/dashboard/bookings").into_response(),
+        None => return Redirect::to(&return_to).into_response(),
     };
 
     let (start_at, end_at) = crate::booking_time::wall_strings(
@@ -2655,6 +2661,7 @@ pub(super) async fn host_reschedule_slots(
             date_label => date_label,
             start_time => start_time,
             end_time => end_time,
+            return_to => return_to,
         })
         .unwrap_or_else(|e| internal_error_body("template render", &e));
 
@@ -2672,20 +2679,20 @@ pub(super) async fn host_reschedule_booking(
     if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
         return resp;
     }
-    reschedule_redirect(host_request_reschedule(&state, &auth_user.user, &booking_id, false).await)
+    let outcome = host_request_reschedule(&state, &auth_user.user, &booking_id, false).await;
+    reschedule_redirect(outcome, form.return_to.as_deref())
 }
 
-/// The dashboard page a reschedule request (or resend) returns to.
-fn reschedule_redirect(outcome: HostReschedule) -> Response {
-    let to = match outcome {
-        HostReschedule::NoBookableDates => "/dashboard/bookings?error=no-bookable-dates",
-        HostReschedule::AlreadyRequested => "/dashboard/bookings?error=reschedule-pending",
-        HostReschedule::ResendTooSoon => "/dashboard/bookings?error=reschedule-resend-too-soon",
-        HostReschedule::Requested | HostReschedule::NotFound | HostReschedule::NotRequested => {
-            "/dashboard/bookings"
-        }
+/// The dashboard page a reschedule request (or resend) returns to: the
+/// page of the bookings list it was asked from (`bookings_return`).
+fn reschedule_redirect(outcome: HostReschedule, return_to: Option<&str>) -> Response {
+    let error = match outcome {
+        HostReschedule::NoBookableDates => Some("no-bookable-dates"),
+        HostReschedule::AlreadyRequested => Some("reschedule-pending"),
+        HostReschedule::ResendTooSoon => Some("reschedule-resend-too-soon"),
+        HostReschedule::Requested | HostReschedule::NotFound | HostReschedule::NotRequested => None,
     };
-    Redirect::to(to).into_response()
+    Redirect::to(&bookings_return(return_to, error)).into_response()
 }
 
 /// Host: email the guest the pending reschedule request again, with the same
@@ -2695,12 +2702,13 @@ pub(super) async fn host_resend_reschedule(
     auth_user: crate::auth::AuthUser,
     headers: HeaderMap,
     Path(booking_id): Path<String>,
-    Form(form): Form<CsrfForm>,
+    Form(form): Form<BookingActionForm>,
 ) -> Response {
     if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
         return resp;
     }
-    reschedule_redirect(host_request_reschedule(&state, &auth_user.user, &booking_id, true).await)
+    let outcome = host_request_reschedule(&state, &auth_user.user, &booking_id, true).await;
+    reschedule_redirect(outcome, form.return_to.as_deref())
 }
 
 /// A pending reschedule request is emailed again at most this often.

@@ -16,11 +16,12 @@
       {% if et.scheduling_mode is defined and et.members is defined and et.members %}
       <div class="lp-with">
         <span>{% if et.scheduling_mode == "collective" %}{{ t("landing-with-everyone") }}{% else %}{{ t("landing-with-one-of") }}{% endif %}</span>
-        <span class="lp-sr">{% for m in et.members %}{{ m.name }}{% if not loop.last %}, {% endif %}{% endfor %}</span>
+        {%- set more = (et.members_total if et.members_total is defined else et.members|length) - et.members|length %}
+        <span class="lp-sr">{% for m in et.members %}{{ m.name }}{% if not loop.last %}, {% endif %}{% endfor %}{% if more > 0 %} {{ t("faces-and-more", count=more) }}{% endif %}</span>
         <span class="lp-with-faces" aria-hidden="true">
-          {% for m in et.members %}{% if loop.index <= 8 %}<span class="lp-face" data-face="{{ m.name }}" title="{{ m.name }}">{% if m.has_avatar %}<img src="/avatar/{{ m.id }}" alt="">{% else %}{{ m.initials }}{% endif %}</span>{% endif %}{% endfor %}
+          {% for m in et.members %}<span class="lp-face" data-face="{{ m.name }}" title="{{ m.name }}">{% if m.has_avatar %}<img src="/avatar/{{ m.id }}" alt="">{% else %}{{ m.initials }}{% endif %}</span>{% endfor %}
         </span>
-        {% if et.members|length > 8 %}<span class="lp-num" aria-hidden="true">+{{ et.members|length - 8 }}</span>{% endif %}
+        {% if more > 0 %}<span class="lp-num" aria-hidden="true">+{{ more }}</span>{% endif %}
       </div>
       {% endif %}
     </div>

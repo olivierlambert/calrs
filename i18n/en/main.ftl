@@ -260,6 +260,7 @@ duration-long-d =
     }
 # Public landing pages (/u/{username}, /team/{slug}).
 landing-with-one-of = with one of
+faces-and-more = and { $count } more
 landing-with-everyone = with everyone
 # landing-hours, -two and -vary read the host's usual weekly hours; $days is
 # landing-days-range, landing-days-every or a list joined with list-and. In
@@ -1490,9 +1491,6 @@ admin-guest-footer-default-help = Used when an event type has no footer of its o
 admin-guest-footer-allow-all = Let all users set a footer on their own event types
 admin-guest-footer-allow-all-help = Off by default: the footer goes out under this instance's name, so only admins may write one. A footer set on an event type replaces the default above.
 admin-save-guest-footer = Save footer
-admin-page-of = Page %1 of %2
-admin-show-more-js = Show %1 more
-admin-show-fewer = Show fewer
 
 # Admin panel: overview, section tabs, users table (templates/admin.html)
 
@@ -1659,12 +1657,6 @@ admin-sms-env-error-help = Fix the <code>CALRS_SMS_*</code> environment variable
 admin-sms-env-managed = Managed via <strong>environment variables</strong> (overrides the database). Edit the <code>CALRS_SMS_*</code> variables to change it, or unset them to manage SMS from here.
 admin-sms-env-help = Alternatively, configure via environment variables (which override this): <code>CALRS_SMS_PROVIDER</code>, <code>CALRS_SMS_API_KEY</code>, <code>CALRS_SMS_API_SECRET</code>, <code>CALRS_SMS_SENDER</code>, <code>CALRS_SMS_BASE_URL</code>, <code>CALRS_SMS_DAILY_CAP</code>, <code>CALRS_SMS_DEFAULT_COUNTRY_CODE</code>.
 admin-sms-trial-warning = <strong>Twilio trial mode is on</strong> (<code>CALRS_SMS_TWILIO_TRIAL</code>). Guests receive Twilio's predefined <code>sms_appointment_reminders</code> template, not the real message, and only numbers verified in your Twilio console will be reached. This is a testing aid for trial accounts. Unset the variable before taking bookings.
-
-admin-show-more =
-    { $count ->
-        [one] Show { $count } more
-       *[other] Show { $count } more
-    }
 
 # Calendar source form: backend picker (templates/source_form.html)
 

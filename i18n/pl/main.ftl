@@ -257,6 +257,7 @@ duration-long-d =
     }
 # Public landing pages (/u/{username}, /team/{slug}).
 landing-with-one-of = z jedną z osób
+faces-and-more = i jeszcze { $count }
 landing-with-everyone = ze wszystkimi
 landing-hours = Dostępność: zwykle { $days }, od { $start } do { $end } (strefa czasowa: { $zone })
 landing-days-range = { $first }–{ $last }
@@ -1561,9 +1562,6 @@ admin-guest-footer-default-help = Używana, gdy typ wydarzenia nie ma własnej s
 admin-guest-footer-allow-all = Pozwól każdemu użytkownikowi ustawiać stopkę w swoich typach wydarzeń
 admin-guest-footer-allow-all-help = Domyślnie wyłączone: stopka wychodzi w imieniu tej instancji, więc tylko administratorzy mogą ją wpisać. Stopka ustawiona w typie wydarzenia zastępuje domyślną powyżej.
 admin-save-guest-footer = Zapisz stopkę
-admin-page-of = Strona %1 z %2
-admin-show-more-js = Pokaż o %1 więcej
-admin-show-fewer = Pokaż mniej
 
 # Admin panel: overview, section tabs, users table (templates/admin.html)
 
@@ -1733,14 +1731,6 @@ admin-sms-env-error-help = Popraw zmienne środowiskowe <code>CALRS_SMS_*</code>
 admin-sms-env-managed = Zarządzane przez <strong>zmienne środowiskowe</strong> (mają pierwszeństwo przed bazą danych). Zmień zmienne <code>CALRS_SMS_*</code> albo usuń je, aby zarządzać SMS-ami stąd.
 admin-sms-env-help = Możesz też skonfigurować to zmiennymi środowiskowymi (mają pierwszeństwo przed tym): <code>CALRS_SMS_PROVIDER</code>, <code>CALRS_SMS_API_KEY</code>, <code>CALRS_SMS_API_SECRET</code>, <code>CALRS_SMS_SENDER</code>, <code>CALRS_SMS_BASE_URL</code>, <code>CALRS_SMS_DAILY_CAP</code>, <code>CALRS_SMS_DEFAULT_COUNTRY_CODE</code>.
 admin-sms-trial-warning = <strong>Tryb próbny Twilio jest włączony</strong> (<code>CALRS_SMS_TWILIO_TRIAL</code>). Goście dostają predefiniowany szablon Twilio <code>sms_appointment_reminders</code> zamiast prawdziwej wiadomości, a dotrzeć można tylko na numery zweryfikowane w twojej konsoli Twilio. To pomoc przy testowaniu na kontach próbnych. Usuń tę zmienną, zanim zaczniesz przyjmować rezerwacje.
-
-admin-show-more =
-    { $count ->
-        [one] Pokaż o { $count } więcej
-        [few] Pokaż o { $count } więcej
-        [many] Pokaż o { $count } więcej
-       *[other] Pokaż o { $count } więcej
-    }
 
 # Calendar source form: backend picker (templates/source_form.html)
 

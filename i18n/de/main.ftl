@@ -247,6 +247,7 @@ duration-long-d =
     }
 # Public landing pages (/u/{username}, /team/{slug}).
 landing-with-one-of = mit einem von
+faces-and-more = und { $count } weitere
 landing-with-everyone = mit allen
 landing-hours = Meist verfügbar { $days }, { $start } bis { $end } Uhr (Ortszeit { $zone })
 landing-days-range = { $first } bis { $last }
@@ -1469,9 +1470,6 @@ admin-guest-footer-default-help = Wird verwendet, wenn eine Terminart keine eige
 admin-guest-footer-allow-all = Allen Benutzern erlauben, eine Fußzeile für ihre Terminarten festzulegen
 admin-guest-footer-allow-all-help = Standardmäßig aus: Die Fußzeile geht im Namen dieser Instanz hinaus, daher dürfen nur Administratoren eine schreiben. Eine an einer Terminart festgelegte Fußzeile ersetzt die Standard-Fußzeile oben.
 admin-save-guest-footer = Fußzeile speichern
-admin-page-of = Seite %1 von %2
-admin-show-more-js = %1 weitere anzeigen
-admin-show-fewer = Weniger anzeigen
 
 # Admin panel: overview, section tabs, users table (templates/admin.html)
 
@@ -1638,12 +1636,6 @@ admin-sms-env-error-help = Korrigiere die Umgebungsvariablen <code>CALRS_SMS_*</
 admin-sms-env-managed = Verwaltet über <strong>Umgebungsvariablen</strong> (haben Vorrang vor der Datenbank). Ändere die Variablen <code>CALRS_SMS_*</code> oder entferne sie, um SMS hier zu verwalten.
 admin-sms-env-help = Alternativ über Umgebungsvariablen konfigurieren (sie haben Vorrang): <code>CALRS_SMS_PROVIDER</code>, <code>CALRS_SMS_API_KEY</code>, <code>CALRS_SMS_API_SECRET</code>, <code>CALRS_SMS_SENDER</code>, <code>CALRS_SMS_BASE_URL</code>, <code>CALRS_SMS_DAILY_CAP</code>, <code>CALRS_SMS_DEFAULT_COUNTRY_CODE</code>.
 admin-sms-trial-warning = <strong>Der Twilio-Testmodus ist aktiv</strong> (<code>CALRS_SMS_TWILIO_TRIAL</code>). Gäste erhalten Twilios vordefinierte Vorlage <code>sms_appointment_reminders</code> statt der echten Nachricht, und nur in deiner Twilio-Konsole verifizierte Nummern werden erreicht. Das ist eine Testhilfe für Testkonten. Entferne die Variable, bevor du Buchungen annimmst.
-
-admin-show-more =
-    { $count ->
-        [one] { $count } weitere anzeigen
-       *[other] { $count } weitere anzeigen
-    }
 
 # Calendar source form: backend picker (templates/source_form.html)
 

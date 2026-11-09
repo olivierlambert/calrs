@@ -12,8 +12,9 @@
   </div>
 
   <form method="post" style="margin-top: 1.25rem;">
+    <input type="hidden" name="return_to" value="{{ return_to }}">
     <button type="submit" class="btn" style="background: var(--accent);">{{ t("host-resched-button") }}</button>
-    <a href="/dashboard/bookings" style="display: inline-block; margin-left: 0.75rem; color: var(--text-muted); text-decoration: none; font-size: 0.9rem;">{{ t("host-resched-cancel-link") }}</a>
+    <a href="{{ return_to }}" style="display: inline-block; margin-left: 0.75rem; color: var(--text-muted); text-decoration: none; font-size: 0.9rem;">{{ t("host-resched-cancel-link") }}</a>
   </form>
 </div>
 {% endblock %}

@@ -22,15 +22,15 @@
       {% if team_description %}<div class="lp-bio">{{ team_description|safe }}</div>{% endif %}
       {% if members %}
       <ul class="lp-members">
-        {% for m in members %}{% if loop.index <= 12 %}
+        {% for m in members %}
         <li class="lp-member" title="{{ m.name }}">
           <span class="lp-face" data-face="{{ m.name }}">{% if m.has_avatar %}<img src="/avatar/{{ m.id }}" alt="">{% else %}{{ m.initials }}{% endif %}</span>
           <span class="lp-member-name">{{ m.first_name if m.first_name is defined and m.first_name else m.name }}</span>
         </li>
-        {% endif %}{% endfor %}
-        {% if members|length > 12 %}
-        <li class="lp-member lp-member-more" title="{{ t('teams-member-count', count=members|length) }}">
-          <span class="lp-face">+{{ members|length - 12 }}</span>
+        {% endfor %}
+        {% if members_total > members|length %}
+        <li class="lp-member lp-member-more" title="{{ t('teams-member-count', count=members_total) }}">
+          <span class="lp-face">+{{ members_total - members|length }}</span>
         </li>
         {% endif %}
       </ul>

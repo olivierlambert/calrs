@@ -37,7 +37,11 @@
 <section class="card">
   {% if has_any %}
   <div class="card-head is-tools">
-    {{ cl.search(t("event-types-search-placeholder"), filter=true) }}
+    {#- Searches every page on the server (Enter); typing narrows the rows
+        on this page at once. #}
+    <form method="get" action="/dashboard/event-types" role="search">
+      {{ cl.search(t("event-types-search-placeholder"), name="q", value=q, maxlength=search_max, filter=true) }}
+    </form>
   </div>
   <div class="ui-list card-body" data-filter-list>
     {% for et in all_event_types %}
@@ -117,8 +121,9 @@
       </div>
     </div>
     {% endfor %}
-    <p class="ui-filter-empty" data-filter-empty hidden>{{ t("dash-no-matches") }}</p>
+    <p class="ui-filter-empty" data-filter-empty{% if all_event_types %} hidden{% endif %}>{{ t("dash-no-matches") }}</p>
   </div>
+  {% if pager %}<div class="card-foot">{% include "partials/pager.html" %}</div>{% endif %}
   {% else %}
     <p class="empty-line">{{ t("event-types-empty", link='<a href="/dashboard/event-types/new">' ~ (t("event-types-empty-link-label") | escape) ~ '</a>') | safe }}</p>
   {% endif %}

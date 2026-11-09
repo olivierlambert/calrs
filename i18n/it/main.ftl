@@ -247,6 +247,7 @@ duration-long-d =
     }
 # Public landing pages (/u/{username}, /team/{slug}).
 landing-with-one-of = con uno di
+faces-and-more = e altri { $count }
 landing-with-everyone = con tutti
 landing-hours = Di solito disponibile { $days }, dalle { $start } alle { $end } (ora di { $zone })
 landing-days-range = dal { $first } al { $last }
@@ -1469,9 +1470,6 @@ admin-guest-footer-default-help = Usato quando un tipo di evento non ha un piè 
 admin-guest-footer-allow-all = Consenti a ogni utente di impostare un piè di pagina sui propri tipi di evento
 admin-guest-footer-allow-all-help = Disattivato per impostazione predefinita: il piè di pagina parte a nome di questa istanza, quindi solo gli amministratori possono scriverne uno. Un piè di pagina impostato su un tipo di evento sostituisce quello predefinito qui sopra.
 admin-save-guest-footer = Salva il piè di pagina
-admin-page-of = Pagina %1 di %2
-admin-show-more-js = Mostra altri %1
-admin-show-fewer = Mostra meno
 
 # Admin panel: overview, section tabs, users table (templates/admin.html)
 
@@ -1638,12 +1636,6 @@ admin-sms-env-error-help = Correggi le variabili d'ambiente <code>CALRS_SMS_*</c
 admin-sms-env-managed = Gestito tramite <strong>variabili d'ambiente</strong> (hanno la precedenza sul database). Modifica le variabili <code>CALRS_SMS_*</code>, oppure rimuovile per gestire gli SMS da qui.
 admin-sms-env-help = In alternativa puoi configurarlo con variabili d'ambiente (che hanno la precedenza su questo): <code>CALRS_SMS_PROVIDER</code>, <code>CALRS_SMS_API_KEY</code>, <code>CALRS_SMS_API_SECRET</code>, <code>CALRS_SMS_SENDER</code>, <code>CALRS_SMS_BASE_URL</code>, <code>CALRS_SMS_DAILY_CAP</code>, <code>CALRS_SMS_DEFAULT_COUNTRY_CODE</code>.
 admin-sms-trial-warning = <strong>La modalità di prova Twilio è attiva</strong> (<code>CALRS_SMS_TWILIO_TRIAL</code>). Gli ospiti ricevono il modello predefinito di Twilio <code>sms_appointment_reminders</code> invece del messaggio vero, e vengono raggiunti solo i numeri verificati nella tua console Twilio. È un ausilio per provare con account di prova. Rimuovi la variabile prima di accettare prenotazioni.
-
-admin-show-more =
-    { $count ->
-        [one] Mostra altro { $count }
-       *[other] Mostra altri { $count }
-    }
 
 # Calendar source form: backend picker (templates/source_form.html)
 
