@@ -413,63 +413,76 @@ fn posted_reminder_minutes(form: &EventTypeForm) -> Option<i32> {
 }
 
 /// Stores the member weights the create form posts for a new team event
-/// type (`"uid1:3,uid2:1"`: round-robin priority, or 0 for a member a
-/// collective event type excludes). Entries for users who are not members
-/// of `team_id` are ignored.
-async fn save_created_member_weights(pool: &SqlitePool, et_id: &str, team_id: &str, raw: &str) {
+/// type (`"uid1:3,uid2:1"`: round-robin priority 1 to 3, or 0 for a member a
+/// collective event type excludes), inside the event type's transaction.
+/// Weights are clamped to the 0..=3 the edit form's priority buttons
+/// produce, and entries for users who are not members of `team_id` are
+/// ignored.
+async fn save_created_member_weights(
+    tx: &mut Tx<'_>,
+    et_id: &str,
+    team_id: &str,
+    raw: &str,
+) -> sqlx::Result<()> {
     if raw.is_empty() {
-        return;
+        return Ok(());
     }
-    let valid_members: Vec<(String,)> =
-        sqlx::query_as("SELECT user_id FROM team_members WHERE team_id = ?")
+    let members: std::collections::HashSet<String> =
+        sqlx::query_scalar("SELECT user_id FROM team_members WHERE team_id = ?")
             .bind(team_id)
-            .fetch_all(pool)
-            .await
-            .unwrap_or_default();
-    let valid_set: std::collections::HashSet<&str> =
-        valid_members.iter().map(|(id,)| id.as_str()).collect();
-
+            .fetch_all(&mut **tx)
+            .await?
+            .into_iter()
+            .collect();
     for entry in raw.split(',') {
-        let parts: Vec<&str> = entry.split(':').collect();
-        if parts.len() == 2 {
-            let uid = parts[0].trim();
-            let weight: i64 = parts[1].trim().parse().unwrap_or(1);
-            if !uid.is_empty() && valid_set.contains(uid) {
-                let _ = sqlx::query(
-                    "INSERT OR REPLACE INTO event_type_member_weights (event_type_id, user_id, weight) VALUES (?, ?, ?)",
-                )
-                .bind(et_id)
-                .bind(uid)
-                .bind(weight)
-                .execute(pool)
-                .await;
-            }
+        let Some((uid, weight)) = entry.split_once(':') else {
+            continue;
+        };
+        let uid = uid.trim();
+        if !members.contains(uid) {
+            continue;
         }
+        let weight = weight.trim().parse::<i64>().unwrap_or(1).clamp(0, 3);
+        sqlx::query(
+            "INSERT OR REPLACE INTO event_type_member_weights (event_type_id, user_id, weight) VALUES (?, ?, ?)",
+        )
+        .bind(et_id)
+        .bind(uid)
+        .bind(weight)
+        .execute(&mut **tx)
+        .await?;
     }
+    Ok(())
 }
 
-/// Stores the watcher teams a team event type form posted (comma-separated
-/// team ids) on `et_id`, which has none yet. Ids outside `allowed` are
-/// ignored: a team admin cannot have another team's members emailed the
-/// bookings.
+/// Replaces the watcher teams of `et_id` with those a team event type form
+/// posted (comma-separated team ids), inside the event type's transaction.
+/// Absent (a form without the section) leaves them as stored. Ids outside
+/// `allowed` are ignored: a team admin cannot have another team's members
+/// emailed the bookings.
 async fn save_watcher_teams(
-    pool: &SqlitePool,
+    tx: &mut Tx<'_>,
     et_id: &str,
     raw: Option<&str>,
     allowed: &std::collections::HashSet<String>,
-) {
-    for wid in raw.unwrap_or("").split(',') {
-        let wid = wid.trim();
-        if !wid.is_empty() && allowed.contains(wid) {
-            let _ = sqlx::query(
-                "INSERT INTO event_type_watchers (event_type_id, team_id) VALUES (?, ?)",
+) -> sqlx::Result<()> {
+    let Some(raw) = raw else { return Ok(()) };
+    sqlx::query("DELETE FROM event_type_watchers WHERE event_type_id = ?")
+        .bind(et_id)
+        .execute(&mut **tx)
+        .await?;
+    for wid in raw.split(',').map(str::trim) {
+        if allowed.contains(wid) {
+            sqlx::query(
+                "INSERT OR IGNORE INTO event_type_watchers (event_type_id, team_id) VALUES (?, ?)",
             )
             .bind(et_id)
             .bind(wid)
-            .execute(pool)
-            .await;
+            .execute(&mut **tx)
+            .await?;
         }
     }
+    Ok(())
 }
 
 /// Template context for the "Required resources" section of the event type
@@ -947,8 +960,14 @@ pub(super) async fn create_event_type(
         .filter(|s| !s.is_empty())
         .map(str::to_string);
 
-    // The event type and its booking questions (#210) are written in one
-    // transaction: a refused question list never leaves a half-saved type.
+    let watchable = match team_id {
+        Some(_) => watchable_team_ids(&state.pool, user).await,
+        None => Default::default(),
+    };
+
+    // The event type, its booking questions (#210) and a team event type's
+    // member weights and watchers are written in one transaction: a refused
+    // question list never leaves a half-saved type.
     let written = async {
         let mut tx = state.pool.begin().await?;
         sqlx::query(
@@ -995,6 +1014,16 @@ pub(super) async fn create_event_type(
             form.notes_mode.as_deref(),
         )
         .await?;
+        if let Some(tid) = team_id {
+            save_created_member_weights(&mut tx, &et_id, tid, &form.member_priorities).await?;
+            save_watcher_teams(
+                &mut tx,
+                &et_id,
+                form.watcher_team_ids.as_deref(),
+                &watchable,
+            )
+            .await?;
+        }
         tx.commit().await
     }
     .await;
@@ -1050,20 +1079,6 @@ pub(super) async fn create_event_type(
                 .await;
             }
         }
-    }
-
-    // A team event type's member weights (round-robin priority or
-    // collective exclusions) and watcher teams.
-    if let Some(tid) = team_id {
-        save_created_member_weights(&state.pool, &et_id, tid, &form.member_priorities).await;
-        let allowed = watchable_team_ids(&state.pool, user).await;
-        save_watcher_teams(
-            &state.pool,
-            &et_id,
-            form.watcher_team_ids.as_deref(),
-            &allowed,
-        )
-        .await;
     }
 
     // Save booking frequency limits
@@ -1653,7 +1668,8 @@ pub(super) async fn update_event_type(
         .bind(reminder_minutes)
         .bind(visibility)
         .bind(parse_int_field(&form.max_additional_guests, 0))
-        .bind(posted_scheduling_mode(&form))
+        // A personal event type has no scheduling mode of its own.
+        .bind("round_robin")
         .bind(&default_calendar_view)
         .bind(if form.first_slot_only.as_deref() == Some("on") { 1 } else { 0 })
         .bind(&timezone)
@@ -3012,8 +3028,11 @@ pub(super) async fn create_group_event_type(
         .filter(|s| !s.is_empty())
         .map(str::to_string);
 
-    // The event type and its booking questions (#210) are written in one
-    // transaction: a refused question list never leaves a half-saved type.
+    let watchable = watchable_team_ids(&state.pool, user).await;
+
+    // The event type, its booking questions (#210), member weights and
+    // watchers are written in one transaction: a refused question list never
+    // leaves a half-saved type.
     let written = async {
         let mut tx = state.pool.begin().await?;
         sqlx::query(
@@ -3060,6 +3079,14 @@ pub(super) async fn create_group_event_type(
             form.notes_mode.as_deref(),
         )
         .await?;
+        save_created_member_weights(&mut tx, &et_id, &team_id, &form.member_priorities).await?;
+        save_watcher_teams(
+            &mut tx,
+            &et_id,
+            form.watcher_team_ids.as_deref(),
+            &watchable,
+        )
+        .await?;
         tx.commit().await
     }
     .await;
@@ -3104,18 +3131,6 @@ pub(super) async fn create_group_event_type(
             .await;
         }
     }
-
-    // Member weights (round-robin priority or collective exclusions) and
-    // watcher teams.
-    save_created_member_weights(&state.pool, &et_id, &team_id, &form.member_priorities).await;
-    let allowed = watchable_team_ids(&state.pool, user).await;
-    save_watcher_teams(
-        &state.pool,
-        &et_id,
-        form.watcher_team_ids.as_deref(),
-        &allowed,
-    )
-    .await;
 
     // Save booking frequency limits
     save_frequency_limits(&state.pool, &et_id, &form.frequency_limits).await;
@@ -3697,8 +3712,22 @@ pub(super) async fn update_group_event_type(
         .filter(|s| !s.is_empty())
         .map(str::to_string);
 
-    // The event type and its booking questions (#210) are written in one
-    // transaction: a refused question list never leaves a half-saved type.
+    // A watcher already attached stays allowed, so an edit by someone outside
+    // that team (which the form shows as selected) keeps it.
+    let mut watchable = watchable_team_ids(&state.pool, user).await;
+    watchable.extend(
+        sqlx::query_scalar::<_, String>(
+            "SELECT team_id FROM event_type_watchers WHERE event_type_id = ?",
+        )
+        .bind(&et_id)
+        .fetch_all(&state.pool)
+        .await
+        .unwrap_or_default(),
+    );
+
+    // The event type, its booking questions (#210) and its watchers are
+    // written in one transaction: a refused question list never leaves a
+    // half-saved type.
     let written = async {
         let mut tx = state.pool.begin().await?;
         sqlx::query(
@@ -3741,6 +3770,13 @@ pub(super) async fn update_group_event_type(
             &et_id,
             booking_questions.as_deref(),
             form.notes_mode.as_deref(),
+        )
+        .await?;
+        save_watcher_teams(
+            &mut tx,
+            &et_id,
+            form.watcher_team_ids.as_deref(),
+            &watchable,
         )
         .await?;
         tx.commit().await
@@ -3796,31 +3832,6 @@ pub(super) async fn update_group_event_type(
             .await;
         }
     }
-
-    // Update watcher teams: delete old, insert new. A watcher already
-    // attached stays allowed, so an edit by someone outside that team (which
-    // the form shows as selected) keeps it.
-    let mut allowed = watchable_team_ids(&state.pool, user).await;
-    allowed.extend(
-        sqlx::query_scalar::<_, String>(
-            "SELECT team_id FROM event_type_watchers WHERE event_type_id = ?",
-        )
-        .bind(&et_id)
-        .fetch_all(&state.pool)
-        .await
-        .unwrap_or_default(),
-    );
-    let _ = sqlx::query("DELETE FROM event_type_watchers WHERE event_type_id = ?")
-        .bind(&et_id)
-        .execute(&state.pool)
-        .await;
-    save_watcher_teams(
-        &state.pool,
-        &et_id,
-        form.watcher_team_ids.as_deref(),
-        &allowed,
-    )
-    .await;
 
     // Update booking frequency limits: delete old, insert new
     let _ = sqlx::query("DELETE FROM booking_frequency_limits WHERE event_type_id = ?")

@@ -583,3 +583,192 @@ async fn watchers_are_limited_to_the_editors_teams() {
     expected.sort();
     assert_eq!(kept, expected);
 }
+
+/// A personal event type stays round robin when its edit form posts
+/// another mode, as on create.
+#[tokio::test]
+async fn personal_edit_ignores_a_posted_scheduling_mode() {
+    let (app, pool, session, _) = setup_test_app().await;
+    save(
+        &app,
+        "/dashboard/event-types/test-meeting/edit",
+        &session,
+        &[("slug", "test-meeting"), ("scheduling_mode", "collective")],
+    )
+    .await;
+    assert_eq!(scheduling_mode(&pool, "test-meeting").await, "round_robin");
+}
+
+/// Created weights are clamped to the 0..=3 the priority buttons produce.
+#[tokio::test]
+async fn created_member_weights_are_clamped() {
+    let (app, pool, session, _) = setup_test_app().await;
+    let (team_id, _) = seed_team_event_type(&pool).await;
+    let me = test_user_id(&pool).await;
+    let other = add_member(&pool, &team_id, "other@example.com").await;
+
+    for (n, uri) in TEAM_CREATE_URIS.iter().enumerate() {
+        let slug = format!("clamped-{n}");
+        save(
+            &app,
+            uri,
+            &session,
+            &[
+                ("team_id", &team_id),
+                ("slug", &slug),
+                ("member_priorities", &format!("{me}:9,{other}:-4")),
+            ],
+        )
+        .await;
+        let mut expected = vec![(me.clone(), 3), (other.clone(), 0)];
+        expected.sort();
+        assert_eq!(
+            weights(&pool, &et_id(&pool, &slug).await).await,
+            expected,
+            "{uri}"
+        );
+    }
+}
+
+/// Weights and watchers are written in the event type's own transaction: a
+/// refused write leaves no event type behind on create, and changes nothing
+/// on edit.
+#[tokio::test]
+async fn weights_and_watchers_are_saved_with_the_event_type() {
+    let (app, pool, session, _) = setup_test_app().await;
+    let (team_id, team_et) = seed_team_event_type(&pool).await;
+    let me = test_user_id(&pool).await;
+    let sales = watcher_team(&pool).await;
+
+    for (table, field, value) in [
+        (
+            "event_type_member_weights",
+            "member_priorities",
+            format!("{me}:2"),
+        ),
+        ("event_type_watchers", "watcher_team_ids", sales.clone()),
+    ] {
+        sqlx::query(&format!(
+            "CREATE TRIGGER refuse_child BEFORE INSERT ON {table}
+             BEGIN SELECT RAISE(ABORT, 'refused'); END"
+        ))
+        .execute(&pool)
+        .await
+        .unwrap();
+        for uri in TEAM_CREATE_URIS {
+            let csrf = "csrf-et-atomic";
+            let response = app
+                .clone()
+                .oneshot(post_form(
+                    uri,
+                    &session,
+                    csrf,
+                    &form_body(
+                        csrf,
+                        &[("team_id", &team_id), ("slug", "atomic"), (field, &value)],
+                    ),
+                ))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), 500, "{uri} {table}");
+            let created: i64 =
+                sqlx::query_scalar("SELECT COUNT(*) FROM event_types WHERE slug = 'atomic'")
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap();
+            assert_eq!(created, 0, "{uri} {table}");
+        }
+        if table == "event_type_watchers" {
+            let csrf = "csrf-et-atomic-edit";
+            let response = app
+                .clone()
+                .oneshot(post_form(
+                    &edit_uri(&team_id, "team-sync"),
+                    &session,
+                    csrf,
+                    &form_body(
+                        csrf,
+                        &[
+                            ("slug", "team-sync"),
+                            ("title", "Renamed"),
+                            ("watcher_team_ids", &sales),
+                        ],
+                    ),
+                ))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), 500);
+            let title: String = sqlx::query_scalar("SELECT title FROM event_types WHERE id = ?")
+                .bind(&team_et)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+            assert_eq!(title, "Team Sync");
+        }
+        sqlx::query("DROP TRIGGER refuse_child")
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+}
+
+/// An edit form without the watcher section leaves the watchers as stored.
+#[tokio::test]
+async fn edit_without_watcher_field_keeps_the_watchers() {
+    let (app, pool, session, _) = setup_test_app().await;
+    let (team_id, team_et) = seed_team_event_type(&pool).await;
+    let sales = watcher_team(&pool).await;
+    sqlx::query("INSERT INTO event_type_watchers (event_type_id, team_id) VALUES (?, ?)")
+        .bind(&team_et)
+        .bind(&sales)
+        .execute(&pool)
+        .await
+        .unwrap();
+    save(
+        &app,
+        &edit_uri(&team_id, "team-sync"),
+        &session,
+        &[("slug", "team-sync")],
+    )
+    .await;
+    assert_eq!(
+        watchers(&pool, &team_et).await,
+        std::slice::from_ref(&sales)
+    );
+}
+
+/// Names reach the form's script as JSON strings, so a backslash or a quote
+/// in one cannot end the string early.
+#[tokio::test]
+async fn names_in_the_form_script_are_json_strings() {
+    let (app, pool, session, _) = setup_test_app().await;
+    let (team_id, _) = seed_team_event_type(&pool).await;
+    let odd = add_member(&pool, &team_id, "odd@example.com").await;
+    sqlx::query(
+        "UPDATE users SET name = ?, username = 'odd', allow_dynamic_group = 1 WHERE id = ?",
+    )
+    .bind(r#"Ann "A" \"#)
+    .bind(&odd)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    for uri in [
+        "/dashboard/event-types/new",
+        "/dashboard/group-event-types/new",
+        "/dashboard/event-types/test-meeting/edit",
+    ] {
+        let page = body_string(
+            app.clone()
+                .oneshot(get_authed(uri, &session))
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert!(
+            page.contains(r#"name: "Ann \"A\" \\""#),
+            "{uri} carries the name as a JSON string"
+        );
+        assert!(!page.contains(r#"Ann "A" \""#), "{uri}");
+    }
+}
