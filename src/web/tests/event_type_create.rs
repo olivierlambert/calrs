@@ -772,3 +772,136 @@ async fn names_in_the_form_script_are_json_strings() {
         assert!(!page.contains(r#"Ann "A" \""#), "{uri}");
     }
 }
+
+/// A watcher team the editor is not in has no checkbox for them, so it is
+/// shown as a read-only row and kept on save whatever the form posts: a
+/// team admin who toggles their own team does not drop it (#405).
+#[tokio::test]
+async fn edit_keeps_watcher_teams_the_editor_is_not_in() {
+    let (app, pool, _, _) = setup_test_app().await;
+    let (team_id, team_et) = seed_team_event_type(&pool).await;
+    let (lead, session) =
+        insert_test_user_with_session(&pool, "Lead", "lead@example.com", "lead").await;
+    sqlx::query(
+        "INSERT INTO accounts (id, name, email, timezone, user_id) VALUES (?, 'Lead', 'lead@example.com', 'UTC', ?)",
+    )
+    .bind(uuid::Uuid::new_v4().to_string())
+    .bind(&lead)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO team_members (team_id, user_id, role, source) VALUES (?, ?, 'admin', 'direct')",
+    )
+    .bind(&team_id)
+    .bind(&lead)
+    .execute(&pool)
+    .await
+    .unwrap();
+    // Sales: the test user's team, which the lead is not in, watching.
+    let sales = watcher_team(&pool).await;
+    sqlx::query("INSERT INTO event_type_watchers (event_type_id, team_id) VALUES (?, ?)")
+        .bind(&team_et)
+        .bind(&sales)
+        .execute(&pool)
+        .await
+        .unwrap();
+    // Board: a private team the lead is not in, also watching. Its name
+    // is not shown to the lead.
+    let board = uuid::Uuid::new_v4().to_string();
+    sqlx::query(
+        "INSERT INTO teams (id, name, slug, visibility) VALUES (?, 'Secret Board', 'board', 'private')",
+    )
+    .bind(&board)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO event_type_watchers (event_type_id, team_id) VALUES (?, ?)")
+        .bind(&team_et)
+        .bind(&board)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let html = body_string(
+        app.clone()
+            .oneshot(get_authed(&edit_uri(&team_id, "team-sync"), &session))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(
+        html.contains(&format!(
+            r#"<input type="hidden" class="watcher-team-locked" value="{sales}">"#
+        )),
+        "Sales shown as a read-only row"
+    );
+    assert!(!html.contains(&format!(r#"class="watcher-team-check" value="{sales}""#)));
+    assert!(html.contains("Not one of your teams, so it stays attached"));
+    assert!(html.contains(&format!(
+        r#"<input type="hidden" class="watcher-team-locked" value="{board}">"#
+    )));
+    assert!(html.contains("A private team"));
+    assert!(
+        !html.contains("Secret Board"),
+        "a private team's name stays hidden"
+    );
+
+    // The lead ticks their own team: the form posts only the checked box.
+    save(
+        &app,
+        &edit_uri(&team_id, "team-sync"),
+        &session,
+        &[("slug", "team-sync"), ("watcher_team_ids", &team_id)],
+    )
+    .await;
+    let mut kept = watchers(&pool, &team_et).await;
+    kept.sort();
+    let mut expected = vec![sales.clone(), team_id.clone(), board.clone()];
+    expected.sort();
+    assert_eq!(kept, expected);
+
+    // Unticking it again, with nothing else posted, still keeps both.
+    save(
+        &app,
+        &edit_uri(&team_id, "team-sync"),
+        &session,
+        &[("slug", "team-sync"), ("watcher_team_ids", "")],
+    )
+    .await;
+    let mut kept = watchers(&pool, &team_et).await;
+    kept.sort();
+    let mut expected = vec![sales.clone(), board.clone()];
+    expected.sort();
+    assert_eq!(kept, expected);
+
+    // A global admin sees Sales as an ordinary checkbox and may remove it.
+    let (admin, admin_session) =
+        insert_test_user_with_session(&pool, "Root", "root@example.com", "root").await;
+    sqlx::query("UPDATE users SET role = 'admin' WHERE id = ?")
+        .bind(&admin)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let html = body_string(
+        app.clone()
+            .oneshot(get_authed(&edit_uri(&team_id, "team-sync"), &admin_session))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(!html.contains("watcher-team-locked\" value"));
+    assert!(
+        html.contains("Secret Board"),
+        "a global admin sees every name"
+    );
+    assert!(!html.contains("A private team"));
+    save(
+        &app,
+        &edit_uri(&team_id, "team-sync"),
+        &admin_session,
+        &[("slug", "team-sync"), ("watcher_team_ids", "")],
+    )
+    .await;
+    assert!(watchers(&pool, &team_et).await.is_empty());
+}

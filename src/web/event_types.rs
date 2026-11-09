@@ -505,28 +505,32 @@ async fn save_created_member_weights(
 /// posted (comma-separated team ids), inside the event type's transaction.
 /// Absent (a form without the section) leaves them as stored. Ids outside
 /// `allowed` are ignored: a team admin cannot have another team's members
-/// emailed the bookings.
+/// emailed the bookings. Teams in `keep` (attached watchers the editor may
+/// not change, see [`locked_watcher_teams`]) stay whatever was posted.
 async fn save_watcher_teams(
     tx: &mut Tx<'_>,
     et_id: &str,
     raw: Option<&str>,
     allowed: &std::collections::HashSet<String>,
+    keep: &std::collections::HashSet<String>,
 ) -> sqlx::Result<()> {
     let Some(raw) = raw else { return Ok(()) };
     sqlx::query("DELETE FROM event_type_watchers WHERE event_type_id = ?")
         .bind(et_id)
         .execute(&mut **tx)
         .await?;
-    for wid in raw.split(',').map(str::trim) {
-        if allowed.contains(wid) {
-            sqlx::query(
-                "INSERT OR IGNORE INTO event_type_watchers (event_type_id, team_id) VALUES (?, ?)",
-            )
-            .bind(et_id)
-            .bind(wid)
-            .execute(&mut **tx)
-            .await?;
-        }
+    let posted = raw
+        .split(',')
+        .map(str::trim)
+        .filter(|wid| allowed.contains(*wid));
+    for wid in posted.chain(keep.iter().map(String::as_str)) {
+        sqlx::query(
+            "INSERT OR IGNORE INTO event_type_watchers (event_type_id, team_id) VALUES (?, ?)",
+        )
+        .bind(et_id)
+        .bind(wid)
+        .execute(&mut **tx)
+        .await?;
     }
     Ok(())
 }
@@ -1067,6 +1071,7 @@ pub(super) async fn create_event_type(
                 &et_id,
                 form.watcher_team_ids.as_deref(),
                 &watchable,
+                &std::collections::HashSet::new(),
             )
             .await?;
         }
@@ -1558,21 +1563,15 @@ pub(super) async fn update_event_type(
         resolve_guest_footer(&state.pool, user, form.guest_email_footer.as_deref()).await;
     let visibility = posted_visibility(&form);
 
-    // Check slug uniqueness if changed
+    // Check slug uniqueness (and the reserved slug) if changed
     if new_slug != slug {
-        let existing: Option<(String,)> =
-            sqlx::query_as("SELECT id FROM event_types WHERE account_id = ? AND slug = ?")
-                .bind(&account_id)
-                .bind(&new_slug)
-                .fetch_optional(&state.pool)
-                .await
-                .unwrap_or(None);
-
-        if existing.is_some() {
+        if let Some(key) =
+            slug_conflict(&state.pool, &new_slug, &account_id, None, Some(&et_id)).await
+        {
             return render_event_type_form_error(
                 &state,
                 &auth_user,
-                &crate::i18n::translate(auth_user.lang, "form-error-event-type-slug-taken", None),
+                &crate::i18n::translate(auth_user.lang, key, None),
                 &form,
                 FormTarget::EditPersonal {
                     et_id: &et_id,
@@ -2264,6 +2263,52 @@ async fn watchable_team_ids(
         .collect()
 }
 
+/// Watcher teams attached to `et_id` that `user` may not change, because
+/// they are not among [`watchable_teams`] (id, name, private), by name. The
+/// edit form shows them as read-only rows and the save keeps them (#405).
+/// Empty for a global admin.
+async fn locked_watcher_teams(
+    pool: &SqlitePool,
+    user: &crate::models::User,
+    et_id: &str,
+) -> Vec<(String, String, bool)> {
+    let watchable = watchable_team_ids(pool, user).await;
+    let attached: Vec<(String, String, bool)> = sqlx::query_as(
+        "SELECT t.id, t.name, t.visibility = 'private' FROM event_type_watchers w \
+         JOIN teams t ON t.id = w.team_id WHERE w.event_type_id = ? ORDER BY t.name",
+    )
+    .bind(et_id)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
+    attached
+        .into_iter()
+        .filter(|(id, _, _)| !watchable.contains(id))
+        .collect()
+}
+
+/// [`locked_watcher_teams`] as template context. A private team's name is
+/// not shown to someone outside it: it reads "A private team".
+async fn form_locked_watcher_teams(
+    pool: &SqlitePool,
+    user: &crate::models::User,
+    et_id: &str,
+    lang: &str,
+) -> Vec<minijinja::Value> {
+    locked_watcher_teams(pool, user, et_id)
+        .await
+        .into_iter()
+        .map(|(id, name, private)| {
+            let name = if private {
+                crate::i18n::translate(lang, "etf-watcher-team-private", None)
+            } else {
+                name
+            };
+            context! { id => id, name => name }
+        })
+        .collect()
+}
+
 /// [`watchable_teams`], for the watcher section of the event type form.
 async fn form_watcher_teams(
     pool: &SqlitePool,
@@ -2299,6 +2344,9 @@ async fn form_dg_eligible_users(pool: &SqlitePool, user_id: &str) -> Vec<minijin
         .collect()
 }
 
+/// The slug the landing pages' hint endpoint owns (`next_free.rs`).
+pub(super) const NEXT_FREE_SLUG: &str = "next-free";
+
 /// The form error key for `slug` when another event type already holds it,
 /// `None` when it is free. The schema keeps slugs unique per account
 /// (personal and team event types alike, since a team event type is stored
@@ -2313,9 +2361,23 @@ pub(super) async fn slug_conflict(
 ) -> Option<&'static str> {
     // The landing pages answer their next-free hints at
     // /u/{username}/next-free and /team/{slug}/next-free, so no event type
-    // may take that slug: its page would be unreachable.
-    if slug == "next-free" {
-        return Some("form-error-event-type-slug-taken");
+    // may take that slug: its page would be unreachable. Only a new or
+    // changed slug is refused, so an event type that still holds it (the
+    // upgrade renames them, see 20261109014416_rename_next_free_slugs) can
+    // be saved and renamed.
+    if slug == NEXT_FREE_SLUG {
+        let current: Option<String> = match exclude_id {
+            Some(id) => sqlx::query_scalar("SELECT slug FROM event_types WHERE id = ?")
+                .bind(id)
+                .fetch_optional(pool)
+                .await
+                .ok()
+                .flatten(),
+            None => None,
+        };
+        if current.as_deref() != Some(NEXT_FREE_SLUG) {
+            return Some("form-error-event-type-slug-taken");
+        }
     }
     let taken = |scope: &'static str, value: String| async move {
         sqlx::query_scalar::<_, i64>(&format!(
@@ -2446,6 +2508,12 @@ async fn render_event_type_form_error(
         FormTarget::EditPersonal { .. } => Vec::new(),
         FormTarget::NewPersonal if teams.is_empty() => Vec::new(),
         _ => form_watcher_teams(pool, user).await,
+    };
+    let locked_watcher_teams = match target {
+        FormTarget::EditTeam { et_id, .. } => {
+            form_locked_watcher_teams(pool, user, et_id, auth_user.lang).await
+        }
+        _ => Vec::new(),
     };
     let priority_members = match target {
         FormTarget::EditTeam { team_id, et_id, .. } => {
@@ -2603,6 +2671,7 @@ async fn render_event_type_form_error(
             form_team_id => form_team_id,
             teams => teams,
             watcher_teams => watcher_teams,
+            locked_watcher_teams => locked_watcher_teams,
             selected_watcher_team_ids => form.watcher_team_ids.as_deref().unwrap_or(""),
             is_round_robin_group => is_group && scheduling_mode == "round_robin",
             is_collective_team => is_group && scheduling_mode == "collective",
@@ -3129,6 +3198,7 @@ pub(super) async fn create_group_event_type(
             &et_id,
             form.watcher_team_ids.as_deref(),
             &watchable,
+            &std::collections::HashSet::new(),
         )
         .await?;
         tx.commit().await
@@ -3398,6 +3468,8 @@ pub(super) async fn edit_group_event_type_form(
     };
 
     let watcher_teams_ctx = form_watcher_teams(&state.pool, user).await;
+    let locked_watcher_teams_ctx =
+        form_locked_watcher_teams(&state.pool, user, &et_id, auth_user.lang).await;
 
     // Load selected watcher team IDs
     let selected_watchers: Vec<(String,)> =
@@ -3517,6 +3589,7 @@ pub(super) async fn edit_group_event_type_form(
             is_collective_team => is_collective_team,
             priority_members => members_ctx,
             watcher_teams => watcher_teams_ctx,
+            locked_watcher_teams => locked_watcher_teams_ctx,
             selected_watcher_team_ids => selected_watcher_team_ids,
             error => "",
             sidebar => sidebar_context(&auth_user, "event-types"),
@@ -3757,18 +3830,16 @@ pub(super) async fn update_group_event_type(
         .filter(|s| !s.is_empty())
         .map(str::to_string);
 
-    // A watcher already attached stays allowed, so an edit by someone outside
-    // that team (which the form shows as selected) keeps it.
-    let mut watchable = watchable_team_ids(&state.pool, user).await;
-    watchable.extend(
-        sqlx::query_scalar::<_, String>(
-            "SELECT team_id FROM event_type_watchers WHERE event_type_id = ?",
-        )
-        .bind(&et_id)
-        .fetch_all(&state.pool)
-        .await
-        .unwrap_or_default(),
-    );
+    // A watcher team already attached that the editor may not change (they
+    // are not in it) stays, whatever the form posted: the form shows it as a
+    // read-only row (#405).
+    let watchable = watchable_team_ids(&state.pool, user).await;
+    let locked_watchers: std::collections::HashSet<String> =
+        locked_watcher_teams(&state.pool, user, &et_id)
+            .await
+            .into_iter()
+            .map(|(id, _, _)| id)
+            .collect();
 
     // The event type, its booking questions (#210) and its watchers are
     // written in one transaction: a refused question list never leaves a
@@ -3822,6 +3893,7 @@ pub(super) async fn update_group_event_type(
             &et_id,
             form.watcher_team_ids.as_deref(),
             &watchable,
+            &locked_watchers,
         )
         .await?;
         tx.commit().await

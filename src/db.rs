@@ -940,6 +940,54 @@ mod tests {
         assert!(indexed);
     }
 
+    /// 20261109014416_rename_next_free_slugs moves event types off the slug
+    /// the landing pages' hints now own, to the first `next-free-N` free in
+    /// their account and, for a team event type, in their team.
+    #[tokio::test]
+    async fn next_free_slugs_are_renamed_to_a_free_variant() {
+        let pool = memory_pool().await;
+        migrate(&pool).await.unwrap();
+        sqlx::raw_sql(
+            "DELETE FROM _migrations WHERE name = '20261109014416_rename_next_free_slugs';
+             INSERT INTO users (id, email, name, role, auth_provider, username, enabled)
+                 VALUES ('u1', 'a@example.com', 'A', 'admin', 'local', 'a', 1),
+                        ('u2', 'b@example.com', 'B', 'user', 'local', 'b', 1),
+                        ('u3', 'c@example.com', 'C', 'user', 'local', 'c', 1);
+             INSERT INTO accounts (id, name, email, timezone, user_id)
+                 VALUES ('a1', 'A', 'a@example.com', 'UTC', 'u1'),
+                        ('a2', 'B', 'b@example.com', 'UTC', 'u2'),
+                        ('a3', 'C', 'c@example.com', 'UTC', 'u3');
+             INSERT INTO teams (id, name, slug, visibility) VALUES ('t', 'T', 't', 'public');
+             INSERT INTO event_types (id, account_id, slug, title, duration_min, team_id)
+                 VALUES ('own', 'a1', 'next-free', 'Mine', 30, NULL),
+                        ('taken', 'a1', 'next-free-1', 'Taken', 30, NULL),
+                        ('team', 'a2', 'next-free', 'Team', 30, 't'),
+                        ('team-taken', 'a3', 'next-free-1', 'Other', 30, 't'),
+                        ('kept', 'a3', 'next-free-call', 'Call', 30, NULL);",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        migrate(&pool).await.unwrap();
+
+        let slugs: Vec<(String, String)> =
+            sqlx::query_as("SELECT id, slug FROM event_types ORDER BY id")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            slugs,
+            [
+                ("kept".to_string(), "next-free-call".to_string()),
+                ("own".to_string(), "next-free-2".to_string()),
+                ("taken".to_string(), "next-free-1".to_string()),
+                ("team".to_string(), "next-free-2".to_string()),
+                ("team-taken".to_string(), "next-free-1".to_string()),
+            ]
+        );
+    }
+
     #[tokio::test]
     async fn migrate_tracks_applied_migrations() {
         let pool = memory_pool().await;

@@ -558,6 +558,8 @@ overview-ruler-booked = Broneeritud
 overview-ruler-pending = Ootab otsust
 overview-ruler-unavailable = Pole saadaval (sinu kalender)
 overview-key-open = Broneerimiseks avatud
+overview-ruler-unreadable = Korduv sündmus, mida calrs ei oska lugeda
+overview-ruler-unreadable-tip = Ettevaatusest loetud hõivatuks. Tõrkeotsing näitab, mis sündmusega on tegu.
 overview-figures-title = Viimased 30 päeva
 
 # Dashboard bookings (templates/dashboard_bookings.html)
@@ -1162,6 +1164,8 @@ etf-dynamic-group-note = Näidatakse ainult kasutajaid, kes lubavad dünaamilisi
 etf-dynamic-group-url = Rühmalingi aadress
 etf-watcher-teams = Jälgivad meeskonnad
 etf-watcher-teams-help = Valitud meeskondi teavitatakse igast broneeringust. Nende liikmed saavad broneeringu üle võtta, et sellel osaleda.
+etf-watcher-team-locked = See pole sinu meeskond, see jääb alles
+etf-watcher-team-private = Privaatne meeskond
 etf-save = Salvesta muudatused
 etf-create = Loo sündmuse tüüp
 etf-js-loading = Laadimine...

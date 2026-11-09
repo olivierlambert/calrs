@@ -583,7 +583,10 @@ fn week_view_lays_out_the_week_on_one_hour_axis() {
         day_booking("b", dt(2026, 11, 2, 9, 30), 30, false),
         day_booking("p", dt(2026, 11, 3, 15, 0), 45, true),
     ];
-    let busy = vec![(dt(2026, 11, 4, 0, 0), dt(2026, 11, 5, 0, 0))];
+    let busy = ov::CalendarBusy {
+        times: vec![(dt(2026, 11, 4, 0, 0), dt(2026, 11, 5, 0, 0))],
+        unreadable: vec![],
+    };
     let now = wednesday_noon();
     let ctx = ov::week_context(
         "en",
@@ -687,7 +690,17 @@ fn week_view_lays_out_the_week_on_one_hour_axis() {
     assert_eq!(attr(&first, "weekday"), "Sun");
 
     // Nothing open, booked or in the calendar: no week view at all.
-    assert!(ov::week_context("en", &[], &[], &[], &[], paris, now, WeekStart::Mon).is_none());
+    assert!(ov::week_context(
+        "en",
+        &[],
+        &[],
+        &ov::CalendarBusy::default(),
+        &[],
+        paris,
+        now,
+        WeekStart::Mon
+    )
+    .is_none());
 }
 
 fn next_meeting(day: &str, ongoing: bool, extra: i64) -> minijinja::Value {
@@ -978,7 +991,9 @@ async fn calendar_busy_leaves_out_written_back_bookings() {
         .await
         .unwrap();
     let from = day.and_time(NaiveTime::MIN);
-    let busy = ov::fetch_calendar_busy(&pool, &me, Tz::UTC, from, from + Duration::days(1)).await;
+    let busy = ov::fetch_calendar_busy(&pool, &me, Tz::UTC, from, from + Duration::days(1))
+        .await
+        .times;
     assert_eq!(busy, vec![(dt(2026, 11, 2, 12, 0), dt(2026, 11, 2, 13, 0))]);
 }
 
@@ -1189,7 +1204,9 @@ async fn calendar_busy_keeps_the_copy_of_a_cancelled_booking() {
             .unwrap();
     }
     let from = dt(2026, 11, 2, 0, 0);
-    let busy = ov::fetch_calendar_busy(&pool, &me, Tz::UTC, from, from + Duration::days(1)).await;
+    let busy = ov::fetch_calendar_busy(&pool, &me, Tz::UTC, from, from + Duration::days(1))
+        .await
+        .times;
     assert_eq!(
         busy,
         vec![
@@ -1237,7 +1254,9 @@ async fn calendar_busy_skips_calendars_that_are_not_synced() {
         .unwrap();
     }
     let from = dt(2026, 11, 2, 0, 0);
-    let busy = ov::fetch_calendar_busy(&pool, &me, Tz::UTC, from, from + Duration::days(1)).await;
+    let busy = ov::fetch_calendar_busy(&pool, &me, Tz::UTC, from, from + Duration::days(1))
+        .await
+        .times;
     assert_eq!(busy, vec![(dt(2026, 11, 2, 9, 0), dt(2026, 11, 2, 9, 30))]);
 }
 
@@ -1326,4 +1345,106 @@ async fn week_strip_day_links_land_on_a_day_line_of_the_bookings_page() {
     )
     .await;
     assert!(bookings.contains(&format!("id=\"d-{day}\"")), "{day}");
+}
+
+/// A recurring event whose rule calrs cannot expand is blocked as busy (fail
+/// closed): the overview keeps its time apart, marks it "r" in the week
+/// strip with a tooltip saying why, and links the day's troubleshoot view.
+#[tokio::test]
+async fn unreadable_recurrence_is_marked_and_links_the_troubleshoot_view() {
+    let pool = setup_test_db().await;
+    let me = insert_role_user(&pool, "me@example.com", "user").await;
+    insert_personal_et(&pool, &me, "call").await;
+    let (acc,): (String,) = sqlx::query_as("SELECT id FROM accounts WHERE user_id = ?")
+        .bind(&me)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO caldav_sources (id, account_id, name, url, username) VALUES ('s', ?, 'S', 'https://dav.example', 'u')")
+        .bind(&acc)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO calendars (id, source_id, href, is_busy) VALUES ('c', 's', '/c/', 1)")
+        .execute(&pool)
+        .await
+        .unwrap();
+    for (uid, rule) in [
+        ("daily", "FREQ=DAILY"),
+        ("yearday", "FREQ=YEARLY;BYYEARDAY=1,100,200,306"),
+    ] {
+        let start = if uid == "daily" {
+            "20261101T090000"
+        } else {
+            "20261101T140000"
+        };
+        let end = if uid == "daily" {
+            "20261101T093000"
+        } else {
+            "20261101T150000"
+        };
+        sqlx::query("INSERT INTO events (id, calendar_id, uid, start_at, end_at, rrule) VALUES (?, 'c', ?, ?, ?, ?)")
+            .bind(uuid::Uuid::new_v4().to_string())
+            .bind(uid)
+            .bind(start)
+            .bind(end)
+            .bind(rule)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+    let from = dt(2026, 11, 2, 0, 0);
+    let busy = ov::fetch_calendar_busy(&pool, &me, Tz::UTC, from, from + Duration::days(1)).await;
+    assert_eq!(
+        busy.times,
+        vec![(dt(2026, 11, 2, 9, 0), dt(2026, 11, 2, 9, 30))]
+    );
+    assert_eq!(
+        busy.unreadable,
+        vec![(dt(2026, 11, 2, 14, 0), dt(2026, 11, 2, 15, 0))]
+    );
+
+    let hours = vec![ov::EventTypeHours {
+        tz: Tz::UTC,
+        rules: (0..7).map(|d| (d, hm(8, 0), hm(18, 0))).collect(),
+        overrides: vec![],
+        bookable_from: None,
+        bookable_until: None,
+    }];
+    let ctx = ov::week_context(
+        "en",
+        &hours,
+        &[],
+        &busy,
+        &[],
+        Tz::UTC,
+        wednesday_noon(),
+        WeekStart::Mon,
+    )
+    .unwrap();
+    assert!(ctx.get_attr("has_unavailable").unwrap().is_true());
+    assert!(ctx.get_attr("has_unreadable").unwrap().is_true());
+    assert_eq!(
+        ctx.get_attr("unreadable_link").unwrap().to_string(),
+        "/dashboard/troubleshoot?date=2026-11-02"
+    );
+    let monday = ctx
+        .get_attr("days")
+        .unwrap()
+        .get_item(&minijinja::Value::from(0))
+        .unwrap();
+    let blocks = monday.get_attr("busy").unwrap();
+    let block = |i: usize| blocks.get_item(&minijinja::Value::from(i)).unwrap();
+    assert_eq!(block(0).get_attr("kind").unwrap().to_string(), "u");
+    assert!(block(0).get_attr("href").unwrap().is_none());
+    assert_eq!(block(1).get_attr("kind").unwrap().to_string(), "r");
+    assert_eq!(
+        block(1).get_attr("href").unwrap().to_string(),
+        "/dashboard/troubleshoot?date=2026-11-02"
+    );
+    assert!(block(1)
+        .get_attr("tip")
+        .unwrap()
+        .to_string()
+        .starts_with("14:00\u{2013}15:00, Repeating event calrs cannot read. "));
 }

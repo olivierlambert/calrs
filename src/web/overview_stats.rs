@@ -600,13 +600,17 @@ pub(super) async fn fetch_day_bookings(
 /// Only an active booking in scope counts: the leftover copy of a cancelled
 /// or declined booking still blocks the time, so it still shows as busy.
 /// Only the times are read: the overview never shows what an event is.
+/// A recurring event whose rule calrs cannot expand is blocked as busy from
+/// its start (fail closed, see `rrule::expand_rrule`); its times are kept
+/// apart in `unreadable`, so the week strip can mark them and point at the
+/// troubleshoot view.
 pub(super) async fn fetch_calendar_busy(
     pool: &SqlitePool,
     user_id: &str,
     host_tz: Tz,
     from: NaiveDateTime,
     to: NaiveDateTime,
-) -> Vec<(NaiveDateTime, NaiveDateTime)> {
+) -> CalendarBusy {
     let lo = (from - Duration::days(1))
         .format("%Y%m%dT%H%M%S")
         .to_string();
@@ -661,9 +665,27 @@ pub(super) async fn fetch_calendar_busy(
         .fetch_all(pool)
         .await
         .unwrap_or_default();
-    busy.extend(expand_recurring_into_busy(&recurring, from, to, host_tz));
-    busy.retain(|(s, e)| *s < to && *e > from && e > s);
-    busy
+    let (readable, unreadable): (Vec<_>, Vec<_>) = recurring
+        .into_iter()
+        .partition(|(_, _, rule, _, _)| crate::rrule::is_supported(rule));
+    busy.extend(expand_recurring_into_busy(&readable, from, to, host_tz));
+    let mut unreadable = expand_recurring_into_busy(&unreadable, from, to, host_tz);
+    let in_view = |(s, e): &(NaiveDateTime, NaiveDateTime)| *s < to && *e > from && e > s;
+    busy.retain(in_view);
+    unreadable.retain(in_view);
+    CalendarBusy {
+        times: busy,
+        unreadable,
+    }
+}
+
+/// Busy times read from the user's synced calendars ([`fetch_calendar_busy`]).
+#[derive(Debug, Default, Clone, PartialEq)]
+pub(super) struct CalendarBusy {
+    /// Events and the occurrences of the series calrs can read.
+    pub times: Vec<(NaiveDateTime, NaiveDateTime)>,
+    /// What the series calrs cannot read block instead.
+    pub unreadable: Vec<(NaiveDateTime, NaiveDateTime)>,
 }
 
 // --- Bookable hours ---
@@ -860,7 +882,8 @@ pub(super) fn without_time_off(
 pub(super) struct RulerBlock {
     pub start: i64,
     pub end: i64,
-    /// "c" confirmed, "p" waiting for a decision, "u" unavailable.
+    /// "c" confirmed, "p" waiting for a decision, "u" unavailable, "r"
+    /// unavailable because of a repeat rule calrs cannot read.
     pub kind: &'static str,
     /// The booking's id, empty for unavailable time.
     pub id: String,
@@ -880,13 +903,19 @@ fn minute_of(day: NaiveDate, t: NaiveDateTime) -> i64 {
         .clamp(0, 1440)
 }
 
+/// Whether a block is calendar busy time rather than a booking.
+fn is_calendar_time(kind: &str) -> bool {
+    kind == "u" || kind == "r"
+}
+
 /// The blocks of one day: bookings with their title and guest, calendar
-/// busy times merged into anonymous blocks.
+/// busy times merged into anonymous blocks, those of unreadable repeat
+/// rules apart ("r").
 pub(super) fn day_blocks(
     lang: &str,
     day: NaiveDate,
     bookings: &[DayBooking],
-    busy: &[(NaiveDateTime, NaiveDateTime)],
+    busy: &CalendarBusy,
 ) -> Vec<RulerBlock> {
     let (from, to) = (
         day.and_time(NaiveTime::MIN),
@@ -907,23 +936,28 @@ pub(super) fn day_blocks(
             hue: face_hue(&b.guest),
         })
         .collect();
-    let unavailable = merge(
-        busy.iter()
-            .filter(|(s, e)| *s < to && *e > from)
-            .map(|(s, e)| (minute_of(day, *s), minute_of(day, *e)))
-            .collect(),
-    );
-    blocks.extend(unavailable.into_iter().map(|(start, end)| RulerBlock {
-        start,
-        end,
-        kind: "u",
-        id: String::new(),
-        listed: false,
-        title: String::new(),
-        guest: String::new(),
-        initials: String::new(),
-        hue: 0,
-    }));
+    let merged = |times: &[(NaiveDateTime, NaiveDateTime)]| {
+        merge(
+            times
+                .iter()
+                .filter(|(s, e)| *s < to && *e > from)
+                .map(|(s, e)| (minute_of(day, *s), minute_of(day, *e)))
+                .collect(),
+        )
+    };
+    for (kind, times) in [("u", &busy.times), ("r", &busy.unreadable)] {
+        blocks.extend(merged(times).into_iter().map(|(start, end)| RulerBlock {
+            start,
+            end,
+            kind,
+            id: String::new(),
+            listed: false,
+            title: String::new(),
+            guest: String::new(),
+            initials: String::new(),
+            hue: 0,
+        }));
+    }
     blocks
 }
 
@@ -1030,7 +1064,7 @@ pub(super) fn week_context(
     lang: &str,
     hours: &[EventTypeHours],
     bookings: &[DayBooking],
-    busy: &[(NaiveDateTime, NaiveDateTime)],
+    busy: &CalendarBusy,
     time_off: &[(NaiveDateTime, NaiveDateTime)],
     viewer: Tz,
     now: NaiveDateTime,
@@ -1057,12 +1091,22 @@ pub(super) fn week_context(
             open.iter().copied().chain(
                 blocks
                     .iter()
-                    .filter(|b| b.kind != "u")
+                    .filter(|b| !is_calendar_time(b.kind))
                     .map(|b| (b.start, b.end)),
             )
         })
     };
-    let has_busy = days.iter().any(|(_, _, b)| b.iter().any(|b| b.kind == "u"));
+    let has_kind = |kind: &str| {
+        days.iter()
+            .any(|(_, _, b)| b.iter().any(|b| b.kind == kind))
+    };
+    let (has_unavailable, has_unreadable) = (has_kind("u"), has_kind("r"));
+    let has_busy = has_unavailable || has_unreadable;
+    // The legend's way to the troubleshoot view: the first day it explains.
+    let unreadable_link = days
+        .iter()
+        .find(|(_, _, b)| b.iter().any(|b| b.kind == "r"))
+        .map(|(day, _, _)| troubleshoot_link(*day));
     let (lo, hi) = match (spans().map(|s| s.0).min(), spans().map(|s| s.1).max()) {
         (Some(lo), Some(hi)) => (lo, hi),
         _ if has_busy => (8 * 60, 18 * 60),
@@ -1094,6 +1138,7 @@ pub(super) fn week_context(
     let status = |kind: &str| match kind {
         "c" => t(lang, "overview-ruler-booked"),
         "p" => t(lang, "overview-ruler-pending"),
+        "r" => t(lang, "overview-ruler-unreadable"),
         _ => t(lang, "overview-ruler-unavailable"),
     };
     let mut booked_total = 0;
@@ -1109,18 +1154,40 @@ pub(super) fn week_context(
                 .filter(|(s, e)| *e > from && *s < to)
                 .map(|(s, e)| context! { top => fmt(at(*s)), height => fmt(at(*e) - at(*s)) })
                 .collect();
-            let unavailable: Vec<minijinja::Value> = blocks
+            // Unreadable repeat rules last, so their mark is drawn over
+            // plain busy time; they say why and lead to the troubleshoot
+            // view of that day.
+            let unavailable: Vec<minijinja::Value> = ["u", "r"]
                 .iter()
-                .filter(|b| b.kind == "u" && b.end > from && b.start < to)
+                .flat_map(|kind| {
+                    blocks
+                        .iter()
+                        .filter(move |b| b.kind == *kind && b.end > from && b.start < to)
+                })
                 .map(|b| {
+                    let range = format!("{}\u{2013}{}", clock(b.start), clock(b.end));
+                    let tip = if b.kind == "r" {
+                        format!(
+                            "{range}, {}. {}",
+                            status("r"),
+                            t(lang, "overview-ruler-unreadable-tip")
+                        )
+                    } else {
+                        format!("{range}, {}", status("u"))
+                    };
                     context! {
+                        kind => b.kind,
                         top => fmt(at(b.start)),
                         height => fmt(at(b.end) - at(b.start)),
-                        tip => format!("{}\u{2013}{}, {}", clock(b.start), clock(b.end), status("u")),
+                        tip => tip,
+                        href => (b.kind == "r").then(|| troubleshoot_link(*day)),
                     }
                 })
                 .collect();
-            let mut booked: Vec<&RulerBlock> = blocks.iter().filter(|b| b.kind != "u").collect();
+            let mut booked: Vec<&RulerBlock> = blocks
+                .iter()
+                .filter(|b| !is_calendar_time(b.kind))
+                .collect();
             booked.sort_by_key(|b| (b.start, b.end));
             let minutes: i64 = booked.iter().map(|b| b.end - b.start).sum();
             booked_total += minutes;
@@ -1195,10 +1262,18 @@ pub(super) fn week_context(
         from_minute => from,
         span_minutes => span,
         has_pending => has_pending,
-        has_unavailable => has_busy,
+        has_unavailable => has_unavailable,
+        has_unreadable => has_unreadable,
+        unreadable_link => unreadable_link,
         total => (booked_total > 0)
             .then(|| crate::i18n::translate(lang, "overview-week-total", Some(&args))),
     })
+}
+
+/// The troubleshoot view of `day`, which names the repeat rule calrs could
+/// not read.
+fn troubleshoot_link(day: NaiveDate) -> String {
+    format!("/dashboard/troubleshoot?date={day}")
 }
 
 // --- Greeting ---

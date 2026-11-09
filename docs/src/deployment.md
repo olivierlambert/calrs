@@ -149,12 +149,13 @@ cal.example.com {
 | `CALRS_DATA_DIR` | SQLite database directory | `/var/lib/calrs` (Docker/systemd) or XDG (dev) |
 | `CALRS_BASE_URL` | Public URL (required for OIDC callbacks and email action links) | `http://localhost:3000` |
 | `CALRS_ALLOW_PRIVATE_HOSTS` | Comma-separated hostnames allowed to resolve to private IPs for CalDAV/EWS (SSRF opt-out) | _(none)_ |
+| `CALRS_TRUSTED_PROXIES` | Comma or space separated addresses and CIDR ranges of the reverse proxies whose `X-Forwarded-For` calrs believes for its rate limits, or `none` to trust no peer. A `/0` range is refused. See [Trusted proxies](./security.md#trusted-proxies) | loopback, private, unique local and link-local ranges |
 | `CALRS_SYNC_MIN_AGE` | Minimum time in seconds between two background syncs of the same calendar source, e.g. `900` for every 15 minutes. Booking pages still refresh a host's calendars on demand once they are 5 minutes old, and a source due its daily full resync is synced anyway. Capped at `86400` (one day). A failing source is retried at this interval too, so the email warning its owner (sent after three failures) comes later: after about 30 minutes at `900` | `0` (no minimum: each source about once an hour, see below) |
 | `CALRS_SYNC_CONCURRENCY` | How many calendar sources the background sync may sync at once, never more than one per server. Capped at `8`: syncs share the database's five connections with web requests | `4` |
 | `RUST_LOG` | Log level filter | `calrs=info,tower_http=info` |
 | `CALRS_SMS_*` | SMS gateway configuration, overriding the admin panel; see [SMS Notifications](./sms.md#environment-variables) | _(none)_ |
 
-`CALRS_BASE_URL` and `CALRS_ALLOW_PRIVATE_HOSTS` can also be set without environment variables — from the admin panel (**System settings**) or the CLI (`calrs config general`). The stored value is persisted in the database; when the matching environment variable is set it takes precedence at runtime. The other variables (`CALRS_DATA_DIR`, `RUST_LOG`, and `CALRS_SECRET_KEY`) are bootstrap settings and remain environment-only.
+`CALRS_BASE_URL`, `CALRS_ALLOW_PRIVATE_HOSTS` and `CALRS_TRUSTED_PROXIES` can also be set without environment variables, from the admin panel (**System settings**: base URL, private hosts, **Trusted proxies**); the first two also from the CLI (`calrs config general`). The stored value is persisted in the database; when the matching environment variable is set it takes precedence at runtime and the field is read-only. System settings check every field before saving any, so a refused value saves nothing from the form. The other variables (`CALRS_DATA_DIR`, `RUST_LOG`, and `CALRS_SECRET_KEY`) are bootstrap settings and remain environment-only.
 
 ### Background calendar sync
 

@@ -1971,72 +1971,61 @@ pub(super) async fn admin_update_general(
     // value back; writing it would either clobber the stored DB value with NULL
     // (disabled inputs) or leak the env value into the DB. The env keeps
     // precedence regardless, so there's nothing to save for those fields.
-    if !crate::settings::base_url_from_env() {
+    //
+    // Every field is validated first and the whole form saved in one
+    // transaction, so a refused value saves nothing (`None` below leaves a
+    // column as stored).
+    let refuse = |key: &str, args: Option<&fluent_bundle::FluentArgs>| {
+        let msg = urlencoding::encode(&crate::i18n::translate(_admin.lang, key, args)).into_owned();
+        Redirect::to(&format!("/dashboard/admin?error={}", msg)).into_response()
+    };
+
+    let base_url: Option<Option<String>> = if crate::settings::base_url_from_env() {
+        None
+    } else {
         // Normalise (strip trailing slash). Empty clears the override; a
         // non-empty value must be an absolute http(s) URL with a host. We do
-        // NOT run the SSRF guard here — the public base URL is legitimately
+        // NOT run the SSRF guard here: the public base URL is legitimately
         // allowed to be localhost / a private host in dev.
         let raw = form
             .base_url
             .as_deref()
             .map(|s| s.trim().trim_end_matches('/'))
             .filter(|s| !s.is_empty());
-        let base_url = match raw {
+        Some(match raw {
             None => None,
             Some(raw) => match reqwest::Url::parse(raw) {
                 Ok(u) if matches!(u.scheme(), "http" | "https") && u.host_str().is_some() => {
                     Some(raw.to_string())
                 }
-                _ => {
-                    let msg = urlencoding::encode(&crate::i18n::translate(
-                        _admin.lang,
-                        "admin-base-url-invalid",
-                        None,
-                    ))
-                    .into_owned();
-                    return Redirect::to(&format!("/dashboard/admin?error={}", msg))
-                        .into_response();
-                }
+                _ => return refuse("admin-base-url-invalid", None),
             },
+        })
+    };
+
+    let allow_private_hosts: Option<Option<String>> =
+        if crate::settings::allow_private_hosts_from_env() {
+            None
+        } else {
+            // Re-serialise through the canonical parser so what we store
+            // matches what `settings` reads back. Empty → NULL (clears the DB
+            // override).
+            Some(
+                form.allow_private_hosts
+                    .as_deref()
+                    .map(|s| crate::settings::parse_host_list(s).join(","))
+                    .filter(|s| !s.is_empty()),
+            )
         };
-        if let Err(e) = sqlx::query(
-            "UPDATE auth_config SET base_url = ?, updated_at = datetime('now') WHERE id = 'singleton'",
-        )
-        .bind(&base_url)
-        .execute(&state.pool)
-        .await
-        {
-            return internal_error_response("save base_url", &e);
-        }
-    }
 
-    if !crate::settings::allow_private_hosts_from_env() {
-        // Re-serialise through the canonical parser so what we store matches
-        // what `settings` reads back. Empty → NULL (clears the DB override).
-        let allow_private_hosts = form
-            .allow_private_hosts
-            .as_deref()
-            .map(|s| crate::settings::parse_host_list(s).join(","))
-            .filter(|s| !s.is_empty());
-        if let Err(e) = sqlx::query(
-            "UPDATE auth_config SET allow_private_hosts = ?, updated_at = datetime('now') WHERE id = 'singleton'",
-        )
-        .bind(&allow_private_hosts)
-        .execute(&state.pool)
-        .await
-        {
-            return internal_error_response("save allow_private_hosts", &e);
-        }
-    }
-
-    if let (Some(raw), false) = (
+    let trusted_proxies: Option<Option<String>> = match (
         form.trusted_proxies.as_deref(),
         crate::trusted_proxies::set_by_env(),
     ) {
         // Stored in its canonical form; empty is NULL, the default list.
-        let stored = match crate::trusted_proxies::TrustedProxies::parse(raw) {
-            Ok(_) if raw.trim().is_empty() => None,
-            Ok(list) => Some(list.describe()),
+        (Some(raw), false) => match crate::trusted_proxies::TrustedProxies::parse(raw) {
+            Ok(_) if raw.trim().is_empty() => Some(None),
+            Ok(list) => Some(Some(list.describe())),
             Err(e) => {
                 let key = match e {
                     crate::trusted_proxies::ListError::Invalid(_) => {
@@ -2048,45 +2037,57 @@ pub(super) async fn admin_update_general(
                 };
                 let mut args = fluent_bundle::FluentArgs::new();
                 args.set("entry", fluent_bundle::FluentValue::from(e.entry()));
-                let msg =
-                    urlencoding::encode(&crate::i18n::translate(_admin.lang, key, Some(&args)))
-                        .into_owned();
-                return Redirect::to(&format!("/dashboard/admin?error={}", msg)).into_response();
+                return refuse(key, Some(&args));
             }
-        };
-        if let Err(e) = sqlx::query(
-            "UPDATE auth_config SET trusted_proxies = ?, updated_at = datetime('now') WHERE id = 'singleton'",
-        )
-        .bind(&stored)
-        .execute(&state.pool)
-        .await
-        {
-            return internal_error_response("save trusted_proxies", &e);
-        }
-    }
+        },
+        _ => None,
+    };
 
-    if let Some(form_of_address) = form.german_formal.as_deref() {
-        let formal = form_of_address == "sie";
-        if let Err(e) = sqlx::query(
-            "UPDATE auth_config SET german_formal = ?, updated_at = datetime('now') WHERE id = 'singleton'",
-        )
-        .bind(formal)
-        .execute(&state.pool)
-        .await
-        {
-            return internal_error_response("save german_formal", &e);
+    let german_formal = form.german_formal.as_deref().map(|form| form == "sie");
+
+    let saved = async {
+        let mut tx = state.pool.begin().await?;
+        // Each column in its own statement, written only when it is set.
+        for (column, value) in [
+            ("base_url", base_url.as_ref()),
+            ("allow_private_hosts", allow_private_hosts.as_ref()),
+            ("trusted_proxies", trusted_proxies.as_ref()),
+        ] {
+            if let Some(value) = value {
+                sqlx::query(&format!(
+                    "UPDATE auth_config SET {column} = ?, updated_at = datetime('now') WHERE id = 'singleton'"
+                ))
+                .bind(value)
+                .execute(&mut *tx)
+                .await?;
+            }
         }
+        if let Some(formal) = german_formal {
+            sqlx::query(
+                "UPDATE auth_config SET german_formal = ?, updated_at = datetime('now') WHERE id = 'singleton'",
+            )
+            .bind(formal)
+            .execute(&mut *tx)
+            .await?;
+        }
+        if let Some(day) = form.week_start {
+            sqlx::query(
+                "UPDATE auth_config SET week_start = ?, updated_at = datetime('now') WHERE id = 'singleton'",
+            )
+            .bind(day.key())
+            .execute(&mut *tx)
+            .await?;
+        }
+        tx.commit().await
+    }
+    .await;
+    if let Err(e) = saved {
+        return internal_error_response("save general settings", &e);
+    }
+    if let Some(formal) = german_formal {
         state
             .german_formal
             .store(formal, std::sync::atomic::Ordering::Relaxed);
-    }
-
-    if let Some(day) = form.week_start {
-        if let Err(e) = sqlx::query("UPDATE auth_config SET week_start = ?, updated_at = datetime('now') WHERE id = 'singleton'")
-            .bind(day.key()).execute(&state.pool).await
-        {
-            return internal_error_response("save week_start", &e);
-        }
     }
 
     // Refresh the process-global cache so the change takes effect immediately.
