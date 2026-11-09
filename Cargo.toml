@@ -21,12 +21,10 @@ async-trait = "0.1"
 # Database
 sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "sqlite", "migrate", "chrono", "uuid"] }
 
-# HTTP client (for CalDAV)
-reqwest = { version = "0.11", features = ["rustls-tls", "json"], default-features = false }
-# Only to name the DNS `Name` type of reqwest 0.11's `Resolve` trait, which
-# `net_guard::GuardedResolver` implements (#363). Same version and features
-# as reqwest already pulls in.
-hyper = { version = "0.14", default-features = false, features = ["client", "tcp"] }
+# HTTP client (for CalDAV). `http2` and `charset` are on by default in
+# reqwest 0.12 but off here with the default features (which would bring
+# native-tls): 0.11 always offered HTTP/2 and decoded text() by charset.
+reqwest = { version = "0.12", features = ["rustls-tls", "json", "http2", "charset"], default-features = false }
 
 # XML (CalDAV/WebDAV multistatus responses)
 quick-xml = "0.39"

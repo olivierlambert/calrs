@@ -204,7 +204,7 @@ pub struct GuardedResolver {
 }
 
 impl reqwest::dns::Resolve for GuardedResolver {
-    fn resolve(&self, name: hyper::client::connect::dns::Name) -> reqwest::dns::Resolving {
+    fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
         let lookup = Arc::clone(&self.lookup);
         let host = name.as_str().to_string();
         let allowlist = if self.proxy_hosts.contains(&normalize_host(&host)) {
@@ -214,7 +214,14 @@ impl reqwest::dns::Resolve for GuardedResolver {
         };
         Box::pin(async move {
             match resolve_checked(lookup.as_ref(), &host, &allowlist).await {
-                Ok(addrs) => Ok(Box::new(addrs.into_iter()) as reqwest::dns::Addrs),
+                // Port 0: the connector then uses the URL's port (or the
+                // scheme's default). reqwest 0.12 would otherwise keep a
+                // non-zero port from the resolver when the URL names none,
+                // where 0.11 always used the URL's.
+                Ok(addrs) => Ok(Box::new(addrs.into_iter().map(|mut a| {
+                    a.set_port(0);
+                    a
+                })) as reqwest::dns::Addrs),
                 Err(e) => {
                     if let GuardError::Private(ip) = &e {
                         tracing::warn!(host = %host, %ip, "outbound connection refused by the private-host policy");
@@ -230,9 +237,10 @@ impl reqwest::dns::Resolve for GuardedResolver {
 /// `HTTP_PROXY`, then `http_proxy` (only `http_proxy` under CGI, where a
 /// request header can set `HTTP_PROXY`); `HTTPS_PROXY`, then `https_proxy`;
 /// `ALL_PROXY`, then `all_proxy`, for a scheme with neither; `NO_PROXY`,
-/// then `no_proxy`. Only settings reqwest accepts are kept: this build has
-/// no SOCKS support, so a `socks5://` proxy is dropped (see `ignored`) and
-/// its requests go direct, checked and pinned like any other.
+/// then `no_proxy`. Only `http://` and `https://` proxies are kept (see
+/// [`usable_proxy`]): this build has no SOCKS support, so a `socks5://`
+/// proxy is dropped (see `ignored`) and its requests go direct, checked and
+/// pinned like any other.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ProxyConfig {
     pub http: Option<String>,
@@ -269,15 +277,11 @@ impl ProxyConfig {
         };
         let http = http.or_else(|| all.clone());
         let https = get(&["HTTPS_PROXY", "https_proxy"]).or(all);
-        let ignored = http
-            .as_deref()
-            .is_some_and(|p| reqwest::Proxy::http(p).is_err())
-            || https
-                .as_deref()
-                .is_some_and(|p| reqwest::Proxy::https(p).is_err());
+        let ignored = http.as_deref().is_some_and(|p| !usable_proxy(p))
+            || https.as_deref().is_some_and(|p| !usable_proxy(p));
         Self {
-            http: http.filter(|p| reqwest::Proxy::http(p.as_str()).is_ok()),
-            https: https.filter(|p| reqwest::Proxy::https(p.as_str()).is_ok()),
+            http: http.filter(|p| usable_proxy(p)),
+            https: https.filter(|p| usable_proxy(p)),
             no_proxy: get(&["NO_PROXY", "no_proxy"]),
             ignored,
         }
@@ -312,12 +316,23 @@ impl ProxyConfig {
     }
 }
 
-/// A proxy setting as reqwest reads it: a URL, or, when it does not parse
-/// as one, `http://` in front of it.
+/// A proxy setting as reqwest reads it: a URL with a host, or, when it does
+/// not parse as one (`10.0.0.8:3128`, `localhost:3128`), `http://` in front
+/// of it.
 fn proxy_url(raw: &str) -> Option<Url> {
     Url::parse(raw)
-        .or_else(|_| Url::parse(&format!("http://{raw}")))
         .ok()
+        .filter(|u| u.has_host())
+        .or_else(|| Url::parse(&format!("http://{raw}")).ok())
+}
+
+/// Whether calrs can use this proxy setting: reqwest accepts it and it is
+/// an HTTP or HTTPS proxy. reqwest 0.11 refused every other scheme itself;
+/// 0.12 accepts any URL here and, built without its `socks` feature, would
+/// not speak SOCKS to it, so the scheme is checked by calrs.
+fn usable_proxy(raw: &str) -> bool {
+    reqwest::Proxy::http(raw).is_ok()
+        && proxy_url(raw).is_some_and(|u| matches!(u.scheme(), "http" | "https"))
 }
 
 /// Log, once per process, how calendar requests leave: through a proxy
@@ -424,9 +439,15 @@ fn redirect_refused(target: &Url, allowlist: &Allowlist, proxy_hosts: &[String])
     url_refused_with(target, allowlist, proxy_hosts)
 }
 
-/// Follow at most `max` redirects, as `Policy::limited(max)` does, refusing
-/// those [`redirect_refused`] names. Host names in a redirect go through the
-/// guarded resolver.
+/// Follow redirects while fewer than `max` URLs have been requested in the
+/// chain, so at most `max - 1` of them, refusing those [`redirect_refused`]
+/// names. Host names in a redirect go through the guarded resolver.
+///
+/// `previous()` holds every URL already requested, the original included,
+/// in reqwest 0.11 and 0.12 alike. This is the count `Policy::limited(max)`
+/// kept in 0.11, which calrs's CalDAV client used before #363; 0.12's
+/// `limited(max)` follows one more, so this policy keeps its own count
+/// rather than delegating.
 pub fn redirects(max: usize, allowlist: Allowlist) -> reqwest::redirect::Policy {
     redirects_with(max, allowlist, ProxyConfig::from_env().hosts())
 }
