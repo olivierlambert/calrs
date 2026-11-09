@@ -533,7 +533,8 @@ overview-sum-pending = { $count ->
 }
 overview-links-page = Ihre Seite
 
-landing-hours-yours = Ihre Zeit: %1
+landing-hours-heading-yours = Meist verfügbar, in Ihrer Zeit
+landing-hours-toggle-hint = Diese Zeiten in Ihrer Zeitzone zeigen
 landing-how-it-works = Wählen Sie ein Thema und eine passende Zeit, die Bestätigung kommt per E-Mail.
 settings-based-in-help = Eine Stadt oder Region, angezeigt unter Ihrem Namen auf Ihrer öffentlichen Seite.
 settings-speaks = Ihre Sprachen

@@ -241,15 +241,22 @@ pub(super) async fn stored_section(pool: &SqlitePool, et_id: &str) -> String {
 /// Weekdays Monday first, as `availability_rules.day_of_week` (0 = Sunday).
 const WEEK: [u32; 7] = [1, 2, 3, 4, 5, 6, 0];
 
-fn weekday_name(lang: &str, day: u32) -> String {
-    let key = match day {
-        0 => "common-weekday-long-sun",
-        1 => "common-weekday-long-mon",
-        2 => "common-weekday-long-tue",
-        3 => "common-weekday-long-wed",
-        4 => "common-weekday-long-thu",
-        5 => "common-weekday-long-fri",
-        _ => "common-weekday-long-sat",
+fn weekday_name(lang: &str, day: u32, short: bool) -> String {
+    let key = match (day, short) {
+        (0, false) => "common-weekday-long-sun",
+        (1, false) => "common-weekday-long-mon",
+        (2, false) => "common-weekday-long-tue",
+        (3, false) => "common-weekday-long-wed",
+        (4, false) => "common-weekday-long-thu",
+        (5, false) => "common-weekday-long-fri",
+        (_, false) => "common-weekday-long-sat",
+        (0, true) => "slots-weekday-sun",
+        (1, true) => "slots-weekday-mon",
+        (2, true) => "slots-weekday-tue",
+        (3, true) => "slots-weekday-wed",
+        (4, true) => "slots-weekday-thu",
+        (5, true) => "slots-weekday-fri",
+        (_, true) => "slots-weekday-sat",
     };
     crate::i18n::translate(lang, key, None)
 }
@@ -257,19 +264,28 @@ fn weekday_name(lang: &str, day: u32) -> String {
 /// "Monday to Friday", "every day", "Monday, Wednesday and Friday": a run
 /// of three days or more as a range, anything else as a list. A run may
 /// wrap past the end of the week ("Friday to Monday"), which a visitor's
-/// zone can make of a host's Saturday to Tuesday.
-fn days_phrase(lang: &str, days: &[u32]) -> String {
+/// zone can make of a host's Saturday to Tuesday. With `short`, the
+/// timetable's form: "Mon to Fri", "Mon, Wed and Fri".
+fn days_phrase(lang: &str, days: &[u32], short: bool) -> String {
     if days.len() == 7 {
         return crate::i18n::translate(lang, "landing-days-every", None);
     }
     if let Some((first, last)) = circular_run(days) {
         let mut args = FluentArgs::new();
-        args.set("first", FluentValue::from(weekday_name(lang, first)));
-        args.set("last", FluentValue::from(weekday_name(lang, last)));
-        return crate::i18n::translate(lang, "landing-days-range", Some(&args));
+        args.set("first", FluentValue::from(weekday_name(lang, first, short)));
+        args.set("last", FluentValue::from(weekday_name(lang, last, short)));
+        let key = if short {
+            "landing-days-span"
+        } else {
+            "landing-days-range"
+        };
+        return crate::i18n::translate(lang, key, Some(&args));
     }
     let sorted: Vec<u32> = WEEK.iter().copied().filter(|d| days.contains(d)).collect();
-    let names: Vec<String> = sorted.iter().map(|d| weekday_name(lang, *d)).collect();
+    let names: Vec<String> = sorted
+        .iter()
+        .map(|d| weekday_name(lang, *d, short))
+        .collect();
     join_list(lang, &names)
 }
 
@@ -321,12 +337,18 @@ fn valid_hm(s: &str) -> bool {
     chrono::NaiveTime::parse_from_str(s, "%H:%M").is_ok()
 }
 
-/// The host's usual hours line for a landing page, from the weekly rules of
-/// the meetings it lists, all in timezone `tz`: one sentence and, for the
-/// script that adds the visitor's own hours, the groups behind it. One or
-/// two groups of days are written out ("Monday to Thursday, 09:00 to 17:30,
-/// and Friday, 09:00 to 16:00"); more say the hours vary by day. `None`
-/// without any rule.
+/// Distinct schedules beyond this many are not written out: the block
+/// says the hours vary by day instead.
+const TIMETABLE_MAX_ROWS: usize = 4;
+
+/// The host's usual hours for a landing page, from the weekly rules of the
+/// meetings it lists, all in timezone `tz`: a heading naming the timezone
+/// once ("Usually available, Paris time") over a small timetable, one row
+/// per distinct schedule with short day names ("Mon to Thu", "09:00 to
+/// 17:30"), plus the groups behind the rows for the page script that
+/// shows them in the visitor's timezone. Beyond [`TIMETABLE_MAX_ROWS`]
+/// schedules, no rows: one sentence (`text`) says on which days the host
+/// is available and that the hours vary by day. `None` without any rule.
 pub(super) fn usual_hours(
     lang: &str,
     rules: &[(i32, String, String)],
@@ -336,32 +358,36 @@ pub(super) fn usual_hours(
     let zone = zone_place(tz);
     let mut args = FluentArgs::new();
     args.set("zone", FluentValue::from(zone));
-    let text = match groups.as_slice() {
-        [] => return None,
-        [(days, start, end)] => {
-            args.set("days", FluentValue::from(days_phrase(lang, days)));
-            args.set("start", FluentValue::from(start.clone()));
-            args.set("end", FluentValue::from(end.clone()));
-            crate::i18n::translate(lang, "landing-hours", Some(&args))
-        }
-        [(d1, s1, e1), (d2, s2, e2)] => {
-            args.set("days", FluentValue::from(days_phrase(lang, d1)));
-            args.set("start", FluentValue::from(s1.clone()));
-            args.set("end", FluentValue::from(e1.clone()));
-            args.set("days2", FluentValue::from(days_phrase(lang, d2)));
-            args.set("start2", FluentValue::from(s2.clone()));
-            args.set("end2", FluentValue::from(e2.clone()));
-            crate::i18n::translate(lang, "landing-hours-two", Some(&args))
-        }
-        _ => {
-            let mut all: Vec<u32> = groups.iter().flat_map(|(d, _, _)| d.clone()).collect();
-            all.sort_by_key(|d| WEEK.iter().position(|w| w == d));
-            args.set("days", FluentValue::from(days_phrase(lang, &all)));
-            crate::i18n::translate(lang, "landing-hours-vary", Some(&args))
-        }
+    if groups.is_empty() {
+        return None;
+    }
+    let written = groups.len() <= TIMETABLE_MAX_ROWS;
+    // Too many schedules for the timetable: one sentence instead.
+    let text = if written {
+        String::new()
+    } else {
+        let mut all: Vec<u32> = groups.iter().flat_map(|(d, _, _)| d.clone()).collect();
+        all.sort_by_key(|d| WEEK.iter().position(|w| w == d));
+        args.set("days", FluentValue::from(days_phrase(lang, &all, false)));
+        crate::i18n::translate(lang, "landing-hours-vary", Some(&args))
+    };
+    let heading = crate::i18n::translate(lang, "landing-hours-heading", Some(&args));
+    let range = crate::i18n::translate(lang, "landing-time-range", None);
+    let rows: Vec<minijinja::Value> = if written {
+        groups
+            .iter()
+            .map(|(days, start, end)| {
+                context! {
+                    days => days_phrase(lang, days, true),
+                    hours => range.replacen("%1", start, 1).replacen("%2", end, 1),
+                }
+            })
+            .collect()
+    } else {
+        Vec::new()
     };
     // The visitor's own hours only make sense for hours written out.
-    let shown: Vec<minijinja::Value> = if groups.len() <= 2 {
+    let shown: Vec<minijinja::Value> = if written {
         groups
             .iter()
             .map(|(days, start, end)| context! { days => days, start => start, end => end })
@@ -369,7 +395,7 @@ pub(super) fn usual_hours(
     } else {
         Vec::new()
     };
-    Some(context! { text => text, tz => tz, groups => shown })
+    Some(context! { text => text, heading => heading, rows => rows, tz => tz, groups => shown })
 }
 
 /// Rules and timezone of the meetings `ids`, for [`usual_hours`]: `None`
@@ -739,51 +765,86 @@ mod tests {
         (d, s.to_string(), e.to_string())
     }
 
+    /// The timetable rows of a `usual_hours` value, "days: hours".
+    fn rows(v: &minijinja::Value) -> Vec<String> {
+        v.get_attr("rows")
+            .unwrap()
+            .try_iter()
+            .unwrap()
+            .map(|r| {
+                format!(
+                    "{}: {}",
+                    r.get_attr("days").unwrap(),
+                    r.get_attr("hours").unwrap()
+                )
+            })
+            .collect()
+    }
+
     #[test]
-    fn usual_hours_write_one_or_two_groups_and_vary_beyond() {
-        let week: Vec<_> = (1..=5).map(|d| rule(d, "09:00", "17:30")).collect();
+    fn the_timetable_names_the_zone_once_and_one_row_per_schedule() {
+        let mut week: Vec<_> = (1..=4).map(|d| rule(d, "09:00", "17:30")).collect();
+        week.push(rule(5, "09:00", "16:00"));
         let v = usual_hours("en", &week, "Europe/Paris").unwrap();
         assert_eq!(
-            v.get_attr("text").unwrap().to_string(),
-            "Usually available Monday to Friday, 09:00 to 17:30 (Paris time)"
+            v.get_attr("heading").unwrap().to_string(),
+            "Usually available, Paris time"
         );
+        assert_eq!(
+            rows(&v),
+            ["Mon to Thu: 09:00 to 17:30", "Fri: 09:00 to 16:00"]
+        );
+        let v = usual_hours("fr", &week, "Europe/Paris").unwrap();
+        assert_eq!(
+            rows(&v),
+            ["Lun au Jeu: de 09:00 à 17:30", "Ven: de 09:00 à 16:00"]
+        );
+        let v = usual_hours("de", &week, "Europe/Berlin").unwrap();
+        assert_eq!(rows(&v), ["Mo–Do: 09:00 bis 17:30", "Fr: 09:00 bis 16:00"]);
+        let every: Vec<_> = (0..=6).map(|d| rule(d, "10:00", "16:00")).collect();
+        let v = usual_hours("en", &every, "UTC").unwrap();
+        assert_eq!(rows(&v), ["every day: 10:00 to 16:00"]);
+        assert_eq!(days_phrase("en", &[1, 3, 5], true), "Mon, Wed and Fri");
+        assert_eq!(days_phrase("en", &[5, 6, 0, 1], true), "Fri to Mon");
+    }
+
+    #[test]
+    fn usual_hours_write_up_to_four_schedules_and_vary_beyond() {
+        let week: Vec<_> = (1..=5).map(|d| rule(d, "09:00", "17:30")).collect();
+        let v = usual_hours("en", &week, "Europe/Paris").unwrap();
+        assert_eq!(rows(&v), ["Mon to Fri: 09:00 to 17:30"]);
+        assert_eq!(v.get_attr("text").unwrap().to_string(), "");
         // A lunch break does not split the day.
         let mut split = week.clone();
         split.push(rule(1, "13:30", "17:30"));
         split[0] = rule(1, "09:00", "12:00");
-        assert_eq!(
-            usual_hours("en", &split, "Europe/Paris")
-                .unwrap()
-                .get_attr("text")
-                .unwrap()
-                .to_string(),
-            "Usually available Monday to Friday, 09:00 to 17:30 (Paris time)"
-        );
-        let mut friday = week.clone();
-        friday[4] = rule(5, "09:00", "16:00");
-        assert_eq!(
-            usual_hours("en", &friday, "America/New_York").unwrap().get_attr("text").unwrap().to_string(),
-            "Usually available Monday to Thursday, 09:00 to 17:30, and Friday, 09:00 to 16:00 (New York time)"
-        );
+        let v = usual_hours("en", &split, "Europe/Paris").unwrap();
+        assert_eq!(rows(&v), ["Mon to Fri: 09:00 to 17:30"]);
         let odd = vec![
             rule(1, "08:00", "12:00"),
             rule(3, "10:00", "18:00"),
             rule(5, "14:00", "20:00"),
         ];
         let v = usual_hours("en", &odd, "Europe/Paris").unwrap();
+        assert_eq!(v.get_attr("groups").unwrap().len(), Some(3));
+        assert_eq!(
+            rows(&v),
+            [
+                "Mon: 08:00 to 12:00",
+                "Wed: 10:00 to 18:00",
+                "Fri: 14:00 to 20:00"
+            ]
+        );
+        // Five do not fit: the sentence alone.
+        let five: Vec<_> = (1..=5)
+            .map(|d| rule(d, &format!("0{d}:00"), "18:00"))
+            .collect();
+        let v = usual_hours("en", &five, "Europe/Paris").unwrap();
+        assert_eq!(v.get_attr("rows").unwrap().len(), Some(0));
+        assert_eq!(v.get_attr("groups").unwrap().len(), Some(0));
         assert_eq!(
             v.get_attr("text").unwrap().to_string(),
-            "Usually available Monday, Wednesday and Friday (Paris time), hours vary by day"
-        );
-        assert_eq!(v.get_attr("groups").unwrap().len(), Some(0));
-        let every: Vec<_> = (0..=6).map(|d| rule(d, "10:00", "16:00")).collect();
-        assert_eq!(
-            usual_hours("fr", &every, "Europe/Paris")
-                .unwrap()
-                .get_attr("text")
-                .unwrap()
-                .to_string(),
-            "Disponible en général tous les jours, de 10:00 à 16:00 (heure de Paris)"
+            "Usually available Monday to Friday (Paris time), hours vary by day"
         );
         assert!(usual_hours("en", &[], "Europe/Paris").is_none());
         assert!(usual_hours("en", &[rule(1, "18:00", "09:00")], "UTC").is_none());
@@ -791,15 +852,24 @@ mod tests {
 
     #[test]
     fn day_runs_may_wrap_past_sunday() {
-        assert_eq!(days_phrase("en", &[1, 2, 3, 4, 5]), "Monday to Friday");
-        assert_eq!(days_phrase("en", &[0, 1, 2, 3, 4]), "Sunday to Thursday");
-        assert_eq!(days_phrase("en", &[5, 6, 0, 1]), "Friday to Monday");
-        assert_eq!(days_phrase("en", &[6, 0]), "Saturday and Sunday");
         assert_eq!(
-            days_phrase("en", &[1, 3, 5]),
+            days_phrase("en", &[1, 2, 3, 4, 5], false),
+            "Monday to Friday"
+        );
+        assert_eq!(
+            days_phrase("en", &[0, 1, 2, 3, 4], false),
+            "Sunday to Thursday"
+        );
+        assert_eq!(days_phrase("en", &[5, 6, 0, 1], false), "Friday to Monday");
+        assert_eq!(days_phrase("en", &[6, 0], false), "Saturday and Sunday");
+        assert_eq!(
+            days_phrase("en", &[1, 3, 5], false),
             "Monday, Wednesday and Friday"
         );
-        assert_eq!(days_phrase("en", &[0, 1, 2, 3, 4, 5, 6]), "every day");
+        assert_eq!(
+            days_phrase("en", &[0, 1, 2, 3, 4, 5, 6], false),
+            "every day"
+        );
     }
 
     #[test]

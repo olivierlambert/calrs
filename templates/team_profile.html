@@ -5,7 +5,8 @@
 {% set invite_q = ("?invite=" ~ (invite_token | urlencode)) if (invite_token is defined and invite_token) else "" %}
 <section class="lp-top">
   {% include "partials/public_logo.html" %}
-  <header class="lp-card">
+  {%- set has_practical = hours or based_in or speaks %}
+  <header class="lp-card{% if has_practical %} has-practical{% endif %}">
     <div class="lp-face lp-face-team" data-face="{{ team_name }}">
       {% if team_has_avatar %}
         <img src="/team-avatar/{{ team_id }}" alt="" data-initials="{{ team_initials }}" onerror="this.parentElement.textContent=this.dataset.initials">
@@ -15,28 +16,28 @@
     </div>
     <div class="lp-id">
       <h1 class="lp-name">{{ team_name }}</h1>
-    </div>
-    {% include "partials/landing_about.html" %}
-    {% if team_description or members %}
-    <div class="lp-more">
-      {% if team_description %}<div class="lp-bio">{{ team_description|safe }}</div>{% endif %}
-      {% if members %}
-      <ul class="lp-members">
-        {% for m in members %}
-        <li class="lp-member" title="{{ m.name }}">
-          <span class="lp-face" data-face="{{ m.name }}">{% if m.has_avatar %}<img src="/avatar/{{ m.id }}" alt="">{% else %}{{ m.initials }}{% endif %}</span>
-          <span class="lp-member-name">{{ m.first_name if m.first_name is defined and m.first_name else m.name }}</span>
-        </li>
-        {% endfor %}
-        {% if members_total > members|length %}
-        <li class="lp-member lp-member-more" title="{{ t('teams-member-count', count=members_total) }}">
-          <span class="lp-face">+{{ members_total - members|length }}</span>
-        </li>
+      {% if team_description or members %}
+      <div class="lp-more">
+        {% if team_description %}<div class="lp-bio">{{ team_description|safe }}</div>{% endif %}
+        {% if members %}
+        <ul class="lp-members">
+          {% for m in members %}
+          <li class="lp-member" title="{{ m.name }}">
+            <span class="lp-face" data-face="{{ m.name }}">{% if m.has_avatar %}<img src="/avatar/{{ m.id }}" alt="">{% else %}{{ m.initials }}{% endif %}</span>
+            <span class="lp-member-name">{{ m.first_name if m.first_name is defined and m.first_name else m.name }}</span>
+          </li>
+          {% endfor %}
+          {% if members_total > members|length %}
+          <li class="lp-member lp-member-more" title="{{ t('teams-member-count', count=members_total) }}">
+            <span class="lp-face">+{{ members_total - members|length }}</span>
+          </li>
+          {% endif %}
+        </ul>
         {% endif %}
-      </ul>
+      </div>
       {% endif %}
     </div>
-    {% endif %}
+    {% if has_practical %}{% include "partials/landing_about.html" %}{% endif %}
   </header>
 </section>
 

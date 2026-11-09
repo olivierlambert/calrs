@@ -1,9 +1,10 @@
 {#- Behaviour of the landing pages, after the content:
     - faces get the overview's per-person hue (--h), a stable hash;
-    - the host's usual hours (landing_about.html) get the guest's own
-      hours under them when the guest's timezone differs, in the guest's
-      time format. Nothing blocks the page; on a failure the line simply
-      stays as the server wrote it. -#}
+    - the host's usual hours (landing_about.html) can be shown in the
+      guest's timezone and time format with the "My time" button, which
+      appears only when that timezone differs. Nothing blocks the page; on
+      a failure the button stays hidden and the hours stay as the server
+      wrote them. -#}
 <script>
 (function() {
   // FNV-1a over the UTF-8 bytes, as overview_stats::face_hue computes it.
@@ -19,27 +20,29 @@
     el.style.setProperty('--h', FACE_HUES[fnv(key(el.getAttribute('data-face'))) % FACE_HUES.length]);
   });
 
-  // The host's usual hours, in the visitor's timezone when it differs:
-  // for each group of days the line names, its first and last minute on
-  // the next day of that group (so a clock change between now and then is
-  // accounted for), converted with Intl alone. Written under the host's
-  // line as "Your time: 08:00 to 16:30", or, when the days differ or move
-  // past midnight, "Your time: Tuesday to Saturday, 01:00 to 09:30".
-  var line = document.querySelector('.lp-hours[data-tz]');
-  var yours = line && line.querySelector('.lp-yours');
-  if (!yours || !window.Intl) return;
-  var htz = line.getAttribute('data-tz');
+  // The host's usual hours (landing_about.html), which the "My time"
+  // button turns into the visitor's own when their timezone differs: for
+  // each row of the timetable, its first and last minute on the next day
+  // of that row (so a clock change between now and then is accounted
+  // for), converted with Intl alone; days move along when the shift
+  // carries the start past midnight. Nothing blocks the page; on a
+  // failure the button stays hidden and the host's hours stay.
+  var box = document.querySelector('.lp-hours[data-tz]');
+  var toggle = box && box.querySelector('.lp-tt-toggle');
+  var table = box && box.querySelector('.lp-tt tbody');
+  var label = box && box.querySelector('.lp-hours-label');
+  if (!toggle || !table || !label || !window.Intl) return;
+  var htz = box.getAttribute('data-tz');
   var gtz = '';
   try { gtz = Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch (e) {}
   if (!htz || !gtz || htz === gtz) return;
   var groups = [];
-  try { groups = JSON.parse(line.getAttribute('data-groups') || '[]'); } catch (e) { return; }
+  try { groups = JSON.parse(box.getAttribute('data-groups') || '[]'); } catch (e) { return; }
   if (!Array.isArray(groups) || !groups.length) return;
   var lang = document.documentElement.lang || 'en';
   var h12 = false;
   try { h12 = localStorage.getItem('calrs_time_format') === '12'; } catch (e) {}
   var WEEK = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-  // Calendar fields of an instant in a timezone.
   function fields(tz, ms) {
     var p = {};
     try {
@@ -49,14 +52,12 @@
     } catch (e) { return null; }
     return p;
   }
-  // A timezone's offset from UTC at an instant, in milliseconds.
   function offset(tz, ms) {
     var p = fields(tz, ms);
     if (!p) return null;
     var minute = Math.floor(ms / 60000) * 60000;
     return Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour % 24, +p.minute) - minute;
   }
-  // The instant a wall-clock time ("09:00") falls on, in a timezone.
   function instant(tz, y, m, d, hm) {
     var parts = String(hm).split(':');
     var guess = Date.UTC(y, m - 1, d, +parts[0], +parts[1]);
@@ -73,18 +74,16 @@
   }
   // The page's own wording, with %1/%2 for what the script fills in.
   var L = {
-    week: [{{ t("common-weekday-long-sun") | tojson }}, {{ t("common-weekday-long-mon") | tojson }},
-      {{ t("common-weekday-long-tue") | tojson }}, {{ t("common-weekday-long-wed") | tojson }},
-      {{ t("common-weekday-long-thu") | tojson }}, {{ t("common-weekday-long-fri") | tojson }},
-      {{ t("common-weekday-long-sat") | tojson }}],
+    week: [{{ t("slots-weekday-sun") | tojson }}, {{ t("slots-weekday-mon") | tojson }},
+      {{ t("slots-weekday-tue") | tojson }}, {{ t("slots-weekday-wed") | tojson }},
+      {{ t("slots-weekday-thu") | tojson }}, {{ t("slots-weekday-fri") | tojson }},
+      {{ t("slots-weekday-sat") | tojson }}],
     every: {{ t("landing-days-every") | tojson }},
-    daysRange: {{ t("landing-days-range", first="%1", last="%2") | tojson }},
+    daysSpan: {{ t("landing-days-span", first="%1", last="%2") | tojson }},
     and: {{ t("list-and", first="%1", last="%2", e="no") | tojson }},
     range: {{ t("landing-time-range") | tojson }},
     next: {{ t("landing-time-range-next") | tojson }},
-    clause: {{ t("landing-yours-clause") | tojson }},
-    two: {{ t("landing-yours-two") | tojson }},
-    yours: {{ t("landing-hours-yours") | tojson }}
+    yours: {{ t("landing-hours-heading-yours") | tojson }}
   };
   function fill(pattern, a, b) { return pattern.replace('%1', a).replace('%2', b); }
   // As landing::days_phrase: every day, a run of three to six days as a
@@ -100,7 +99,7 @@
         if (!has(s) || has(s + 6)) continue;
         var run = true;
         for (var k = 0; k < sorted.length; k++) if (!has(s + k)) run = false;
-        if (run) return fill(L.daysRange, L.week[MONDAY_FIRST[s]], L.week[MONDAY_FIRST[(s + sorted.length - 1) % 7]]);
+        if (run) return fill(L.daysSpan, L.week[MONDAY_FIRST[s]], L.week[MONDAY_FIRST[(s + sorted.length - 1) % 7]]);
         break;
       }
     }
@@ -108,11 +107,9 @@
     if (names.length === 1) return names[0];
     return fill(L.and, names.slice(0, -1).join(', '), names[names.length - 1]);
   }
-  // Each group of days in the visitor's zone: its days moved along when
-  // the shift carries the start past midnight, its hours, and whether it
-  // ends on the next day.
-  var differs = false, shifted = false;
-  var entries = [];
+  // Each row in the visitor's zone.
+  var differs = false;
+  var rows = [];
   for (var g = 0; g < groups.length; g++) {
     var days = Array.isArray(groups[g].days) ? groups[g].days : [];
     var day = null, hostDay = -1;
@@ -128,25 +125,31 @@
     var gs = fields(gtz, start), ge = fields(gtz, end);
     if (!gs || !ge) return;
     var shift = (WEEK.indexOf(gs.weekday) - hostDay + 7) % 7;
-    if (shift !== 0) shifted = true;
     var from = hm(start), to = hm(end);
     if (!from || !to) return;
-    var nextDay = gs.weekday !== ge.weekday;
-    entries.push({
-      days: days.map(function(d) { return (d + shift) % 7; }),
-      range: fill(nextDay ? L.next : L.range, from, to)
+    rows.push([daysPhrase(days.map(function(d) { return (d + shift) % 7; })),
+      fill(gs.weekday !== ge.weekday ? L.next : L.range, from, to)]);
+  }
+  if (!differs || !rows.length) return;
+  function render(list) {
+    table.textContent = '';
+    list.forEach(function(r) {
+      var tr = document.createElement('tr');
+      var th = document.createElement('th'); th.scope = 'row'; th.textContent = r[0];
+      var td = document.createElement('td'); td.textContent = r[1];
+      tr.appendChild(th); tr.appendChild(td); table.appendChild(tr);
     });
   }
-  if (!differs || !entries.length) return;
-  var text;
-  if (entries.length === 1 && !shifted) {
-    // The same days, one set of hours: the hours alone.
-    text = entries[0].range;
-  } else {
-    var clauses = entries.map(function(e) { return fill(L.clause, daysPhrase(e.days), e.range); });
-    text = clauses.length === 1 ? clauses[0] : fill(L.two, clauses[0], clauses[1]);
-  }
-  yours.textContent = L.yours.replace('%1', text);
-  yours.hidden = false;
+  var hostRows = Array.prototype.map.call(table.rows, function(tr) {
+    return [tr.cells[0].textContent, tr.cells[1].textContent];
+  });
+  var hostLabel = label.textContent;
+  toggle.hidden = false;
+  toggle.addEventListener('click', function() {
+    var mine = toggle.getAttribute('aria-pressed') !== 'true';
+    toggle.setAttribute('aria-pressed', mine ? 'true' : 'false');
+    render(mine ? rows : hostRows);
+    label.textContent = mine ? L.yours : hostLabel;
+  });
 })();
 </script>

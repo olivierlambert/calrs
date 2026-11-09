@@ -262,30 +262,33 @@ duration-long-d =
 landing-with-one-of = with one of
 faces-and-more = and { $count } more
 landing-with-everyone = with everyone
-# landing-hours, -two and -vary read the host's usual weekly hours; $days is
-# landing-days-range, landing-days-every or a list joined with list-and. In
-# landing-hours-yours, %1 is the same hours in the visitor's timezone, each
-# written with landing-time-range (%1 and %2 the times), or -next when it ends
-# the next day; with days (when they differ or move), landing-yours-clause
-# (%1 the days, %2 the hours) and landing-yours-two for two groups. Filled in by
-# the page script.
-landing-hours = Usually available { $days }, { $start } to { $end } ({ $zone } time)
+# The usual hours beside the host's name: landing-hours-heading over a
+# timetable, one row per schedule: the days with the short weekday names
+# (landing-days-span for a run, else a list joined with list-and), the hours
+# with landing-time-range (%1 and %2 the times). The "My time" button
+# (landing-hours-toggle) rewrites the rows in the visitor's timezone, with
+# landing-time-range-next when they end the next day, and the heading as
+# landing-hours-heading-yours. With too many schedules, landing-hours-vary
+# alone; its $days is landing-days-range, landing-days-every or a list.
+# landing-host-confirms labels a meeting whose requests the host confirms by
+# hand (landing-on-request-hint explains it).
 landing-days-range = { $first } to { $last }
 landing-days-every = every day
-landing-hours-yours = Your time: %1
-landing-on-request = On request
 landing-on-request-hint = Each request is confirmed by hand before it is booked.
 landing-how-it-works = Pick a topic, choose a time that suits you, and you'll get a confirmation by email.
 landing-based-in = Based in { $place }
 landing-speaks = Speaks { $languages }
 landing-meetings = Meetings
-landing-hours-two = Usually available { $days }, { $start } to { $end }, and { $days2 }, { $start2 } to { $end2 } ({ $zone } time)
 landing-hours-vary = Usually available { $days } ({ $zone } time), hours vary by day
 landing-time-range = %1 to %2
 landing-time-range-next = %1 to %2 the next day
-landing-yours-clause = %1, %2
-landing-yours-two = %1, and %2
 landing-other-meetings = Other meetings
+landing-hours-heading = Usually available, { $zone } time
+landing-hours-heading-yours = Usually available, your time
+landing-hours-toggle = My time
+landing-hours-toggle-hint = Show these hours in your timezone
+landing-days-span = { $first } to { $last }
+landing-host-confirms = Host confirms
 list-and = { $first } and { $last }
 
 # Month and weekday names + per-locale date format patterns.

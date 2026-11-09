@@ -1,24 +1,36 @@
-{#- What a guest knows about the host before picking a meeting, under the
-    name, an icon each and only what is set: when they usually meet
-    (`hours`, from landing::usual_hours: the sentence, the timezone and the
-    groups of days behind it, which the page script uses to add the
-    visitor's own hours when their timezone differs), where they are based
-    (`based_in`, as written) and the languages they speak (`speaks`, named
-    in the visitor's language). -#}
+{#- What a guest needs before picking a meeting, in a compact block beside
+    the name (under it on narrow screens), only what is set: when the host
+    usually meets as a small timetable (`hours`, from landing::usual_hours:
+    a heading naming the timezone once, one row per distinct schedule with
+    short day names, and the groups behind the rows, which the page script
+    uses to show them in the visitor's timezone behind the "My time"
+    button when it differs), then where they are based (`based_in`, as
+    written) and the languages they speak (`speaks`, named in the
+    visitor's language) on one line. The pages include it only when one of
+    them is set (`has_practical`). -#}
 {%- import "partials/phosphor.html" as ph -%}
-{%- if hours or based_in or speaks %}
-<ul class="lp-about">
+<div class="lp-practical">
   {%- if hours %}
-  <li class="lp-hours" data-tz="{{ hours.tz }}" data-groups='{{ hours.groups | tojson }}'>
-    {{ ph.icon("clock", 16) }}
-    <span>{{ hours.text }}<span class="lp-yours" hidden></span></span>
-  </li>
+  <div class="lp-hours" data-tz="{{ hours.tz }}" data-groups='{{ hours.groups | tojson }}'>
+    {%- if hours.rows %}
+    <p class="lp-hours-head">{{ ph.icon("clock", 16) }}<span class="lp-hours-label" aria-live="polite">{{ hours.heading }}</span><button type="button" class="lp-tt-toggle" aria-pressed="false" title="{{ t('landing-hours-toggle-hint') }}" hidden>{{ t("landing-hours-toggle") }}</button></p>
+    <table class="lp-tt">
+      <tbody>
+        {%- for row in hours.rows %}
+        <tr><th scope="row">{{ row.days }}</th><td>{{ row.hours }}</td></tr>
+        {%- endfor %}
+      </tbody>
+    </table>
+    {%- else %}
+    <p class="lp-hours-head">{{ ph.icon("clock", 16) }}<span>{{ hours.text }}</span></p>
+    {%- endif %}
+  </div>
   {%- endif %}
-  {%- if based_in %}
-  <li>{{ ph.icon("map-pin", 16) }}<span>{{ t("landing-based-in", place=based_in) }}</span></li>
+  {%- if based_in or speaks %}
+  <p class="lp-where">
+    {%- if based_in %}<span class="lp-where-item">{{ ph.icon("map-pin", 16) }}<span class="lp-sr">{{ t("landing-based-in", place=based_in) }}</span><span aria-hidden="true">{{ based_in }}</span></span>{% endif %}
+    {%- if based_in and speaks %}<span class="lp-dot" aria-hidden="true">·</span>{% endif %}
+    {%- if speaks %}<span class="lp-where-item">{{ ph.icon("globe", 16) }}<span class="lp-sr">{{ t("landing-speaks", languages=speaks) }}</span><span aria-hidden="true">{{ speaks }}</span></span>{% endif %}
+  </p>
   {%- endif %}
-  {%- if speaks %}
-  <li>{{ ph.icon("globe", 16) }}<span>{{ t("landing-speaks", languages=speaks) }}</span></li>
-  {%- endif %}
-</ul>
-{%- endif %}
+</div>

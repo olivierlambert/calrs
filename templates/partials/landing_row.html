@@ -37,7 +37,7 @@
       <li class="lp-fact">{{ ph.icon("map-pin", 16) }}<span>{{ t("etf-location-in-person") }}</span></li>
       {%- endif %}
       {%- if et.requires_confirmation %}
-      <li class="lp-fact lp-req" title="{{ t('landing-on-request-hint') }}"><span>{{ t("landing-on-request") }}</span><span class="lp-sr">{{ t("landing-on-request-hint") }}</span></li>
+      <li class="lp-fact" title="{{ t('landing-on-request-hint') }}">{{ ph.icon("user-check", 16) }}<span>{{ t("landing-host-confirms") }}</span><span class="lp-sr">{{ t("landing-on-request-hint") }}</span></li>
       {%- endif %}
     </ul>
     {%- endif %}

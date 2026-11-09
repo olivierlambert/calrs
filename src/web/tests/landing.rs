@@ -160,7 +160,7 @@ async fn profile_lists_one_card_with_the_decision_facts_and_the_hours() {
     .execute(&pool)
     .await
     .unwrap();
-    let page = body_string(app.oneshot(get("/u/testuser")).await.unwrap()).await;
+    let page = body_string(app.clone().oneshot(get("/u/testuser")).await.unwrap()).await;
     assert!(
         page.contains(
             r#"<h2>Meetings<span class="lp-sr">, </span><span class="num">1</span></h2>"#
@@ -168,11 +168,25 @@ async fn profile_lists_one_card_with_the_decision_facts_and_the_hours() {
         "{page}"
     );
     assert!(page.contains("<span>Phone call</span>"));
-    assert!(page.contains("On request"));
-    assert!(page.contains("Usually available Monday to Friday, 09:00 to 17:00 (UTC time)"));
+    assert!(page.contains("<span>Host confirms</span>"), "{page}");
+    assert!(page.contains("Each request is confirmed by hand"));
+    // The hours sit beside the name as a timetable, the zone named once.
+    assert!(page.contains(r#"<header class="lp-card has-practical">"#));
+    assert!(page.contains("Usually available, UTC time"), "{page}");
+    assert!(page.contains(r#"<tr><th scope="row">Mon to Fri</th><td>09:00 to 17:00</td></tr>"#));
+    assert!(page.contains(r#"class="lp-tt-toggle" aria-pressed="false""#));
     assert!(!page.contains("next-free"));
     // One meeting: no line on how booking works.
     assert!(!page.contains(r#"<p class="lp-how">"#));
+
+    // Nothing practical to say: no block and no third column.
+    sqlx::query("DELETE FROM availability_rules")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let page = body_string(app.oneshot(get("/u/testuser")).await.unwrap()).await;
+    assert!(page.contains(r#"<header class="lp-card">"#), "{page}");
+    assert!(!page.contains(r#"<div class="lp-practical">"#));
 }
 
 /// Sections become cards in the order of the page, the meetings without a
@@ -362,6 +376,10 @@ async fn based_in_and_languages_show_under_the_name() {
     .await;
     assert!(page.contains("Localisation : Lyon"), "{page}");
     assert!(page.contains("Parle anglais et français"));
+    // On one line, the place and the languages as they are, the sentences
+    // for screen readers.
+    assert!(page.contains(r#"<span aria-hidden="true">Lyon</span>"#));
+    assert!(page.contains(r#"<span aria-hidden="true">anglais et français</span>"#));
     // An older settings form without the languages keeps them.
     app.clone()
         .oneshot(post_form(

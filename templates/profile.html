@@ -4,7 +4,8 @@
 {% block content %}
 <section class="lp-top">
   {% include "partials/public_logo.html" %}
-  <header class="lp-card">
+  {%- set has_practical = hours or based_in or speaks %}
+  <header class="lp-card{% if has_practical %} has-practical{% endif %}">
     <div class="lp-face" data-face="{{ host_name }}">
       {% if host_has_avatar %}
         <img src="/avatar/{{ host_user_id }}" alt="" data-initials="{{ host_initials }}" onerror="this.parentElement.textContent=this.dataset.initials">
@@ -15,9 +16,9 @@
     <div class="lp-id">
       <h1 class="lp-name">{{ host_name }}</h1>
       {% if host_title %}<p class="lp-title">{{ host_title }}</p>{% endif %}
+      {% if host_bio %}<div class="lp-more lp-bio">{{ host_bio|safe }}</div>{% endif %}
     </div>
-    {% include "partials/landing_about.html" %}
-    {% if host_bio %}<div class="lp-more lp-bio">{{ host_bio|safe }}</div>{% endif %}
+    {% if has_practical %}{% include "partials/landing_about.html" %}{% endif %}
   </header>
 </section>
 
