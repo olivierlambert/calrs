@@ -5,7 +5,7 @@
 {% import "partials/landing_hue.html" as dial %}
 {% set invite_q = ("?invite=" ~ (invite_token | urlencode)) if (invite_token is defined and invite_token) else "" %}
 <section class="lp-top">
-  <div class="lp-logo">{% if company_link %}<a href="{{ company_link }}" target="_blank" rel="noopener noreferrer">{% endif %}<img src="/logo" alt="" onerror="this.closest('.lp-logo').style.display='none'">{% if company_link %}</a>{% endif %}</div>
+  {% include "partials/public_logo.html" %}
   <header class="lp-card">
     <div class="lp-face lp-face-team" data-face="{{ team_name }}">
       {% if team_has_avatar %}

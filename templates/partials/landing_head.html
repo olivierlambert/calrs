@@ -76,8 +76,11 @@
     padding-bottom: 2.25rem;
     margin-bottom: 2.5rem;
   }
-  .lp-logo { margin-bottom: 2.5rem; }
-  .lp-logo img { display: block; max-height: 56px; max-width: 240px; object-fit: contain; }
+  /* The tenant logo (partials/public_logo.html, light and dark), quiet and
+     left. Its images keep base.html's display rules, which pick the one
+     for the theme. */
+  .lp-top .logo { text-align: left; margin-bottom: 2.5rem; }
+  .lp-top .logo img { max-height: 56px; max-width: 240px; object-fit: contain; vertical-align: top; }
 
   /* The host, set like a business card. Photo and name share the first
      line; the bio and the team's faces sit under the name. */
@@ -192,7 +195,7 @@
   @media (max-width: 560px) {
     body { padding: 2.25rem 1rem 2rem; }
     .lp-top { clip-path: inset(-2.25rem -100vmax 0 -100vmax); }
-    .lp-logo { margin-bottom: 2rem; }
+    .lp-top .logo { margin-bottom: 2rem; }
     .lp-card { gap: 0 1rem; }
     .lp-card > .lp-more { grid-column: 1 / -1; }
     .lp-face { width: 72px; height: 72px; font-size: 1.35rem; }

@@ -433,6 +433,11 @@ fn landing_dials_draw_one_dial_per_hour() {
     env.set_undefined_behavior(minijinja::UndefinedBehavior::Lenient);
     env.set_loader(minijinja::path_loader("templates"));
     crate::i18n::register(&mut env);
+    // The landing header includes the public logo partial; no logo here.
+    register_company_logo(
+        &mut env,
+        std::env::temp_dir().join(format!("calrs_no_logo_{}", uuid::Uuid::new_v4())),
+    );
     let render = |minutes: i32| {
         let html = env
             .get_template("profile.html")
