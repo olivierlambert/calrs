@@ -1,61 +1,43 @@
 {% extends "base.html" %}
-{% block title %}{{ host_name }} — calrs{% endblock %}
-{% block head %}
-<style>
-  .host-bio a { color: #fff; text-decoration: underline; text-underline-offset: 2px; }
-  .host-bio a:hover { opacity: 0.8; }
-  .host-bio code { background: rgba(255,255,255,0.15); padding: 0.1em 0.3em; border-radius: 3px; font-size: 0.85em; }
-  .description-clamp { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-</style>
-{% endblock %}
+{% block title %}{{ host_name }}, calrs{% endblock %}
+{% block head %}{% include "partials/landing_head.html" %}{% endblock %}
 {% block content %}
-{% include "partials/public_logo.html" %}
-
-<div class="card" style="overflow: hidden; padding: 0;">
-  <div style="background: linear-gradient(135deg, var(--accent) 0%, var(--accent-hover) 100%); padding: 2rem 2rem 1.5rem; color: #fff;">
-    <div style="display: flex; align-items: center; gap: 1rem; margin-bottom: 0.5rem;">
-      {% if host_user_id %}
-      <div style="width: 64px; height: 64px; border-radius: 50%; background: rgba(255,255,255,0.2); color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 600; font-size: 1.25rem; flex-shrink: 0; overflow: hidden; border: 2px solid rgba(255,255,255,0.3);">
-        {% if host_has_avatar %}
-          <img src="/avatar/{{ host_user_id }}" alt="" style="width: 100%; height: 100%; object-fit: cover;" onerror="this.parentElement.textContent='{{ host_initials }}'">
-        {% else %}
-          {{ host_initials }}
-        {% endif %}
-      </div>
+{% import "partials/landing_hue.html" as dial %}
+<section class="lp-top">
+  {% include "partials/public_logo.html" %}
+  <header class="lp-card">
+    <div class="lp-face" data-face="{{ host_name }}">
+      {% if host_has_avatar %}
+        <img src="/avatar/{{ host_user_id }}" alt="" data-initials="{{ host_initials }}" onerror="this.parentElement.textContent=this.dataset.initials">
+      {% else %}
+        {{ host_initials }}
       {% endif %}
-      <div>
-        <h1 style="margin-bottom: 0; color: #fff;">{{ host_name }}</h1>
-        {% if host_title %}<p style="color: rgba(255,255,255,0.8); font-size: 0.9rem; margin-top: 0.125rem;">{{ host_title }}</p>{% endif %}
-      </div>
     </div>
-    {% if host_bio %}<div class="host-bio" style="color: rgba(255,255,255,0.85); font-size: 0.9rem; margin-top: 0.5rem;">{{ host_bio|safe }}</div>{% endif %}
-  </div>
-  <div style="padding: 1.25rem 2rem 1.5rem;">
-    <p class="subtitle" style="margin-bottom: 0;">{{ t('profile-pick-event-type-invite') }}</p>
-  </div>
-</div>
+    <div class="lp-id">
+      <h1 class="lp-name">{{ host_name }}</h1>
+      {% if host_title %}<p class="lp-title">{{ host_title }}</p>{% endif %}
+    </div>
+    {% if host_bio %}<div class="lp-more lp-bio">{{ host_bio|safe }}</div>{% endif %}
+  </header>
+</section>
 
-{% if event_types %}
+<ul class="lp-list"{% if event_types %} data-next="/u/{{ username }}/next-free"{% endif %}>
   {% for et in event_types %}
-  <div class="card card-link" style="border-left: 3px solid var(--accent); padding-left: 1.75rem;">
-    <div style="display: flex; justify-content: space-between; align-items: center;">
-      <div>
-        <a href="/u/{{ username }}/{{ et.slug }}" data-calrs-sync class="card-link-title"><strong>{{ et.title }}</strong></a>
-        <span style="color: var(--text-muted); font-size: 0.85rem;">&middot; {{ et.duration_min }}min</span>
-        {% if et.description %}
-        <p class="description-clamp" style="color: var(--text-secondary); font-size: 0.875rem; margin-top: 0.25rem; margin-bottom: 0;">{{ et.description|safe }}</p>
-        {% endif %}
-      </div>
-      <span aria-hidden="true" style="color: var(--accent); font-size: 1.25rem; transition: transform 0.15s ease;">&rarr;</span>
+  <li class="lp-row" style="--eh: {{ dial.hue(et.duration_min) }}" data-slug="{{ et.slug }}">
+    {% with d = et.duration_min %}{% include "partials/landing_dial.html" %}{% endwith %}
+    <div class="lp-main">
+      <a href="/u/{{ username }}/{{ et.slug }}" data-calrs-sync class="lp-et-title">{{ et.title }}</a>
+      {% if et.description %}<p class="lp-desc">{{ et.description|safe }}</p>{% endif %}
     </div>
-  </div>
+    <div class="lp-side">
+      <span class="lp-next" hidden></span>
+      <span class="lp-days" hidden aria-hidden="true"></span>
+    </div>
+  </li>
+  {% else %}
+  <li class="lp-empty">{{ t("profile-no-event-type") }}</li>
   {% endfor %}
-{% else %}
-  <div class="card">
-    <div class="empty">
-      <div class="empty-icon">&#128197;</div>
-      <div class="empty-text">{{ t('profile-no-event-type') }}</div>
-    </div>
-  </div>
-{% endif %}
+</ul>
+{% include "partials/landing_script.html" %}
 {% endblock %}
+{% block footer %}<div class="lp-foot">{{ t("base-powered-by") }} <a href="https://cal.rs">calrs</a> <img src="/brand-logo" alt=""></div>{% endblock %}

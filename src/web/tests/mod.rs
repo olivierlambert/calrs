@@ -32,6 +32,7 @@ mod guest_footer;
 mod hosts;
 mod invites;
 mod mcp;
+mod next_free;
 mod oauth;
 mod organizer;
 mod overview_stats;

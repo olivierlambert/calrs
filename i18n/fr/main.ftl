@@ -219,6 +219,32 @@ base-powered-by = Propulsé par
 profile-pick-event-type-invite = Choisissez un type d'événement pour réserver un créneau.
 profile-no-event-type = Aucun type d'événement disponible pour le moment.
 
+# Public landing pages (/u/{username}, /team/{slug}). In landing-next-free,
+# %1 is the time, filled in by the page itself.
+landing-duration-h = { $hours } h
+landing-duration-aria =
+    { $minutes ->
+        [one] { $minutes } minute
+       *[other] { $minutes } minutes
+    }
+landing-duration-hm = { $hours } h { $minutes }
+landing-duration-aria-h =
+    { $hours ->
+        [one] { $hours } heure
+       *[other] { $hours } heures
+    }
+landing-duration-aria-hm =
+    { $hours ->
+        [one] { $hours } heure
+       *[other] { $hours } heures
+    } { $minutes ->
+        [one] { $minutes } minute
+       *[other] { $minutes } minutes
+    }
+landing-next-free = Prochain créneau : %1
+landing-with-one-of = avec l'un d'eux
+landing-with-everyone = avec tout le monde
+
 # Month and weekday names + per-locale date format patterns.
 # Used by server-side date formatters in src/i18n.rs.
 
