@@ -39,6 +39,7 @@ const SUPPORTED_LANGS: &[(&str, &str, &str)] = &[
         include_str!("../i18n/pt/main.ftl"),
     ),
     ("nl", "Nederlands", include_str!("../i18n/nl/main.ftl")),
+    ("ru", "Русский", include_str!("../i18n/ru/main.ftl")),
 ];
 
 const DEFAULT_LANG: &str = "en";
@@ -249,7 +250,7 @@ pub fn format_long_date(date: NaiveDate, lang: &str) -> String {
     args.set("year", FluentValue::from(year.as_str()));
     // The month as a number too, for locales whose date needs a form of the
     // month other than the name a calendar header shows (Polish takes the
-    // genitive: "10 kwietnia", not "10 kwiecień").
+    // genitive: "10 kwietnia", not "10 kwiecień"; so does Russian: "10 апреля").
     args.set("monthnum", FluentValue::from(date.month()));
     translate(lang, "common-format-long-date", Some(&args))
 }
@@ -564,6 +565,37 @@ mod tests {
         assert_eq!(format_long_date(d, "pl"), "piątek, 10 kwietnia 2026");
         // Other locales are untouched by the month number.
         assert_eq!(format_long_date(d, "de"), "Freitag, 10. April 2026");
+    }
+
+    /// Russian, like Polish, takes the genitive month in a date ("10 апреля")
+    /// and keeps the name in a calendar header ("апрель 2026").
+    #[test]
+    fn russian_dates_take_the_genitive() {
+        let genitive = [
+            "января",
+            "февраля",
+            "марта",
+            "апреля",
+            "мая",
+            "июня",
+            "июля",
+            "августа",
+            "сентября",
+            "октября",
+            "ноября",
+            "декабря",
+        ];
+        for (i, month) in genitive.iter().enumerate() {
+            let d = NaiveDate::from_ymd_opt(2026, i as u32 + 1, 10).unwrap();
+            let long = format_long_date(d, "ru");
+            assert!(long.ends_with(&format!(" 10 {month} 2026")), "{long}");
+            assert_eq!(format_date(d, "ru"), format!("10 {month} 2026"));
+            assert!(format_day_date(d, "ru").ends_with(&format!(" 10 {month}")));
+        }
+        let d = NaiveDate::from_ymd_opt(2026, 4, 10).unwrap();
+        assert_eq!(format_long_date(d, "ru"), "пятница, 10 апреля 2026");
+        assert_eq!(format_day_date(d, "ru"), "пятница, 10 апреля");
+        assert_eq!(format_month_year(d, "ru"), "апрель 2026");
     }
 
     #[test]
@@ -1643,6 +1675,11 @@ mod tests {
         assert_eq!(format_duration_long("pl", 2 * 60), "2 godziny");
         assert_eq!(format_duration_long("pl", 5 * 60), "5 godzin");
         assert_eq!(format_duration_long("pl", 22), "22 minuty");
+        assert_eq!(format_duration_long("ru", 1), "1 минута");
+        assert_eq!(format_duration_long("ru", 2 * 60), "2 часа");
+        assert_eq!(format_duration_long("ru", 5 * 60), "5 часов");
+        assert_eq!(format_duration_long("ru", 21), "21 минута");
+        assert_eq!(format_duration_long("ru", 2880), "2 дня");
         assert_eq!(format_duration_long("de-formal", 1440), "1 Tag");
         let mut env = Environment::new();
         register(&mut env);
@@ -1702,6 +1739,7 @@ mod tests {
             ("pt", &["one", "other"]),
             ("et", &["one", "other"]),
             ("nl", &["one", "other"]),
+            ("ru", &["one", "few", "many"]),
         ];
         let plural_keys: Vec<&str> = message_values("en")
             .into_iter()

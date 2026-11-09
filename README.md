@@ -215,7 +215,7 @@ Each team member's CalDAV calendars are checked for conflicts. The availability 
 
 ### Localization
 
-- **Multi-language UI**: the whole application, guest side and host side, in English, French, Spanish, Polish, German (informal "du" and formal "Sie"), Italian, Estonian, Brazilian Portuguese and Dutch. Strings are managed via [Fluent](https://projectfluent.org/) and embedded in the binary at compile time, so no runtime files to ship
+- **Multi-language UI**: the whole application, guest side and host side, in English, French, Spanish, Polish, German (informal "du" and formal "Sie"), Italian, Estonian, Brazilian Portuguese, Dutch and Russian. Strings are managed via [Fluent](https://projectfluent.org/) and embedded in the binary at compile time, so no runtime files to ship
 - **Automatic language detection**: guests get their browser's language (RFC 7231 `Accept-Language` with q-weights). Authenticated users can override the choice in **Profile & Settings**
 - **Community-driven translations**: contributed by pull request, no separate platform to sign up for. See [Contributing a translation](#contributing-a-translation)
 
@@ -664,11 +664,11 @@ Contributing code? Start with [ARCHITECTURE.md](ARCHITECTURE.md): which file own
 
 ## Localization
 
-calrs ships with nine complete translations: English, French, Spanish, Polish, German, Italian, Estonian, Brazilian Portuguese and Dutch. Strings live in [Fluent](https://projectfluent.org/) `.ftl` files under `i18n/` and are embedded in the binary at compile time, so there are no runtime translation files to deploy.
+calrs ships with ten complete translations: English, French, Spanish, Polish, German, Italian, Estonian, Brazilian Portuguese, Dutch and Russian. Strings live in [Fluent](https://projectfluent.org/) `.ftl` files under `i18n/` and are embedded in the binary at compile time, so there are no runtime translation files to deploy.
 
 German comes in two registers: **Deutsch** addresses the reader as "du", **Deutsch (Sie)** as "Sie", as most businesses in Germany, Austria and Switzerland address their customers. Browsers only ask for "German", so visitors get "du" unless the instance chooses otherwise. An admin can set **German form of address** to *Formal (Sie)* under System settings, after which every visitor whose browser asks for German is addressed as "Sie": on all public pages, in the bookings they make, and in every email they receive. A single user can also pick *Deutsch (Sie)* as their language in Profile & Settings and set their public booking pages to *Always my language*.
 
-Each of these nine locales carries all 2004 message ids. A test holds them there, so a release cannot ship a half-translated language. Formal German is the exception by design: `i18n/de-formal/` is an overlay on `de` that only carries the messages addressing the reader and reads every other message from `de`. Do not copy unchanged German messages into it; a test rejects an override identical to `de`.
+Each of these ten locales carries all 2004 message ids. A test holds them there, so a release cannot ship a half-translated language. Formal German is the exception by design: `i18n/de-formal/` is an overlay on `de` that only carries the messages addressing the reader and reads every other message from `de`. Do not copy unchanged German messages into it; a test rejects an override identical to `de`.
 
 ### Translation quality
 
@@ -678,8 +678,9 @@ Each of these nine locales carries all 2004 message ids. A test holds them there
 | French | Human-translated and reviewed |
 | Brazilian Portuguese | Contributed by a native speaker |
 | Spanish, Polish, German, Italian, Estonian, Dutch | Complete, but machine-seeded. Native-speaker review very welcome |
+| Russian | Complete, machine-assisted and then reviewed section by section. Native-speaker review very welcome |
 
-Complete is not the same as good. The machine-seeded locales are grammatical and internally consistent, and they have been checked for the things automated translation usually gets wrong: the register stays informal throughout, Polish carries the plural categories its grammar needs rather than English's two, and sentences that interpolate a value avoid agreeing with it. What they have not had is a native speaker reading them in context, on the actual pages. If one of those is your language, the section below is for you.
+Complete is not the same as good. The machine-seeded locales are grammatical and internally consistent, and they have been checked for the things automated translation usually gets wrong: the register stays consistent throughout (informal, except French and Russian, which use the formal "vous" and «вы» as their software usually does), Polish and Russian carry the plural categories its grammar needs rather than English's two, and sentences that interpolate a value avoid agreeing with it. What they have not had is a native speaker reading them in context, on the actual pages. If one of those is your language, the section below is for you.
 
 ### How language is selected
 
@@ -712,7 +713,7 @@ Four steps, and the order matters. Doing them out of order fails the build in a 
 
 1. **Translate first.** Copy `i18n/en/main.ftl` to `i18n/{code}/main.ftl` and translate every value, keeping the ids exactly as they are.
 2. **Then register it.** Add one line to `SUPPORTED_LANGS` in `src/i18n.rs`: the code, the language's own name for itself (`Eesti`, not `Estonian`), and an `include_str!` of the new file.
-3. **Declare its plural categories.** Add the locale to the `required` table in `plural_messages_carry_the_locale_categories` in `src/i18n.rs`. Most languages need `one, other`; Polish needs `one, few, many`. The [CLDR plural rules chart](https://www.unicode.org/cldr/charts/47/supplemental/language_plural_rules.html) is the reference.
+3. **Declare its plural categories.** Add the locale to the `required` table in `plural_messages_carry_the_locale_categories` in `src/i18n.rs`. Most languages need `one, other`; Polish and Russian need `one, few, many`. The [CLDR plural rules chart](https://www.unicode.org/cldr/charts/47/supplemental/language_plural_rules.html) is the reference.
 4. Run `cargo test i18n::`
 
 Step 1 comes before step 2 for a reason: the coverage test demands every key the moment a locale appears in `SUPPORTED_LANGS`, so registering an empty file fails with 2004 errors at once.
@@ -734,8 +735,8 @@ The test suite checks structure, not meaning. It will catch a missing key, a bro
 - Translation source lives in `i18n/{lang}/main.ftl`, one file per language, kebab-case message ids
 - Loader and language detection: `src/i18n.rs`. Templates use `{{ t("message-id", arg=value) }}`; the active language reaches the template as `lang`
 - New translatable strings land on the `i18n` branch first, then merge into `main`. The flow is one-directional: never merge `main` into `i18n`
-- Adding a key costs nine translations, not one. The coverage test fails until every locale has a value, which is deliberate: a half-translated page is worse than an English one, because nobody notices it is wrong
-- Run `cargo test i18n::` before pushing. It checks key coverage across all nine locales, that every template still loads, and that plural messages carry the categories each language needs
+- Adding a key costs ten translations, not one. The coverage test fails until every locale has a value, which is deliberate: a half-translated page is worse than an English one, because nobody notices it is wrong
+- Run `cargo test i18n::` before pushing. It checks key coverage across all ten locales, that every template still loads, and that plural messages carry the categories each language needs
 
 ## License
 
