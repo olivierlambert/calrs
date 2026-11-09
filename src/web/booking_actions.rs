@@ -1697,13 +1697,16 @@ pub(super) async fn guest_reschedule_slots(
     let reschedule_base = format!("/booking/reschedule/{}", token);
 
     // Empty unless the booking belongs to a whole roster, in which case the
-    // sidebar renders the team card instead of a single host.
+    // sidebar renders the team card instead of a single host: its first
+    // faces and how many there are.
+    let team_members_total = host.team.as_ref().map_or(0, |team| team.members.len());
     let team_members_ctx: Vec<minijinja::Value> = host
         .team
         .as_ref()
         .map(|team| {
             team.members
                 .iter()
+                .take(SLOT_PAGE_FACES as usize)
                 .map(|(member_id, member_name, avatar_path)| {
                     context! {
                         id => member_id,
@@ -1742,6 +1745,7 @@ pub(super) async fn guest_reschedule_slots(
             team_has_avatar => host.has_avatar,
             team_initials => compute_initials(&host.name),
             team_members => team_members_ctx,
+            team_members_total => team_members_total,
             days => days_ctx,
             available_dates => available_dates,
             month_label => month_label,

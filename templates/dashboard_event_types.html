@@ -120,6 +120,7 @@
     {% endfor %}
     <p class="ui-filter-empty" data-filter-empty hidden>{{ t("dash-no-matches") }}</p>
   </div>
+  {% include "partials/pager.html" %}
   {% else %}
     <p class="empty-line">{{ t("event-types-empty", link='<a href="/dashboard/event-types/new">' ~ (t("event-types-empty-link-label") | escape) ~ '</a>') | safe }}</p>
   {% endif %}

@@ -324,13 +324,13 @@
 <section class="adm-sec" aria-labelledby="adm-users-h">
   <div class="adm-sec-h"><h2 id="adm-users-h">{{ t("admin-users") }}<span class="adm-n">{{ user_count }}</span></h2></div>
   {% if user_count > 0 %}
-  {% if users_server %}
-  {# A large instance: search, chips, sort and pages go through the server,
-     so only one page of rows (and of action menus) is ever rendered. #}
+  {# Search, chips, sort and pages go through the server, so only one page
+     of rows (and of action menus) is ever rendered. #}
   <form method="get" action="/dashboard/admin#users" class="adm-toolbar" role="search">
     <input type="search" name="uq" value="{{ users_list.q }}" maxlength="{{ users_list.search_max }}" class="adm-search" placeholder="{{ t('admin-user-filter') }}" aria-label="{{ t('admin-user-filter') }}" autocomplete="off">
     {% if users_list.filter != "all" %}<input type="hidden" name="uf" value="{{ users_list.filter }}">{% endif %}
     {% if users_list.sort %}<input type="hidden" name="us" value="{{ users_list.sort }}"><input type="hidden" name="ud" value="{{ users_list.dir }}">{% endif %}
+    {% for name, value in users_list.hidden %}<input type="hidden" name="{{ name }}" value="{{ value }}">{% endfor %}
     <button type="submit" class="adm-btn adm-btn-sm">{{ t("admin-users-search") }}</button>
     <div class="adm-chips" role="group" aria-label="{{ t('admin-users-filter-label') }}">
       {% for key, label, n in [("all", t("admin-filter-all"), stats.users.total), ("admin", t("admin-filter-admins"), stats.users.admins), ("disabled", t("admin-filter-disabled"), stats.users.disabled), ("local", t("admin-provider-local"), stats.users.local), ("oidc", t("admin-provider-oidc"), stats.users.oidc), ("never", t("admin-filter-never"), none)] %}
@@ -338,31 +338,18 @@
       {% endfor %}
     </div>
   </form>
-  {% else %}
-  <div class="adm-toolbar">
-    <input type="search" id="user-search" class="adm-search" placeholder="{{ t('admin-user-filter') }}" aria-label="{{ t('admin-user-filter') }}" autocomplete="off">
-    <div class="adm-chips" role="group" aria-label="{{ t('admin-users-filter-label') }}">
-      <button type="button" class="adm-chip" data-filter="all" aria-pressed="true">{{ t("admin-filter-all") }} <span class="adm-chip-n">{{ stats.users.total }}</span></button>
-      <button type="button" class="adm-chip" data-filter="admin" aria-pressed="false">{{ t("admin-filter-admins") }} <span class="adm-chip-n">{{ stats.users.admins }}</span></button>
-      <button type="button" class="adm-chip" data-filter="disabled" aria-pressed="false">{{ t("admin-filter-disabled") }} <span class="adm-chip-n">{{ stats.users.disabled }}</span></button>
-      <button type="button" class="adm-chip" data-filter="local" aria-pressed="false">{{ t("admin-provider-local") }} <span class="adm-chip-n">{{ stats.users.local }}</span></button>
-      <button type="button" class="adm-chip" data-filter="oidc" aria-pressed="false">{{ t("admin-provider-oidc") }} <span class="adm-chip-n">{{ stats.users.oidc }}</span></button>
-      <button type="button" class="adm-chip" data-filter="never" aria-pressed="false">{{ t("admin-filter-never") }}</button>
-    </div>
-  </div>
-  {% endif %}
   <table class="adm-table adm-users" id="user-table">
       <thead>
         <tr>
-          {% if users_server %}<th aria-sort="{{ users_list.sort_links.name.aria }}"><a class="adm-sort" href="{{ users_list.sort_links.name.href }}">{{ t("admin-col-user") }}</a></th>{% else %}<th aria-sort="none"><button type="button" class="adm-sort" data-sort="name">{{ t("admin-col-user") }}</button></th>{% endif %}
-          {% if users_server %}<th class="adm-col-role" aria-sort="{{ users_list.sort_links.role.aria }}"><a class="adm-sort" href="{{ users_list.sort_links.role.href }}">{{ t("admin-col-role") }}</a></th>{% else %}<th class="adm-col-role" aria-sort="none"><button type="button" class="adm-sort" data-sort="role">{{ t("admin-col-role") }}</button></th>{% endif %}
-          {% if users_server %}<th class="adm-col-provider" aria-sort="{{ users_list.sort_links.provider.aria }}"><a class="adm-sort" href="{{ users_list.sort_links.provider.href }}">{{ t("admin-col-signin") }}</a></th>{% else %}<th class="adm-col-provider" aria-sort="none"><button type="button" class="adm-sort" data-sort="provider">{{ t("admin-col-signin") }}</button></th>{% endif %}
-          {% if users_server %}<th aria-sort="{{ users_list.sort_links.last.aria }}"><a class="adm-sort" href="{{ users_list.sort_links.last.href }}">{{ t("admin-col-last") }}</a></th>{% else %}<th aria-sort="none"><button type="button" class="adm-sort" data-sort="last">{{ t("admin-col-last") }}</button></th>{% endif %}
-          {% if users_server %}<th class="adm-col-created" aria-sort="{{ users_list.sort_links.created.aria }}"><a class="adm-sort" href="{{ users_list.sort_links.created.href }}">{{ t("admin-col-created") }}</a></th>{% else %}<th class="adm-col-created" aria-sort="none"><button type="button" class="adm-sort" data-sort="created">{{ t("admin-col-created") }}</button></th>{% endif %}
+          <th aria-sort="{{ users_list.sort_links.name.aria }}"><a class="adm-sort" href="{{ users_list.sort_links.name.href }}">{{ t("admin-col-user") }}</a></th>
+          <th class="adm-col-role" aria-sort="{{ users_list.sort_links.role.aria }}"><a class="adm-sort" href="{{ users_list.sort_links.role.href }}">{{ t("admin-col-role") }}</a></th>
+          <th class="adm-col-provider" aria-sort="{{ users_list.sort_links.provider.aria }}"><a class="adm-sort" href="{{ users_list.sort_links.provider.href }}">{{ t("admin-col-signin") }}</a></th>
+          <th aria-sort="{{ users_list.sort_links.last.aria }}"><a class="adm-sort" href="{{ users_list.sort_links.last.href }}">{{ t("admin-col-last") }}</a></th>
+          <th class="adm-col-created" aria-sort="{{ users_list.sort_links.created.aria }}"><a class="adm-sort" href="{{ users_list.sort_links.created.href }}">{{ t("admin-col-created") }}</a></th>
           <th class="adm-num"><span class="sr-only">{{ t("admin-col-actions") }}</span></th>
         </tr>
       </thead>
-      <tbody id="{{ 'user-list-server' if users_server else 'user-list' }}">
+      <tbody id="user-list-server">
         {% for u in users %}
         <tr class="user-item{% if not u.enabled %} is-disabled{% endif %}" data-name="{{ u.name | lower }}" data-email="{{ u.email | lower }}" data-role="{{ u.role }}" data-provider="{{ u.auth_provider }}" data-enabled="{{ 1 if u.enabled else 0 }}" data-last="{{ u.last_login_at }}" data-created="{{ u.created_at }}">
           <td>
@@ -382,22 +369,22 @@
                 <form method="post" action="/dashboard/admin/impersonate/{{ u.id }}">
                   <button type="submit" class="adm-menu-item">{{ t("admin-impersonate") }}</button>
                 </form>
-                <form method="post" action="/dashboard/admin/users/{{ u.id }}/toggle-role">{% if users_server %}<input type="hidden" name="back" value="{{ users_list.back }}">{% endif %}
+                <form method="post" action="/dashboard/admin/users/{{ u.id }}/toggle-role"><input type="hidden" name="back" value="{{ users_list.back }}">
                   <button type="submit" class="adm-menu-item">{% if u.role == "admin" %}{{ t("admin-demote") }}{% else %}{{ t("admin-promote") }}{% endif %}</button>
                 </form>
                 {% if u.apps %}
-                <form method="post" action="/dashboard/admin/users/{{ u.id }}/revoke-apps">{% if users_server %}<input type="hidden" name="back" value="{{ users_list.back }}">{% endif %}
+                <form method="post" action="/dashboard/admin/users/{{ u.id }}/revoke-apps"><input type="hidden" name="back" value="{{ users_list.back }}">
                   <button type="submit" class="adm-menu-item adm-menu-danger">{{ t("admin-revoke-apps", count=u.apps) }}</button>
                 </form>
                 {% endif %}
-                <form method="post" action="/dashboard/admin/users/{{ u.id }}/toggle-enabled">{% if users_server %}<input type="hidden" name="back" value="{{ users_list.back }}">{% endif %}
+                <form method="post" action="/dashboard/admin/users/{{ u.id }}/toggle-enabled"><input type="hidden" name="back" value="{{ users_list.back }}">
                   <button type="submit" class="adm-menu-item{% if u.enabled %} adm-menu-danger{% endif %}">{% if u.enabled %}{{ t("admin-disable") }}{% else %}{{ t("admin-enable") }}{% endif %}</button>
                 </form>
                 <details class="adm-confirm">
                   <summary class="adm-menu-item adm-menu-danger">{{ t("admin-delete") }}&hellip;</summary>
                   <div class="adm-confirm-body">
                     <p>{{ t("admin-delete-user-confirm", email=u.email) }}</p>
-                    <form method="post" action="/dashboard/admin/users/{{ u.id }}/delete">{% if users_server %}<input type="hidden" name="back" value="{{ users_list.back }}">{% endif %}
+                    <form method="post" action="/dashboard/admin/users/{{ u.id }}/delete"><input type="hidden" name="back" value="{{ users_list.back }}">
                       <button type="submit" class="adm-btn-danger">{{ t("admin-delete-confirm-btn") }}</button>
                     </form>
                   </div>
@@ -410,31 +397,26 @@
         {% endfor %}
       </tbody>
     </table>
-  {% if users_server %}
   {% if users_matched == 0 %}<div class="adm-empty">{{ t("admin-no-users-match") }}</div>{% endif %}
   <div class="adm-table-foot">
     <span class="adm-muted">{{ t('admin-users-shown') | replace('%1', users_matched | string) | replace('%2', user_count | string) }}</span>
     {% with pager=users_pager %}{% include "partials/pager.html" %}{% endwith %}
   </div>
   {% else %}
-  <div class="adm-table-foot">
-    <span id="user-count" class="adm-muted" aria-live="polite"></span>
-    <div id="user-pagination" class="adm-pager"></div>
-  </div>
-  <div id="user-no-results" class="adm-empty" style="display: none;">{{ t("admin-no-users-match") }}</div>
-  {% endif %}
-  {% else %}
   <p class="adm-empty">{{ t("admin-no-users") }}</p>
   {% endif %}
 </section>
 
 <!-- Groups -->
-<section class="adm-sec" aria-labelledby="adm-groups-h">
+<section class="adm-sec" id="groups" aria-labelledby="adm-groups-h">
   <div class="adm-sec-h"><h2 id="adm-groups-h">{{ t("admin-groups") }}<span class="adm-n">{{ group_count }}</span></h2></div>
+  {% if group_count > 0 %}
+  <form method="get" action="/dashboard/admin#groups" class="adm-toolbar" role="search">
+    <input type="search" name="gq" value="{{ groups_list.q }}" maxlength="{{ groups_list.search_max }}" class="adm-search" placeholder="{{ t('admin-group-filter') }}" aria-label="{{ t('admin-group-filter') }}" autocomplete="off">
+    {% for name, value in groups_list.hidden %}<input type="hidden" name="{{ name }}" value="{{ value }}">{% endfor %}
+    <button type="submit" class="adm-btn adm-btn-sm">{{ t("admin-users-search") }}</button>
+  </form>
   {% if groups %}
-  <div class="adm-toolbar">
-    <input type="search" id="group-search" class="adm-search" placeholder="{{ t('admin-group-filter') }}" aria-label="{{ t('admin-group-filter') }}" oninput="filterGroups()" autocomplete="off">
-  </div>
   <div class="adm-table-wrap">
     <table class="adm-table adm-groups">
       <thead>
@@ -445,21 +427,19 @@
       </thead>
       <tbody id="group-list">
         {% for g in groups %}
-        <tr class="group-item" data-name="{{ g.name | lower }}">
+        <tr class="group-item" id="group-{{ g.id }}">
           <td class="adm-group-name">{{ g.name }}</td>
           <td>
             {% if g.members %}
             <div class="group-members">
               {% for m in g.members %}
-              <form method="POST" action="/dashboard/admin/groups/{{ g.id }}/members/{{ m.user_id }}/weight" class="adm-weight{% if loop.index > 5 %} group-member-extra{% endif %}"{% if loop.index > 5 %} data-group="{{ g.id }}" style="display: none;"{% endif %}>
+              <form method="POST" action="/dashboard/admin/groups/{{ g.id }}/members/{{ m.user_id }}/weight" class="adm-weight">
                 <span class="adm-weight-name">{{ m.name }}</span>
                 <label>{{ t("admin-weight") }} <input type="number" name="weight" value="{{ m.weight }}" min="1" max="100"></label>
                 <button type="submit" class="adm-btn adm-btn-sm">{{ t("source-write-save") }}</button>
               </form>
               {% endfor %}
-              {% if g.members | length > 5 %}
-              <button type="button" class="group-expand-btn adm-linkbtn" data-group="{{ g.id }}" onclick="toggleGroupMembers('{{ g.id }}')">{{ t("admin-show-more", count=g.members | length - 5) }}&hellip;</button>
-              {% endif %}
+              {% with pager=g.members_pager %}{% include "partials/pager.html" %}{% endwith %}
             </div>
             {% else %}
             {{ g.member_count }}
@@ -470,8 +450,10 @@
       </tbody>
     </table>
   </div>
-  <div id="group-pagination" class="adm-pager adm-table-foot"></div>
-  <div id="group-no-results" class="adm-empty" style="display: none;">{{ t("admin-no-groups-match") }}</div>
+  {% else %}
+  <div class="adm-empty">{{ t("admin-no-groups-match") }}</div>
+  {% endif %}
+  {% if groups_list.pager %}<div class="adm-table-foot">{% with pager=groups_list.pager %}{% include "partials/pager.html" %}{% endwith %}</div>{% endif %}
   {% else %}
   <p class="adm-empty">{{ t("admin-no-groups") }}</p>
   {% endif %}
@@ -1893,7 +1875,6 @@ th[aria-sort="descending"] .adm-sort::after { opacity: 1; }
 .adm-confirm-pop { position: absolute; left: 0; top: calc(100% + 4px); z-index: 20; width: 16rem; padding: 0.65rem; font-size: 12.5px; color: var(--text-secondary); background: var(--surface); border: 1px solid var(--rule); border-radius: 6px; box-shadow: var(--shadow-lg); }
 .adm-confirm-pop p { margin-bottom: 0.5rem; }
 .adm-table-foot { display: flex; justify-content: space-between; align-items: center; gap: 0.75rem; flex-wrap: wrap; margin-top: 0.75rem; }
-.adm-pager { display: flex; align-items: center; gap: 0.4rem; }
 
 /* Groups */
 .adm-group-name { font-weight: 500; }
@@ -1954,10 +1935,6 @@ th[aria-sort="descending"] .adm-sort::after { opacity: 1; }
 <script>
 // %1/%2 are substituted client-side: the values depend on the live filter.
 var ADMIN_I18N = {
-  page: {{ t('admin-page-of') | tojson }},
-  showMore: {{ t('admin-show-more-js') | tojson }},
-  showFewer: {{ t('admin-show-fewer') | tojson }},
-  shown: {{ t('admin-users-shown') | tojson }},
   confirmed: {{ t('admin-series-confirmed') | tojson }},
   pending: {{ t('admin-series-pending') | tojson }},
   ended: {{ t('admin-series-ended') | tojson }},
@@ -1990,10 +1967,20 @@ var ADMIN_I18N = {
     var h = location.hash.replace(/^#(panel-)?/, '');
     return known(h) ? h : '';
   }
+  // A hash naming something inside a panel (a list's page link, #groups):
+  // that panel, then the element scrolled into view once it shows.
+  function targetPanel() {
+    var id = decodeURIComponent(location.hash.slice(1));
+    var el = id ? document.getElementById(id) : null;
+    var panel = el ? el.closest('.adm-panel') : null;
+    return panel && known(panel.dataset.panel) ? { name: panel.dataset.panel, el: el } : null;
+  }
   root.classList.add('adm-js');
   var stored = '';
   try { stored = sessionStorage.getItem(KEY) || ''; } catch (e) {}
-  activate(fromHash() || (known(stored) ? stored : 'overview'));
+  var inner = fromHash() ? null : targetPanel();
+  activate(fromHash() || (inner ? inner.name : '') || (known(stored) ? stored : 'overview'));
+  if (inner) inner.el.scrollIntoView({ block: 'start' });
 
   tabs.forEach(function(t, i) {
     t.addEventListener('click', function(e) { e.preventDefault(); activate(t.dataset.tab); });
@@ -2097,169 +2084,6 @@ var ADMIN_I18N = {
   });
 })();
 
-// Users table: search, filter chips, sortable columns, pagination.
-(function() {
-  var tbody = document.getElementById('user-list');
-  if (!tbody) return;
-  var PAGE_SIZE = 25;
-  var page = 1;
-  var filter = 'all';
-  var sortKey = '';
-  var sortDir = 1;
-  var rows = Array.prototype.slice.call(tbody.querySelectorAll('tr.user-item'));
-  var search = document.getElementById('user-search');
-  var chips = document.querySelectorAll('.adm-chip');
-  var headers = document.querySelectorAll('#user-table th[aria-sort]');
-
-  function matches(el, q) {
-    if (q && el.dataset.name.indexOf(q) === -1 && el.dataset.email.indexOf(q) === -1) return false;
-    switch (filter) {
-      case 'admin': return el.dataset.role === 'admin';
-      case 'disabled': return el.dataset.enabled === '0';
-      case 'local': return el.dataset.provider === 'local';
-      case 'oidc': return el.dataset.provider === 'oidc';
-      case 'never': return !el.dataset.last;
-      default: return true;
-    }
-  }
-  function value(el, key) {
-    switch (key) {
-      case 'name': return el.dataset.name;
-      case 'role': return el.dataset.role === 'admin' ? '0' : '1';
-      case 'provider': return el.dataset.provider;
-      case 'last': return el.dataset.last;
-      case 'created': return el.dataset.created;
-      default: return '';
-    }
-  }
-  function render() {
-    var q = search.value.trim().toLowerCase();
-    var list = rows.filter(function(el) { return matches(el, q); });
-    if (sortKey) {
-      list.sort(function(a, b) {
-        var va = value(a, sortKey), vb = value(b, sortKey);
-        // Users who never signed in sort last whichever the direction.
-        if (!va && vb) return 1;
-        if (va && !vb) return -1;
-        return va < vb ? -sortDir : va > vb ? sortDir : 0;
-      });
-    }
-    var pages = Math.max(1, Math.ceil(list.length / PAGE_SIZE));
-    if (page > pages) page = pages;
-    var start = (page - 1) * PAGE_SIZE;
-    rows.forEach(function(el) { el.style.display = 'none'; });
-    list.forEach(function(el, i) {
-      tbody.appendChild(el);
-      el.style.display = (i >= start && i < start + PAGE_SIZE) ? '' : 'none';
-    });
-    document.getElementById('user-no-results').style.display = list.length ? 'none' : '';
-    document.getElementById('user-count').textContent = ADMIN_I18N.shown.replace('%1', list.length).replace('%2', rows.length);
-    var pag = document.getElementById('user-pagination');
-    pag.innerHTML = '';
-    if (pages <= 1) return;
-    var label = document.createElement('span');
-    label.className = 'adm-muted';
-    label.textContent = ADMIN_I18N.page.replace('%1', page).replace('%2', pages);
-    pag.appendChild(label);
-    [[-1, '←', page > 1], [1, '→', page < pages]].forEach(function(b) {
-      var btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'adm-btn adm-btn-sm';
-      btn.textContent = b[1];
-      btn.disabled = !b[2];
-      btn.addEventListener('click', function() { page += b[0]; render(); });
-      pag.appendChild(btn);
-    });
-  }
-  search.addEventListener('input', function() { page = 1; render(); });
-  chips.forEach(function(chip) {
-    chip.addEventListener('click', function() {
-      filter = chip.dataset.filter;
-      chips.forEach(function(c) { c.setAttribute('aria-pressed', c === chip ? 'true' : 'false'); });
-      page = 1;
-      render();
-    });
-  });
-  headers.forEach(function(th) {
-    var btn = th.querySelector('.adm-sort');
-    if (!btn) return;
-    btn.addEventListener('click', function() {
-      var key = btn.dataset.sort;
-      if (sortKey === key) {
-        sortDir = -sortDir;
-      } else {
-        sortKey = key;
-        // Dates read best newest first; names and roles A to Z.
-        sortDir = (key === 'last' || key === 'created') ? -1 : 1;
-      }
-      headers.forEach(function(h) { h.setAttribute('aria-sort', 'none'); });
-      th.setAttribute('aria-sort', sortDir === 1 ? 'ascending' : 'descending');
-      render();
-    });
-  });
-  render();
-})();
-
-(function() {
-  var GROUP_PAGE_SIZE = 5;
-  var groupPage = 1;
-
-  function getFilteredGroups() {
-    var q = document.getElementById('group-search').value.toLowerCase();
-    var items = document.querySelectorAll('.group-item');
-    var filtered = [];
-    items.forEach(function(el) {
-      if (!q || el.dataset.name.indexOf(q) !== -1) {
-        filtered.push(el);
-      }
-    });
-    return filtered;
-  }
-
-  function renderGroupPage() {
-    var items = document.querySelectorAll('.group-item');
-    var filtered = getFilteredGroups();
-    var totalPages = Math.max(1, Math.ceil(filtered.length / GROUP_PAGE_SIZE));
-    if (groupPage > totalPages) groupPage = totalPages;
-    var start = (groupPage - 1) * GROUP_PAGE_SIZE;
-    var end = start + GROUP_PAGE_SIZE;
-
-    items.forEach(function(el) { el.style.display = 'none'; });
-    filtered.forEach(function(el, i) {
-      el.style.display = (i >= start && i < end) ? '' : 'none';
-    });
-
-    var noResults = document.getElementById('group-no-results');
-    if (noResults) noResults.style.display = (items.length > 0 && filtered.length === 0) ? '' : 'none';
-
-    var pag = document.getElementById('group-pagination');
-    if (!pag) return;
-    if (totalPages <= 1) { pag.innerHTML = ''; return; }
-
-    var html = '<span class="adm-muted">' + ADMIN_I18N.page.replace('%1', groupPage).replace('%2', totalPages) + '</span> ';
-    if (groupPage > 1) html += '<button onclick="window._groupPageNav(-1)" class="adm-btn adm-btn-sm">&larr;</button> ';
-    if (groupPage < totalPages) html += '<button onclick="window._groupPageNav(1)" class="adm-btn adm-btn-sm">&rarr;</button>';
-    pag.innerHTML = html;
-  }
-
-  window._groupPageNav = function(dir) { groupPage += dir; renderGroupPage(); };
-  window.filterGroups = function() { groupPage = 1; renderGroupPage(); };
-
-  if (document.getElementById('group-list')) renderGroupPage();
-})();
-
-window.toggleGroupMembers = function(groupId) {
-  var extras = document.querySelectorAll('.group-member-extra[data-group="' + groupId + '"]');
-  var btn = document.querySelector('.group-expand-btn[data-group="' + groupId + '"]');
-  if (!btn) return;
-  var hidden = extras[0] && extras[0].style.display === 'none';
-  extras.forEach(function(el) {
-    el.style.display = hidden ? 'flex' : 'none';
-  });
-  btn.textContent = hidden
-    ? ADMIN_I18N.showFewer
-    : ADMIN_I18N.showMore.replace('%1', extras.length) + '…';
-};
 </script>
 </div>
 {% endblock dashboard_content %}

@@ -524,6 +524,9 @@ pub(super) struct DayBooking {
     pub extra_guests: i64,
     /// Listed on /dashboard/bookings, so the overview may link to its row.
     pub listed: bool,
+    /// The page of that list's Upcoming section holding it (1 when not
+    /// listed there).
+    pub bookings_page: i64,
 }
 
 /// Confirmed and pending bookings in scope overlapping `[from, to)` (the
@@ -573,12 +576,21 @@ pub(super) async fn fetch_day_bookings(
         .fetch_all(pool)
         .await
         .unwrap_or_default();
+    // The Upcoming section of the bookings page is paged: where each
+    // listed confirmed booking sits there, in one query.
+    let listed_ids: Vec<&str> = rows
+        .iter()
+        .filter(|row| row.8 && row.4 == "confirmed")
+        .map(|row| row.0.as_str())
+        .collect();
+    let pages = super::dashboard::upcoming_pages(pool, user_id, &listed_ids).await;
     rows.into_iter()
         .filter_map(
             |(id, start, end, stored, status, title, guest, extra, listed)| {
                 let stored = stored.parse::<Tz>().unwrap_or(Tz::UTC);
                 let start = crate::booking_time::local(&start, stored, host_tz)?;
                 let end = crate::booking_time::local(&end, stored, host_tz)?;
+                let bookings_page = pages.get(&id).copied().unwrap_or(1);
                 (start < to && end > from).then_some(DayBooking {
                     id,
                     start,
@@ -588,6 +600,7 @@ pub(super) async fn fetch_day_bookings(
                     guest,
                     extra_guests: extra,
                     listed,
+                    bookings_page,
                 })
             },
         )
@@ -889,6 +902,8 @@ pub(super) struct RulerBlock {
     pub id: String,
     /// The booking has a row on /dashboard/bookings to link to.
     pub listed: bool,
+    /// The page of that list's Upcoming section holding it.
+    pub bookings_page: i64,
     pub title: String,
     pub guest: String,
     /// The guest's face: initials and hue, empty for unavailable time.
@@ -930,6 +945,7 @@ pub(super) fn day_blocks(
             kind: if b.pending { "p" } else { "c" },
             id: b.id.clone(),
             listed: b.listed,
+            bookings_page: b.bookings_page,
             title: b.title.clone(),
             guest: guest_label(lang, &b.guest, b.extra_guests),
             initials: initials(&b.guest),
@@ -952,6 +968,7 @@ pub(super) fn day_blocks(
             kind,
             id: String::new(),
             listed: false,
+            bookings_page: 1,
             title: String::new(),
             guest: String::new(),
             initials: String::new(),
@@ -1195,10 +1212,18 @@ pub(super) fn week_context(
             // The bookings page heads its upcoming (confirmed) list with
             // one line per day; a pending request is listed above it, with
             // no day line, so only a confirmed booking makes the day a link.
+            // That list is paged: the link opens the first page showing the
+            // day, which heads it with its line again.
             let link = booked
                 .iter()
-                .any(|b| b.listed && b.kind == "c")
-                .then(|| format!("/dashboard/bookings#d-{day}"));
+                .filter(|b| b.listed && b.kind == "c")
+                .map(|b| b.bookings_page)
+                .min()
+                .map(|page| {
+                    super::dashboard::BookingPages::default()
+                        .with(super::dashboard::BookingSection::Upcoming, page)
+                        .href(&format!("d-{day}"))
+                });
             let placed = lanes(&booked.iter().map(|b| (b.start, b.end)).collect::<Vec<_>>());
             let items: Vec<minijinja::Value> = booked
                 .iter()

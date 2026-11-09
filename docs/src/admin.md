@@ -19,12 +19,15 @@ Actions per user:
 - **Enable/Disable** — disabled users cannot log in or receive bookings
 - **Impersonate** — view the dashboard as that user (for troubleshooting)
 
-Up to 100 users, the whole list is on the page and the search box, the filter
-buttons, the column sorting and the pages of 25 react as you type. Past 100
-users, the server does the searching, filtering, sorting and paging, so the
-page only ever carries 25 rows: press Enter to search, and use **Previous** and
+The server does the searching, filtering, sorting and paging, so the page
+only ever carries 25 rows: press Enter to search, and use **Previous** and
 **Next** under the table. Promoting, disabling or deleting a user brings you
 back to the same page of the list.
+
+The **Groups** list below it works the same way: search by name (press
+Enter), 25 groups a page, and each group shows ten of its members, by
+weight then name, with its own **Previous** and **Next** for the rest. The
+two lists keep each other's page as you move through either.
 
 On an instance with more than 20,000 bookings, the booking figures of the
 overview (totals, the weekly chart and the 90-day rankings) are kept for a

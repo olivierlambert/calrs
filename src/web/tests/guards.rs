@@ -67,6 +67,8 @@ fn safe_interpolated_sentences_escape_their_values() {
                 bookings => vec![booking_row.clone()],
                 pending_bookings => vec![booking_row.clone()],
                 claimable_bookings => vec![booking_row.clone()],
+                totals => context! { pending => 1, claimable => 1, upcoming => 1, recent => 0, cancelled => 0 },
+                pagers => context! {},
             },
         ),
         (

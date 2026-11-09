@@ -730,13 +730,13 @@
         <div class="slots-info-name">{{ host_name }}</div>
         {% if team_members is defined and team_members %}
         <div style="display: flex; align-items: center; margin-top: 0.25rem;">
-          {% for m in team_members %}{% if loop.index0 < 6 %}
+          {% for m in team_members %}
           <span title="{{ m.name }}" style="width: 24px; height: 24px; border-radius: 50%; background: var(--accent); color: #fff; display: inline-flex; align-items: center; justify-content: center; font-size: 0.55rem; font-weight: 600; flex-shrink: 0; overflow: hidden; border: 2px solid var(--surface);{% if loop.index0 > 0 %} margin-left: -6px;{% endif %}">
             {% if m.has_avatar %}<img src="/avatar/{{ m.id }}" alt="" style="width:100%;height:100%;object-fit:cover;">{% else %}{{ m.initials }}{% endif %}
           </span>
-          {% endif %}{% endfor %}
-          {% if team_members | length > 6 %}
-          <span style="width: 24px; height: 24px; border-radius: 50%; background: var(--surface-hover); color: var(--text-muted); display: inline-flex; align-items: center; justify-content: center; font-size: 0.55rem; font-weight: 600; flex-shrink: 0; border: 2px solid var(--surface); margin-left: -6px;">+{{ team_members | length - 6 }}</span>
+          {% endfor %}
+          {% if team_members_total > team_members | length %}
+          <span title="{{ t('teams-member-count', count=team_members_total) }}" style="width: 24px; height: 24px; border-radius: 50%; background: var(--surface-hover); color: var(--text-muted); display: inline-flex; align-items: center; justify-content: center; font-size: 0.55rem; font-weight: 600; flex-shrink: 0; border: 2px solid var(--surface); margin-left: -6px;">+{{ team_members_total - team_members | length }}</span>
           {% endif %}
         </div>
         {% endif %}

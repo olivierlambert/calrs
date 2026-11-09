@@ -47,7 +47,7 @@
 <header class="page-header">
   <div class="page-header-text">
     <h1 class="page-title">{{ t("bookings-page-title") }}</h1>
-    <p class="page-subtitle">{{ t("bookings-summary", upcoming=bookings | length, pending=pending_bookings | length, tz=sidebar.user_timezone) }}</p>
+    <p class="page-subtitle">{{ t("bookings-summary", upcoming=totals.upcoming, pending=totals.pending, tz=sidebar.user_timezone) }}</p>
   </div>
   {% if bookings or pending_bookings or claimable_bookings or recent_bookings or cancelled_bookings %}
   <div class="page-actions ui-search">
@@ -64,7 +64,7 @@
 
 {% if pending_bookings %}
 <section class="sec" aria-labelledby="bk-pending">
-  <div class="sec-h"><h2 id="bk-pending">{{ t("bookings-pending-approval") }}<span class="num">{{ pending_bookings | length }}</span></h2></div>
+  <div class="sec-h"><h2 id="bk-pending">{{ t("bookings-pending-approval") }}<span class="num">{{ totals.pending }}</span></h2></div>
   <ol class="ledger" data-filter-list>
   {% for b in pending_bookings %}
   <li class="tt-row" id="b-{{ b.id }}" data-filter-text="{{ b.event_title }} {{ b.guest_name }} {{ b.guest_email }}">
@@ -89,12 +89,13 @@
   {% endfor %}
   <li class="ui-filter-empty" data-filter-empty hidden>{{ t("dash-no-matches") }}</li>
   </ol>
+  {% with pager=pagers.pending %}{% include "partials/pager.html" %}{% endwith %}
 </section>
 {% endif %}
 
 {% if claimable_bookings is defined and claimable_bookings %}
 <section class="sec" aria-labelledby="bk-claim">
-  <div class="sec-h"><h2 id="bk-claim">{{ t("bookings-available-to-claim") }}<span class="num">{{ claimable_bookings | length }}</span></h2></div>
+  <div class="sec-h"><h2 id="bk-claim">{{ t("bookings-available-to-claim") }}<span class="num">{{ totals.claimable }}</span></h2></div>
   <ol class="ledger" data-filter-list>
   {% for b in claimable_bookings %}
   <li class="tt-row" data-filter-text="{{ b.event_title }} {{ b.guest_name }} {{ b.guest_email }} {{ b.team_name }}">
@@ -112,11 +113,12 @@
   {% endfor %}
   <li class="ui-filter-empty" data-filter-empty hidden>{{ t("dash-no-matches") }}</li>
   </ol>
+  {% with pager=pagers.claimable %}{% include "partials/pager.html" %}{% endwith %}
 </section>
 {% endif %}
 
 <section class="sec" aria-labelledby="bk-upcoming">
-  <div class="sec-h"><h2 id="bk-upcoming">{{ t("bookings-upcoming") }}{% if bookings %}<span class="num">{{ bookings | length }}</span>{% endif %}</h2></div>
+  <div class="sec-h"><h2 id="bk-upcoming">{{ t("bookings-upcoming") }}{% if bookings %}<span class="num">{{ totals.upcoming }}</span>{% endif %}</h2></div>
   {% if bookings %}
   <ol class="ledger" data-filter-list>
     {% for b in bookings %}
@@ -155,14 +157,15 @@
     {% endfor %}
     <li class="ui-filter-empty" data-filter-empty hidden>{{ t("dash-no-matches") }}</li>
   </ol>
+  {% with pager=pagers.upcoming %}{% include "partials/pager.html" %}{% endwith %}
   {% else %}
   <p class="empty-line">{{ t("bookings-empty", link='<a href="/dashboard/event-types">' ~ (t("bookings-empty-link-label") | escape) ~ '</a>') | safe }}</p>
   {% endif %}
 </section>
 {#- Recent and Cancelled: rows that only lead to the booking's host notes. #}
-{% macro hosted_section(sec_id, heading, rows) -%}
+{% macro hosted_section(sec_id, heading, rows, total, pg) -%}
 <section class="sec" aria-labelledby="{{ sec_id }}">
-  <div class="sec-h"><h2 id="{{ sec_id }}">{{ heading }}<span class="num">{{ rows | length }}</span></h2></div>
+  <div class="sec-h"><h2 id="{{ sec_id }}">{{ heading }}<span class="num">{{ total }}</span></h2></div>
   <ol class="ledger" data-filter-list>
   {% for b in rows %}
   <li class="tt-row" data-filter-text="{{ b.event_title }} {{ b.guest_name }} {{ b.guest_email }}">
@@ -181,8 +184,9 @@
   {% endfor %}
   <li class="ui-filter-empty" data-filter-empty hidden>{{ t("dash-no-matches") }}</li>
   </ol>
+  {% with pager=pg %}{% include "partials/pager.html" %}{% endwith %}
 </section>
 {%- endmacro %}
-{% if recent_bookings %}{{ hosted_section("bk-recent", t("bookings-recent"), recent_bookings) }}{% endif %}
-{% if cancelled_bookings %}{{ hosted_section("bk-cancelled", t("bookings-cancelled"), cancelled_bookings) }}{% endif %}
+{% if recent_bookings %}{{ hosted_section("bk-recent", t("bookings-recent"), recent_bookings, totals.recent, pagers.recent) }}{% endif %}
+{% if cancelled_bookings %}{{ hosted_section("bk-cancelled", t("bookings-cancelled"), cancelled_bookings, totals.cancelled, pagers.cancelled) }}{% endif %}
 {% endblock %}

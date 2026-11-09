@@ -243,6 +243,7 @@ landing-duration-aria-hm =
     }
 landing-next-free = Prochain créneau : %1
 landing-with-one-of = avec l'un d'eux
+faces-and-more = et { $count } de plus
 landing-with-everyone = avec tout le monde
 
 # Month and weekday names + per-locale date format patterns.
@@ -1450,9 +1451,6 @@ admin-guest-footer-default-help = Utilisé lorsqu'un type d'événement n'a pas 
 admin-guest-footer-allow-all = Autoriser tout utilisateur à définir un pied de page sur ses propres types d'événement
 admin-guest-footer-allow-all-help = Désactivé par défaut : le pied de page part au nom de cette instance, donc seuls les administrateurs peuvent en écrire un. Un pied de page défini sur un type d'événement remplace celui par défaut ci-dessus.
 admin-save-guest-footer = Enregistrer le pied de page
-admin-page-of = Page %1 sur %2
-admin-show-more-js = Afficher %1 de plus
-admin-show-fewer = Afficher moins
 
 # Admin panel: overview, section tabs, users table (templates/admin.html)
 
@@ -1619,12 +1617,6 @@ admin-sms-env-error-help = Corrigez les variables d'environnement <code>CALRS_SM
 admin-sms-env-managed = Géré par <strong>variables d'environnement</strong> (prioritaires sur la base). Modifiez les variables <code>CALRS_SMS_*</code> pour changer ce réglage, ou supprimez-les pour gérer les SMS ici.
 admin-sms-env-help = Vous pouvez aussi configurer par variables d'environnement (prioritaires sur ceci) : <code>CALRS_SMS_PROVIDER</code>, <code>CALRS_SMS_API_KEY</code>, <code>CALRS_SMS_API_SECRET</code>, <code>CALRS_SMS_SENDER</code>, <code>CALRS_SMS_BASE_URL</code>, <code>CALRS_SMS_DAILY_CAP</code>, <code>CALRS_SMS_DEFAULT_COUNTRY_CODE</code>.
 admin-sms-trial-warning = <strong>Le mode d'essai Twilio est actif</strong> (<code>CALRS_SMS_TWILIO_TRIAL</code>). Les invités reçoivent le modèle prédéfini <code>sms_appointment_reminders</code> de Twilio, pas le vrai message, et seuls les numéros vérifiés dans votre console Twilio sont joignables. C'est une aide au test pour les comptes d'essai. Supprimez la variable avant d'accepter des réservations.
-
-admin-show-more =
-    { $count ->
-        [one] Afficher { $count } de plus
-       *[other] Afficher { $count } de plus
-    }
 
 # Calendar source form: backend picker (templates/source_form.html)
 

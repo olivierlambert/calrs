@@ -154,7 +154,7 @@
 
   <!-- Members section -->
   <div class="card" style="margin-top: 1.25rem;">
-    <h2 style="font-size: 1rem; margin-bottom: 0.75rem;">{{ t("team-form-members") }}</h2>
+    <h2 id="members" style="font-size: 1rem; margin-bottom: 0.75rem;">{{ t("team-form-members") }}{% if members_pager %} <span class="num">{{ members_total }}</span>{% endif %}</h2>
     <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 1rem;">{{ t("team-settings-members-help") }}</p>
 
     <!-- Unified member + group list -->
@@ -201,6 +201,7 @@
       </div>
       {% endfor %}
     </div>
+    {% with pager=members_pager %}{% include "partials/pager.html" %}{% endwith %}
 
     <!-- Unified search bar -->
     <div style="position: relative;">
@@ -269,21 +270,14 @@ var MEMBER_COUNT_OTHER = {{ t('teams-member-count', count=2) | tojson }};
     {% endif %}
   ];
 
-  // Track current direct members (excludes OIDC-synced)
+  // Track current direct members (excludes OIDC-synced). Every member,
+  // not only the page of rows shown: the form posts the whole membership.
   var currentMembers = {};
-  {% for m in members %}
-  {% if m.source != "group" %}
-  currentMembers["{{ m.id }}"] = true;
-  {% endif %}
-  {% endfor %}
+  {{ direct_member_ids | tojson }}.forEach(function(id) { currentMembers[id] = true; });
 
   // Track admin members
   var adminMembers = {};
-  {% for m in members %}
-  {% if m.role == "admin" %}
-  adminMembers["{{ m.id }}"] = true;
-  {% endif %}
-  {% endfor %}
+  {{ admin_member_ids | tojson }}.forEach(function(id) { adminMembers[id] = true; });
 
   // Track linked groups
   var linkedGroups = {};

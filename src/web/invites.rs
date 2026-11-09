@@ -2,38 +2,62 @@
 
 use super::*;
 
+type InternalEventTypeRow = (
+    String,
+    String,
+    String,
+    i32,
+    String,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    String,
+);
+
+/// The FROM and WHERE of the Invite Links page: every enabled internal
+/// event type, which any signed-in user may invite to.
+const INTERNAL_SCOPE: &str = " FROM event_types et
+     JOIN accounts a ON a.id = et.account_id
+     JOIN users u ON u.id = a.user_id
+     LEFT JOIN teams t ON t.id = et.team_id
+     WHERE et.visibility = 'internal' AND et.enabled = 1";
+
 pub(super) async fn dashboard_organization(
     State(state): State<Arc<AppState>>,
     auth_user: crate::auth::AuthUser,
+    Query(query): Query<HashMap<String, String>>,
 ) -> impl IntoResponse {
-    let internal_ets: Vec<(
-        String,
-        String,
-        String,
-        i32,
-        String,
-        Option<String>,
-        Option<String>,
-        Option<String>,
-        String,
-    )> = sqlx::query_as(
-        "SELECT et.id, et.slug, et.title, et.duration_min, u.name,
-                u.username,
+    let mut count = sqlx::QueryBuilder::new("SELECT COUNT(*)");
+    count.push(INTERNAL_SCOPE);
+    let mut select = sqlx::QueryBuilder::new(
+        "SELECT et.id, et.slug, et.title, et.duration_min, u.name, u.username,
                 CASE WHEN et.team_id IS NOT NULL THEN t.name ELSE NULL END,
                 CASE WHEN et.team_id IS NOT NULL THEN t.slug ELSE NULL END,
-                et.visibility
-         FROM event_types et
-         JOIN accounts a ON a.id = et.account_id
-         JOIN users u ON u.id = a.user_id
-         LEFT JOIN teams t ON t.id = et.team_id
-         WHERE et.visibility = 'internal' AND et.enabled = 1
-         ORDER BY et.created_at",
+                et.visibility",
+    );
+    select.push(INTERNAL_SCOPE);
+    let listed = match listing::paged::<InternalEventTypeRow>(
+        &state.pool,
+        count,
+        select,
+        "et.created_at, et.id",
+        PageParams::from_query(&query, "page"),
+        |n| {
+            listing::href(
+                "/dashboard/invite-links",
+                &[listing::page_part("page", n)],
+                "",
+            )
+        },
     )
-    .fetch_all(&state.pool)
     .await
-    .unwrap_or_default();
+    {
+        Ok(page) => page,
+        Err(e) => return internal_error_html("load internal event types", &e),
+    };
 
-    let ets_ctx: Vec<minijinja::Value> = internal_ets
+    let ets_ctx: Vec<minijinja::Value> = listed
+        .rows
         .iter()
         .map(
             |(id, slug, title, duration, host_name, username, team_name, team_slug, visibility)| {
@@ -64,6 +88,7 @@ pub(super) async fn dashboard_organization(
             sidebar => sidebar_context(&auth_user, "organization"),
             lang => auth_user.lang,
             event_types => ets_ctx,
+            pager => listed.pager,
             impersonating => impersonating,
             impersonating_name => impersonating_name,
         })
@@ -170,11 +195,25 @@ fn bulk_result_context(result: &BulkInviteResult) -> minijinja::Value {
     }
 }
 
+type InviteRow = (
+    String,
+    String,
+    String,
+    String,
+    Option<String>,
+    Option<String>,
+    i32,
+    i32,
+    String,
+    String,
+);
+
 async fn render_invite_management(
     state: &Arc<AppState>,
     auth_user: &crate::auth::AuthUser,
     event_type_id: &str,
     bulk_result: Option<&BulkInviteResult>,
+    page: PageParams,
 ) -> Response {
     let et: Option<(
         String,
@@ -227,17 +266,39 @@ async fn render_invite_management(
         .into_response();
     }
 
-    let invites: Vec<(String, String, String, String, Option<String>, Option<String>, i32, i32, String, String)> = sqlx::query_as(
-        "SELECT bi.id, bi.token, bi.guest_name, bi.guest_email, bi.message, bi.expires_at, bi.max_uses, bi.used_count, bi.created_at, u.name
-         FROM booking_invites bi
-         JOIN users u ON u.id = bi.created_by_user_id
-         WHERE bi.event_type_id = ?
-         ORDER BY bi.created_at DESC",
+    let scope = |head: &'static str| {
+        let mut qb = sqlx::QueryBuilder::new(head);
+        qb.push(
+            " FROM booking_invites bi
+             JOIN users u ON u.id = bi.created_by_user_id
+             WHERE bi.event_type_id = ",
+        );
+        qb.push_bind(et_id.clone());
+        qb
+    };
+    let invites_page = match listing::paged::<InviteRow>(
+        &state.pool,
+        scope("SELECT COUNT(*)"),
+        scope(
+            "SELECT bi.id, bi.token, bi.guest_name, bi.guest_email, bi.message, bi.expires_at,
+                    bi.max_uses, bi.used_count, bi.created_at, u.name",
+        ),
+        "bi.created_at DESC, bi.id",
+        page,
+        |n| {
+            listing::href(
+                &format!("/dashboard/invites/{}", urlencoding::encode(&et_id)),
+                &[listing::page_part("page", n)],
+                "invites-sent",
+            )
+        },
     )
-    .bind(&et_id)
-    .fetch_all(&state.pool)
     .await
-    .unwrap_or_default();
+    {
+        Ok(page) => page,
+        Err(e) => return internal_error_response("load invites", &e),
+    };
+    let invites = &invites_page.rows;
 
     let base_url = crate::settings::base_url().unwrap_or_default();
     let invites_ctx: Vec<minijinja::Value> = invites
@@ -310,6 +371,8 @@ async fn render_invite_management(
             username => username,
             owner_name => owner_name,
             invites => invites_ctx,
+            invites_total => invites_page.total,
+            pager => invites_page.pager,
             bulk_result => bulk_ctx,
             can_delete_invites => can_delete_invites,
             success => "",
@@ -324,8 +387,10 @@ pub(super) async fn invite_management_page(
     State(state): State<Arc<AppState>>,
     auth_user: crate::auth::AuthUser,
     Path(event_type_id): Path<String>,
+    Query(query): Query<HashMap<String, String>>,
 ) -> impl IntoResponse {
-    render_invite_management(&state, &auth_user, &event_type_id, None).await
+    let page = PageParams::from_query(&query, "page");
+    render_invite_management(&state, &auth_user, &event_type_id, None, page).await
 }
 
 pub(super) async fn send_invite_bulk(
@@ -478,7 +543,15 @@ pub(super) async fn send_invite_bulk(
         "bulk invites processed",
     );
 
-    render_invite_management(&state, &auth_user, &event_type_id, Some(&result)).await
+    // The invites just sent head the first page.
+    render_invite_management(
+        &state,
+        &auth_user,
+        &event_type_id,
+        Some(&result),
+        PageParams::new(1),
+    )
+    .await
 }
 
 #[derive(Deserialize)]
