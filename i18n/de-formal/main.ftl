@@ -189,7 +189,7 @@ troubleshoot-none-custom-hours = Ausnahme mit abweichenden Zeiten aktiv, aber ke
 # Invite management (templates/invite_form.html)
 
 invites-capped = <strong>Die Eingabe wurde auf { $max } Empfänger pro Absendung begrenzt.</strong> Senden Sie den Rest in einem weiteren Durchgang.
-invites-failed-hint = — Einzelheiten finden Sie in den Serverprotokollen.
+invites-failed-hint = Einzelheiten finden Sie in den Serverprotokollen.
 invites-quick-link-help = Erzeugen Sie einen Einmal-Link und kopieren Sie ihn in die Zwischenablage.
 invites-message-placeholder = Ich freue mich darauf, Ihnen eine Demo zu zeigen...
 invites-empty = Noch keine Einladungen gesendet. Nutzen Sie das Formular oben, um jemandem einen Buchungslink zu schicken.

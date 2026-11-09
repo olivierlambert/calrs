@@ -1036,3 +1036,32 @@ async fn requiring_mfa_deletes_unverified_oauth_grants_for_good() {
     assert!(!required(&pool).await.unwrap());
     assert_eq!(grants_of(&pool, &member.id).await, 0);
 }
+
+#[tokio::test]
+async fn http_settings_page_is_a_dashboard_card() {
+    let pool = database().await;
+    let user = user(&pool, "owner@example.com").await;
+    let (_, session, _) = enroll(&pool, &user).await;
+    let app = app(&pool).await;
+    let r = request(
+        &app,
+        "GET",
+        "/dashboard/settings/mfa",
+        &cookies(&session.id),
+        "",
+    )
+    .await;
+    assert_eq!(r.status(), 200);
+    assert_eq!(r.headers()["cache-control"], "no-store");
+    assert!(response_cookie(&r, "__Host-calrs_csrf").is_some());
+    let html = body(r).await;
+    // The dashboard layout (sidebar, Settings active), one head-band card
+    // holding the form, the enrolled actions.
+    assert!(html.contains("class=\"dashboard-main has-cards"), "{html}");
+    assert!(html.contains("aria-current=\"page\""));
+    assert!(html.contains("<div class=\"card-head\"><h2 id=\"mfa-h\">"));
+    assert!(html.contains("action=\"/dashboard/settings/mfa\""));
+    assert!(html.contains("value=\"regenerate\""));
+    assert!(html.contains("value=\"disable\""));
+    assert!(!html.contains("value=\"enable\""));
+}

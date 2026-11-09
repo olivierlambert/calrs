@@ -624,6 +624,7 @@ teams-empty-admin = { $link }, et oma meeskonnaga koos töötada.
 teams-empty-admin-link-label = Loo üks
 teams-empty-member = Meeskondi loovad haldajad. Palu neil luua meeskond ja lisada sind liikmeks.
 teams-subtitle = Inimesed, kes jagavad kohtumisi, broneeritakse kordamööda või kõik koos.
+teams-search-placeholder = Filtreeri nime või lingi järgi
 
 # Dashboard invite links (templates/dashboard_internal.html)
 
@@ -919,7 +920,7 @@ invites-back-teams = Tagasi meeskondade juurde
 invites-back-event-types = Tagasi sündmuse tüüpide juurde
 invites-intro = Saada kutselinke sündmusele { $title }
 invites-capped = <strong>Sisestus piirati { $max } saajale korraga.</strong> Saada ülejäänud järgmise partiiga.
-invites-failed-hint = — üksikasjad leiad serveri logidest.
+invites-failed-hint = Üksikasjad leiad serveri logidest.
 invites-quick-link = Kiirlink
 invites-quick-link-help = Loo ühekordne link ja kopeeri see lõikelauale.
 invites-get-link = Hangi link
@@ -1048,7 +1049,7 @@ team-form-submit = Loo meeskond
 # Team settings (templates/team_settings.html)
 
 team-settings-page-title = Seaded
-team-settings-subtitle = Meeskonna seaded — neid saavad muuta meeskonna haldajad.
+team-settings-subtitle = Meeskonna seaded: neid saavad muuta meeskonna haldajad.
 team-settings-public-url = Avalik aadress
 team-settings-public-url-help = Selle lingi kaudu saab broneerida igaüks.
 team-settings-invite-link = Kutselink
