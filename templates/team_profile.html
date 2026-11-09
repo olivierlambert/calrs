@@ -1,76 +1,47 @@
 {% extends "base.html" %}
-{% block title %}{{ team_name }} — calrs{% endblock %}
+{% block title %}{{ team_name }}, calrs{% endblock %}
+{% block head %}{% include "partials/landing_head.html" %}{% endblock %}
 {% block content %}
-<style>
-  .host-bio a { color: #fff; text-decoration: underline; text-underline-offset: 2px; }
-  .host-bio a:hover { opacity: 0.8; }
-  .host-bio code { background: rgba(255,255,255,0.15); padding: 0.1em 0.3em; border-radius: 3px; font-size: 0.85em; }
-  .description-clamp { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-</style>
-<div class="logo">{% if company_link %}<a href="{{ company_link }}" target="_blank" rel="noopener noreferrer">{% endif %}<img src="/logo" alt="" onerror="this.closest('.logo').style.display='none'">{% if company_link %}</a>{% endif %}</div>
-
-<div class="card" style="overflow: hidden; padding: 0;">
-  <div style="background: linear-gradient(135deg, var(--accent) 0%, var(--accent-hover) 100%); padding: 2rem 2rem 1.5rem; color: #fff;">
-    <div style="display: flex; align-items: center; gap: 1rem; margin-bottom: 0.5rem;">
-      <div style="width: 64px; height: 64px; border-radius: 50%; background: rgba(255,255,255,0.2); color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 600; font-size: 1.25rem; flex-shrink: 0; overflow: hidden; border: 2px solid rgba(255,255,255,0.3);">
-        {% if team_has_avatar %}
-          <img src="/team-avatar/{{ team_id }}" alt="" style="width: 100%; height: 100%; object-fit: cover;" onerror="this.parentElement.textContent='{{ team_initials }}'">
-        {% else %}
-          {{ team_initials }}
-        {% endif %}
-      </div>
-      <div>
-        <h1 style="margin-bottom: 0; color: #fff;">{{ team_name }}</h1>
-      </div>
-    </div>
-    {% if team_description %}<div class="host-bio" style="color: rgba(255,255,255,0.85); font-size: 0.9rem; margin-top: 0.5rem;">{{ team_description|safe }}</div>{% endif %}
-    {% if members %}
-    <div style="display: flex; align-items: center; margin-top: 1rem; gap: 0.25rem;">
-      {% for m in members %}{% if loop.index <= 8 %}
-      <div title="{{ m.name }}" style="width: 28px; height: 28px; border-radius: 50%; background: rgba(255,255,255,0.25); color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 600; font-size: 0.6rem; flex-shrink: 0; overflow: hidden; border: 2px solid rgba(255,255,255,0.4); margin-left: {% if loop.index > 1 %}-6px{% else %}0{% endif %};">
-        {% if m.has_avatar %}
-          <img src="/avatar/{{ m.id }}" alt="" style="width: 100%; height: 100%; object-fit: cover;">
-        {% else %}
-          {{ m.initials }}
-        {% endif %}
-      </div>
-      {% endif %}{% endfor %}
-      {% if members|length > 8 %}
-      <div style="width: 28px; height: 28px; border-radius: 50%; background: rgba(255,255,255,0.2); color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 600; font-size: 0.55rem; flex-shrink: 0; border: 2px solid rgba(255,255,255,0.4); margin-left: -6px;">+{{ members|length - 8 }}</div>
+{% set invite_q = ("?invite=" ~ (invite_token | urlencode)) if (invite_token is defined and invite_token) else "" %}
+<section class="lp-top">
+  {% include "partials/public_logo.html" %}
+  {%- set has_practical = hours or based_in or speaks %}
+  <header class="lp-card{% if has_practical %} has-practical{% endif %}">
+    <div class="lp-face lp-face-team" data-face="{{ team_name }}">
+      {% if team_has_avatar %}
+        <img src="/team-avatar/{{ team_id }}" alt="" data-initials="{{ team_initials }}" onerror="this.parentElement.textContent=this.dataset.initials">
+      {% else %}
+        {{ team_initials }}
       {% endif %}
-      <span style="color: rgba(255,255,255,0.7); font-size: 0.8rem; margin-left: 0.5rem;">{{ t("teams-member-count", count=members|length) }}</span>
     </div>
-    {% endif %}
-  </div>
-  <div style="padding: 1.25rem 2rem 1.5rem;">
-    <p class="subtitle" style="margin-bottom: 0;">{{ t("team-profile-subtitle") }}</p>
-  </div>
-</div>
-
-{% if event_types %}
-  {% for et in event_types %}
-  <div class="card card-link" style="border-left: 3px solid var(--accent); padding-left: 1.75rem;">
-    <div style="display: flex; justify-content: space-between; align-items: center;">
-      <div>
-        <a href="/team/{{ team_slug }}/{{ et.slug }}{% if invite_token is defined and invite_token %}?invite={{ invite_token }}{% endif %}" data-calrs-sync class="card-link-title"><strong>{{ et.title }}</strong></a>
-        <span style="color: var(--text-muted); font-size: 0.85rem;">&middot; {{ et.duration_min }}min</span>
-        {% if et.visibility != 'public' %}
-        <span style="margin-left: 0.5rem; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.04em; padding: 0.1rem 0.45rem; border-radius: 999px; background: var(--surface); color: var(--text-muted); border: 1px solid var(--border);">{{ et.visibility }}</span>
-        {% endif %}
-        {% if et.description %}
-        <p class="description-clamp" style="color: var(--text-secondary); font-size: 0.875rem; margin-top: 0.25rem; margin-bottom: 0;">{{ et.description|safe }}</p>
+    <div class="lp-id">
+      <h1 class="lp-name">{{ team_name }}</h1>
+      {% if team_description or members %}
+      <div class="lp-more">
+        {% if team_description %}<div class="lp-bio">{{ team_description|safe }}</div>{% endif %}
+        {% if members %}
+        <ul class="lp-members">
+          {% for m in members %}
+          <li class="lp-member" title="{{ m.name }}">
+            <span class="lp-face" data-face="{{ m.name }}">{% if m.has_avatar %}<img src="/avatar/{{ m.id }}" alt="">{% else %}{{ m.initials }}{% endif %}</span>
+            <span class="lp-member-name">{{ m.first_name if m.first_name is defined and m.first_name else m.name }}</span>
+          </li>
+          {% endfor %}
+          {% if members_total > members|length %}
+          <li class="lp-member lp-member-more" title="{{ t('teams-member-count', count=members_total) }}">
+            <span class="lp-face">+{{ members_total - members|length }}</span>
+          </li>
+          {% endif %}
+        </ul>
         {% endif %}
       </div>
-      <span aria-hidden="true" style="color: var(--accent); font-size: 1.25rem; transition: transform 0.15s ease;">&rarr;</span>
+      {% endif %}
     </div>
-  </div>
-  {% endfor %}
-{% else %}
-  <div class="card">
-    <div class="empty">
-      <div class="empty-icon">&#128197;</div>
-      <div class="empty-text">{{ t("team-profile-empty") }}</div>
-    </div>
-  </div>
-{% endif %}
+    {% if has_practical %}{% include "partials/landing_about.html" %}{% endif %}
+  </header>
+</section>
+
+{% with href_kind = "team", href_owner = team_slug, href_tail = invite_q, empty_text = t("team-profile-empty") %}{% include "partials/landing_list.html" %}{% endwith %}
+{% include "partials/landing_script.html" %}
 {% endblock %}
+{% block footer %}<div class="lp-foot">{{ t("base-powered-by") }} <a href="https://cal.rs">calrs</a> <img src="/brand-logo" alt=""></div>{% endblock %}

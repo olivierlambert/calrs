@@ -22,9 +22,29 @@ Login attempts are rate-limited per IP address:
 
 - **10 attempts** per **15-minute window**
 - After the limit, further attempts return an error without checking credentials
-- The client IP is read from the `X-Forwarded-For` header (set by your reverse proxy)
+- The client address is the TCP peer, or, when the peer is a trusted proxy, the address that proxy reports in `X-Forwarded-For` (see below)
 
-> **Important:** Make sure your reverse proxy sets `X-Forwarded-For` correctly. Without it, rate limiting falls back to a single "unknown" bucket and won't be effective.
+The same rule identifies the client for every per-address limit (sign-in, two-factor codes, bookings, OAuth). An IPv6 client counts by its /64, so rotating addresses inside it does not buy a new budget.
+
+### Trusted proxies
+
+calrs believes `X-Forwarded-For` only from a **trusted proxy**. It joins every `X-Forwarded-For` line in the order they arrived (HAProxy adds a line of its own rather than extending the client's) and reads the list right to left, skipping the hops that are themselves trusted proxies; the first address that is not one is the client. A port on a hop (`198.51.100.7:5678`, `[2001:db8::1]:443`) is dropped. A hop that is not an address at all stops the walk, and every such request shares one bucket of its own, never the proxy's. A peer that is not trusted is the client itself, and whatever `X-Forwarded-For` it sends is ignored, so a client cannot claim a fresh address on every attempt. `X-Real-IP` and `Forwarded` (RFC 7239) are ignored: configure your proxy to set `X-Forwarded-For`.
+
+The trusted list is, in order of precedence:
+
+1. `CALRS_TRUSTED_PROXIES`: a comma or space separated list of addresses and CIDR ranges (`127.0.0.1, 10.0.0.0/8, fd00::/8`), or `none` to trust no peer. A `/0` range (`0.0.0.0/0`, `::/0`) is refused, since it would trust every peer. An unusable or refused value trusts no peer and logs an error.
+2. **Trusted proxies** in the admin panel (System settings), same format. Empty means the default.
+3. The default: loopback (`127.0.0.0/8`, `::1`), private (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`), unique local (`fc00::/7`) and link-local (`169.254.0.0/16`, `fe80::/10`).
+
+What this means for common setups:
+
+- **Caddy or Nginx on the same host, or on the same Docker network**: works out of the box, the proxy's address is in the default list. Make sure it sets `X-Forwarded-For` (Caddy does; Nginx needs the line below).
+- **Docker's userland proxy** (ports published over IPv6, or hairpin connections from the host): every client arrives from the bridge gateway, a trusted address that sends no header, so all clients share one rate-limit bucket and one person mistyping a password can lock everyone out for 15 minutes. Put the reverse proxy in front, or publish the port with the userland proxy disabled so calrs sees real client addresses.
+- **calrs exposed directly on a LAN, no proxy**: by default LAN peers are trusted, so a LAN client could forge `X-Forwarded-For`. Set `CALRS_TRUSTED_PROXIES=none`.
+- **Behind a proxy, with LAN users**: the default trusts every private address, so a LAN user whose request goes through the proxy can still add a forged private hop that calrs skips. List only the proxy's own address (`CALRS_TRUSTED_PROXIES=127.0.0.1`, or its Docker address) rather than relying on the default ranges.
+- **`none` behind a proxy** turns every client into the proxy's address: one bucket for everyone, and the OAuth per-address client cap (see the MCP docs) then counts every registration as coming from one address. Use `none` only when nothing sits in front of calrs.
+- **calrs exposed directly on the internet**: public peers are never trusted by default, so each client is counted by its own address.
+- **A proxy on a public address** (a load balancer, a CDN): list its addresses or ranges, otherwise every client is counted as the proxy.
 
 ### Nginx
 
@@ -42,6 +62,10 @@ Booking submissions are rate-limited per IP address:
 
 - **10 attempts** per **5-minute window**
 - Applies to all booking handlers (user, team, and legacy)
+- The client is identified as for sign-in (see [Trusted proxies](#trusted-proxies))
+- The counts are also stored in the database (`rate_limit_counters`) and read back at startup, so restarting calrs does not reset them; closed windows are pruned every 5 minutes
+
+Login and the other limits are kept in memory and start over when calrs restarts.
 
 ## CSRF protection
 
@@ -116,15 +140,23 @@ Tokens are UUID v4 (128-bit random), stored with unique indexes in the database.
 
 CalDAV and SMTP passwords are encrypted at rest using **AES-256-GCM**. The encryption key is auto-generated at `$DATA_DIR/secret.key` on first run, or can be provided via the `CALRS_SECRET_KEY` environment variable. Legacy hex-encoded passwords (from pre-v0.10.0) are auto-migrated to encrypted format on startup. Protect your `secret.key` file with filesystem permissions.
 
+In memory, the key and the decrypted credentials calrs holds are kept in buffers that are wiped when released (`zeroize`): the key and its long-lived copies, the plaintext returned by every decryption, the CalDAV, EWS and SMTP passwords and SMS gateway secrets in calrs's own configuration and client structures, OAuth access tokens, and the captcha, meeting webhook and EWS service-account secrets the server keeps for its whole life; the AES key schedule is wiped too. This narrows what a core dump or a later memory disclosure could reveal. It does not reach the copies that libraries make while using a credential (the HTTP client's request headers, the SMTP client's credentials, the OpenID Connect client secret) or the `CALRS_SECRET_KEY` value in the process environment, which the operating system keeps for the life of the process.
+
 ### No brute-force account lockout
 
 Rate limiting is per-IP, not per-account. A distributed attack from many IPs would not be rate-limited. Consider using fail2ban or your reverse proxy's rate limiting for additional protection.
 
 ### SSRF (server-side request forgery)
 
-CalDAV source URLs are user-supplied. `validate_caldav_url()` blocks URLs whose hostname resolves to a private or reserved IP range (loopback, RFC1918, link-local, ULA, etc.) before any HTTP request is issued.
+CalDAV and EWS source URLs are user-supplied, and resource feeds, the organization-wide Exchange endpoint and booking webhooks are supplied by admins or users. When one is saved, `validate_caldav_url()` (or the webhook check) refuses a URL whose hostname resolves to a private or reserved IP range (loopback, RFC1918, link-local, CGNAT, ULA, IPv6 forms that carry such an IPv4 address, etc.).
 
-This check resolves the hostname once at validation time, so a DNS-rebinding attacker who answers the initial lookup with a public IP and a subsequent lookup (during the actual HTTP fetch) with a private IP can bypass the guard. Mitigating this purely at the application layer would require inspecting the connected socket's peer address after every TCP handshake, which is outside the scope of the current implementation. The recommended deployment posture is therefore an **egress firewall** that prevents calrs from reaching RFC1918 / link-local ranges regardless of what DNS returns.
+The requests themselves do not rely on that first lookup. Every client that fetches one of these URLs (CalDAV, EWS and Autodiscover, resource feeds and their CalDAV collections, booking webhooks, the `calrs resource probe` command) resolves the host itself at each connection, refuses the connection when any address is private or reserved, and connects only to the addresses it checked, so a DNS answer that changes between the check and the request cannot send it to an internal host. This also covers hosts a server names on its own (CalDAV hrefs on another host, redirects): a host name goes through the same check. An IP literal never needs a lookup, so it is checked against the allowlist at every request instead, the saved URL's own literal included: a source on a private IP literal stops working when its entry is removed from the allowlist. A refused request records a generic error on the sources page and in the owner's alert email; the address itself is only logged, at warn level, for the administrator. List an IP literal in the allowlist the way it appears in the URL, without brackets for IPv6 (`10.0.0.5`, `fd00::1`); any spelling of the same address matches.
+
+#### Behind an outbound proxy
+
+Calendar requests honour `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY` and `NO_PROXY` (lowercase forms too), since many deployments, on-prem Exchange ones especially, reach the outside only through one. A request that goes through the proxy cannot be pinned by calrs: the proxy resolves the host name, not calrs. For those requests the URL is still checked when it is saved, server-supplied IP literals and redirects are still checked, and calrs only resolves the proxy's own host (exempt from the check, since you configured it); **filtering private addresses is then the proxy's job**, so configure it to refuse internal destinations. calrs logs this when it starts, for every command. Hosts that `NO_PROXY` sends direct get the full check and pinning. A URL, server-supplied href or redirect that names a proxy's own host (on any port) is refused unless that host is on the private-host allowlist, since calendar URLs never need to target the proxy itself. Only `http://` and `https://` proxies are used (a setting without a scheme counts as `http://`). This build has no SOCKS support: a `socks5://` proxy setting is ignored, logged at startup, and the requests it would have carried go direct, checked and pinned. Booking webhooks never use a proxy.
+
+Left out on purpose: the fixed Google and Microsoft endpoints (constants, not configuration), and the admin-configured captcha server, meeting webhook, SMS gateway and OIDC issuer, which were never under the private-host policy because pointing them at a service on the local network is their usual setup. They take the same proxy settings as calendar requests (only `http://` and `https://` proxies, `NO_PROXY` honoured). An egress firewall that keeps calrs away from internal ranges remains good practice.
 
 #### Allowing private CalDAV hosts (self-hosting)
 

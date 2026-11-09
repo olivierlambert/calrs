@@ -10,7 +10,9 @@ async fn production_pool_app() -> (Router, SqlitePool, String, TestDataDir) {
     let pool = crate::db::connect(&dir).await.unwrap();
     crate::db::migrate(&pool).await.unwrap();
     let (_, _, et_id) = seed_test_data(&pool).await;
-    let router = create_router(pool.clone(), dir.to_path_buf(), [0u8; 32]).await;
+    let router = create_router(pool.clone(), dir.to_path_buf(), [0u8; 32])
+        .await
+        .layer(local_proxy_peer());
     (router, pool, et_id, dir)
 }
 
@@ -114,6 +116,8 @@ async fn a_burst_of_bookings_is_answered_quickly_and_never_double_books_the_host
 /// calendar could not be read, so they are not known to be free.
 #[tokio::test]
 async fn an_unreadable_calendar_refuses_the_booking() {
+    let _lock = crate::test_support::ENV_LOCK.lock().await;
+    let _env = crate::test_support::EnvGuard::new();
     let (app, pool, _session, et_id) = setup_test_app().await;
     sqlx::query("ALTER TABLE events RENAME TO events_gone")
         .execute(&pool)
@@ -199,6 +203,7 @@ async fn strict_busy_readers_report_an_unreadable_table() {
         team_id: None,
         collective: false,
         participants: Vec::new(),
+        claimant: None,
     };
     assert!(
         reschedule_busy_source(&pool, &hosts, &et_id, start, end, utc, "", "", true)
@@ -321,6 +326,8 @@ async fn the_submit_time_slot_check_never_fetches_a_resource_feed() {
 /// grid degrades and keeps showing slots.
 #[tokio::test]
 async fn unreadable_slot_settings_refuse_the_booking() {
+    let _lock = crate::test_support::ENV_LOCK.lock().await;
+    let _env = crate::test_support::EnvGuard::new();
     let (app, pool, _session, et_id) = setup_test_app().await;
     sqlx::query("ALTER TABLE availability_overrides RENAME TO availability_overrides_gone")
         .execute(&pool)
@@ -457,4 +464,91 @@ async fn unreadable_reschedule_hosts_are_an_error() {
         .await
         .unwrap();
     assert!(reschedule_hosts(&pool, &uid, &owner).await.is_err());
+}
+
+/// Six guests submit at once through the same single-use invite link, each
+/// for a different time, so nothing but the invite can refuse them (#373).
+/// The check and the count used to be two steps, so several could pass the
+/// check before any was counted. Exactly one booking is made, the invite is
+/// counted once, and the others are refused as a used invite.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_single_use_invite_books_once_under_concurrent_submissions() {
+    let (app, pool, et_id, _dir) = production_pool_app().await;
+    sqlx::query("UPDATE event_types SET visibility = 'private' WHERE id = ?")
+        .bind(&et_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO booking_invites (id, event_type_id, token, guest_name, guest_email, max_uses, created_by_user_id)
+         SELECT 'inv373', ?, 'tok373', '', '', 1, id FROM users WHERE username = 'testuser'",
+    )
+    .bind(&et_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // Hold the booking lock while the six read the invite, so every one of
+    // them has passed the early check before the first can book: the old
+    // two-step count then let all six through. The early check comes before
+    // the lock on this path.
+    let lock = crate::resources::booking_lock().await;
+    let day = far_future_monday();
+    let mut requests = Vec::new();
+    for (ip, time) in ["09:00", "10:00", "11:00", "13:00", "14:00", "15:00"]
+        .into_iter()
+        .enumerate()
+    {
+        let app = app.clone();
+        let mut request = post_form_unauthed(
+            "/u/testuser/test-meeting/book",
+            "burst",
+            &format!(
+                "_csrf=burst&date={day}&time={time}&tz=UTC&name=Guest+{ip}&email=guest{ip}%40example.com&invite_token=tok373"
+            ),
+        );
+        request.headers_mut().insert(
+            "x-forwarded-for",
+            format!("198.51.100.{ip}").parse().unwrap(),
+        );
+        requests.push(tokio::spawn(async move {
+            app.oneshot(request).await.unwrap().status()
+        }));
+    }
+    // Release the lock only once all six have passed the early check: each
+    // then waits on the lock, so none can have spent the invite yet.
+    tokio::time::timeout(std::time::Duration::from_secs(20), async {
+        loop {
+            let passed = INVITE_CHECKS_PASSED
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|t| t.as_str() == "tok373")
+                .count();
+            if passed == 6 {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("all six submissions pass the early invite check");
+    drop(lock);
+    for request in requests {
+        let status = request.await.unwrap();
+        assert!(!status.is_server_error(), "{status}");
+    }
+
+    let bookings: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM bookings WHERE event_type_id = ?")
+        .bind(&et_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(bookings, 1, "a single-use invite books once");
+    let used: i64 =
+        sqlx::query_scalar("SELECT used_count FROM booking_invites WHERE id = 'inv373'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(used, 1);
 }

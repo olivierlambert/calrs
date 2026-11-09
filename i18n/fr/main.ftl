@@ -219,6 +219,56 @@ base-powered-by = Propulsé par
 profile-pick-event-type-invite = Choisissez un type d'événement pour réserver un créneau.
 profile-no-event-type = Aucun type d'événement disponible pour le moment.
 
+duration-short-m = { $minutes } min
+duration-short-h = { $hours } h
+duration-short-hm = { $hours } h { $minutes }
+duration-long-m =
+    { $minutes ->
+        [one] { $minutes } minute
+       *[other] { $minutes } minutes
+    }
+duration-long-h =
+    { $hours ->
+        [one] { $hours } heure
+       *[other] { $hours } heures
+    }
+duration-long-hm =
+    { $hours ->
+        [one] { $hours } heure
+       *[other] { $hours } heures
+    } { $minutes ->
+        [one] { $minutes } minute
+       *[other] { $minutes } minutes
+    }
+duration-long-d =
+    { $days ->
+        [one] { $days } jour
+       *[other] { $days } jours
+    }
+# Public landing pages (/u/{username}, /team/{slug}).
+landing-with-one-of = avec l'un d'eux
+faces-and-more = et { $count } de plus
+landing-with-everyone = avec tout le monde
+landing-days-range = du { $first } au { $last }
+landing-days-every = tous les jours
+landing-on-request-hint = Chaque demande est confirmée à la main avant d'être réservée.
+landing-how-it-works = Choisissez un sujet, puis un horaire qui vous convient : vous recevrez une confirmation par e-mail.
+landing-based-in = Localisation : { $place }
+landing-speaks = Parle { $languages }
+landing-meetings = Rendez-vous
+landing-hours-vary = Disponible en général { $days } (heure de { $zone }), horaires variables selon le jour
+landing-time-range = de %1 à %2
+landing-time-range-next = de %1 à %2 le lendemain
+landing-other-meetings = Autres rendez-vous
+landing-hours-heading = Disponible en général, heure de { $zone }
+landing-hours-heading-yours = Disponible en général, à votre heure
+landing-hours-toggle = Mon heure
+landing-hours-toggle-hint = Afficher ces horaires dans votre fuseau horaire
+landing-days-every-short = Tous les jours
+landing-days-span = { $first } au { $last }
+landing-host-confirms = L'hôte confirme
+list-and = { $first } et { $last }
+
 # Month and weekday names + per-locale date format patterns.
 # Used by server-side date formatters in src/i18n.rs.
 
@@ -296,8 +346,8 @@ email-cancel-ics-attached-html = Une annulation de calendrier est jointe à cet 
 
 # Confirmation email: notice-window policy lines (src/email.rs)
 
-email-confirm-cancel-notice = Note : l'annulation exige un préavis d'au moins { $minutes } minutes.
-email-confirm-reschedule-notice = Note : la reprogrammation exige un préavis d'au moins { $minutes } minutes.
+email-confirm-cancel-notice = Note : l'annulation exige un préavis d'au moins { $duration }.
+email-confirm-reschedule-notice = Note : la reprogrammation exige un préavis d'au moins { $duration }.
 
 # Event type form: cancel/reschedule minimum notice (templates/event_type_form.html)
 
@@ -339,14 +389,14 @@ event-type-form-saved = Enregistré.
 
 # Booking confirmation: cancel/reschedule policy notices (templates/confirmed.html)
 
-confirmed-cancel-notice-info = L'annulation exige un préavis d'au moins { $minutes } minutes avant la réunion.
-confirmed-reschedule-notice-info = La reprogrammation exige un préavis d'au moins { $minutes } minutes avant la réunion.
+confirmed-cancel-notice-info = L'annulation exige un préavis d'au moins { $duration } avant la réunion.
+confirmed-reschedule-notice-info = La reprogrammation exige un préavis d'au moins { $duration } avant la réunion.
 
 # Booking action blocked page (templates/booking_action_blocked.html)
 
 booking-blocked-title-cancel = Cette réservation ne peut plus être annulée en ligne
 booking-blocked-title-reschedule = Cette réservation ne peut plus être reprogrammée en ligne
-booking-blocked-body = L'hôte exige un préavis d'au moins { $minutes } minutes. Si vous ne pouvez pas être présent, écrivez directement à <a href="mailto:{ $host_email }">{ $host_email }</a>.
+booking-blocked-body = L'hôte exige un préavis d'au moins { $duration }. Si vous ne pouvez pas être présent, écrivez directement à <a href="mailto:{ $host_email }">{ $host_email }</a>.
 
 # Dashboard event types listing (templates/dashboard_event_types.html)
 
@@ -410,18 +460,12 @@ overview-page-title = Tableau de bord
 overview-avail-banner-body = Vos horaires de travail par défaut ont été fixés du lundi au vendredi, de 9h00 à 17h00. Ils sont utilisés lorsque d'autres personnes vous incluent dans une réunion de groupe dynamique.
 overview-avail-banner-cta = Vérifier vos disponibilités
 overview-dismiss = Ignorer
-overview-getting-started = Pour commencer
 overview-step-connect-calendar = Connecter un agenda
 overview-step-first-event-type = Créer votre premier type d'événement
-overview-step-share-link = Partager votre lien de réservation
 overview-pending-approval = En attente d'approbation
 overview-confirm = Confirmer
 overview-decline = Refuser
 overview-copy-link = Copier le lien de réservation
-overview-duration-h = { $hours } h
-overview-duration-m = { $minutes } min
-overview-duration-hm = { $hours } h { $minutes }
-overview-percent = { $value } %
 overview-chart-title = Rendez-vous par semaine
 overview-chart-this-week = Cette semaine
 overview-chart-week-of = Semaine du { $date }
@@ -435,7 +479,6 @@ overview-types-other = Autres types
 overview-agenda-title = À venir
 overview-agenda-today = Aujourd’hui
 overview-agenda-tomorrow = Demain
-overview-agenda-now = En cours
 overview-agenda-join = Rejoindre
 overview-agenda-empty = Aucun rendez-vous dans les 14 prochains jours. Partagez votre lien de réservation pour en recevoir.
 overview-agenda-all = Toutes les réservations
@@ -457,33 +500,88 @@ overview-open-calendar = Ouvrir votre agenda
 overview-week-title = Cette semaine
 overview-week-closed = fermé
 overview-week-total = { $booked } réservées
-overview-week-number = Semaine { $week }
 overview-week-short = S{ $week }
 overview-time-range = de { $from } à { $to }
 overview-until = jusqu'à { $time }
 overview-expires = Échéance { $when }
 overview-guest-and-more = { $name } (+{ $count })
-overview-mast-now = En cours : { $title } avec { $guest }, jusqu'à { $time }
-overview-mast-next = Ensuite : { $title } avec { $guest } à { $time }
-overview-mast-next-day = Ensuite : { $title } avec { $guest }, { $day } à { $time }
+overview-greeting-night = Bonjour, { $name }
+overview-greeting-morning = Bonjour, { $name }
+overview-greeting-afternoon = Bonjour, { $name }
+overview-greeting-evening = Bonsoir, { $name }
+overview-mast-date = { $date }, semaine { $week }
+overview-sum-now = Vous êtes avec { $guest } jusqu'à { $time }.
+overview-sum-today = Aujourd'hui, vous voyez { $guest } à { $time }.
+overview-sum-tomorrow = Demain, vous voyez { $guest } à { $time }.
+overview-sum-later = Votre prochain rendez-vous est avec { $guest } le { $day } à { $time }.
+overview-sum-more-today = { $count ->
+    [one] Un autre rendez-vous suit dans la journée.
+   *[other] { $count } autres rendez-vous suivent dans la journée.
+}
+overview-sum-none = Rien n'est réservé dans les 14 prochains jours.
+overview-sum-pending = { $count ->
+    [one] Une demande attend votre réponse.
+   *[other] { $count } demandes attendent votre réponse.
+}
+overview-sum-guests = { $count ->
+    [one] { $name } et une autre personne
+   *[other] { $name } et { $count } autres personnes
+}
+overview-hero-title = Prochain rendez-vous
+overview-when-now = En cours, jusqu'à { $time }
+overview-when-minutes = { $count ->
+    [one] dans 1 minute
+   *[other] dans { $count } minutes
+}
+overview-when-hours = { $count ->
+    [one] dans 1 heure
+   *[other] dans { $count } heures
+}
+overview-when-today-night = plus tard dans la nuit
+overview-when-today-morning = ce matin
+overview-when-today-afternoon = cet après-midi
+overview-when-today-evening = ce soir
+overview-when-tomorrow-night = demain très tôt
+overview-when-tomorrow-morning = demain matin
+overview-when-tomorrow-afternoon = demain après-midi
+overview-when-tomorrow-evening = demain soir
+overview-when-weekday-night = { $day } très tôt
+overview-when-weekday-morning = { $day } matin
+overview-when-weekday-afternoon = { $day } après-midi
+overview-when-weekday-evening = { $day } soir
+overview-when-days = { $count ->
+    [one] dans 1 jour
+   *[other] dans { $count } jours
+}
+overview-pulse-held = { $count ->
+    [one] Un rendez-vous ces 30 derniers jours, { $time } avec vos invités.
+   *[other] { $count } rendez-vous ces 30 derniers jours, { $time } avec vos invités.
+}
+overview-pulse-held-vs = { $count ->
+    [one] Un rendez-vous ces 30 derniers jours, { $time } avec vos invités, contre { $prev } les 30 jours précédents.
+   *[other] { $count } rendez-vous ces 30 derniers jours, { $time } avec vos invités, contre { $prev } les 30 jours précédents.
+}
+overview-pulse-booked = { $count ->
+    [one] Une nouvelle réservation est arrivée sur la même période.
+   *[other] { $count } nouvelles réservations sont arrivées sur la même période.
+}
+overview-pulse-booked-only = { $count ->
+    [one] Une nouvelle réservation est arrivée ces 30 derniers jours.
+   *[other] { $count } nouvelles réservations sont arrivées ces 30 derniers jours.
+}
+overview-links-page = Votre page
+overview-agenda-nothing-else = Rien d'autre dans les 14 prochains jours.
+overview-setup-count = { $count ->
+    [one] 1 élément à configurer
+   *[other] { $count } éléments à configurer
+}
 overview-ruler-booked = Réservé
 overview-ruler-pending = En attente de décision
 overview-ruler-unavailable = Indisponible (votre agenda)
 overview-key-open = Ouvert aux réservations
-overview-ruler-aria = Aujourd'hui, de { $from } à { $to }
-overview-chart-now = en cours
+overview-ruler-unreadable = Événement répété que calrs ne sait pas lire
+overview-ruler-unreadable-tip = Compté comme occupé par précaution. La page Diagnostic montre de quel événement il s'agit.
 overview-figures-title = 30 derniers jours
-overview-fig-booked = Rendez-vous réservés
-overview-fig-time = Temps en rendez-vous
-overview-fig-cancelled = Annulés
-overview-fig-notice = Délai moyen
-overview-fig-before = { $value } les 30 jours précédents
-overview-fig-prev-key = Les 30 jours précédents
-overview-fig-days =
-    { $count ->
-        [one] { $count } jour
-       *[other] { $count } jours
-    }
 
 # Dashboard bookings (templates/dashboard_bookings.html)
 
@@ -546,6 +644,7 @@ teams-empty-admin = { $link } pour collaborer avec votre équipe.
 teams-empty-admin-link-label = Créez-en une
 teams-empty-member = Les équipes sont créées par les administrateurs. Demandez au vôtre d'en créer une et de vous y ajouter.
 teams-subtitle = Des personnes qui partagent des rendez-vous, attribués à tour de rôle ou en commun.
+teams-search-placeholder = Filtrer par nom ou lien
 
 # Dashboard invite links (templates/dashboard_internal.html)
 
@@ -553,7 +652,6 @@ invite-links-page-title = Liens d'invitation
 invite-links-heading = Liens d'invitation
 invite-links-new = Nouvel événement interne
 invite-links-help = Générez des liens de réservation à usage unique pour les types d'événement internes. Tout collègue authentifié peut créer et partager des liens ici.
-invite-links-duration = { $minutes } min
 invite-links-hosted-by = Organisé par { $host }
 invite-links-get-link = Obtenir un lien
 invite-links-invites = Invitations
@@ -623,7 +721,6 @@ event-types-badge-expired = expiré
 event-types-badge-range-from = à partir du { $date }
 event-types-badge-range-until = jusqu'au { $date }
 event-types-send-invites = Envoyer des invitations
-event-types-duration = { $minutes } min
 event-types-mode-collective = collectif
 event-types-mode-round-robin = tour de rôle
 event-types-edit = Modifier
@@ -704,6 +801,8 @@ settings-add-window = Ajouter une plage horaire
 settings-remove-window = Supprimer la plage
 settings-save = Enregistrer les paramètres
 settings-appearance = Apparence
+settings-card-profile = Profil
+settings-card-languages = Langues
 settings-theme-system = Système
 settings-theme-light = Clair
 settings-theme-dark = Sombre
@@ -802,10 +901,9 @@ troubleshoot-page-title = Diagnostic
 troubleshoot-empty = Aucun type d'événement trouvé. { $link } pour commencer à diagnostiquer vos disponibilités.
 troubleshoot-empty-link-label = Créez-en un
 troubleshoot-subtitle = Comprenez pourquoi les créneaux sont disponibles ou bloqués pour { $title }
-troubleshoot-duration = { $minutes } min
-troubleshoot-buffer-before = { $minutes } min de marge avant
-troubleshoot-buffer-after = { $minutes } min de marge après
-troubleshoot-min-notice = { $minutes } min de préavis
+troubleshoot-buffer-before = { $duration } de marge avant
+troubleshoot-buffer-after = { $duration } de marge après
+troubleshoot-min-notice = { $duration } de préavis
 troubleshoot-blocked-override = Bloqué par une exception de date (jour de congé)
 troubleshoot-custom-hours-active = Exception d'horaires personnalisés active (remplace les règles hebdomadaires)
 troubleshoot-microsoft-not-ready = Votre calendrier Microsoft n'a pas terminé sa première synchronisation : toutes les heures apparaissent occupées d'ici là. Voir Sources d'agenda.
@@ -822,10 +920,10 @@ troubleshoot-none-no-rules = Aucune règle de disponibilité pour ce jour de la 
 troubleshoot-none-all-bookable = Aucun créneau bloqué pendant les horaires de disponibilité. Tous les horaires sont réservables.
 troubleshoot-label-outside = Hors disponibilité
 troubleshoot-label-available = Disponible
-troubleshoot-label-min-notice = Préavis minimum ({ $minutes } min)
+troubleshoot-label-min-notice = Préavis minimum ({ $duration })
 troubleshoot-label-beyond-horizon = Au-delà de l'horizon de réservation ({ $days } jours)
 troubleshoot-label-outside-date-range = En dehors de la période réservable
-troubleshoot-label-buffer = Marge ({ $minutes } min)
+troubleshoot-label-buffer = Marge ({ $duration })
 troubleshoot-label-resource-busy = Ressource occupée : { $names }
 troubleshoot-detail-around = Autour de : { $label }
 troubleshoot-detail-around-booking = Autour de la réservation de { $guest }
@@ -839,7 +937,7 @@ invites-back-teams = Retour aux équipes
 invites-back-event-types = Retour aux types d'événement
 invites-intro = Envoyez des liens d'invitation pour { $title }
 invites-capped = <strong>La saisie a été limitée à { $max } destinataires par envoi.</strong> Envoyez le reste dans un autre lot.
-invites-failed-hint = — consultez les journaux du serveur pour en savoir plus.
+invites-failed-hint = Consultez les journaux du serveur pour en savoir plus.
 invites-quick-link = Lien rapide
 invites-quick-link-help = Générez un lien à usage unique et copiez-le dans votre presse-papiers.
 invites-get-link = Obtenir un lien
@@ -901,6 +999,7 @@ source-form-heading-edit = Modifier la source d'agenda
 source-form-heading-add = Connecter un agenda
 source-form-subtitle-edit = Mettez à jour la connexion. Laissez le mot de passe vide pour conserver l'actuel. Après avoir changé l'URL ou le nom d'utilisateur, lancez une synchronisation pour rafraîchir la liste des agendas détectés.
 source-form-subtitle-add = Connectez un serveur CalDAV ou Microsoft Exchange (EWS) pour que calrs puisse vérifier vos disponibilités lors des réservations.
+source-form-server-title = Serveur CalDAV ou Exchange
 source-form-backend = Backend
 source-form-preset = Préréglage
 source-form-connect-google = Se connecter avec Google
@@ -967,7 +1066,7 @@ team-form-submit = Créer l'équipe
 # Team settings (templates/team_settings.html)
 
 team-settings-page-title = Paramètres
-team-settings-subtitle = Paramètres de l'équipe — les administrateurs de l'équipe peuvent les modifier.
+team-settings-subtitle = Paramètres de l'équipe : les administrateurs de l'équipe peuvent les modifier.
 team-settings-public-url = URL publique
 team-settings-public-url-help = N'importe qui peut réserver via ce lien.
 team-settings-invite-link = Lien d'invitation
@@ -1087,6 +1186,8 @@ etf-dynamic-group-note = Seuls les utilisateurs qui autorisent les liens de grou
 etf-dynamic-group-url = URL du lien de groupe
 etf-watcher-teams = Équipes observatrices
 etf-watcher-teams-help = Les équipes sélectionnées seront notifiées à chaque réservation. Leurs membres peuvent prendre en charge une réservation pour y participer.
+etf-watcher-team-locked = Vous n'êtes pas dans cette équipe, elle reste en place
+etf-watcher-team-private = Une équipe privée
 etf-save = Enregistrer les modifications
 etf-create = Créer le type d'événement
 etf-js-loading = Chargement...
@@ -1164,6 +1265,9 @@ admin-action-refused = Action refusée :
 admin-error-last-admin = C'est le dernier administrateur actif. Promouvez ou réactivez d'abord un autre administrateur.
 admin-logo = Logo de l'entreprise
 admin-logo-help = Affiché sur les pages de réservation publiques. PNG, JPEG, GIF ou WebP, 2 Mo maximum.
+admin-logo-light = Thème clair
+admin-logo-dark = Thème sombre
+admin-logo-dark-help = Facultatif. Affiché lorsque le visiteur utilise le thème sombre ; sans lui, le logo clair sert dans les deux thèmes.
 admin-logo-refused = Le logo n'a pas été enregistré. Envoyez une image PNG, JPEG, GIF ou WebP de 2 Mo maximum.
 admin-favicon = Favicon
 admin-favicon-help = Affiché dans les onglets du navigateur et les favoris. Recommandé : un PNG carré d'au moins 32×32 pixels, 512 Ko maximum. Sans favicon, le crabe de calrs est affiché.
@@ -1221,6 +1325,10 @@ admin-base-url = URL de base
 admin-base-url-help = URL publique de cette instance. Utilisée pour les redirections OIDC et les liens dans les e-mails (approbation/refus, annulation, rappels).
 admin-private-hosts = Liste d'hôtes privés autorisés
 admin-private-hosts-help = Noms d'hôtes, séparés par des virgules, autorisés à résoudre vers des IP privées ou réservées pour les sources CalDAV/EWS (dérogation à la protection SSRF). N'ajoutez que des hôtes que vous contrôlez (par exemple un serveur d'agenda sur le même réseau Docker). Laissez vide pour conserver la protection sur tous les hôtes.
+admin-trusted-proxies = Proxys de confiance
+admin-trusted-proxies-help = Adresses ou plages CIDR des proxys inverses dont l'en-tête X-Forwarded-For est pris en compte pour distinguer les clients dans les limites de débit. Laissez vide pour la valeur par défaut (plages de bouclage, privées, locales uniques et lien-local : un proxy sur le même hôte ou le même réseau Docker). Saisissez none si calrs est joint directement, pour qu'un client ne puisse pas se faire passer pour une autre adresse.
+admin-trusted-proxies-everyone = Proxys de confiance : « { $entry } » ferait confiance à toutes les adresses, et n’importe quel client pourrait se faire passer pour un autre. Indiquez plutôt l’adresse ou la plage de votre proxy.
+admin-trusted-proxies-invalid = Proxys de confiance : « { $entry } » n'est ni une adresse IP ni une plage CIDR.
 admin-german-formal = Forme d'adresse en allemand
 admin-german-formal-du = Informelle (du)
 admin-german-formal-sie = Formelle (Sie)
@@ -1332,6 +1440,8 @@ admin-sms-test-checked = Identifiants acceptés.
 admin-sms-test-error = La passerelle SMS a refusé la requête.
 admin-sms-captcha-warning = Le formulaire de réservation est public et le numéro du destinataire vient de l'invité : sans captcha, les SMS forment un relais ouvert que quelqu'un peut vous facturer. Configurez le captcha ci-dessus et restreignez les pays de destination dans les réglages de votre passerelle.
 admin-sms-sent-today = Envoyés aujourd'hui :
+admin-sms-segments-today = Segments facturés aujourd'hui :
+admin-sms-unknown-today = Sans réponse de la passerelle, comptés dans la limite :
 admin-sms-of-cap = sur { $cap }
 admin-sms-config-error = Erreur de configuration SMS :
 admin-sms-gateway = Passerelle :
@@ -1344,8 +1454,8 @@ admin-sms-docs = Documentation de l'API { $provider }
 admin-sms-country = Indicatif pays par défaut
 admin-sms-country-hint = (utilisé quand un invité saisit un numéro local)
 admin-sms-daily-cap = Limite quotidienne
-admin-sms-daily-cap-hint = (messages par jour pour toute l'instance, 0 pour aucune limite)
-admin-sms-daily-cap-help = Au-delà de la limite, calrs cesse d'envoyer des SMS et continue les e-mails : une réservation n'échoue jamais parce que le budget SMS est épuisé.
+admin-sms-daily-cap-hint = (segments SMS facturés par jour UTC pour toute l'instance, 0 pour aucune limite)
+admin-sms-daily-cap-help = Un message de 160 caractères au plus compte pour un segment, ou 70 s'il contient un caractère hors de l'alphabet GSM ; un message plus long est facturé un segment par tranche de 153 caractères (67), et les messages de test comptent aussi. Au-delà de la limite, calrs cesse d'envoyer des SMS et continue les e-mails : une réservation n'échoue jamais parce que le budget SMS est épuisé.
 admin-save-sms = Enregistrer les paramètres SMS
 admin-send-test-sms = Envoyer un message de test à
 admin-send-test-sms-hint-check = (laissez vide pour vérifier seulement les identifiants)
@@ -1362,9 +1472,6 @@ admin-guest-footer-default-help = Utilisé lorsqu'un type d'événement n'a pas 
 admin-guest-footer-allow-all = Autoriser tout utilisateur à définir un pied de page sur ses propres types d'événement
 admin-guest-footer-allow-all-help = Désactivé par défaut : le pied de page part au nom de cette instance, donc seuls les administrateurs peuvent en écrire un. Un pied de page défini sur un type d'événement remplace celui par défaut ci-dessus.
 admin-save-guest-footer = Enregistrer le pied de page
-admin-page-of = Page %1 sur %2
-admin-show-more-js = Afficher %1 de plus
-admin-show-fewer = Afficher moins
 
 # Admin panel: overview, section tabs, users table (templates/admin.html)
 
@@ -1532,12 +1639,6 @@ admin-sms-env-managed = Géré par <strong>variables d'environnement</strong> (p
 admin-sms-env-help = Vous pouvez aussi configurer par variables d'environnement (prioritaires sur ceci) : <code>CALRS_SMS_PROVIDER</code>, <code>CALRS_SMS_API_KEY</code>, <code>CALRS_SMS_API_SECRET</code>, <code>CALRS_SMS_SENDER</code>, <code>CALRS_SMS_BASE_URL</code>, <code>CALRS_SMS_DAILY_CAP</code>, <code>CALRS_SMS_DEFAULT_COUNTRY_CODE</code>.
 admin-sms-trial-warning = <strong>Le mode d'essai Twilio est actif</strong> (<code>CALRS_SMS_TWILIO_TRIAL</code>). Les invités reçoivent le modèle prédéfini <code>sms_appointment_reminders</code> de Twilio, pas le vrai message, et seuls les numéros vérifiés dans votre console Twilio sont joignables. C'est une aide au test pour les comptes d'essai. Supprimez la variable avant d'accepter des réservations.
 
-admin-show-more =
-    { $count ->
-        [one] Afficher { $count } de plus
-       *[other] Afficher { $count } de plus
-    }
-
 # Calendar source form: backend picker (templates/source_form.html)
 
 source-form-backend-help = Choisissez le protocole parlé par votre serveur. EWS vise Exchange 2019/2016/2013 auto-hébergé.
@@ -1691,6 +1792,8 @@ bookings-error-reschedule-resend-too-soon = La demande a été envoyée à l'inv
 bookings-resend-reschedule = Renvoyer la demande
 bookings-resend-reschedule-hint = Renvoyer le même lien à l'invité par e-mail (une fois par heure au plus)
 troubleshoot-detail-pending-request = { $title } (demande en attente)
+troubleshoot-detail-claimed-booking = { $title } (réservation prise en charge)
+troubleshoot-detail-unsupported-recurrence = { $calendar } (règle de répétition que calrs ne sait pas lire, comptée comme occupée dès son début)
 etf-pending-blocks-slot = Les demandes en attente bloquent le créneau
 etf-pending-blocks-slot-help = Tant qu'une demande attend votre réponse, personne d'autre ne peut réserver ce créneau, sur ce type d'événement comme sur les autres.
 etf-pending-expiry = Expiration des demandes
@@ -1884,6 +1987,8 @@ admin-sms-check-accepted = Identifiants acceptés par la passerelle.
 admin-sms-bad-number = Ce numéro de téléphone n'est pas utilisable.
 admin-sms-test-body = Message de test calrs. Votre passerelle SMS fonctionne.
 admin-sms-test-accepted = Message de test accepté par la passerelle.
+admin-sms-test-over-cap = La limite quotidienne de SMS est atteinte : le message de test n'a pas été envoyé. Les messages de test comptent dans la limite comme les autres.
+admin-sms-test-ledger-failed = L'utilisation des SMS n'a pas pu être enregistrée : le message de test n'a pas été envoyé.
 
 ## Local multi-factor authentication
 
@@ -2259,6 +2364,8 @@ answer-agreed = Accepté
 answer-not-agreed = Non accepté
 answer-you-agreed = Vous avez accepté
 answer-you-did-not-agree = Vous n'avez pas accepté
+answer-agreed-recorded-by = Accepté, enregistré par { $name }
+answer-recorded-for-you-by = Enregistré en votre nom par { $name }
 bookings-answers = Réponses
 validate-notes-required = Veuillez ajouter une note pour l'hôte.
 validate-question-required = Veuillez répondre à « { $question } ».
@@ -2318,3 +2425,54 @@ etf-q-key = Clé pour les webhooks : %1
 etf-hint-questions-one = 1 question
 etf-hint-questions-other = %1 questions
 etf-hint-no-questions = Aucune question
+
+# Language names, for the languages a host speaks (landing.rs).
+language-name-en = anglais
+language-name-fr = français
+language-name-de = allemand
+language-name-es = espagnol
+language-name-it = italien
+language-name-pt = portugais
+language-name-nl = néerlandais
+language-name-pl = polonais
+language-name-et = estonien
+language-name-ar = arabe
+language-name-zh = chinois
+language-name-ja = japonais
+language-name-ko = coréen
+language-name-ru = russe
+language-name-uk = ukrainien
+language-name-sv = suédois
+language-name-da = danois
+language-name-nb = norvégien
+language-name-fi = finnois
+language-name-cs = tchèque
+language-name-ro = roumain
+language-name-el = grec
+language-name-tr = turc
+language-name-hi = hindi
+language-name-he = hébreu
+language-name-hu = hongrois
+
+# Sections and order of the landing pages (landing.rs, event type form, settings).
+etf-section = Rubrique
+etf-section-placeholder = Pour commencer
+etf-section-help = Les rendez-vous de la même rubrique sont regroupés sous son nom sur la page publique, tel qu'il est écrit.
+etf-section-order-link = Modifier l'ordre
+settings-based-in = Localisation
+settings-based-in-placeholder = Paris, France
+settings-based-in-help = Une ville ou une région, affichée sous votre nom sur votre page publique.
+settings-speaks = Langues parlées
+settings-speaks-help = Affichées sous votre nom sur votre page publique, dans la langue de chaque visiteur.
+page-order-heading = Ordre de votre page
+page-order-team-heading = Ordre de la page { $team }
+page-order-subtitle = Les rubriques et les rendez-vous apparaissent dans cet ordre sur la page publique. La rubrique d'un rendez-vous se règle dans ses paramètres.
+page-order-back = Retour
+page-order-empty = Aucun rendez-vous pour le moment.
+page-order-up = Monter
+page-order-down = Descendre
+page-order-section-up = Monter { $section }
+page-order-section-down = Descendre { $section }
+page-order-type-up = Monter { $title }
+page-order-type-down = Descendre { $title }
+page-order-not-listed = Absent de la page publique (désactivé, interne ou privé)

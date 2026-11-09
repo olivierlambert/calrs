@@ -24,7 +24,7 @@ use super::{factory, SendReceipt, SmsConfig, SmsError, SmsProvider};
 pub struct WebhookProvider {
     url: String,
     sender: String,
-    secret: String,
+    secret: zeroize::Zeroizing<String>,
 }
 
 impl WebhookProvider {
@@ -77,7 +77,7 @@ impl SmsProvider for WebhookProvider {
             .body(body)
             .send()
             .await
-            .map_err(|e| SmsError::Transport(e.to_string()))?;
+            .map_err(super::request_error)?;
 
         let status = response.status();
         let text = response.text().await.unwrap_or_default();
@@ -101,5 +101,24 @@ impl SmsProvider for WebhookProvider {
             message_id: parsed.and_then(|r| r.id),
             ..Default::default()
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The shared SMS client follows no redirect, so a 307 cannot re-send
+    /// the signed message to another host.
+    #[tokio::test]
+    async fn the_sms_webhook_does_not_follow_redirects() {
+        let (url, hits) = crate::test_support::redirect_trap().await;
+        let provider = WebhookProvider {
+            url,
+            sender: "calrs".to_string(),
+            secret: "s3cret".to_string().into(),
+        };
+        assert!(provider.send("+33612345678", "hello").await.is_err());
+        assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 0);
     }
 }

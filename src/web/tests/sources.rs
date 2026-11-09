@@ -114,7 +114,9 @@ async fn update_source_changes_fields_and_keeps_password_when_blank() {
     assert_eq!(row.1, "https://192.0.2.10/dav/new/");
     assert_eq!(row.2, "newuser");
     // Decrypt the stored blob and confirm the password is unchanged.
-    let pw = crate::crypto::decrypt_password(&[0u8; 32], &row.3).unwrap();
+    let pw = crate::crypto::decrypt_password(&[0u8; 32], &row.3)
+        .unwrap()
+        .to_string();
     assert_eq!(pw, "old-pw", "blank password must keep the existing one");
 }
 
@@ -144,7 +146,9 @@ async fn update_source_rotates_password() {
         .fetch_one(&pool)
         .await
         .unwrap();
-    let pw = crate::crypto::decrypt_password(&[0u8; 32], &enc.0).unwrap();
+    let pw = crate::crypto::decrypt_password(&[0u8; 32], &enc.0)
+        .unwrap()
+        .to_string();
     assert_eq!(
         pw, "new-pw-rotated",
         "non-blank password must replace the existing one"
@@ -757,4 +761,45 @@ async fn sources_dashboard_links_the_calendar_selection() {
     let body = body_string(response).await;
     assert!(body.contains(&format!("/dashboard/sources/{sid}/calendars")));
     assert!(body.contains("Calendars synced: 1 of 2"));
+}
+
+/// #388: the Sync button waits a little for a sync of the same source
+/// already running, then says so instead of hanging behind it.
+#[tokio::test]
+async fn sync_button_does_not_hang_behind_a_running_sync() {
+    let (app, pool, session, _) = setup_test_app().await;
+    let account: String = sqlx::query_scalar(
+        "SELECT a.id FROM accounts a JOIN users u ON u.id = a.user_id WHERE u.username = 'testuser'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let source = uuid::Uuid::new_v4().to_string();
+    sqlx::query("INSERT INTO caldav_sources (id, account_id, name, url, username, password_enc) VALUES (?, ?, 'busy', 'https://dav.example.com/', 'u', 'deadbeef')")
+        .bind(&source).bind(&account).execute(&pool).await.unwrap();
+    let lock = crate::commands::sync::source_lock(&source).await;
+    let _being_synced = lock.lock().await;
+
+    let csrf = "csrf-sync-busy";
+    let response = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        app.oneshot(post_form(
+            &format!("/dashboard/sources/{source}/sync"),
+            &session,
+            csrf,
+            &format!("_csrf={csrf}"),
+        )),
+    )
+    .await
+    .expect("the Sync button hung behind the running sync")
+    .unwrap();
+    assert_eq!(response.status(), 200);
+    assert!(body_string(response).await.contains("still being synced"));
+    let error: Option<String> =
+        sqlx::query_scalar("SELECT last_sync_error_at FROM caldav_sources WHERE id = ?")
+            .bind(&source)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(error, None, "no second sync ran");
 }

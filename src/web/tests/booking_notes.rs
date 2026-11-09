@@ -803,7 +803,7 @@ async fn reminders_show_host_notes_to_the_host_only() {
     .await;
     set_host_notes(&pool, &id, SECRET).await;
 
-    send_due_reminders(pool.clone(), [0u8; 32]).await;
+    send_due_reminders(pool.clone(), &[0u8; 32]).await;
 
     let host = mail_to(&mails, "test@example.com").await;
     assert!(host.contains(SECRET), "{host}");
@@ -1421,8 +1421,9 @@ async fn cancelled_bookings_are_listed_for_their_hosts_only() {
     }
 }
 
-/// The section keeps the cancellations closest to today: a pile of far
-/// future ones does not push out the meeting cancelled last week.
+/// The section opens on the cancellations closest to today: a pile of far
+/// future ones does not push out the meeting cancelled last week, and the
+/// farthest are on the next page.
 #[tokio::test]
 async fn far_future_cancellations_do_not_hide_recent_ones() {
     let (app, pool, session, et_id) = setup_test_app().await;
@@ -1434,7 +1435,8 @@ async fn far_future_cancellations_do_not_hide_recent_ones() {
     }
     let recent = insert_v1_booking(&pool, &et_id, "week@t.com", at(-7), 30, "cancelled", &[]).await;
     let body = body_string(
-        app.oneshot(get_authed("/dashboard/bookings", &session))
+        app.clone()
+            .oneshot(get_authed("/dashboard/bookings", &session))
             .await
             .unwrap(),
     )
@@ -1444,6 +1446,13 @@ async fn far_future_cancellations_do_not_hide_recent_ones() {
     assert!(cancelled.contains("far0@t.com"), "the nearest future one");
     assert!(
         !cancelled.contains("far54@t.com"),
-        "the farthest is dropped"
+        "the farthest is on the next page"
     );
+    let next = body_string(
+        app.oneshot(get_authed("/dashboard/bookings?xp=2", &session))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(bookings_section(&next, "bk-cancelled").contains("far54@t.com"));
 }

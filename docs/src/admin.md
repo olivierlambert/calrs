@@ -19,12 +19,15 @@ Actions per user:
 - **Enable/Disable** — disabled users cannot log in or receive bookings
 - **Impersonate** — view the dashboard as that user (for troubleshooting)
 
-Up to 100 users, the whole list is on the page and the search box, the filter
-buttons, the column sorting and the pages of 25 react as you type. Past 100
-users, the server does the searching, filtering, sorting and paging, so the
-page only ever carries 25 rows: press Enter to search, and use **Previous** and
+The server does the searching, filtering, sorting and paging, so the page
+only ever carries 25 rows: press Enter to search, and use **Previous** and
 **Next** under the table. Promoting, disabling or deleting a user brings you
 back to the same page of the list.
+
+The **Groups** list below it works the same way: search by name (press
+Enter), 25 groups a page, and each group shows ten of its members, by
+weight then name, with its own **Previous** and **Next** for the rest. The
+two lists keep each other's page as you move through either.
 
 On an instance with more than 20,000 bookings, the booking figures of the
 overview (totals, the weekly chart and the 90-day rankings) are kept for a
@@ -83,7 +86,7 @@ The **Resources** card manages [shared bookable resources](./resources.md) (demo
 
 ## SMS settings
 
-The **SMS settings** card configures the instance's [SMS gateway](./sms.md): pick Twilio, GatewayAPI, seven.io, or a generic webhook, and the form relabels its fields for that vendor. The same card holds the daily message limit, today's usage and cost, and the policy controlling whether non-admins may enable SMS on their own event types.
+The **SMS settings** card configures the instance's [SMS gateway](./sms.md): pick Twilio, GatewayAPI, seven.io, or a generic webhook, and the form relabels its fields for that vendor. The same card holds the daily limit (in billed segments, test messages included), today's messages, segments and cost, and the policy controlling whether non-admins may enable SMS on their own event types.
 
 **Test gateway** sends a real message to a number you give it, or verifies the credentials for free when you leave the field empty and the gateway supports it.
 
@@ -94,6 +97,12 @@ SMS spends real money on a public form, so the card also warns when SMS is confi
 The **Guest email footer** card sets the default footer added to every email guests and additional attendees receive (never to hosts, nor to a team member who claimed the booking). It takes bold, italic and links, at most 500 characters, in one text for all languages. An event type with a footer of its own uses that instead; see [Guest email footer](./event-types.md#guest-email-footer).
 
 The checkbox on the card lets every user write footers on their own event types. It is off by default: the footer goes out under this instance's name, so only admins may write one until you turn it on.
+
+## Branding
+
+The **Branding** tab holds the company logo, the link it points to, the favicon and the theme.
+
+The company logo is shown at the top of the public booking pages. Upload a PNG, JPEG, GIF or WebP image of at most 2 MB; SVG is refused. A second, optional logo is used when the visitor's page is in the dark theme, for a wordmark that would not read on a dark background. A light logo alone is shown in both themes; a dark logo alone is shown in the dark theme only, since a mark made for a dark background may not read on a light page. Each preview sits on the page background the instance theme gives public pages, light and dark, whatever theme your dashboard is in. A new logo shows to visitors on their next page view. Emails never carry the company logo.
 
 ## SMTP status
 

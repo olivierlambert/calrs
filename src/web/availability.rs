@@ -529,31 +529,21 @@ pub(crate) fn expand_recurring_into_busy(
     window_end: NaiveDateTime,
     host_tz: Tz,
 ) -> Vec<(NaiveDateTime, NaiveDateTime)> {
-    let mut result = Vec::new();
-    for (s, e, rrule_str, raw_ical, event_tz) in recurring {
-        if let (Some(ev_start), Some(ev_end)) = (parse_ical_datetime(s), parse_ical_datetime(e)) {
-            let exdates = raw_ical
-                .as_deref()
-                .map(|raw| crate::rrule::extract_exdates(raw, event_tz.as_deref()))
-                .unwrap_or_default();
-            // Expand RRULE in the event's own timezone (correct for DST)
-            let occurrences = crate::rrule::expand_rrule(
-                ev_start,
-                ev_end,
+    recurring
+        .iter()
+        .flat_map(|(s, e, rrule_str, raw_ical, event_tz)| {
+            crate::rrule::occurrences_in(
+                s,
+                e,
                 rrule_str,
-                &exdates,
+                raw_ical.as_deref(),
+                event_tz.as_deref(),
                 window_start,
                 window_end,
-            );
-            // Convert each occurrence to host timezone
-            for (os, oe) in occurrences {
-                let cs = convert_event_to_tz(os, event_tz.as_deref(), host_tz);
-                let ce = convert_event_to_tz(oe, event_tz.as_deref(), host_tz);
-                result.push((cs, ce));
-            }
-        }
-    }
-    result
+                host_tz,
+            )
+        })
+        .collect()
 }
 
 /// Fetch busy times for a specific user (events from their calendars, their
@@ -754,7 +744,7 @@ async fn busy_times(
          WHERE a.user_id = ? AND c.sync_enabled = 1
            AND ((c.is_busy = 1 AND NOT EXISTS (SELECT 1 FROM event_type_calendars etc JOIN calendars sc ON sc.id = etc.calendar_id WHERE etc.event_type_id = ? AND sc.sync_enabled = 1))
                 OR c.id IN (SELECT calendar_id FROM event_type_calendars WHERE event_type_id = ?))
-           AND (e.rrule IS NULL OR e.rrule = '')
+           AND (e.rrule IS NULL OR e.rrule = '') AND e.rdate = 0
            AND (e.status IS NULL OR e.status != 'CANCELLED')
            AND (e.transp IS NULL OR e.transp != 'TRANSPARENT')
            AND (? = '' OR e.uid != ?)
@@ -787,7 +777,7 @@ async fn busy_times(
 
     let end_compact_rrule = window_end.format("%Y%m%dT235959").to_string();
     let recurring: Result<Vec<(String, String, String, Option<String>, Option<String>)>, _> = sqlx::query_as(
-        "SELECT e.start_at, e.end_at, e.rrule, e.raw_ical, e.timezone FROM events e
+        "SELECT e.start_at, e.end_at, COALESCE(e.rrule, ''), e.raw_ical, e.timezone FROM events e
          JOIN calendars c ON c.id = e.calendar_id
          JOIN caldav_sources cs ON cs.id = c.source_id
          JOIN accounts a ON a.id = cs.account_id
@@ -797,7 +787,7 @@ async fn busy_times(
            AND (e.status IS NULL OR e.status != 'CANCELLED')
            AND (e.transp IS NULL OR e.transp != 'TRANSPARENT')
            AND (? = '' OR e.uid != ?)
-           AND e.rrule IS NOT NULL AND e.rrule != '' AND (e.start_at <= ? OR e.start_at <= ?)",
+           AND ((e.rrule IS NOT NULL AND e.rrule != '') OR e.rdate = 1) AND (e.start_at <= ? OR e.start_at <= ?)",
     )
     .bind(user_id)
     .bind(et_id_for_filter)
@@ -818,12 +808,13 @@ async fn busy_times(
     ));
 
     let exclude_id = exclude_booking_id.unwrap_or("");
-    // A booking makes a user busy when it is assigned to them, or when it
-    // is unassigned and they own the event type (personal bookings), or
-    // when it is an unassigned team booking (collective mode) and they are
-    // a member of that team. An assigned booking must NOT mark the event
-    // type owner busy: on a round-robin team the owner stays free when
-    // another member took the booking (#146).
+    // A booking makes a user busy when they host it (assigned to them,
+    // their own unassigned booking, or an unassigned collective booking of
+    // a team they belong to and are not excluded from, #375) or when they
+    // claimed it as a watcher (#374); see `booking_time::user_busy_bookings`.
+    // An assigned booking must NOT mark the event type owner busy: on a
+    // round-robin team the owner stays free when another member took the
+    // booking (#146).
     //
     // Pending requests count too when their own event type says so
     // (`pending_blocks_slot`, on by default): otherwise a second guest is
@@ -840,6 +831,7 @@ async fn busy_times(
            AND (? = '' OR b.id != ?)",
         crate::booking_time::user_busy_bookings(include_pending_holds)
     ))
+    .bind(user_id)
     .bind(user_id)
     .bind(user_id)
     .bind(user_id)
@@ -2776,7 +2768,7 @@ pub(super) async fn troubleshoot(
          WHERE a.user_id = ? AND c.sync_enabled = 1
            AND ((c.is_busy = 1 AND NOT EXISTS (SELECT 1 FROM event_type_calendars etc JOIN calendars sc ON sc.id = etc.calendar_id WHERE etc.event_type_id = ? AND sc.sync_enabled = 1))
                 OR c.id IN (SELECT calendar_id FROM event_type_calendars WHERE event_type_id = ?))
-           AND (e.rrule IS NULL OR e.rrule = '')
+           AND (e.rrule IS NULL OR e.rrule = '') AND e.rdate = 0
            AND (e.status IS NULL OR e.status != 'CANCELLED')
            AND (e.transp IS NULL OR e.transp != 'TRANSPARENT')
            AND ((e.start_at < ? AND e.end_at > ?) OR (e.start_at < ? AND e.end_at > ?)
@@ -2833,7 +2825,7 @@ pub(super) async fn troubleshoot(
         Option<String>,
         Option<String>,
     )> = sqlx::query_as(
-        "SELECT e.start_at, e.end_at, e.rrule, e.raw_ical, e.summary, c.display_name, e.timezone
+        "SELECT e.start_at, e.end_at, COALESCE(e.rrule, ''), e.raw_ical, e.summary, c.display_name, e.timezone
          FROM events e
          JOIN calendars c ON c.id = e.calendar_id
          JOIN caldav_sources cs ON cs.id = c.source_id
@@ -2843,7 +2835,7 @@ pub(super) async fn troubleshoot(
                 OR c.id IN (SELECT calendar_id FROM event_type_calendars WHERE event_type_id = ?))
            AND (e.status IS NULL OR e.status != 'CANCELLED')
            AND (e.transp IS NULL OR e.transp != 'TRANSPARENT')
-           AND e.rrule IS NOT NULL AND e.rrule != ''
+           AND ((e.rrule IS NOT NULL AND e.rrule != '') OR e.rdate = 1)
            AND (e.start_at <= ? OR e.start_at <= ?)",
     )
     .bind(&user.id)
@@ -2862,45 +2854,59 @@ pub(super) async fn troubleshoot(
         .and_hms_opt(23, 59, 59)
         .unwrap_or(target_date.and_time(NaiveTime::MIN));
     for (s, e, rrule_str, raw_ical, summary, cal_name, event_tz) in &recurring_events {
-        if let (Some(ev_start), Some(ev_end)) = (parse_ical_datetime(s), parse_ical_datetime(e)) {
-            let exdates = raw_ical
-                .as_deref()
-                .map(|raw| crate::rrule::extract_exdates(raw, event_tz.as_deref()))
-                .unwrap_or_default();
-            let occurrences = crate::rrule::expand_rrule(
-                ev_start,
-                ev_end,
-                rrule_str,
-                &exdates,
-                ts_window_start,
-                ts_window_end,
-            );
-            for (os, oe) in occurrences {
-                let cs = convert_event_to_tz(os, event_tz.as_deref(), host_tz);
-                let ce = convert_event_to_tz(oe, event_tz.as_deref(), host_tz);
-                busy_events.push((
-                    cs.format("%Y-%m-%dT%H:%M:%S").to_string(),
-                    ce.format("%Y-%m-%dT%H:%M:%S").to_string(),
-                    summary.clone(),
-                    cal_name.clone(),
-                ));
-            }
+        // A rule calrs cannot expand is blocked as busy from its start: say
+        // so, or the host has no way to tell why the day is closed.
+        let detail = if crate::rrule::is_supported(rrule_str) {
+            cal_name.clone()
+        } else {
+            Some(tr1(
+                auth_user.lang,
+                "troubleshoot-detail-unsupported-recurrence",
+                "calendar",
+                cal_name.as_deref().unwrap_or_default(),
+            ))
+        };
+        for (cs, ce) in crate::rrule::occurrences_in(
+            s,
+            e,
+            rrule_str,
+            raw_ical.as_deref(),
+            event_tz.as_deref(),
+            ts_window_start,
+            ts_window_end,
+            host_tz,
+        ) {
+            busy_events.push((
+                cs.format("%Y-%m-%dT%H:%M:%S").to_string(),
+                ce.format("%Y-%m-%dT%H:%M:%S").to_string(),
+                summary.clone(),
+                detail.clone(),
+            ));
         }
     }
 
     // Bookings for this date: the same bookings that make this user busy on
     // the slot pages (their own, the ones assigned to them on someone else's
-    // team event type, unassigned collective ones, and held pending requests).
-    let bookings: Vec<(String, String, String, String, String)> = sqlx::query_as(&format!(
-        "SELECT CASE b.time_version WHEN 1 THEN b.start_at ELSE rtrim(b.start_at, 'Z') END AS start_at, CASE b.time_version WHEN 1 THEN b.end_at ELSE rtrim(b.end_at, 'Z') END AS end_at, b.guest_name, et.title, b.status
+    // team event type, unassigned collective ones, the ones they claimed as a
+    // watcher, and held pending requests). `claimed` is 1 for a booking the
+    // user is busy for only because they claimed it, so it is labelled so.
+    let bookings: Vec<(String, String, String, String, String, i64)> = sqlx::query_as(&format!(
+        "SELECT CASE b.time_version WHEN 1 THEN b.start_at ELSE rtrim(b.start_at, 'Z') END AS start_at, CASE b.time_version WHEN 1 THEN b.end_at ELSE rtrim(b.end_at, 'Z') END AS end_at, b.guest_name, et.title, b.status,
+                CASE WHEN {} THEN 0 ELSE 1 END AS claimed
          FROM bookings b
          JOIN event_types et ON et.id = b.event_type_id
          JOIN accounts a ON a.id = et.account_id
          WHERE {}
            AND b.start_at < strftime('%Y-%m-%dT%H:%M:%S', ?, '+2 days') AND b.end_at > strftime('%Y-%m-%dT%H:%M:%S', ?, '-2 days')
          ORDER BY b.start_at",
+        crate::booking_time::USER_HOSTS_BOOKING,
         crate::booking_time::user_busy_bookings(true)
     ))
+    .bind(&user.id)
+    .bind(&user.id)
+    .bind(&user.id)
+    .bind(&user.id)
+    .bind(&user.id)
     .bind(&user.id)
     .bind(&user.id)
     .bind(&user.id)
@@ -2987,9 +2993,16 @@ pub(super) async fn troubleshoot(
     // from a confirmed meeting.
     let bookings_parsed: Vec<(NaiveDateTime, NaiveDateTime, String, String)> = bookings
         .iter()
-        .filter_map(|(s, e, guest, et_title, status)| {
+        .filter_map(|(s, e, guest, et_title, status, claimed)| {
             let (start, end) = crate::booking_time::busy_range(s, e, host_tz)?;
-            let detail = if status == "pending" {
+            let detail = if *claimed == 1 {
+                tr1(
+                    auth_user.lang,
+                    "troubleshoot-detail-claimed-booking",
+                    "title",
+                    et_title,
+                )
+            } else if status == "pending" {
                 tr1(
                     auth_user.lang,
                     "troubleshoot-detail-pending-request",
@@ -3097,8 +3110,8 @@ pub(super) async fn troubleshoot(
                 label: tr1(
                     lang,
                     "troubleshoot-label-min-notice",
-                    "minutes",
-                    &min_notice.to_string(),
+                    "duration",
+                    &crate::i18n::format_duration(lang, i64::from(min_notice)),
                 ),
                 detail: String::new(),
             });
@@ -3164,13 +3177,15 @@ pub(super) async fn troubleshoot(
                     label: tr1(
                         lang,
                         "troubleshoot-label-buffer",
-                        "minutes",
-                        &if tick_dt < *ev_s {
-                            buf_before
-                        } else {
-                            buf_after
-                        }
-                        .to_string(),
+                        "duration",
+                        &crate::i18n::format_duration(
+                            lang,
+                            i64::from(if tick_dt < *ev_s {
+                                buf_before
+                            } else {
+                                buf_after
+                            }),
+                        ),
                     ),
                     detail: tr1(lang, "troubleshoot-detail-around", "label", ev_label),
                 });
@@ -3202,13 +3217,15 @@ pub(super) async fn troubleshoot(
                     label: tr1(
                         lang,
                         "troubleshoot-label-buffer",
-                        "minutes",
-                        &if tick_dt < *bk_s {
-                            buf_before
-                        } else {
-                            buf_after
-                        }
-                        .to_string(),
+                        "duration",
+                        &crate::i18n::format_duration(
+                            lang,
+                            i64::from(if tick_dt < *bk_s {
+                                buf_before
+                            } else {
+                                buf_after
+                            }),
+                        ),
                     ),
                     detail: tr1(
                         lang,
@@ -3245,13 +3262,15 @@ pub(super) async fn troubleshoot(
                     label: tr1(
                         lang,
                         "troubleshoot-label-buffer",
-                        "minutes",
-                        &if tick_dt < *off_s {
-                            buf_before
-                        } else {
-                            buf_after
-                        }
-                        .to_string(),
+                        "duration",
+                        &crate::i18n::format_duration(
+                            lang,
+                            i64::from(if tick_dt < *off_s {
+                                buf_before
+                            } else {
+                                buf_after
+                            }),
+                        ),
                     ),
                     detail: tr1(lang, "troubleshoot-detail-around", "label", &time_off_label),
                 });

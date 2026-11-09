@@ -1,5 +1,6 @@
 {% extends "dashboard_base.html" %}
 {% block title %}{{ t("settings-page-title") }}, calrs{% endblock %}
+{% block main_class %}has-cards{% endblock %}
 {% block dashboard_content %}
 {% import "partials/icons.html" as ic %}
 <header class="page-header">
@@ -23,17 +24,17 @@
   <div class="notice notice--error error" role="alert">{{ ic.icon("alert") }}<span>{{ error }}</span></div>
 {% endif %}
 
-<div class="card">
-
   {% if username %}
-  <div style="margin-bottom: 1.5rem; padding-bottom: 1.25rem; border-bottom: 1px solid var(--rule);">
-    <label style="display: block; font-weight: 500; margin-bottom: 0.5rem; font-size: 0.875rem;">{{ t("settings-public-page-label") }}</label>
+<section class="card" aria-labelledby="set-public">
+  <div class="card-head"><h2 id="set-public">{{ t("settings-public-page-label") }}</h2></div>
+  <div class="card-body">
     <div style="display: flex; gap: 0.5rem; align-items: center;">
-      <input type="text" id="public-url" readonly value="" style="flex: 1; font-size: 0.85rem; padding: 0.5rem 0.75rem; border: 1px solid var(--border-hover); border-radius: var(--r-control); background: var(--paper); color: var(--ink); font-family: inherit; font-variant-numeric: tabular-nums;">
+      <input type="text" id="public-url" aria-labelledby="set-public" readonly value="" style="flex: 1; font-size: 0.85rem; padding: 0.5rem 0.75rem; border: 1px solid var(--border-hover); border-radius: var(--r-control); background: var(--paper); color: var(--ink); font-family: inherit; font-variant-numeric: tabular-nums;">
       <button type="button" id="copy-url-btn" class="ui-btn" data-copy-path="/u/{{ username }}">{{ ic.icon("copy", 14) }}{{ t("settings-copy") }}</button>
       <a id="open-url-link" href="/u/{{ username }}" target="_blank" rel="noopener noreferrer" class="ui-btn">{{ t("settings-open") }}{{ ic.icon("external", 13) }}</a>
     </div>
   </div>
+</section>
   <script>
   (function() {
     var url = window.location.origin + '/u/{{ username }}';
@@ -43,9 +44,9 @@
   </script>
   {% endif %}
 
-  <!-- Avatar -->
-  <div style="margin-top: 1.25rem; margin-bottom: 1.5rem;">
-    <label style="display: block; font-weight: 500; margin-bottom: 0.5rem; font-size: 0.875rem;">{{ t("settings-avatar") }}</label>
+<section class="card" aria-labelledby="set-avatar">
+  <div class="card-head"><h2 id="set-avatar">{{ t("settings-avatar") }}</h2></div>
+  <div class="card-body">
     <div style="display: flex; align-items: center; gap: 1rem;">
       <div style="width: 64px; height: 64px; border-radius: 50%; background: var(--data-busy); color: var(--ink); display: flex; align-items: center; justify-content: center; font-weight: 600; font-size: 1.25rem; flex-shrink: 0; overflow: hidden;">
         {% if has_avatar %}
@@ -72,8 +73,12 @@
     <p style="color: var(--error-text); font-size: 0.875rem; margin-top: 0.75rem;">{{ t("avatar-upload-save-failed") }}</p>
     {% endif %}
   </div>
+</section>
 
   <form method="POST" style="margin-top: 0;" data-dirty-guard>
+    <section class="card" aria-labelledby="set-profile">
+      <div class="card-head"><h2 id="set-profile">{{ t("settings-card-profile") }}</h2></div>
+      <div class="card-body">
     <div class="form-group">
       <label for="name">{{ t("settings-display-name") }}</label>
       <input type="text" id="name" name="name" required maxlength="255" value="{{ form_name }}" placeholder="{{ t('settings-display-name-placeholder') }}">
@@ -90,6 +95,21 @@
       <input type="text" id="title" name="title" value="{{ form_title }}" placeholder="{{ t('settings-title-placeholder') }}">
       <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">{{ t("settings-title-help") }}</span>
     </div>
+
+    <div class="form-group">
+      <label for="based_in">{{ t("settings-based-in") }} <span class="hint">{{ t("team-form-optional") }}</span></label>
+      <input type="text" id="based_in" name="based_in" maxlength="80" value="{{ form_based_in }}" placeholder="{{ t('settings-based-in-placeholder') }}">
+      <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">{{ t("settings-based-in-help") }}</span>
+    </div>
+
+    <fieldset class="form-group" style="border: 0; padding: 0; margin-inline: 0; min-width: 0;">
+      <legend style="font-weight: 500; font-size: 0.875rem; margin-bottom: 0.4rem; padding: 0;">{{ t("settings-speaks") }} <span class="hint">{{ t("team-form-optional") }}</span></legend>
+      <input type="hidden" name="spoken_languages_shown" value="1">
+      <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(9.5rem, 1fr)); gap: 0.3rem 1rem;">
+        {% for o in spoken_options %}<label style="display: flex; align-items: center; gap: 0.45rem; font-weight: 400; font-size: 0.9rem; margin: 0;"><input type="checkbox" name="spoken_languages" value="{{ o.value }}"{% if o.checked %} checked{% endif %} style="width: auto; margin: 0;"> {{ o.label }}</label>{% endfor %}
+      </div>
+      <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.35rem;">{{ t("settings-speaks-help") }}</span>
+    </fieldset>
 
     <div class="form-group">
       <label for="bio">{{ t("settings-bio") }}</label>
@@ -131,6 +151,20 @@
       <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">{{ t("settings-timezone-help") }}</span>
     </div>
 
+    <div class="form-group" style="margin-top: 1rem;">
+      <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+        <input type="checkbox" name="lend_resource_write" {% if lend_resource_write %}checked{% endif %} style="width: auto;">
+        {{ t("settings-lend-resource") }}
+      </label>
+      <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">{{ t("settings-lend-resource-help") }}</span>
+    </div>
+
+      </div>
+    </section>
+
+    <section class="card" aria-labelledby="set-language">
+      <div class="card-head"><h2 id="set-language">{{ t("settings-card-languages") }}</h2></div>
+      <div class="card-body">
     <div class="form-group">
       <label for="language">{{ t("settings-language") }}</label>
       <select id="language" name="language" style="width: 100%; padding: 0.5rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); color: var(--text); font-size: 0.9rem;">
@@ -151,33 +185,28 @@
       <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">{{ t("settings-public-page-language-help") }}</span>
     </div>
 
-    <div class="form-group" style="margin-top: 1rem;">
+      </div>
+    </section>
+
+    <section class="card" id="availability" aria-labelledby="set-avail">
+      <div class="card-head"><h2 id="set-avail">{{ t("settings-default-availability") }}</h2>
+        <button type="button" id="copy-to-all-btn" class="ui-btn ui-btn--sm" title="{{ t('settings-copy-to-all-title') }}">{{ t("settings-copy-to-all") }}</button>
+      </div>
+      <div class="card-body">
+      <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-bottom: 0.75rem;">{{ t("settings-default-availability-help") }} {{ t("time-off-hint", link='<a href="/dashboard/time-off">' ~ (t("nav-time-off") | escape) ~ '</a>') | safe }}</span>
+      {% set week_start_inherit = "site" %}
+      {% include "week_start_select.html" %}
+      <div id="schedule-container" style="display: flex; flex-direction: column; gap: 0.25rem;"></div>
+      <input type="hidden" name="avail_schedule" id="avail_schedule" value="{{ form_avail_schedule | default(value='') }}">
+    <div class="form-group" style="margin-top: 1.25rem;">
       <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
         <input type="checkbox" name="allow_dynamic_group" {% if allow_dynamic_group %}checked{% endif %} style="width: auto;">
         {{ t("settings-dynamic-group") }}
       </label>
       <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">{{ t("settings-dynamic-group-help", example='<code>/u/you+them/meeting</code>') | safe }}</span>
     </div>
-
-    <div class="form-group" style="margin-top: 1rem;">
-      <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
-        <input type="checkbox" name="lend_resource_write" {% if lend_resource_write %}checked{% endif %} style="width: auto;">
-        {{ t("settings-lend-resource") }}
-      </label>
-      <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">{{ t("settings-lend-resource-help") }}</span>
-    </div>
-
-    <div id="availability" style="border-top: 1px solid var(--border); padding-top: 1.25rem; margin-top: 1.25rem;">
-      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
-        <h3 style="font-size: 0.95rem; margin-bottom: 0;">{{ t("settings-default-availability") }}</h3>
-        <button type="button" id="copy-to-all-btn" style="padding: 0.25rem 0.625rem; border: 1px solid var(--border); border-radius: var(--radius); background: transparent; color: var(--text-muted); cursor: pointer; font-size: 0.75rem; transition: all 0.15s ease;" title="{{ t('settings-copy-to-all-title') }}">{{ t("settings-copy-to-all") }}</button>
       </div>
-      <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-bottom: 0.75rem;">{{ t("settings-default-availability-help") }} {{ t("time-off-hint", link='<a href="/dashboard/time-off">' ~ (t("nav-time-off") | escape) ~ '</a>') | safe }}</span>
-      {% set week_start_inherit = "site" %}
-      {% include "week_start_select.html" %}
-      <div id="schedule-container" style="display: flex; flex-direction: column; gap: 0.25rem;"></div>
-      <input type="hidden" name="avail_schedule" id="avail_schedule" value="{{ form_avail_schedule | default(value='') }}">
-    </div>
+    </section>
 
     <div class="form-savebar">
       <span class="form-savebar-status" role="status">{{ t("dash-unsaved") }}</span>
@@ -185,10 +214,11 @@
       <button type="submit" class="btn">{{ t("settings-save") }}</button>
     </div>
   </form>
-</div>
 
-<div class="card" style="margin-top: 1.25rem;">
-  <h2 class="card-title" style="margin-bottom: 0.75rem;">{{ t("settings-appearance") }}</h2>
+
+<section class="card" aria-labelledby="set-appearance">
+  <div class="card-head"><h2 id="set-appearance">{{ t("settings-appearance") }}</h2></div>
+  <div class="card-body">
   <div id="theme-picker" class="segmented" role="group" aria-label="{{ t('settings-appearance') }}">
     <button type="button" data-theme="system" aria-pressed="false">{{ t("settings-theme-system") }}</button>
     <button type="button" data-theme="light" aria-pressed="false">{{ t("settings-theme-light") }}</button>
@@ -228,7 +258,8 @@
   })();
 
   </script>
-</div>
+  </div>
+</section>
 
 <script>
 // --- Per-day default availability schedule ---

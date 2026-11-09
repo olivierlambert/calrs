@@ -88,7 +88,7 @@ google-meet-prereq-missing = Google Meet setzt voraus, dass jeder Gastgeber Goog
 
 # Booking action blocked page (templates/booking_action_blocked.html)
 
-booking-blocked-body = Der Gastgeber verlangt mindestens { $minutes } Minuten Vorlaufzeit. Falls Sie nicht teilnehmen können, schreiben Sie bitte direkt an <a href="mailto:{ $host_email }">{ $host_email }</a>.
+booking-blocked-body = Der Gastgeber verlangt mindestens { $duration } Vorlaufzeit. Falls Sie nicht teilnehmen können, schreiben Sie bitte direkt an <a href="mailto:{ $host_email }">{ $host_email }</a>.
 
 # Timezone mismatch banner (templates/dashboard_base.html)
 
@@ -189,7 +189,7 @@ troubleshoot-none-custom-hours = Ausnahme mit abweichenden Zeiten aktiv, aber ke
 # Invite management (templates/invite_form.html)
 
 invites-capped = <strong>Die Eingabe wurde auf { $max } Empfänger pro Absendung begrenzt.</strong> Senden Sie den Rest in einem weiteren Durchgang.
-invites-failed-hint = — Einzelheiten finden Sie in den Serverprotokollen.
+invites-failed-hint = Einzelheiten finden Sie in den Serverprotokollen.
 invites-quick-link-help = Erzeugen Sie einen Einmal-Link und kopieren Sie ihn in die Zwischenablage.
 invites-message-placeholder = Ich freue mich darauf, Ihnen eine Demo zu zeigen...
 invites-empty = Noch keine Einladungen gesendet. Nutzen Sie das Formular oben, um jemandem einen Buchungslink zu schicken.
@@ -233,6 +233,7 @@ team-settings-time-off-help = Geplante Abwesenheiten der Mitglieder, in Ihrer Ze
 etf-required-members-help = Alle angehakten Mitglieder müssen frei sein, damit ein Zeitfenster angeboten wird. Nehmen Sie den Haken bei Mitgliedern weg, die ausgeschlossen werden sollen (ihre Verfügbarkeit wird dann ignoriert).
 etf-timezone-help = Die Zeiten unten werden in dieser Zeitzone ausgelegt. Wählen Sie bei Team-Terminarten die Arbeitszeitzone des Teams (nicht zwingend die der erstellenden Person).
 etf-reset-default-title = Diese Zeiten durch die Standardverfügbarkeit aus Ihrem Profil ersetzen
+etf-watcher-team-locked = Nicht Ihr Team, es bleibt eingetragen
 etf-availability-prefilled = Vorbelegt aus Ihrer { $link }. Sie können sie hier für diese Terminart überschreiben.
 etf-requires-confirmation-help = Buchungen bleiben ausstehend, bis Sie sie im Dashboard bestätigen.
 etf-conflict-calendars-help = Wählen Sie, welche Kalender auf Konflikte geprüft werden. Ohne Auswahl werden Ihre Kalender geprüft, die als belegt zählen, nicht aber von Kollegen geteilte: Wählen Sie alle Kalender aus, die blockieren sollen, auch geteilte.
@@ -256,6 +257,8 @@ admin-theme-help = Wählen Sie ein Farbdesign für alle Seiten. Die Umschaltung 
 admin-theme-custom-desc = Ihre Farben
 admin-no-groups = Noch keine Gruppen synchronisiert. Gruppen werden automatisch von Ihrem OIDC-Anbieter übernommen.
 admin-private-hosts-help = Kommagetrennte Hostnamen, die für CalDAV-/EWS-Quellen auf private oder reservierte IP-Adressen zeigen dürfen (Ausnahme vom SSRF-Schutz). Tragen Sie nur Hosts ein, die Sie kontrollieren (etwa einen Kalenderserver im selben Docker-Netz). Leer lassen, um den Schutz für alle Hosts aktiv zu halten.
+admin-trusted-proxies-help = Adressen oder CIDR-Bereiche der Reverse-Proxys, deren X-Forwarded-For-Header beim Unterscheiden der Clients für die Ratenbegrenzung geglaubt wird. Lassen Sie das Feld leer für die Vorgabe (Loopback-, private, Unique-Local- und Link-Local-Bereiche: ein Proxy auf demselben Host oder im selben Docker-Netz). Geben Sie none ein, wenn calrs direkt erreichbar ist, damit ein Client keine andere Adresse vortäuschen kann.
+admin-trusted-proxies-everyone = Vertrauenswürdige Proxys: „{ $entry }“ würde jeder Adresse vertrauen, und jeder Client könnte sich als ein anderer ausgeben. Tragen Sie stattdessen die Adresse oder den Bereich Ihres Proxys ein.
 admin-unset-env = Entfernen Sie die Umgebungsvariable, um dies hier zu bearbeiten.
 admin-wasm-url-help = Von dort lädt das Widget seinen Löser. Tragen Sie die WASM-Datei Ihres Cap-Servers ein, damit Buchungsseiten cdn.jsdelivr.net nicht mehr kontaktieren. Leer lassen für den Standardwert.
 admin-captcha-disable-help = Lassen Sie Instanz-URL, Site-Key und Secret leer, um das Captcha auf Buchungsseiten zu deaktivieren.
@@ -513,9 +516,27 @@ webhooks-url-masked-hint = (nur die Person, die ihn hinzugefügt hat, sieht die 
 book-question-pick-one = Kreuzen Sie mindestens ein Kästchen an.
 answer-you-agreed = Sie haben zugestimmt
 answer-you-did-not-agree = Sie haben nicht zugestimmt
+answer-recorded-for-you-by = In Ihrem Namen erfasst von { $name }
 validate-notes-required = Bitte schreiben Sie eine Notiz für die Gastgeber.
 validate-question-required = Bitte beantworten Sie „{ $question }“.
 validate-questions-invalid = Die Buchungsfragen konnten nicht gelesen werden. Laden Sie die Seite neu und versuchen Sie es noch einmal.
 validate-question-kind-change = Bei Frage { $position }: Eine gespeicherte Frage behält ihre Art. Entfernen Sie sie und fügen Sie eine neue hinzu.
 etf-booking-form-help = Gäste geben immer ihren Namen und ihre E-Mail-Adresse an. Fügen Sie die Fragen hinzu, die dieser Termintyp braucht: Gäste beantworten sie beim Buchen, und die Antworten kommen mit der Buchung bei Ihnen an.
 etf-q-in-calendar-help = Bei sensiblen Antworten ausschalten: Wer Ihren Kalender lesen kann, würde sie sehen.
+overview-sum-now = Gerade läuft Ihr Termin mit { $guest }, bis { $time }.
+overview-sum-today = Heute treffen Sie { $guest } um { $time }.
+overview-sum-tomorrow = Morgen treffen Sie { $guest } um { $time }.
+overview-sum-later = Ihr nächster Termin ist mit { $guest } am { $day } um { $time }.
+overview-sum-pending = { $count ->
+    [one] Eine Anfrage wartet auf Ihre Antwort.
+   *[other] { $count } Anfragen warten auf Ihre Antwort.
+}
+overview-links-page = Ihre Seite
+
+landing-hours-heading-yours = Meist verfügbar, in Ihrer Zeit
+landing-hours-toggle-hint = Diese Zeiten in Ihrer Zeitzone zeigen
+landing-how-it-works = Wählen Sie ein Thema und eine passende Zeit, die Bestätigung kommt per E-Mail.
+settings-based-in-help = Eine Stadt oder Region, angezeigt unter Ihrem Namen auf Ihrer öffentlichen Seite.
+settings-speaks = Ihre Sprachen
+settings-speaks-help = Unter Ihrem Namen auf Ihrer öffentlichen Seite, in der Sprache der Besucher.
+page-order-heading = Reihenfolge Ihrer Seite

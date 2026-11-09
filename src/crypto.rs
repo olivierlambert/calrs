@@ -14,20 +14,29 @@ use anyhow::{bail, Context, Result};
 use base64::Engine;
 use rand::RngCore;
 use std::path::Path;
-use zeroize::Zeroizing;
+use zeroize::{Zeroize, Zeroizing};
 
 const KEY_LEN: usize = 32;
 const NONCE_LEN: usize = 12;
 const KEY_FILE: &str = "secret.key";
 
+/// The 256-bit secret key, wiped from memory when dropped (#85,
+/// FINDING-14). Functions that only use the key take `&[u8; 32]`, which a
+/// `&SecretKey` derefs to; whatever keeps a key for longer (the web state,
+/// the background loops, a spawned task) holds a `SecretKey` (or a clone of
+/// one) rather than a bare array, so no unwiped copy outlives its use.
+pub type SecretKey = Zeroizing<[u8; KEY_LEN]>;
+
 /// Load or generate the 256-bit secret key.
 ///
-/// Heap intermediates that briefly hold key bytes (decoded env value, file
-/// contents) are wrapped in `Zeroizing` so they are wiped on drop instead of
-/// being left in freed memory.
-pub fn load_or_create_key(data_dir: &Path) -> Result<[u8; KEY_LEN]> {
+/// The environment value, the decoded bytes, the key file contents and the
+/// returned key are all `Zeroizing`, so they are wiped on drop instead of
+/// being left in freed memory. The process environment itself keeps its
+/// copy of `CALRS_SECRET_KEY`; only the operating system can drop that.
+pub fn load_or_create_key(data_dir: &Path) -> Result<SecretKey> {
     // 1. Check env var
     if let Ok(val) = std::env::var("CALRS_SECRET_KEY") {
+        let val = Zeroizing::new(val);
         let bytes = Zeroizing::new(
             base64::engine::general_purpose::STANDARD
                 .decode(val.trim())
@@ -39,7 +48,7 @@ pub fn load_or_create_key(data_dir: &Path) -> Result<[u8; KEY_LEN]> {
                 bytes.len()
             );
         }
-        let mut key = [0u8; KEY_LEN];
+        let mut key = Zeroizing::new([0u8; KEY_LEN]);
         key.copy_from_slice(&bytes);
         return Ok(key);
     }
@@ -58,16 +67,16 @@ pub fn load_or_create_key(data_dir: &Path) -> Result<[u8; KEY_LEN]> {
                 KEY_LEN
             );
         }
-        let mut key = [0u8; KEY_LEN];
+        let mut key = Zeroizing::new([0u8; KEY_LEN]);
         key.copy_from_slice(&bytes);
         return Ok(key);
     }
 
     // 3. Generate new key
-    let mut key = [0u8; KEY_LEN];
-    OsRng.fill_bytes(&mut key);
+    let mut key = Zeroizing::new([0u8; KEY_LEN]);
+    OsRng.fill_bytes(key.as_mut());
     std::fs::create_dir_all(data_dir)?;
-    std::fs::write(&key_path, key)
+    std::fs::write(&key_path, key.as_ref())
         .with_context(|| format!("Failed to write {}", key_path.display()))?;
 
     // Set file permissions to 0600 on Unix
@@ -101,8 +110,9 @@ pub fn encrypt_password(key: &[u8; KEY_LEN], plaintext: &str) -> Result<String> 
     Ok(base64::engine::general_purpose::STANDARD.encode(&combined))
 }
 
-/// Decrypt a password stored as base64(nonce || ciphertext).
-pub fn decrypt_password(key: &[u8; KEY_LEN], stored: &str) -> Result<String> {
+/// Decrypt a password stored as base64(nonce || ciphertext). The plaintext
+/// is wiped when the returned value is dropped.
+pub fn decrypt_password(key: &[u8; KEY_LEN], stored: &str) -> Result<Zeroizing<String>> {
     let combined = base64::engine::general_purpose::STANDARD
         .decode(stored.trim())
         .context("invalid base64 in stored password")?;
@@ -121,7 +131,14 @@ pub fn decrypt_password(key: &[u8; KEY_LEN], stored: &str) -> Result<String> {
         .decrypt(nonce, ciphertext)
         .map_err(|e| anyhow::anyhow!("decryption failed (wrong key?): {}", e))?;
 
-    String::from_utf8(plaintext).context("decrypted password is not valid UTF-8")
+    match String::from_utf8(plaintext) {
+        Ok(text) => Ok(Zeroizing::new(text)),
+        Err(e) => {
+            // The refused bytes are still the plaintext: wipe them too.
+            e.into_bytes().zeroize();
+            bail!("decrypted password is not valid UTF-8")
+        }
+    }
 }
 
 /// Check if a stored value looks like a legacy hex-encoded password
@@ -144,9 +161,9 @@ pub fn is_legacy_hex(value: &str) -> bool {
 /// Returns the encrypted string if it was legacy, None otherwise.
 pub fn migrate_legacy(key: &[u8; KEY_LEN], stored: &str) -> Result<Option<String>> {
     if is_legacy_hex(stored) {
-        let bytes = hex::decode(stored)?;
-        let plaintext = String::from_utf8(bytes)?;
-        let encrypted = encrypt_password(key, &plaintext)?;
+        let bytes = Zeroizing::new(hex::decode(stored)?);
+        let plaintext = std::str::from_utf8(&bytes)?;
+        let encrypted = encrypt_password(key, plaintext)?;
         Ok(Some(encrypted))
     } else {
         Ok(None)
@@ -172,8 +189,9 @@ pub fn encrypt_value(key: &[u8; KEY_LEN], plaintext: &str) -> Result<String> {
 }
 
 /// Decrypt a value previously produced by `encrypt_value`. Errors if the
-/// value lacks the expected prefix or fails AES-GCM decryption.
-pub fn decrypt_value(key: &[u8; KEY_LEN], stored: &str) -> Result<String> {
+/// value lacks the expected prefix or fails AES-GCM decryption. The
+/// plaintext is wiped when the returned value is dropped.
+pub fn decrypt_value(key: &[u8; KEY_LEN], stored: &str) -> Result<Zeroizing<String>> {
     let body = stored
         .strip_prefix(ENC_PREFIX)
         .ok_or_else(|| anyhow::anyhow!("not in encrypted-value format"))?;
@@ -190,7 +208,7 @@ mod tests {
         let password = "hunter2";
         let encrypted = encrypt_password(&key, password).unwrap();
         let decrypted = decrypt_password(&key, &encrypted).unwrap();
-        assert_eq!(decrypted, password);
+        assert_eq!(*decrypted, password);
     }
 
     #[test]
@@ -201,8 +219,8 @@ mod tests {
         // Same plaintext should produce different ciphertexts (random nonce)
         assert_ne!(e1, e2);
         // But both should decrypt to the same value
-        assert_eq!(decrypt_password(&key, &e1).unwrap(), "test");
-        assert_eq!(decrypt_password(&key, &e2).unwrap(), "test");
+        assert_eq!(*decrypt_password(&key, &e1).unwrap(), "test");
+        assert_eq!(*decrypt_password(&key, &e2).unwrap(), "test");
     }
 
     #[test]
@@ -232,7 +250,7 @@ mod tests {
         let result = migrate_legacy(&key, &legacy).unwrap();
         assert!(result.is_some());
         let decrypted = decrypt_password(&key, &result.unwrap()).unwrap();
-        assert_eq!(decrypted, "mypassword");
+        assert_eq!(*decrypted, "mypassword");
     }
 
     #[test]
@@ -241,7 +259,7 @@ mod tests {
         let plaintext = "very-secret-oidc-client-secret";
         let encrypted = encrypt_value(&key, plaintext).unwrap();
         assert!(encrypted.starts_with(ENC_PREFIX));
-        assert_eq!(decrypt_value(&key, &encrypted).unwrap(), plaintext);
+        assert_eq!(*decrypt_value(&key, &encrypted).unwrap(), plaintext);
     }
 
     #[test]
@@ -268,6 +286,35 @@ mod tests {
         let raw = encrypt_password(&key, "secret").unwrap();
         assert!(decrypt_value(&key, &raw).is_err());
         assert!(decrypt_value(&key, "plaintext").is_err());
+    }
+
+    /// Compile-time pin (#85, FINDING-14): the key and every decrypted
+    /// plaintext are wiped when dropped, so a change back to a bare array or
+    /// `String` fails to build.
+    #[test]
+    fn key_and_plaintexts_are_wiped_on_drop() {
+        fn wiped_on_drop<T: zeroize::ZeroizeOnDrop>(_: &T) {}
+        let key: SecretKey = Zeroizing::new([42u8; 32]);
+        wiped_on_drop(&key);
+        let enc = encrypt_password(&key, "pw").unwrap();
+        wiped_on_drop(&decrypt_password(&key, &enc).unwrap());
+        let enc = encrypt_value(&key, "pw").unwrap();
+        wiped_on_drop(&decrypt_value(&key, &enc).unwrap());
+    }
+
+    #[test]
+    fn decrypt_refuses_a_plaintext_that_is_not_utf8() {
+        let key = [42u8; 32];
+        let cipher = Aes256Gcm::new_from_slice(&key).unwrap();
+        let nonce = [7u8; NONCE_LEN];
+        let mut combined = nonce.to_vec();
+        combined.extend(
+            cipher
+                .encrypt(Nonce::from_slice(&nonce), [0xffu8, 0xfe].as_slice())
+                .unwrap(),
+        );
+        let stored = base64::engine::general_purpose::STANDARD.encode(&combined);
+        assert!(decrypt_password(&key, &stored).is_err());
     }
 
     #[test]

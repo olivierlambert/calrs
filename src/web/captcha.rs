@@ -5,7 +5,8 @@ pub const DEFAULT_WIDGET_URL: &str = "https://cdn.jsdelivr.net/npm/cap-widget";
 pub struct CaptchaConfig {
     pub instance_url: String,
     pub site_key: String,
-    pub secret: String,
+    /// Kept in `AppState` for the life of the process, so wiped when dropped.
+    pub secret: zeroize::Zeroizing<String>,
     pub widget_url: String,
     /// Where the widget fetches its WASM solver, exposed to it as
     /// `window.CAP_CUSTOM_WASM_URL`. `None` keeps the widget's default (the
@@ -202,7 +203,18 @@ pub async fn verify(config: &Option<CaptchaConfig>, token: Option<&str>) -> Resu
 
     let verify_url = format!("{}/siteverify", cfg.api_endpoint().trim_end_matches('/'));
 
-    let client = reqwest::Client::new();
+    // No redirects: a 307 or 308 would re-send the secret to whatever host
+    // it names.
+    let client = match crate::net_guard::plain_builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!(error = %e, "captcha client build failed");
+            return Err(());
+        }
+    };
     let resp = match client
         .post(&verify_url)
         .json(&VerifyRequest {
@@ -236,6 +248,20 @@ pub async fn verify(config: &Option<CaptchaConfig>, token: Option<&str>) -> Resu
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn verification_does_not_follow_redirects() {
+        let (url, hits) = crate::test_support::redirect_trap().await;
+        let cfg = Some(CaptchaConfig {
+            instance_url: url,
+            site_key: "key".to_string(),
+            secret: "s3cret".to_string().into(),
+            widget_url: DEFAULT_WIDGET_URL.to_string(),
+            wasm_url: None,
+        });
+        assert!(verify(&cfg, Some("token")).await.is_err());
+        assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
 
     // --- extract_origin tests ---
 
@@ -286,7 +312,7 @@ mod tests {
         let mut cfg = CaptchaConfig {
             instance_url: "https://cap.example.com".to_string(),
             site_key: "key".to_string(),
-            secret: "s".to_string(),
+            secret: "s".to_string().into(),
             widget_url: DEFAULT_WIDGET_URL.to_string(),
             wasm_url: None,
         };
@@ -309,7 +335,7 @@ mod tests {
         let cfg = CaptchaConfig {
             instance_url: "https://cap.example.com/".to_string(),
             site_key: "mykey".to_string(),
-            secret: "s".to_string(),
+            secret: "s".to_string().into(),
             widget_url: DEFAULT_WIDGET_URL.to_string(),
             wasm_url: None,
         };
@@ -321,7 +347,7 @@ mod tests {
         let cfg = CaptchaConfig {
             instance_url: "https://cap.example.com".to_string(),
             site_key: "mykey".to_string(),
-            secret: "s".to_string(),
+            secret: "s".to_string().into(),
             widget_url: DEFAULT_WIDGET_URL.to_string(),
             wasm_url: None,
         };
@@ -341,7 +367,7 @@ mod tests {
         let cfg = Some(CaptchaConfig {
             instance_url: "https://cap.example.com".to_string(),
             site_key: "key".to_string(),
-            secret: "secret".to_string(),
+            secret: "secret".to_string().into(),
             widget_url: DEFAULT_WIDGET_URL.to_string(),
             wasm_url: None,
         });
@@ -353,7 +379,7 @@ mod tests {
         let cfg = Some(CaptchaConfig {
             instance_url: "https://cap.example.com".to_string(),
             site_key: "key".to_string(),
-            secret: "secret".to_string(),
+            secret: "secret".to_string().into(),
             widget_url: DEFAULT_WIDGET_URL.to_string(),
             wasm_url: None,
         });

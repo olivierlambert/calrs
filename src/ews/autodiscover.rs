@@ -10,12 +10,12 @@
 //! target for this implementation.
 
 use anyhow::{bail, Context, Result};
-use reqwest::redirect::Policy;
 use std::time::Duration;
 
-use super::soap::first_tag_content;
-
 const TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Largest Autodiscover answer read, as it arrives.
+const MAX_REPLY_BYTES: usize = 1024 * 1024;
 
 /// Try a sequence of Autodiscover URLs derived from `email_domain` and return
 /// the EWS endpoint discovered, if any. The candidate order matches Microsoft
@@ -35,20 +35,18 @@ pub async fn discover_ews_url(email: &str, password: &str) -> Result<String> {
     ];
 
     let body = pox_request_body(email);
-    let client = reqwest::Client::builder()
+    let client = crate::net_guard::client_builder()
         .timeout(TIMEOUT)
-        // Follow up to two redirects — Autodiscover often replies 302 to a
-        // canonical URL on the same domain.
-        //
-        // Known limitation: the SSRF validator only runs on the initial
-        // candidate URL, not on intermediate Location headers. A malicious
-        // autodiscover responder could redirect to a private hostname mid
-        // chain. The chain is HTTPS, so the attacker would also need a
-        // valid cert for the private host; we accept the residual risk and
-        // rely on the egress firewall mitigation (see docs/src/security.md).
-        // The server-supplied EwsUrl from the final response is revalidated
-        // below before being persisted.
-        .redirect(Policy::limited(2))
+        // Follow up to two redirects: Autodiscover often replies 302 to a
+        // canonical URL on the same domain. Every host in the chain goes
+        // through the guarded resolver (#363), and a redirect to a private
+        // IP literal is refused, so a hostile responder cannot bounce the
+        // request to an internal host. The server-supplied EwsUrl from the
+        // final response is revalidated below before being persisted.
+        .redirect(crate::net_guard::redirects(
+            2,
+            crate::net_guard::Allowlist::Settings,
+        ))
         .build()
         .context("HTTP client build failed")?;
 
@@ -58,6 +56,9 @@ pub async fn discover_ews_url(email: &str, password: &str) -> Result<String> {
         // hosts so a hostile email domain can't probe internal infrastructure.
         if let Err(e) = crate::caldav::validate_caldav_url(url) {
             tracing::debug!(candidate = %url, error = %e, "skipping autodiscover candidate (validator rejected)");
+            continue;
+        }
+        if reqwest::Url::parse(url).is_ok_and(|u| crate::net_guard::url_refused(&u)) {
             continue;
         }
         match try_one(&client, url, email, password, &body).await {
@@ -116,7 +117,8 @@ async fn try_one(
         return Ok(None);
     }
 
-    let text = resp.text().await.unwrap_or_default();
+    // An Autodiscover answer is a few kilobytes: read no more than this.
+    let text = crate::caldav::read_body(resp, MAX_REPLY_BYTES).await?;
     Ok(parse_pox_response(&text))
 }
 
@@ -136,16 +138,33 @@ fn pox_request_body(email: &str) -> String {
 }
 
 /// Extract the EWS URL from an Autodiscover POX response. We accept either:
-/// - the explicit `<EwsUrl>` element (most modern response shape)
-/// - a `<Protocol>` with `<Type>EXPR</Type>` or `<Type>EXCH</Type>` and a
-///   matching `<EwsUrl>` element nested inside
+/// - the explicit `<EwsUrl>` element (most modern response shape), the first
+///   one in the document
+/// - failing that, an `<ASUrl>` (ActiveSync), whose host serves EWS too
+///
+/// The response is read with the shared XML parser (#369). Autodiscover
+/// nests several schema namespaces, which vary between Exchange versions, so
+/// these elements are matched by local name. A reply that is not well-formed
+/// XML holds no endpoint: `None`, and the next candidate is tried.
 pub fn parse_pox_response(xml: &str) -> Option<String> {
-    if let Some(url) = first_tag_content(xml, "EwsUrl") {
-        if !url.is_empty() {
-            return Some(url);
+    let root = match crate::xml::parse(xml) {
+        Ok(Some(root)) => root,
+        Ok(None) => return None,
+        Err(e) => {
+            tracing::debug!(error = %e, "autodiscover reply is not XML");
+            return None;
         }
+    };
+    let first_text = |name: &str| {
+        std::iter::once(&root)
+            .chain(root.descendants())
+            .filter(|el| el.local_name() == name)
+            .find_map(|el| el.trimmed_text())
+    };
+    if let Some(url) = first_text("EwsUrl") {
+        return Some(url);
     }
-    if let Some(url) = first_tag_content(xml, "ASUrl") {
+    if let Some(url) = first_text("ASUrl") {
         // Some servers return the active sync URL in ASUrl which has the same host;
         // build a sensible EWS URL from it as a last resort.
         if let Ok(parsed) = reqwest::Url::parse(&url) {
@@ -198,6 +217,30 @@ mod tests {
         assert_eq!(
             parse_pox_response(xml),
             Some("https://mail.example.com/EWS/Exchange.asmx".to_string())
+        );
+    }
+
+    /// Prefixes do not matter, entities are decoded, and a reply that is
+    /// not XML (an HTML page, a body cut short) holds no endpoint.
+    #[test]
+    fn prefixed_and_broken_replies() {
+        let xml = r#"<a:Autodiscover xmlns:a="http://schemas.microsoft.com/exchange/autodiscover/responseschema/2006"><o:Response xmlns:o="http://schemas.microsoft.com/exchange/autodiscover/outlook/responseschema/2006a"><o:Account><o:Protocol><o:Type>EXCH</o:Type><o:EwsUrl> https://mail.example.com/EWS/Exchange.asmx?a=1&amp;b=2 </o:EwsUrl></o:Protocol></o:Account></o:Response></a:Autodiscover>"#;
+        assert_eq!(
+            parse_pox_response(xml),
+            Some("https://mail.example.com/EWS/Exchange.asmx?a=1&b=2".to_string())
+        );
+        for broken in [
+            "",
+            "<html><body>Sign in<br></body></html>",
+            "<Autodiscover><Response><Account><Protocol><EwsUrl>https://mail.example.com/EWS/Exch",
+        ] {
+            assert_eq!(parse_pox_response(broken), None, "{broken:?}");
+        }
+        // An empty EwsUrl is skipped for a later one.
+        let xml = "<Autodiscover><Response><Protocol><EwsUrl/></Protocol><Protocol><EwsUrl>https://b.example/EWS/Exchange.asmx</EwsUrl></Protocol></Response></Autodiscover>";
+        assert_eq!(
+            parse_pox_response(xml),
+            Some("https://b.example/EWS/Exchange.asmx".to_string())
         );
     }
 

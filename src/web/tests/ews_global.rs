@@ -299,7 +299,7 @@ async fn admin_save_refuses_an_incomplete_config_and_provisions_a_complete_one()
     let cfg = crate::ews::global::load_ews_global_config(&pool, &[0u8; 32])
         .await
         .expect("still complete");
-    assert_eq!(cfg.service_password, "secret");
+    assert_eq!(*cfg.service_password, "secret");
     assert_eq!(
         cfg.domain_override,
         Some(crate::ews::global::DomainOverride {

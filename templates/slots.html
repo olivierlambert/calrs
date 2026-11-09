@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "partials/phosphor.html" as ph %}
 
 {% block title %}{{ event_type.title }} — {{ host_name }}{% endblock %}
 
@@ -16,7 +17,7 @@
   {% set base = "/" ~ event_type.slug %}
 {% endif %}
 
-<div class="logo">{% if company_link %}<a href="{{ company_link }}" target="_blank" rel="noopener noreferrer">{% endif %}<img src="/logo" alt="" onerror="this.closest('.logo').style.display='none'">{% if company_link %}</a>{% endif %}</div>
+{% include "partials/public_logo.html" %}
 
 <style>
   /* Override container width for the wider layout */
@@ -94,8 +95,10 @@
     font-size: 0.9rem;
     flex-shrink: 0;
     width: 1rem;
-    text-align: center;
+    display: inline-flex;
+    justify-content: center;
   }
+  .slots-info-setting-label svg { vertical-align: -2px; }
 
 
   /* Right: calendar + slots */
@@ -727,13 +730,13 @@
         <div class="slots-info-name">{{ host_name }}</div>
         {% if team_members is defined and team_members %}
         <div style="display: flex; align-items: center; margin-top: 0.25rem;">
-          {% for m in team_members %}{% if loop.index0 < 6 %}
+          {% for m in team_members %}
           <span title="{{ m.name }}" style="width: 24px; height: 24px; border-radius: 50%; background: var(--accent); color: #fff; display: inline-flex; align-items: center; justify-content: center; font-size: 0.55rem; font-weight: 600; flex-shrink: 0; overflow: hidden; border: 2px solid var(--surface);{% if loop.index0 > 0 %} margin-left: -6px;{% endif %}">
             {% if m.has_avatar %}<img src="/avatar/{{ m.id }}" alt="" style="width:100%;height:100%;object-fit:cover;">{% else %}{{ m.initials }}{% endif %}
           </span>
-          {% endif %}{% endfor %}
-          {% if team_members | length > 6 %}
-          <span style="width: 24px; height: 24px; border-radius: 50%; background: var(--surface-hover); color: var(--text-muted); display: inline-flex; align-items: center; justify-content: center; font-size: 0.55rem; font-weight: 600; flex-shrink: 0; border: 2px solid var(--surface); margin-left: -6px;">+{{ team_members | length - 6 }}</span>
+          {% endfor %}
+          {% if team_members_total > team_members | length %}
+          <span title="{{ t('teams-member-count', count=team_members_total) }}" style="width: 24px; height: 24px; border-radius: 50%; background: var(--surface-hover); color: var(--text-muted); display: inline-flex; align-items: center; justify-content: center; font-size: 0.55rem; font-weight: 600; flex-shrink: 0; border: 2px solid var(--surface); margin-left: -6px;">+{{ team_members_total - team_members | length }}</span>
           {% endif %}
         </div>
         {% endif %}
@@ -774,18 +777,18 @@
     {% endif %}
     <div class="slots-info-meta">
       <div class="slots-info-meta-item">
-        <span class="slots-info-meta-icon">&#128339;</span>
-        <span>{{ event_type.duration_min }} min</span>
+        <span class="slots-info-meta-icon">{{ ph.icon("clock", 15) }}</span>
+        <span>{{ duration_label(event_type.duration_min) }}</span>
       </div>
       {% if not (host_user_id is defined and host_user_id) %}
       <div class="slots-info-meta-item">
-        <span class="slots-info-meta-icon">&#128100;</span>
+        <span class="slots-info-meta-icon">{{ ph.icon("user", 15) }}</span>
         <span>{{ host_name }}</span>
       </div>
       {% endif %}
       {% if (event_type.location_value is defined and event_type.location_value) or (event_type.location_type is defined and (event_type.location_type == "jitsi_auto" or event_type.location_type == "webhook_auto" or event_type.location_type == "google_meet")) %}
       <div class="slots-info-meta-item">
-        <span class="slots-info-meta-icon">&#128205;</span>
+        <span class="slots-info-meta-icon">{% if event_type.location_type is defined and event_type.location_type == "phone" %}{{ ph.icon("phone", 15) }}{% elif event_type.location_type is defined and event_type.location_type in ["jitsi_auto", "webhook_auto", "google_meet", "link"] %}{{ ph.icon("video-camera", 15) }}{% else %}{{ ph.icon("map-pin", 15) }}{% endif %}</span>
         {% if event_type.location_type is defined and event_type.location_type == "in_person" %}
           <span>{{ event_type.location_value }}</span>
         {% else %}
@@ -795,7 +798,7 @@
       {% endif %}
       {% if booking_window is defined and booking_window.notice and not booking_window.expired %}
       <div class="slots-info-meta-item">
-        <span class="slots-info-meta-icon">&#128197;</span>
+        <span class="slots-info-meta-icon">{{ ph.icon("calendar-blank", 15) }}</span>
         <span>{{ booking_window.notice }}</span>
       </div>
       {% endif %}
@@ -806,11 +809,11 @@
       {% if embed_fixed_tz is defined and embed_fixed_tz %}
       {# The owner fixed the timezone to the event's own: no picker (so no browser auto-detect either), just a note. #}
       <div class="slots-info-setting">
-        <span class="slots-info-setting-label slots-info-setting-note" id="tz-fixed-note">&#127760; {{ t("slots-tz-fixed", tz=embed_tz_label) }}</span>
+        <span class="slots-info-setting-label slots-info-setting-note" id="tz-fixed-note">{{ ph.icon("globe", 14) }} {{ t("slots-tz-fixed", tz=embed_tz_label) }}</span>
       </div>
       {% else %}
       <div class="slots-info-setting">
-        <label for="tz-select" class="slots-info-setting-label">&#127760; {{ t("slots-tz-label") }}</label>
+        <label for="tz-select" class="slots-info-setting-label">{{ ph.icon("globe", 14) }} {{ t("slots-tz-label") }}</label>
         <select id="tz-select">
           {% for group in tz_options %}
             <optgroup label="{{ group.label }}">
@@ -824,7 +827,7 @@
       {% endif %}
       {% if not (embed_time_format is defined and embed_time_format) %}
       <div class="slots-info-setting">
-        <label class="slots-info-setting-label">&#128336; {{ t("slots-time-format-label") }}</label>
+        <label class="slots-info-setting-label">{{ ph.icon("clock", 14) }} {{ t("slots-time-format-label") }}</label>
         <div id="time-format-toggle" class="time-format-toggle">
           <button type="button" data-format="24">24h</button>
           <button type="button" data-format="12">12h</button>

@@ -43,6 +43,13 @@
     --rule-strong: color-mix(in srgb, var(--text) 40%, var(--surface));
     --hatch: repeating-linear-gradient(135deg, color-mix(in srgb, var(--accent) 70%, var(--surface)) 0 1.5px, transparent 1.5px 5px);
     --now: var(--accent);
+    /* Text-bearing data marks and accent text must read on any preset, and
+       some presets' own text colour is too soft for that (Solarized), so
+       these mix the accent toward black (light) or white (dark): at least
+       4.5:1 on every preset in both modes. */
+    --bar: color-mix(in srgb, var(--accent) 62%, black);
+    --on-bar: white;
+    --now-text: color-mix(in srgb, var(--accent) 62%, black);
     --r-control: 4px;
     --r-float: 6px;
     --shadow-float: 0 8px 28px color-mix(in srgb, var(--text) 14%, transparent), 0 1px 3px color-mix(in srgb, var(--text) 10%, transparent);
@@ -54,6 +61,9 @@
     --accent-soft: color-mix(in srgb, var(--accent) 16%, var(--surface));
     --data-busy: color-mix(in srgb, var(--text) 16%, var(--surface));
     --hours: color-mix(in srgb, var(--text) 5%, var(--surface));
+    --bar: color-mix(in srgb, var(--accent) 72%, white);
+    --on-bar: black;
+    --now-text: color-mix(in srgb, var(--accent) 62%, white);
     --shadow-float: 0 8px 28px rgb(0 0 0 / 0.45), 0 1px 3px rgb(0 0 0 / 0.3);
   }
 
@@ -110,9 +120,8 @@
   .sidebar-section-label { font-size: 12px; color: var(--text-muted); padding: 0.85rem 0.6rem 0.25rem; }
   .sidebar-link {
     display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: 0.5rem;
+    align-items: center;
+    gap: 0.6rem;
     padding: 0.32rem 0.6rem;
     border: 1px solid transparent;
     border-radius: var(--r-control);
@@ -124,7 +133,13 @@
   .sidebar-link:hover { background: var(--surface-hover); color: var(--ink); }
   .sidebar-link.active { background: var(--accent-soft); border-color: transparent; color: var(--accent); font-weight: 600; }
   .sidebar-link:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-  .sidebar-hint { font-size: 12px; font-weight: 400; color: var(--text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  /* Nav icons (Phosphor, regular): one per entry, in the text colour, so
+     the active entry's icon takes the active colour. */
+  .sidebar-link .nav-ic { flex-shrink: 0; opacity: 0.82; }
+  .sidebar-link:hover .nav-ic, .sidebar-link.active .nav-ic { opacity: 1; }
+  .sidebar-link > span:not(.sidebar-hint) { flex: 1 1 auto; min-width: 0; }
+  .nav-ic { display: inline-block; vertical-align: -0.17em; }
+  .sidebar-hint { margin-left: auto; font-size: 12px; font-weight: 400; color: var(--text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
   .sidebar-hint.is-bad { color: var(--error-text); }
   .sidebar-bottom { padding: 0.75rem; border-top: 1px solid var(--rule); }
   .sidebar-bottom form { margin: 0; }
@@ -267,18 +282,127 @@
   .booking-answers dt:first-child { border-top: 0; padding-top: 0; }
   .booking-answers dd { margin: 0.1rem 0 0.35rem; color: var(--text); white-space: pre-wrap; overflow-wrap: anywhere; }
 
-  /* Fieldsets: the one place a box survives in the flow (settings and
-     forms). 1px rule, 6px radius, no shadow. */
+  /* ---- Card: the dashboard's block (owner's choice, 2026-11-09) ----
+     A --surface sheet with a 1px --border hairline and 10px corners, no
+     shadow, no stripe. Blocks are cards; rules only separate rows.
+
+       <section class="card" aria-labelledby="x">
+         <div class="card-head">
+           <h2 id="x">Title<span class="num">3</span></h2>
+           <a class="card-action" href="...">All bookings</a>
+         </div>
+         <div class="card-body">...</div>
+       </section>
+
+     .card-head   a band tinted 4% toward the text (5% in dark) that
+                  follows the card's top corners; head and body part by
+                  colour, never by a line. Title one step up (16.5px),
+                  the count (.num inside the h2) and the action slot
+                  (.card-action, a link or plain text) on its baseline.
+     .card-body   the content. Its rows (ledger, list, table rows) sit on
+                  the faint hairline (--card-rule, half --border); a
+                  list's last row drops its rule. Notices and controls
+                  keep the full --border.
+     .card-part   a second titled part in the same body, headed by
+                  .card-subhead (same type, no band).
+     .card.is-now the "now" card (Up next): accent-tinted body and a
+                  stronger accent band. One per page at most.
+     .card-head.is-tools  a band holding a list's search and filters
+                  instead of a title; every list page is built this way:
+                  search in the band, rows in the body, the pager in a
+                  .card-foot. See partials/card_list.html (search macro).
+     details.card > summary.card-head  a collapsible card; closed, the
+                  band is the whole card.
+     A card without a head keeps plain padding (the settings fieldsets).
+     A page made of cards puts its main column on --bg so the sheets
+     lift off it, by filling the main_class block with "has-cards". */
+  .dashboard-main.has-cards { background: var(--bg); }
+  .dashboard-main.has-cards .form-savebar { background: var(--bg); }
+  /* One space (--card-pad) above the body (under the band, or at the top
+     of a card without one), under the body, and between the band and the
+     body, so content sits centred in its card. A row's own padding is the
+     same top and bottom, so a list keeps that balance too. */
   .dashboard-main .card {
-    background: var(--paper);
-    border: 1px solid var(--rule);
-    border-radius: var(--r-float);
+    --card-pad: 1.1rem;
+    --card-px: 1.4rem;
+    --card-pt: var(--card-pad);
+    --card-pb: var(--card-pad);
+    --card-gap: var(--card-pad);
+    --card-bg: var(--surface);
+    --card-band: color-mix(in srgb, var(--text) 4%, var(--surface));
+    --card-rule: color-mix(in srgb, var(--border) 50%, var(--card-bg));
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
     box-shadow: none;
-    padding: 1.25rem 1.5rem;
+    padding: var(--card-pt) var(--card-px) var(--card-pb);
     margin-bottom: 1.25rem;
+    min-width: 0;
+  }
+  html.dark .dashboard-main .card { --card-band: color-mix(in srgb, var(--text) 5%, var(--surface)); }
+  .dashboard-main .card.is-now {
+    --card-bg: color-mix(in srgb, var(--accent) 4%, var(--surface));
+    --card-band: color-mix(in srgb, var(--accent) 9%, var(--surface));
+  }
+  html.dark .dashboard-main .card.is-now {
+    --card-bg: color-mix(in srgb, var(--accent) 7%, var(--surface));
+    --card-band: color-mix(in srgb, var(--accent) 14%, var(--surface));
   }
   .dashboard-main .card > h2:first-child { color: var(--ink); font-size: 15px; }
-  @media (max-width: 480px) { .dashboard-main .card { padding: 1rem; } }
+  .card-head, .card-subhead { display: flex; align-items: baseline; justify-content: space-between; gap: 0.35rem 1rem; flex-wrap: wrap; }
+  .card-head {
+    margin: calc(-1 * var(--card-pt)) calc(-1 * var(--card-px)) var(--card-gap);
+    padding: 0.8rem var(--card-px) 0.75rem;
+    background: var(--card-band);
+    border-radius: 9px 9px 0 0;
+  }
+  .card-subhead { margin-bottom: var(--card-gap); }
+  /* A head can carry a list's tools (search, filters) instead of a title. */
+  .card-head.is-tools { align-items: center; padding-top: 0.6rem; padding-bottom: 0.6rem; }
+  .card-head.is-tools > .ui-toolbar, .card-head.is-tools > form { margin: 0; flex: 1 1 auto; }
+  .card-head.is-tools, .card-head.is-tools > form { display: flex; align-items: center; gap: 0.5rem 1rem; flex-wrap: wrap; }
+  .card-search { flex: 1 1 16rem; max-width: 30rem; }
+  .card-search input { background: var(--card-bg); }
+  .card-head .ui-btn, .card-head select { flex-shrink: 0; }
+  .card-foot { margin-top: var(--card-gap); }
+  .card-foot:empty { display: none; }
+  .card-foot .ui-pager { margin-top: 0; }
+  /* The last row of a card needs no rule under it: the card's edge ends it. */
+  /* Rows inside a card part on the faint hairline; notices, controls and
+     the old fieldset cards keep the full --border. */
+  .card-body :is(.ui-row, .tt-row, .tt-day, .soon-row, .person-row, .wh-item, .app-item, .source-item, .dest-row, .ts-row, .directory-entry, .q-row),
+  .card-body :is(.figs, .data-table) :is(th, td) { border-color: var(--card-rule); }
+  .card-body > .ui-list > .ui-row:last-of-type, .card-body.ui-list > .ui-row:last-of-type, .card :is(.ui-row, .wh-item, .app-item, .source-item, .dest-row, .ts-row, .directory-entry):last-of-type { border-bottom: 0; }
+  /* A collapsible card: <details class="card"> with <summary class="card-head">.
+     Closed, the band is the whole card. */
+  summary.card-head { cursor: pointer; list-style: none; }
+  summary.card-head::-webkit-details-marker { display: none; }
+  summary.card-head:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  details.card:not([open]) > summary.card-head { margin-bottom: calc(-1 * var(--card-pb)); border-radius: 9px; }
+  .dashboard-main .card-head h2, .dashboard-main .card-subhead h2, .dashboard-main .card-subhead h3 { margin: 0; min-width: 0; font-size: 16.5px; font-weight: 640; line-height: 1.3; color: var(--ink); letter-spacing: -0.005em; }
+  .card-head h2 .num, .card-subhead :is(h2, h3) .num { color: var(--text-muted); font-weight: 500; font-size: 15px; margin-left: 0.35rem; font-variant-numeric: tabular-nums; }
+  .card-action { font-size: 13px; color: var(--text-secondary); text-decoration: none; white-space: nowrap; }
+  a.card-action:hover { color: var(--ink); text-decoration: underline; }
+  .card-part + .card-part, .card-body > * + .card-part { margin-top: 2.1rem; }
+  .card-body > :last-child, .card-body > :last-child > .form-group:last-child { margin-bottom: 0; }
+  .card-body > .ledger > li:last-child, .card-body.ledger > li:last-child, .card-body .figs tr:last-child > * { border-bottom: 0; }
+  /* A list that opens or closes a card body drops its outer row padding:
+     the card's own space (--card-pad) is then the margin on both sides,
+     as for a form or a paragraph. The last row is the last one of its
+     kind, so a hidden "no matches" line after it does not count. */
+  .card-body.ui-list > .ui-row:first-child,
+  .card-body > :is(.ui-list, .ledger):first-child > :is(.ui-row, .tt-row, .tt-day):first-child,
+  .card-body .directory-list > .directory-entry:first-child { padding-top: 0; }
+  .card-body.ui-list > .ui-row:not(:has(~ .ui-row)),
+  :is(.card-body, .card-body > .card-part:last-child) > :is(.ui-list, .ledger):last-child > :is(.ui-row, .tt-row):not(:has(~ :is(.ui-row, .tt-row))),
+  .card-body .directory-list > .directory-entry:not(:has(~ .directory-entry)) { padding-bottom: 0; }
+  /* A list in a card part ends on its last row too; a list that ends on
+     its hidden "no matches" line ends on the row before it. */
+  .card-part > .ledger > li:last-child { border-bottom: 0; }
+  :is(.card-body, .card-part) > .ledger > li:has(+ [data-filter-empty]:last-child) { border-bottom: 0; }
+  @media (max-width: 700px) {
+    .dashboard-main .card { --card-px: 1.05rem; --card-pad: 0.95rem; }
+  }
   .dashboard-main a.card:hover, .dashboard-main .card.card-link:hover { transform: none; box-shadow: none; border-color: var(--rule-strong); }
 
   /* Tags: a quiet word in a 1px frame, never a pill. */
@@ -313,9 +437,11 @@
   .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 
   /* ---- Masthead: title and one plain sentence, the main action right ---- */
+  /* The page's buttons sit on the title's line, centred on it, whatever
+     the description under the title runs to. */
   .page-header {
     display: flex;
-    align-items: flex-end;
+    align-items: flex-start;
     justify-content: space-between;
     gap: 0.75rem 1.5rem;
     flex-wrap: wrap;
@@ -325,7 +451,7 @@
   .page-title { font-size: 2rem; font-weight: 640; letter-spacing: -0.01em; line-height: 1.08; margin: 0; }
   .page-subtitle { color: var(--text-secondary); font-size: 14.5px; line-height: 1.5; margin-top: 0.4rem; max-width: 64ch; }
   .page-subtitle strong { color: var(--ink); font-weight: 600; }
-  .page-actions { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
+  .page-actions { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; min-height: calc(2rem * 1.08); }
   .page-back { display: inline-flex; align-items: center; gap: 0.35rem; color: var(--text-muted); font-size: 13px; text-decoration: none; margin-bottom: 0.6rem; }
   .page-back:hover { color: var(--ink); }
   .page-back:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--r-control); }
@@ -340,11 +466,6 @@
   .sec-h a:hover, .sec-link:hover { color: var(--ink); text-decoration: underline; }
   .sec-note { font-size: 12.5px; color: var(--text-muted); margin: 0; }
 
-  /* Card header, still used inside fieldsets. Counts are muted figures. */
-  .card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 0.75rem; flex-wrap: wrap; margin-bottom: 0.5rem; }
-  .card-title { display: flex; align-items: baseline; gap: 0.35rem; font-size: 15px; font-weight: 640; color: var(--ink); margin: 0; }
-  .count-pill { color: var(--text-muted); font-weight: 500; font-variant-numeric: tabular-nums; }
-  .count-pill--attention { color: var(--warning); }
 
   /* ---- Status marks: solid, hatched, hollow, flat ---- */
   .g { width: 0.7rem; height: 0.7rem; display: inline-block; flex-shrink: 0; }
@@ -352,6 +473,7 @@
   .g.p { background: var(--hatch); box-shadow: inset 0 0 0 1px var(--data); }
   .g.x { box-shadow: inset 0 0 0 1px var(--data); }
   .g.u { background: var(--data-busy); }
+  .g.r { background: var(--data-busy); outline: 1px dashed var(--data); outline-offset: -1px; }
   .key { display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem 1rem; font-size: 12px; color: var(--text-secondary); }
   .key > span { display: inline-flex; gap: 0.4rem; align-items: center; }
 
@@ -372,7 +494,10 @@
   .ui-row-meta a { color: inherit; text-decoration: none; }
   .ui-row-meta a:hover { color: var(--ink); text-decoration: underline; }
   .ui-row-sub { color: var(--text-muted); font-size: 12.5px; margin-top: 0.15rem; }
-  .ui-row-actions { display: flex; align-items: center; gap: 0.35rem; flex-wrap: wrap; justify-content: flex-end; flex-shrink: 0; }
+  /* A row's trailing actions centre on its text block (a list row is one
+     or two lines). Tall records (bookings, webhooks, tokens, sources)
+     keep theirs on their first line instead. */
+  .ui-row-actions { display: flex; align-items: center; gap: 0.35rem; flex-wrap: wrap; justify-content: flex-end; flex-shrink: 0; align-self: center; }
   .ui-row.is-muted .ui-row-title, .ui-row.is-muted .tt-time { color: var(--text-muted); }
   @media (max-width: 600px) {
     .ui-row { flex-wrap: wrap; }
@@ -640,6 +765,7 @@
 </style>
 
 {% import "partials/icons.html" as ic %}
+{% import "partials/phosphor.html" as ph %}
 <a class="skip-link" href="#main-content">{{ t("dash-skip-to-content") }}</a>
 <div class="dashboard-layout">
   <button type="button" class="hamburger" aria-label="{{ t('dash-open-menu') }}" aria-expanded="false" aria-controls="dashboard-sidebar">{{ ic.icon("menu", 20) }}</button>
@@ -651,40 +777,40 @@
       <span class="sidebar-brand-name">cal<b>rs</b></span>
     </a>
 
-    {% macro nav_link(href, key, page, hint="", extra="") -%}
-    <a href="{{ href }}" class="sidebar-link{% if sidebar.active == page %} active{% endif %}"{% if sidebar.active == page %} aria-current="page"{% endif %}{% if extra %} {{ extra }}{% endif %}><span>{{ t(key) }}</span>{% if hint %}<span class="sidebar-hint" data-hint="{{ hint }}"></span>{% endif %}</a>
+    {% macro nav_link(href, key, page, hint="", extra="", icon="") -%}
+    <a href="{{ href }}" class="sidebar-link{% if sidebar.active == page %} active{% endif %}"{% if sidebar.active == page %} aria-current="page"{% endif %}{% if extra %} {{ extra }}{% endif %}>{% if icon %}{{ ph.icon(icon, 18) }}{% endif %}<span>{{ t(key) }}</span>{% if hint %}<span class="sidebar-hint" data-hint="{{ hint }}"></span>{% endif %}</a>
     {%- endmacro %}
     <div class="sidebar-nav">
       <div class="sidebar-section">
         <div class="sidebar-section-label">{{ t("nav-section-scheduling") }}</div>
-        {{ nav_link("/dashboard", "nav-overview", "overview") }}
-        {{ nav_link("/dashboard/bookings", "nav-bookings", "bookings", "bookings") }}
-        {{ nav_link("/dashboard/event-types", "nav-event-types", "event-types") }}
-        {{ nav_link("/dashboard/teams", "nav-teams", "teams") }}
+        {{ nav_link("/dashboard", "nav-overview", "overview", icon="house") }}
+        {{ nav_link("/dashboard/bookings", "nav-bookings", "bookings", "bookings", icon="calendar-check") }}
+        {{ nav_link("/dashboard/event-types", "nav-event-types", "event-types", icon="clock") }}
+        {{ nav_link("/dashboard/teams", "nav-teams", "teams", icon="users-three") }}
       </div>
 
       <div class="sidebar-section">
         <div class="sidebar-section-label">{{ t("nav-section-shared-links") }}</div>
-        {{ nav_link("/dashboard/directory", "directory-title", "directory") }}
-        {{ nav_link("/dashboard/invite-links", "nav-invite-links", "organization") }}
+        {{ nav_link("/dashboard/directory", "directory-title", "directory", icon="address-book") }}
+        {{ nav_link("/dashboard/invite-links", "nav-invite-links", "organization", icon="link") }}
       </div>
 
       <div class="sidebar-section">
         <div class="sidebar-section-label">{{ t("nav-section-calendars") }}</div>
-        {{ nav_link("/dashboard/sources", "nav-sources", "sources", "sources") }}
+        {{ nav_link("/dashboard/sources", "nav-sources", "sources", "sources", icon="plugs") }}
       </div>
 
       <div class="sidebar-section">
         <div class="sidebar-section-label">{{ t("nav-section-personal") }}</div>
-        {{ nav_link("/dashboard/settings", "nav-settings", "settings") }}
-        {{ nav_link("/dashboard/time-off", "nav-time-off", "time-off") }}
-        {{ nav_link("/dashboard/troubleshoot", "nav-troubleshoot", "troubleshoot", "", "data-calrs-sync") }}
+        {{ nav_link("/dashboard/settings", "nav-settings", "settings", icon="user-circle") }}
+        {{ nav_link("/dashboard/time-off", "nav-time-off", "time-off", icon="airplane") }}
+        {{ nav_link("/dashboard/troubleshoot", "nav-troubleshoot", "troubleshoot", "", "data-calrs-sync", icon="wrench") }}
       </div>
 
       {% if sidebar.user_role == "admin" %}
       <div class="sidebar-section">
         <div class="sidebar-section-label">{{ t("nav-section-admin") }}</div>
-        {{ nav_link("/dashboard/admin", "nav-admin-panel", "admin") }}
+        {{ nav_link("/dashboard/admin", "nav-admin-panel", "admin", icon="shield-check") }}
       </div>
       {% endif %}
     </div>
@@ -705,7 +831,7 @@
           </div>
         </a>
         <form method="post" action="/auth/logout" style="flex-shrink: 0;">
-          <button type="submit" class="sidebar-signout" title="{{ t('nav-sign-out') }}" aria-label="{{ t('nav-sign-out') }}">{{ ic.icon("logout") }}</button>
+          <button type="submit" class="sidebar-signout" title="{{ t('nav-sign-out') }}" aria-label="{{ t('nav-sign-out') }}">{{ ph.icon("sign-out", 18) }}</button>
         </form>
       </div>
       <div class="sidebar-meta">
@@ -715,8 +841,11 @@
     </div>
   </nav>
 
-  <main class="dashboard-main" id="main-content" tabindex="-1">
+  <main class="dashboard-main {% block main_class %}{% endblock %}" id="main-content" tabindex="-1">
     <div class="container {% block container_class %}{% endblock %}">
+      {# The overview moves this notice into its own "To set up" strip,
+         with the same ids, so the script below drives either copy. #}
+      {% block tz_banner %}
       <div id="tz-banner" class="tz-banner" role="status">
         <div class="tz-banner-row">
           <span>{{ t("tz-banner-text", detected='<strong id="tz-detected"></strong>', current='<strong id="tz-current"></strong>') | safe }}</span>
@@ -726,6 +855,8 @@
           </span>
         </div>
       </div>
+      {% endblock %}
+      {% block dashboard_content %}{% endblock %}
       <script>
       (function() {
         var userTz = {{ sidebar.user_timezone | tojson }};
@@ -745,7 +876,7 @@
         var banner = document.getElementById('tz-banner');
         document.getElementById('tz-detected').textContent = browserTz;
         document.getElementById('tz-current').textContent = userTz;
-        banner.style.display = 'block';
+        banner.style.display = banner.dataset.display || 'block';
         document.getElementById('tz-dismiss').addEventListener('click', function() {
           banner.style.display = 'none';
           sessionStorage.setItem('calrs_tz_dismissed', browserTz + ':' + userTz);
@@ -763,7 +894,6 @@
         });
       })();
       </script>
-      {% block dashboard_content %}{% endblock %}
     </div>
   </main>
 </div>
@@ -1116,7 +1246,9 @@ document.querySelectorAll('input[type=file][data-max-bytes]').forEach(function(i
     }
     var saved = null;
     try { saved = sessionStorage.getItem(key); } catch (e) { /* private mode */ }
-    if (saved && !input.value) input.value = saved;
+    // A search the server applies (a named field of a GET form) shows what
+    // the page was asked for; only a page-only filter is restored.
+    if (saved && !input.value && !input.name) input.value = saved;
     input.addEventListener('input', run);
     run();
   });
@@ -1239,7 +1371,8 @@ document.querySelectorAll('input[type=file][data-max-bytes]').forEach(function(i
       return;
     }
     if (key === '/') {
-      var search = document.querySelector('[data-search]');
+      // The first search on screen: a tabbed page (admin) hides the others.
+      var search = Array.prototype.find.call(document.querySelectorAll('[data-search]'), function(el) { return el.offsetParent !== null; });
       if (search) { e.preventDefault(); search.focus(); if (search.select) search.select(); }
       return;
     }

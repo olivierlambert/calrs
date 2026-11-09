@@ -1,7 +1,9 @@
 {% extends "dashboard_base.html" %}
 {% block title %}{{ t("event-types-page-title") }}, calrs{% endblock %}
+{% block main_class %}has-cards{% endblock %}
 {% block dashboard_content %}
 {% import "partials/icons.html" as ic %}
+{% import "partials/card_list.html" as cl %}
 <style>
 .action-menu { position: relative; }
 .action-menu-dropdown { display: none; position: absolute; right: 0; top: calc(100% + 4px); background: var(--paper); border: 1px solid var(--rule); border-radius: var(--r-float); box-shadow: var(--shadow-float); z-index: 20; min-width: 190px; padding: 0.3rem; }
@@ -12,6 +14,7 @@
 .action-menu-dropdown .danger.is-armed { color: var(--paper); }
 .action-menu-dropdown hr { border: 0; border-top: 1px solid var(--border); margin: 0.3rem 0.2rem; }
 .et-row { align-items: center; }
+@media (max-width: 480px) { .et-row { align-items: flex-start; } }
 .et-row .ui-switch { margin-top: 0; }
 .et-switch-slot { width: 2.125rem; flex-shrink: 0; }
 .et-row .ui-row-title strong { font-weight: 600; }
@@ -27,20 +30,21 @@
   </div>
   <div class="page-actions">
     {% if webhooks_allowed %}<a href="/dashboard/webhooks" class="ui-btn">{{ t("webhooks-title") }}</a>{% endif %}
+    <a href="/dashboard/event-types/order" class="ui-btn">{{ t("etf-section-order-link") }}</a>
     <a href="/dashboard/event-types/new" class="ui-btn ui-btn--primary" data-shortcut="new" title="{{ t('dash-shortcut-new') }} (n)">{{ t("event-types-new") }}</a>
   </div>
 </header>
 
-<section class="sec">
+<section class="card">
   {% if has_any %}
-  <div class="ui-toolbar">
-    <div class="ui-search">
-      {{ ic.icon("search", 15) }}
-      <input type="search" data-search data-filter placeholder="{{ t('event-types-search-placeholder') }}" aria-label="{{ t('event-types-search-placeholder') }}">
-      <span class="kbd">/</span>
-    </div>
+  <div class="card-head is-tools">
+    {#- Searches every page on the server (Enter); typing narrows the rows
+        on this page at once. #}
+    <form method="get" action="/dashboard/event-types" role="search">
+      {{ cl.search(t("event-types-search-placeholder"), name="q", value=q, maxlength=search_max, filter=true) }}
+    </form>
   </div>
-  <div class="ui-list" data-filter-list>
+  <div class="ui-list card-body" data-filter-list>
     {% for et in all_event_types %}
     {% set et_path = ("/team/" ~ et.team_slug) if et.is_team else ("/u/" ~ username) %}
     <div class="ui-row et-row{% if not et.enabled %} is-muted{% endif %}" data-filter-text="{{ et.title }} {{ et.slug }} {{ et.team_name }}">
@@ -65,7 +69,7 @@
           {% endif %}
         </div>
         <div class="ui-row-meta">
-          <span>{{ t("event-types-duration", minutes=et.duration_min) }}</span>
+          <span>{{ duration_label(et.duration_min) }}</span>
           {% if et.is_team %}<span>{% if et.scheduling_mode == "collective" %}{{ t("event-types-mode-collective") }}{% else %}{{ t("event-types-mode-round-robin") }}{% endif %}</span>{% endif %}
           {% if et.view_url %}
           <a href="{{ et.view_url }}" target="_blank" rel="noopener" class="et-path" title="{% if et.visibility == 'public' %}{{ t('event-types-view-public') }}{% else %}{{ t('event-types-view-page') }}{% endif %}">{{ et_path }}/{{ et.slug }}</a>
@@ -118,8 +122,9 @@
       </div>
     </div>
     {% endfor %}
-    <p class="ui-filter-empty" data-filter-empty hidden>{{ t("dash-no-matches") }}</p>
+    <p class="ui-filter-empty" data-filter-empty{% if all_event_types %} hidden{% endif %}>{{ t("dash-no-matches") }}</p>
   </div>
+  {% if pager %}<div class="card-foot">{% include "partials/pager.html" %}</div>{% endif %}
   {% else %}
     <p class="empty-line">{{ t("event-types-empty", link='<a href="/dashboard/event-types/new">' ~ (t("event-types-empty-link-label") | escape) ~ '</a>') | safe }}</p>
   {% endif %}

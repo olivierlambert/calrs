@@ -2,6 +2,8 @@
 
 ## Guest experience
 
+A host's page (`/u/{username}`) and a team's page (`/team/{slug}`) list their public meetings in cards. Beside the host's name (under it on narrow screens), only what is set: the usual hours as a small timetable under a heading naming the timezone once ("Usually available, Paris time", then rows such as "Mon to Thu 09:00 to 17:30"; for each day, the earliest start to the latest end among the weekly hours of the meetings listed, an approximation that hides breaks; more than four schedules say the hours vary by day; on a team page, from the team's meetings only, not the members' own hours), with a "My time" button that shows the rows in the visitor's timezone when it differs, then where the host is based and the languages they speak on one line (Profile & Settings). Without sections, one "Meetings" card lists every meeting; when meetings have a section (set in the event type form), each section is a card of its own, in the order the host sets at **Event types > Change the order** (`/dashboard/event-types/order`; a team's at `/dashboard/teams/{id}/order`, for team admins), and meetings without one come last under "Other meetings". Each meeting shows its length (as small clock faces and in words), how the guest meets (video, phone or in person) and "Host confirms" when the host confirms each request. A line above the cards explains how booking works when there is more than one meeting.
+
 1. **Visit the booking page** — `/u/host/meeting-slug` (or via an invite link for private event types, or `/u/host+other/slug` for [dynamic group links](./event-types.md#dynamic-group-links))
 2. **Pick a timezone** — auto-detected from the browser, changeable via dropdown
 3. **Browse available slots** — displayed as a week view, navigate with Previous/Next buttons
@@ -70,7 +72,7 @@ When an event type has **requires confirmation** enabled:
 3. Host receives an "approval request" email with **Approve** and **Decline** buttons
 4. Host can approve/decline in two ways:
    - **From the email** — click the Approve or Decline button (no login required, token-based)
-   - **From the dashboard** — go to **Pending approval** section and click Confirm or Decline
+   - **From the dashboard**: in the **Waiting for your decision** section of the bookings page, click Confirm or Decline
 5. On confirm: status becomes `confirmed`, guest receives confirmation email with `.ics`, booking is pushed to CalDAV. Auto meeting links (Jitsi, webhook, Google Meet) are generated at this moment, not while the booking is pending.
 6. On decline: status becomes `declined`, guest receives a decline notification with optional reason
 
@@ -164,7 +166,7 @@ The check applies to **guest-side actions only**. Hosts and admins can still can
 
 ## Host notes
 
-Each booking can carry **host notes**: free text for the people running the meeting (what was said on a call, what to prepare), kept apart from the notes the guest typed when booking. Open them from the booking's title on the bookings page or the overview, at `/dashboard/bookings/{id}/notes`. Once a booking has notes, its row shows them with an **Edit note** button (the overview's agenda shows a quiet "Host note" marker instead). For notes after the call, the bookings page lists in **Last 30 days** the meetings held over that time, and in **Cancelled and declined** the bookings that were cancelled or declined, from those due 30 days ago to those cancelled for a later date, for each of their hosts. Each title opens the notes, so a note on a meeting cancelled for next month stays reachable. Notes are counted in characters, an emoji being one. The page shows the booking, the guest's own notes, and who last edited the host notes and when. Notes are at most 5000 characters; saving an empty field removes them.
+Each booking can carry **host notes**: free text for the people running the meeting (what was said on a call, what to prepare), kept apart from the notes the guest typed when booking. Open them from the booking's title on the bookings page or the overview, at `/dashboard/bookings/{id}/notes`. Once a booking has notes, its row shows them with an **Edit note** button (the overview's agenda shows a quiet "Host note" marker instead). For notes after the call, the bookings page lists in **Last 30 days** the meetings held over that time, and in **Cancelled and declined** the bookings that were cancelled or declined, from those due 30 days ago to those cancelled for a later date, for each of their hosts. Each title opens the notes, so a note on a meeting cancelled for next month stays reachable. Each section of the bookings page (waiting for a decision, available to claim, upcoming, last 30 days, cancelled and declined) shows 50 bookings a page with its own **Previous** and **Next**, and moving through one section leaves the others on their page. The search box searches every section and page on the server when you press Enter (guest name, email, meeting title, and the team for bookings you can claim), and an action taken on a page (cancel, approve, decline, ask to reschedule) brings you back to that page. Notes are counted in characters, an emoji being one. The page shows the booking, the guest's own notes, and who last edited the host notes and when. Notes are at most 5000 characters; saving an empty field removes them.
 
 Who can read and edit them:
 

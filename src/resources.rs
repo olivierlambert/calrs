@@ -77,11 +77,15 @@ pub async fn fetch_feed(feed_url: &str) -> anyhow::Result<String> {
     // stored URL's host may have started resolving to an internal address
     // since (and background re-syncs are triggered from public pages).
     crate::caldav::validate_caldav_url(feed_url)?;
+    if reqwest::Url::parse(feed_url).is_ok_and(|u| crate::net_guard::url_refused(&u)) {
+        anyhow::bail!(crate::net_guard::REFUSED);
+    }
     // No redirects: following one would let a validated public URL bounce
-    // the request to an internal host (SSRF).
-    let client = reqwest::Client::builder()
+    // the request to an internal host (SSRF). The guarded resolver connects
+    // only to addresses it checked, so a second DNS answer cannot either
+    // (#363).
+    let client = crate::net_guard::client_builder()
         .timeout(std::time::Duration::from_secs(30))
-        .redirect(reqwest::redirect::Policy::none())
         .build()?;
     let mut resp = client.get(feed_url).send().await?;
     if !resp.status().is_success() {
@@ -206,7 +210,11 @@ pub async fn sync_resource(
         let start_at = extract_vevent_field(&fields, "DTSTART").unwrap_or_default();
         let status = extract_vevent_field(&fields, "STATUS");
         let rrule = extract_vevent_field(&fields, "RRULE");
+        if let Some(rule) = rrule.as_deref() {
+            crate::rrule::warn_if_unexpandable(rule, &start_at, &uid, resource_id);
+        }
         let recurrence_id = extract_vevent_field(&fields, "RECURRENCE-ID");
+        let rdate = recurrence_id.is_none() && crate::rrule::has_rdate(&fields);
         let transp = extract_vevent_field(&fields, "TRANSP");
         let timezone = zones.event_timezone(&fields);
         let end_at = crate::utils::extract_vevent_end(
@@ -224,8 +232,8 @@ pub async fn sync_resource(
 
         let id = Uuid::new_v4().to_string();
         let _ = sqlx::query(
-            "INSERT INTO resource_events (id, resource_id, uid, recurrence_id, start_at, end_at, all_day, timezone, rrule, raw_ical, status, transp, summary)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            "INSERT INTO resource_events (id, resource_id, uid, recurrence_id, start_at, end_at, all_day, timezone, rrule, raw_ical, status, transp, summary, rdate)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(resource_id, uid, COALESCE(recurrence_id, '')) DO UPDATE SET
                start_at = excluded.start_at,
                end_at = excluded.end_at,
@@ -235,7 +243,8 @@ pub async fn sync_resource(
                raw_ical = excluded.raw_ical,
                status = excluded.status,
                transp = excluded.transp,
-               summary = excluded.summary",
+               summary = excluded.summary,
+               rdate = excluded.rdate",
         )
         .bind(&id)
         .bind(resource_id)
@@ -250,6 +259,7 @@ pub async fn sync_resource(
         .bind(&status)
         .bind(&transp)
         .bind(&summary)
+        .bind(rdate)
         .execute(pool)
         .await
         .map(|_| count += 1)
@@ -392,7 +402,7 @@ async fn try_busy_for_resource(
     let events: Vec<(String, String, Option<String>)> = sqlx::query_as(
         "SELECT start_at, end_at, timezone FROM resource_events
          WHERE resource_id = ?
-           AND (rrule IS NULL OR rrule = '')
+           AND (rrule IS NULL OR rrule = '') AND rdate = 0
            AND (status IS NULL OR status != 'CANCELLED')
            AND (transp IS NULL OR transp != 'TRANSPARENT')
            AND (? = '' OR uid NOT IN (SELECT uid FROM bookings WHERE id = ?))
@@ -417,13 +427,13 @@ async fn try_busy_for_resource(
         .collect();
 
     let recurring: Vec<(String, String, String, Option<String>, Option<String>)> = sqlx::query_as(
-        "SELECT start_at, end_at, rrule, raw_ical, timezone FROM resource_events
+        "SELECT start_at, end_at, COALESCE(rrule, ''), raw_ical, timezone FROM resource_events
          WHERE resource_id = ?
            AND (status IS NULL OR status != 'CANCELLED')
            AND (transp IS NULL OR transp != 'TRANSPARENT')
            AND (? = '' OR uid NOT IN (SELECT uid FROM bookings WHERE id = ?))
            AND uid NOT IN (SELECT uid FROM bookings WHERE status IN ('cancelled', 'declined'))
-           AND rrule IS NOT NULL AND rrule != '' AND start_at <= ?",
+           AND ((rrule IS NOT NULL AND rrule != '') OR rdate = 1) AND start_at <= ?",
     )
     .bind(resource_id)
     .bind(exclude_id)

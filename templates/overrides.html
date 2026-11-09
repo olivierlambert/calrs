@@ -2,24 +2,31 @@
 
 {% block title %}{{ t("overrides-page-title") }}: {{ event_type_title }}, calrs{% endblock %}
 
+{% block main_class %}has-cards{% endblock %}
 {% block dashboard_content %}
 
-<div class="card">
-  <div style="display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem;">
-    <h1 style="margin-bottom: 0;">{{ t("overrides-heading") }}</h1>
-    {% if is_team %}<a href="/dashboard/teams" class="slot-btn" style="text-decoration: none; font-size: 0.8rem;">{{ t("overrides-back-teams") }}</a>{% else %}<a href="/dashboard/event-types" class="slot-btn" style="text-decoration: none; font-size: 0.8rem;">{{ t("overrides-back-event-types") }}</a>{% endif %}
-  </div>
-  <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 1.25rem;">
+<header class="page-header">
+  <div class="page-header-text">
+    <h1 class="page-title">{{ t("overrides-heading") }}</h1>
+    <p class="page-subtitle">
     {{ t("overrides-intro", title='<strong>' ~ (event_type_title | escape) ~ '</strong>') | safe }}
     {{ t("time-off-hint", link='<a href="/dashboard/time-off">' ~ (t("nav-time-off") | escape) ~ '</a>') | safe }}
-  </p>
+    </p>
+  </div>
+  <div class="page-actions">
+    {% if is_team %}<a href="/dashboard/teams" class="ui-btn">{{ t("overrides-back-teams") }}</a>{% else %}<a href="/dashboard/event-types" class="ui-btn">{{ t("overrides-back-event-types") }}</a>{% endif %}
+  </div>
+</header>
+
+<section class="card" aria-labelledby="ov-add">
+  <div class="card-head"><h2 id="ov-add">{{ t("overrides-add-heading") }}</h2></div>
+  <div class="card-body">
 
   {% if error %}
     <div class="error" style="margin-bottom: 1rem;">{{ error }}</div>
   {% endif %}
 
-  <form method="POST" action="/dashboard/event-types/{{ event_type_slug }}/overrides" style="border-bottom: 1px solid var(--border); padding-bottom: 1.25rem; margin-bottom: 1.25rem;">
-    <h2 style="font-size: 1rem; margin-bottom: 0.75rem;">{{ t("overrides-add-heading") }}</h2>
+  <form method="POST" action="/dashboard/event-types/{{ event_type_id }}/overrides">
 
     <div class="form-group">
       <label for="override_date">{{ t("overrides-date") }}</label>
@@ -55,12 +62,16 @@
 
     <button type="submit" class="btn" style="margin-top: 0.75rem;">{{ t("overrides-add-submit") }}</button>
   </form>
+  </div>
+</section>
 
+<section class="card" aria-labelledby="ov-existing">
+  <div class="card-head"><h2 id="ov-existing">{{ t("overrides-existing") }}{% if overrides %}<span class="num">{{ overrides | length }}</span>{% endif %}</h2></div>
+  <div class="card-body">
   {% if overrides %}
-  <h2 style="font-size: 1rem; margin-bottom: 0.75rem;">{{ t("overrides-existing") }}</h2>
-  <div style="display: flex; flex-direction: column; gap: 0.5rem;">
+  <div class="ui-list">
     {% for o in overrides %}
-    <div style="display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 0.5rem; padding: 0.75rem; border: 1px solid var(--border); border-radius: var(--radius);">
+    <div class="ui-row" style="flex-wrap: wrap; justify-content: space-between; align-items: center;">
       <div>
         <strong style="font-size: 0.9rem;">{{ o.date_label }}</strong>
         {% if o.is_blocked %}
@@ -70,19 +81,17 @@
           <span style="color: var(--text-muted); font-size: 0.85rem; margin-left: 0.25rem;">{{ o.start_time }} &ndash; {{ o.end_time }}</span>
         {% endif %}
       </div>
-      <form method="POST" action="/dashboard/event-types/{{ event_type_slug }}/overrides/{{ o.id }}/delete" style="margin: 0;">
+      <form method="POST" action="/dashboard/event-types/{{ event_type_id }}/overrides/{{ o.id }}/delete" style="margin: 0;">
         <button type="submit" class="slot-btn" style="font-size: 0.8rem; color: var(--error-text); cursor: pointer;" data-confirm="{{ t('overrides-delete-confirm') }}" onclick="return confirm(this.dataset.confirm);">{{ t("overrides-delete") }}</button>
       </form>
     </div>
     {% endfor %}
   </div>
   {% else %}
-  <div class="empty" style="padding: 1.5rem 1rem;">
-    <div class="empty-icon">&#128197;</div>
-    <div class="empty-text">{{ t("overrides-empty") | safe }}</div>
-  </div>
+  <p class="empty-line">{{ t("overrides-empty") | safe }}</p>
   {% endif %}
-</div>
+  </div>
+</section>
 
 <script>
   (function() {

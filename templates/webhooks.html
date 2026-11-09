@@ -1,10 +1,11 @@
 {% extends "dashboard_base.html" %}
 {% block title %}{{ t("webhooks-title") }}, calrs{% endblock %}
+{% block main_class %}has-cards{% endblock %}
 {% block dashboard_content %}
 {% import "partials/icons.html" as ic %}
 <style>
   .wh-item { padding: 0.9rem 0; border-bottom: 1px solid var(--rule); }
-  .wh-summary { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 0.75rem 1rem; }
+  .wh-summary { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.75rem 1rem; }
   .wh-details { flex: 1 1 20rem; min-width: 0; overflow-wrap: anywhere; }
   .wh-url { font-weight: 600; font-size: 14px; }
   .wh-meta { color: var(--text-muted); font-size: 12.5px; margin-top: 0.25rem; line-height: 1.6; }
@@ -52,8 +53,9 @@
 {% if not allowed %}
 <p class="empty-line">{{ t("webhooks-not-allowed") }}</p>
 {% else %}
-<section class="sec">
-  <div class="sec-h"><h2>{{ t("webhooks-endpoints") }}<span class="num">{{ endpoints | length }}</span></h2></div>
+<section class="card">
+  <div class="card-head"><h2>{{ t("webhooks-endpoints") }}<span class="num">{{ endpoints | length }}</span></h2></div>
+  <div class="card-body">
   {% if endpoints %}
     {% for w in endpoints %}
     <div class="wh-item">
@@ -127,10 +129,12 @@
   {% else %}
     <p class="empty-line">{{ t("webhooks-empty") }}</p>
   {% endif %}
+  </div>
 </section>
 
-<section class="sec">
-  <div class="sec-h"><h2>{{ t("webhooks-add") }}</h2></div>
+<section class="card">
+  <div class="card-head"><h2>{{ t("webhooks-add") }}</h2></div>
+  <div class="card-body">
   <form method="post" action="/dashboard/webhooks" class="wh-form">
     <div class="form-group">
       <label for="wh-scope">{{ t("webhooks-scope") }}</label>
@@ -154,6 +158,7 @@
     <p class="sec-note" style="margin-bottom: 0.75rem;">{{ t("webhooks-privacy-note") }}</p>
     <button type="submit" class="ui-btn ui-btn--primary">{{ t("webhooks-add-submit") }}</button>
   </form>
+  </div>
 </section>
 {% endif %}
 {% endblock %}

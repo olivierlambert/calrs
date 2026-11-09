@@ -3,7 +3,7 @@
 {% block title %}{% if pending %}{{ t("confirmed-page-title-pending") }}{% else %}{{ t("confirmed-page-title-booked") }}{% endif %}{% endblock %}
 
 {% block content %}
-<div class="logo">{% if company_link %}<a href="{{ company_link }}" target="_blank" rel="noopener noreferrer">{% endif %}<img src="/logo" alt="" onerror="this.closest('.logo').style.display='none'">{% if company_link %}</a>{% endif %}</div>
+{% include "partials/public_logo.html" %}
 
 <div class="card" style="text-align: center;">
   {% if rescheduled is defined and rescheduled and pending %}
@@ -45,10 +45,10 @@
     <div class="detail"><strong>{{ t("confirmed-detail-additional-guests") }}</strong> {{ additional_attendees | join(", ") }}</div>
   {% endif %}
   {% if cancel_notice_min is defined and cancel_notice_min and cancel_notice_min > 0 %}
-    <p class="muted" style="font-size: 0.875rem; color: var(--text-muted); margin-top: 0.75rem;">{{ t("confirmed-cancel-notice-info", minutes=cancel_notice_min) }}</p>
+    <p class="muted" style="font-size: 0.875rem; color: var(--text-muted); margin-top: 0.75rem;">{{ t("confirmed-cancel-notice-info", duration=duration_words(cancel_notice_min)) }}</p>
   {% endif %}
   {% if reschedule_notice_min is defined and reschedule_notice_min and reschedule_notice_min > 0 %}
-    <p class="muted" style="font-size: 0.875rem; color: var(--text-muted); margin-top: 0.25rem;">{{ t("confirmed-reschedule-notice-info", minutes=reschedule_notice_min) }}</p>
+    <p class="muted" style="font-size: 0.875rem; color: var(--text-muted); margin-top: 0.25rem;">{{ t("confirmed-reschedule-notice-info", duration=duration_words(reschedule_notice_min)) }}</p>
   {% endif %}
 </div>
 {% if ics_url is defined and ics_url and not pending %}

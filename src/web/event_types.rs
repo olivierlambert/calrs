@@ -145,40 +145,86 @@ pub(super) async fn owns_or_admins_team_of(
         > 0
 }
 
-/// Look up an event type by slug that the (non-admin) user is allowed to
-/// manage. Personal events resolve via the account owner; team events resolve
-/// via team admin role. Global admins should bypass this and look up by slug
-/// directly. Returns (id, title, team_id).
-///
-/// If the user has both a personal event and a team event with the same slug,
-/// the personal event wins. Branch order in `UNION ALL` is not guaranteed by
-/// SQL, so we wrap it in a subquery and order by `team_id IS NULL DESC`
-/// (i.e. NULLs first → personal first) to make the resolution deterministic.
-pub(super) async fn find_manageable_event_type_by_slug(
+/// The ids of the event types called `slug` that `user` may manage, at most
+/// two: enough to tell "exactly one" from "several". A global admin may
+/// manage every event type; anyone else their own personal ones and those
+/// of the teams they admin. Slugs are unique per account and per team, not
+/// across them, so a slug alone can name several event types (#85,
+/// FINDING-15): callers act only on exactly one.
+pub(super) async fn manageable_event_type_ids_by_slug(
     pool: &SqlitePool,
-    user_id: &str,
+    user: &crate::models::User,
     slug: &str,
-) -> Option<(String, String, Option<String>)> {
-    sqlx::query_as(
-        "SELECT id, title, team_id FROM (
-             SELECT et.id, et.title, et.team_id FROM event_types et
-             JOIN accounts a ON a.id = et.account_id
-             WHERE a.user_id = ? AND et.slug = ? AND et.team_id IS NULL
-             UNION ALL
-             SELECT et.id, et.title, et.team_id FROM event_types et
-             JOIN team_members tm ON tm.team_id = et.team_id
-             WHERE tm.user_id = ? AND tm.role = 'admin' AND et.slug = ? AND et.team_id IS NOT NULL
-         )
-         ORDER BY (team_id IS NULL) DESC
-         LIMIT 1",
-    )
-    .bind(user_id)
-    .bind(slug)
-    .bind(user_id)
-    .bind(slug)
-    .fetch_optional(pool)
-    .await
-    .unwrap_or(None)
+) -> Vec<String> {
+    let ids = if user.role == "admin" {
+        sqlx::query_scalar("SELECT id FROM event_types WHERE slug = ? ORDER BY id LIMIT 2")
+            .bind(slug)
+            .fetch_all(pool)
+            .await
+    } else {
+        sqlx::query_scalar(
+            "SELECT id FROM (
+                 SELECT et.id FROM event_types et
+                 JOIN accounts a ON a.id = et.account_id
+                 WHERE a.user_id = ? AND et.slug = ? AND et.team_id IS NULL
+                 UNION
+                 SELECT et.id FROM event_types et
+                 JOIN team_members tm ON tm.team_id = et.team_id
+                 WHERE tm.user_id = ? AND tm.role = 'admin' AND et.slug = ?
+             )
+             ORDER BY id
+             LIMIT 2",
+        )
+        .bind(&user.id)
+        .bind(slug)
+        .bind(&user.id)
+        .bind(slug)
+        .fetch_all(pool)
+        .await
+    };
+    ids.unwrap_or_default()
+}
+
+/// What the `{key}` of an overrides URL names. The pages are addressed by
+/// event type id; a slug is the URL they had before #85, kept working only
+/// when it names exactly one event type the user may manage.
+pub(super) enum OverridesTarget {
+    /// An event type the user may manage: (id, title, team_id).
+    EventType(String, String, Option<String>),
+    /// A slug naming exactly one event type the user may manage: its id.
+    LegacySlug(String),
+    /// Nothing the user may manage, or a slug several event types share.
+    NotFound,
+}
+
+pub(super) async fn resolve_overrides_target(
+    pool: &SqlitePool,
+    user: &crate::models::User,
+    key: &str,
+) -> OverridesTarget {
+    let by_id: Option<(String, String, Option<String>)> =
+        sqlx::query_as("SELECT id, title, team_id FROM event_types WHERE id = ?")
+            .bind(key)
+            .fetch_optional(pool)
+            .await
+            .unwrap_or(None);
+    if let Some((id, title, team_id)) = by_id {
+        if can_manage_event_type(pool, user, &id).await {
+            return OverridesTarget::EventType(id, title, team_id);
+        }
+    }
+    match manageable_event_type_ids_by_slug(pool, user, key)
+        .await
+        .as_slice()
+    {
+        [id] => OverridesTarget::LegacySlug(id.clone()),
+        _ => OverridesTarget::NotFound,
+    }
+}
+
+/// The overrides page of event type `et_id`.
+pub(super) fn overrides_url(et_id: &str) -> String {
+    format!("/dashboard/event-types/{et_id}/overrides")
 }
 
 /// The phone mode persisted on an event type. A vanished row or a failed
@@ -222,6 +268,8 @@ pub(super) struct EventTypeForm {
     pub(super) visibility: Option<String>, // "public", "internal", or "private"
     pub(super) location_type: Option<String>, // "link", "phone", "in_person", "custom", "jitsi_auto", "webhook_auto", "google_meet"
     pub(super) location_value: Option<String>,
+    /// The landing page section, free text; absent: left as stored.
+    pub(super) section: Option<String>,
     // Optional per-event-type pattern override for the jitsi_auto provider.
     // NULL/empty falls back to the org-wide default pattern from auth_config.
     meeting_pattern_override: Option<String>,
@@ -385,6 +433,108 @@ pub(super) fn validate_event_type_form(form: &EventTypeForm) -> Result<String, &
         return Err("form-error-slug-charset");
     }
     Ok(slug)
+}
+
+/// The scheduling mode a team event type form posted: `collective`, or
+/// `round_robin` for anything else, including a form without the field.
+pub(super) fn posted_scheduling_mode(form: &EventTypeForm) -> &'static str {
+    match form.scheduling_mode.as_deref() {
+        Some("collective") => "collective",
+        _ => "round_robin",
+    }
+}
+
+/// The visibility an event type form posted, `public` unless it is one of
+/// the three known values.
+fn posted_visibility(form: &EventTypeForm) -> &'static str {
+    match form.visibility.as_deref() {
+        Some("internal") => "internal",
+        Some("private") => "private",
+        _ => "public",
+    }
+}
+
+/// The reminder lead time an event type form posted, in minutes; `None`
+/// (no reminder) when blank or zero.
+fn posted_reminder_minutes(form: &EventTypeForm) -> Option<i32> {
+    Some(parse_int_field(&form.reminder_minutes, 0)).filter(|v| *v > 0)
+}
+
+/// Stores the member weights the create form posts for a new team event
+/// type (`"uid1:3,uid2:1"`: round-robin priority 1 to 3, or 0 for a member a
+/// collective event type excludes), inside the event type's transaction.
+/// Weights are clamped to the 0..=3 the edit form's priority buttons
+/// produce, and entries for users who are not members of `team_id` are
+/// ignored.
+async fn save_created_member_weights(
+    tx: &mut Tx<'_>,
+    et_id: &str,
+    team_id: &str,
+    raw: &str,
+) -> sqlx::Result<()> {
+    if raw.is_empty() {
+        return Ok(());
+    }
+    let members: std::collections::HashSet<String> =
+        sqlx::query_scalar("SELECT user_id FROM team_members WHERE team_id = ?")
+            .bind(team_id)
+            .fetch_all(&mut **tx)
+            .await?
+            .into_iter()
+            .collect();
+    for entry in raw.split(',') {
+        let Some((uid, weight)) = entry.split_once(':') else {
+            continue;
+        };
+        let uid = uid.trim();
+        if !members.contains(uid) {
+            continue;
+        }
+        let weight = weight.trim().parse::<i64>().unwrap_or(1).clamp(0, 3);
+        sqlx::query(
+            "INSERT OR REPLACE INTO event_type_member_weights (event_type_id, user_id, weight) VALUES (?, ?, ?)",
+        )
+        .bind(et_id)
+        .bind(uid)
+        .bind(weight)
+        .execute(&mut **tx)
+        .await?;
+    }
+    Ok(())
+}
+
+/// Replaces the watcher teams of `et_id` with those a team event type form
+/// posted (comma-separated team ids), inside the event type's transaction.
+/// Absent (a form without the section) leaves them as stored. Ids outside
+/// `allowed` are ignored: a team admin cannot have another team's members
+/// emailed the bookings. Teams in `keep` (attached watchers the editor may
+/// not change, see [`locked_watcher_teams`]) stay whatever was posted.
+async fn save_watcher_teams(
+    tx: &mut Tx<'_>,
+    et_id: &str,
+    raw: Option<&str>,
+    allowed: &std::collections::HashSet<String>,
+    keep: &std::collections::HashSet<String>,
+) -> sqlx::Result<()> {
+    let Some(raw) = raw else { return Ok(()) };
+    sqlx::query("DELETE FROM event_type_watchers WHERE event_type_id = ?")
+        .bind(et_id)
+        .execute(&mut **tx)
+        .await?;
+    let posted = raw
+        .split(',')
+        .map(str::trim)
+        .filter(|wid| allowed.contains(*wid));
+    for wid in posted.chain(keep.iter().map(String::as_str)) {
+        sqlx::query(
+            "INSERT OR IGNORE INTO event_type_watchers (event_type_id, team_id) VALUES (?, ?)",
+        )
+        .bind(et_id)
+        .bind(wid)
+        .execute(&mut **tx)
+        .await?;
+    }
+    Ok(())
 }
 
 /// Template context for the "Required resources" section of the event type
@@ -578,6 +728,12 @@ pub(super) async fn new_event_type_form(
     // teams in the dropdown.
     let groups_ctx =
         form_teams_with_members(&state.pool, &form_admin_teams(&state.pool, user).await).await;
+    // Watcher teams, offered once a team is picked.
+    let watcher_teams_ctx = if groups_ctx.is_empty() {
+        Vec::new()
+    } else {
+        form_watcher_teams(&state.pool, user).await
+    };
     let calendars_ctx = form_calendars(&state.pool, &user.id).await;
 
     // Pre-fill availability from user's default schedule
@@ -607,6 +763,9 @@ pub(super) async fn new_event_type_form(
             editing => false,
             preset => preset,
             teams => groups_ctx,
+            watcher_teams => watcher_teams_ctx,
+            selected_watcher_team_ids => "",
+            form_scheduling_mode => "round_robin",
             calendars => calendars_ctx,
             selected_calendar_ids => "",
             write_destination => destination_form_ctx(&state.pool, &user.id, auth_user.lang, None, "").await,
@@ -628,6 +787,9 @@ pub(super) async fn new_event_type_form(
             form_requires_confirmation => matches!(preset, "private"),
             form_visibility => match preset { "private" => "private", "internal" => "internal", _ => "public" },
             form_location_type => "link",
+            form_section => "",
+            section_suggestions => section_suggestions(&state.pool, &user.id, None, true).await,
+            order_url => "/dashboard/event-types/order",
             form_location_value => "",
             form_meeting_pattern_override => "",
             form_avail_schedule => user_avail,
@@ -825,18 +987,12 @@ pub(super) async fn create_event_type(
         .into_response();
     }
 
-    let visibility = match form.visibility.as_deref().unwrap_or("public") {
-        v @ ("public" | "internal" | "private") => v.to_string(),
-        _ => "public".to_string(),
-    };
-
-    let reminder_minutes = {
-        let v = parse_int_field(&form.reminder_minutes, 0);
-        if v > 0 {
-            Some(v)
-        } else {
-            None
-        }
+    let visibility = posted_visibility(&form);
+    let reminder_minutes = posted_reminder_minutes(&form);
+    // Only a team event type has a scheduling mode of its own.
+    let scheduling_mode = match team_id {
+        Some(_) => posted_scheduling_mode(&form),
+        None => "round_robin",
     };
 
     let default_calendar_view = match form.default_calendar_view.as_deref().unwrap_or("month") {
@@ -859,13 +1015,19 @@ pub(super) async fn create_event_type(
         .filter(|s| !s.is_empty())
         .map(str::to_string);
 
-    // The event type and its booking questions (#210) are written in one
-    // transaction: a refused question list never leaves a half-saved type.
+    let watchable = match team_id {
+        Some(_) => watchable_team_ids(&state.pool, user).await,
+        None => Default::default(),
+    };
+
+    // The event type, its booking questions (#210) and a team event type's
+    // member weights and watchers are written in one transaction: a refused
+    // question list never leaves a half-saved type.
     let written = async {
         let mut tx = state.pool.begin().await?;
         sqlx::query(
-            "INSERT INTO event_types (id, account_id, slug, title, description, duration_min, slot_interval_min, buffer_before, buffer_after, min_notice_min, requires_confirmation, location_type, location_value, team_id, created_by_user_id, reminder_minutes, visibility, max_additional_guests, default_calendar_view, first_slot_only, timezone, cancel_notice_min, reschedule_notice_min, meeting_pattern_override, sms_phone_mode, guest_email_footer, booking_horizon_days, bookable_from, bookable_until, week_start)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO event_types (id, account_id, slug, title, description, duration_min, slot_interval_min, buffer_before, buffer_after, min_notice_min, requires_confirmation, location_type, location_value, team_id, created_by_user_id, reminder_minutes, visibility, max_additional_guests, scheduling_mode, default_calendar_view, first_slot_only, timezone, cancel_notice_min, reschedule_notice_min, meeting_pattern_override, sms_phone_mode, guest_email_footer, booking_horizon_days, bookable_from, bookable_until, week_start)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&et_id)
         .bind(&account_id)
@@ -883,8 +1045,9 @@ pub(super) async fn create_event_type(
         .bind(team_id)
         .bind(if team_id.is_some() { Some(&user.id) } else { None })
         .bind(reminder_minutes)
-        .bind(&visibility)
+        .bind(visibility)
         .bind(parse_int_field(&form.max_additional_guests, 0))
+        .bind(scheduling_mode)
         .bind(&default_calendar_view)
         .bind(first_slot_only as i32)
         .bind(&timezone)
@@ -906,6 +1069,18 @@ pub(super) async fn create_event_type(
             form.notes_mode.as_deref(),
         )
         .await?;
+        save_section_in(&mut tx, &et_id, form.section.as_deref()).await?;
+        if let Some(tid) = team_id {
+            save_created_member_weights(&mut tx, &et_id, tid, &form.member_priorities).await?;
+            save_watcher_teams(
+                &mut tx,
+                &et_id,
+                form.watcher_team_ids.as_deref(),
+                &watchable,
+                &std::collections::HashSet::new(),
+            )
+            .await?;
+        }
         tx.commit().await
     }
     .await;
@@ -959,39 +1134,6 @@ pub(super) async fn create_event_type(
                 .bind(cal_id)
                 .execute(&state.pool)
                 .await;
-            }
-        }
-    }
-
-    // Save member priorities (creation flow: "uid1:3,uid2:1,uid3:2")
-    // Only insert weights for users who are actually team members.
-    if let Some(tid) = team_id {
-        if !form.member_priorities.is_empty() {
-            let valid_members: Vec<(String,)> =
-                sqlx::query_as("SELECT user_id FROM team_members WHERE team_id = ?")
-                    .bind(tid)
-                    .fetch_all(&state.pool)
-                    .await
-                    .unwrap_or_default();
-            let valid_set: std::collections::HashSet<&str> =
-                valid_members.iter().map(|(id,)| id.as_str()).collect();
-
-            for entry in form.member_priorities.split(',') {
-                let parts: Vec<&str> = entry.split(':').collect();
-                if parts.len() == 2 {
-                    let uid = parts[0].trim();
-                    let weight: i64 = parts[1].trim().parse().unwrap_or(1);
-                    if !uid.is_empty() && valid_set.contains(uid) {
-                        let _ = sqlx::query(
-                            "INSERT OR REPLACE INTO event_type_member_weights (event_type_id, user_id, weight) VALUES (?, ?, ?)",
-                        )
-                        .bind(&et_id)
-                        .bind(uid)
-                        .bind(weight)
-                        .execute(&state.pool)
-                        .await;
-                    }
-                }
             }
         }
     }
@@ -1263,6 +1405,7 @@ pub(super) async fn edit_event_type_form(
     Html(
         tmpl.render(context! {
             editing => true,
+            overrides_url => overrides_url(&et_id),
             form_enabled => event_type_enabled(&state.pool, &et_id).await,
             toggle_url => format!("/dashboard/event-types/{et_slug}/toggle"),
             original_slug => et_slug,
@@ -1295,6 +1438,9 @@ pub(super) async fn edit_event_type_form(
             form_sms_phone_mode => form_sms_phone_mode,
             form_visibility => visibility,
             form_location_type => loc_type,
+            form_section => stored_section(&state.pool, &et_id).await,
+            section_suggestions => section_suggestions(&state.pool, &user.id, None, true).await,
+            order_url => "/dashboard/event-types/order",
             form_location_value => loc_value.unwrap_or_default(),
             form_meeting_pattern_override => meeting_pattern_override.clone().unwrap_or_default(),
             form_avail_days => avail_days,
@@ -1424,26 +1570,17 @@ pub(super) async fn update_event_type(
     // `None` keeps the stored footer: the update below leaves the column.
     let guest_email_footer =
         resolve_guest_footer(&state.pool, user, form.guest_email_footer.as_deref()).await;
-    let visibility = match form.visibility.as_deref().unwrap_or("public") {
-        v @ ("public" | "internal" | "private") => v.to_string(),
-        _ => "public".to_string(),
-    };
+    let visibility = posted_visibility(&form);
 
-    // Check slug uniqueness if changed
+    // Check slug uniqueness (and the reserved slug) if changed
     if new_slug != slug {
-        let existing: Option<(String,)> =
-            sqlx::query_as("SELECT id FROM event_types WHERE account_id = ? AND slug = ?")
-                .bind(&account_id)
-                .bind(&new_slug)
-                .fetch_optional(&state.pool)
-                .await
-                .unwrap_or(None);
-
-        if existing.is_some() {
+        if let Some(key) =
+            slug_conflict(&state.pool, &new_slug, &account_id, None, Some(&et_id)).await
+        {
             return render_event_type_form_error(
                 &state,
                 &auth_user,
-                &crate::i18n::translate(auth_user.lang, "form-error-event-type-slug-taken", None),
+                &crate::i18n::translate(auth_user.lang, key, None),
                 &form,
                 FormTarget::EditPersonal {
                     et_id: &et_id,
@@ -1540,14 +1677,7 @@ pub(super) async fn update_event_type(
         .into_response();
     }
 
-    let reminder_minutes = {
-        let v = parse_int_field(&form.reminder_minutes, 0);
-        if v > 0 {
-            Some(v)
-        } else {
-            None
-        }
-    };
+    let reminder_minutes = posted_reminder_minutes(&form);
 
     let default_calendar_view = match form.default_calendar_view.as_deref().unwrap_or("month") {
         v @ ("month" | "week" | "column") => v.to_string(),
@@ -1591,9 +1721,10 @@ pub(super) async fn update_event_type(
         .bind(location_type)
         .bind(location_value)
         .bind(reminder_minutes)
-        .bind(&visibility)
+        .bind(visibility)
         .bind(parse_int_field(&form.max_additional_guests, 0))
-        .bind(form.scheduling_mode.as_deref().unwrap_or("round_robin"))
+        // A personal event type has no scheduling mode of its own.
+        .bind("round_robin")
         .bind(&default_calendar_view)
         .bind(if form.first_slot_only.as_deref() == Some("on") { 1 } else { 0 })
         .bind(&timezone)
@@ -1618,6 +1749,7 @@ pub(super) async fn update_event_type(
             form.notes_mode.as_deref(),
         )
         .await?;
+        save_section_in(&mut tx, &et_id, form.section.as_deref()).await?;
         tx.commit().await
     }
     .await;
@@ -2110,13 +2242,10 @@ async fn form_priority_members(
         .collect()
 }
 
-/// Teams offered as watchers on a team event type's edit form: every team
-/// for a global admin, otherwise the teams `user` belongs to.
-async fn form_watcher_teams(
-    pool: &SqlitePool,
-    user: &crate::models::User,
-) -> Vec<minijinja::Value> {
-    let teams: Vec<(String, String)> = if user.role == "admin" {
+/// Teams `user` may name as watchers of a team event type: every team for
+/// a global admin, otherwise the teams `user` belongs to.
+async fn watchable_teams(pool: &SqlitePool, user: &crate::models::User) -> Vec<(String, String)> {
+    if user.role == "admin" {
         sqlx::query_as("SELECT id, name FROM teams ORDER BY name")
             .fetch_all(pool)
             .await
@@ -2129,8 +2258,74 @@ async fn form_watcher_teams(
         .fetch_all(pool)
         .await
         .unwrap_or_default()
-    };
-    teams
+    }
+}
+
+/// The ids of [`watchable_teams`].
+async fn watchable_team_ids(
+    pool: &SqlitePool,
+    user: &crate::models::User,
+) -> std::collections::HashSet<String> {
+    watchable_teams(pool, user)
+        .await
+        .into_iter()
+        .map(|(id, _)| id)
+        .collect()
+}
+
+/// Watcher teams attached to `et_id` that `user` may not change, because
+/// they are not among [`watchable_teams`] (id, name, private), by name. The
+/// edit form shows them as read-only rows and the save keeps them (#405).
+/// Empty for a global admin.
+async fn locked_watcher_teams(
+    pool: &SqlitePool,
+    user: &crate::models::User,
+    et_id: &str,
+) -> Vec<(String, String, bool)> {
+    let watchable = watchable_team_ids(pool, user).await;
+    let attached: Vec<(String, String, bool)> = sqlx::query_as(
+        "SELECT t.id, t.name, t.visibility = 'private' FROM event_type_watchers w \
+         JOIN teams t ON t.id = w.team_id WHERE w.event_type_id = ? ORDER BY t.name",
+    )
+    .bind(et_id)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
+    attached
+        .into_iter()
+        .filter(|(id, _, _)| !watchable.contains(id))
+        .collect()
+}
+
+/// [`locked_watcher_teams`] as template context. A private team's name is
+/// not shown to someone outside it: it reads "A private team".
+async fn form_locked_watcher_teams(
+    pool: &SqlitePool,
+    user: &crate::models::User,
+    et_id: &str,
+    lang: &str,
+) -> Vec<minijinja::Value> {
+    locked_watcher_teams(pool, user, et_id)
+        .await
+        .into_iter()
+        .map(|(id, name, private)| {
+            let name = if private {
+                crate::i18n::translate(lang, "etf-watcher-team-private", None)
+            } else {
+                name
+            };
+            context! { id => id, name => name }
+        })
+        .collect()
+}
+
+/// [`watchable_teams`], for the watcher section of the event type form.
+async fn form_watcher_teams(
+    pool: &SqlitePool,
+    user: &crate::models::User,
+) -> Vec<minijinja::Value> {
+    watchable_teams(pool, user)
+        .await
         .iter()
         .map(|(id, name)| context! { id => id, name => name })
         .collect()
@@ -2164,7 +2359,7 @@ async fn form_dg_eligible_users(pool: &SqlitePool, user_id: &str) -> Vec<minijin
 /// (personal and team event types alike, since a team event type is stored
 /// under its creator's account) and per team (#313). `exclude_id` is the event
 /// type being edited.
-async fn slug_conflict(
+pub(super) async fn slug_conflict(
     pool: &SqlitePool,
     slug: &str,
     account_id: &str,
@@ -2284,29 +2479,27 @@ async fn render_event_type_form_error(
         target,
         FormTarget::EditPersonal { .. } | FormTarget::EditTeam { .. }
     );
-    let scheduling_mode = match form.scheduling_mode.as_deref() {
-        Some("collective") => "collective",
-        _ => "round_robin",
-    };
+    let scheduling_mode = posted_scheduling_mode(form);
     let posted_team = form.team_id.as_deref().unwrap_or("");
     let (is_group, form_team_id) = match target {
         FormTarget::NewTeam { team_id } | FormTarget::EditTeam { team_id, .. } => (true, team_id),
         _ => (false, posted_team),
     };
     let teams = match target {
-        FormTarget::NewPersonal => {
+        FormTarget::NewPersonal | FormTarget::NewTeam { .. } => {
             form_teams_with_members(pool, &form_admin_teams(pool, user).await).await
         }
-        FormTarget::NewTeam { .. } => form_admin_teams(pool, user)
-            .await
-            .iter()
-            .map(|(id, name)| context! { id => id, name => name })
-            .collect(),
         _ => Vec::new(),
     };
     let watcher_teams = match target {
-        FormTarget::NewTeam { .. } => teams.clone(),
-        FormTarget::EditTeam { .. } => form_watcher_teams(pool, user).await,
+        FormTarget::EditPersonal { .. } => Vec::new(),
+        FormTarget::NewPersonal if teams.is_empty() => Vec::new(),
+        _ => form_watcher_teams(pool, user).await,
+    };
+    let locked_watcher_teams = match target {
+        FormTarget::EditTeam { et_id, .. } => {
+            form_locked_watcher_teams(pool, user, et_id, auth_user.lang).await
+        }
         _ => Vec::new(),
     };
     let priority_members = match target {
@@ -2405,6 +2598,12 @@ async fn render_event_type_form_error(
             selected_resource_ids => form.resource_ids.clone().unwrap_or_default(),
             resource_scheduling_mode => form.resource_scheduling_mode.as_deref().unwrap_or("all"),
             editing => editing,
+            overrides_url => match target {
+                FormTarget::EditPersonal { et_id, .. } | FormTarget::EditTeam { et_id, .. } => {
+                    overrides_url(et_id)
+                }
+                _ => String::new(),
+            },
             form_title => form.title.as_str(),
             form_slug => form.slug.as_str(),
             form_description => form.description.as_deref().unwrap_or(""),
@@ -2417,6 +2616,13 @@ async fn render_event_type_form_error(
             form_sms_phone_mode => crate::sms::phone_mode::parse(form.sms_phone_mode.as_deref().unwrap_or("")),
             form_visibility => form.visibility.as_deref().unwrap_or("public"),
             form_location_type => form.location_type.as_deref().unwrap_or("link"),
+            form_section => form.section.as_deref().unwrap_or(""),
+            section_suggestions => section_suggestions(pool, &user.id, (!form_team_id.is_empty()).then_some(form_team_id), form_team_id.is_empty()).await,
+            order_url => if !form_team_id.is_empty() {
+                format!("/dashboard/teams/{form_team_id}/order")
+            } else {
+                "/dashboard/event-types/order".to_string()
+            },
             form_location_value => form.location_value.as_deref().unwrap_or(""),
             form_meeting_pattern_override => form.meeting_pattern_override.as_deref().unwrap_or(""),
             form_avail_days => form.avail_days.as_deref().unwrap_or("1,2,3,4,5"),
@@ -2459,6 +2665,7 @@ async fn render_event_type_form_error(
             form_team_id => form_team_id,
             teams => teams,
             watcher_teams => watcher_teams,
+            locked_watcher_teams => locked_watcher_teams,
             selected_watcher_team_ids => form.watcher_team_ids.as_deref().unwrap_or(""),
             is_round_robin_group => is_group && scheduling_mode == "round_robin",
             is_collective_team => is_group && scheduling_mode == "collective",
@@ -2486,27 +2693,16 @@ async fn render_event_type_form_error(
 pub(super) async fn overrides_page(
     State(state): State<Arc<AppState>>,
     auth_user: crate::auth::AuthUser,
-    Path(slug): Path<String>,
+    Path(key): Path<String>,
 ) -> impl IntoResponse {
-    let user = &auth_user.user;
-    let is_global_admin = user.role == "admin";
-
-    let et: Option<(String, String, Option<String>)> = if is_global_admin {
-        sqlx::query_as(
-            "SELECT et.id, et.title, et.team_id FROM event_types et WHERE et.slug = ? LIMIT 1",
-        )
-        .bind(&slug)
-        .fetch_optional(&state.pool)
-        .await
-        .unwrap_or(None)
-    } else {
-        find_manageable_event_type_by_slug(&state.pool, &user.id, &slug).await
-    };
-
-    let (et_id, et_title, team_id) = match et {
-        Some(e) => e,
-        None => return Redirect::to("/dashboard/event-types").into_response(),
-    };
+    let (et_id, et_title, team_id) =
+        match resolve_overrides_target(&state.pool, &auth_user.user, &key).await {
+            OverridesTarget::EventType(id, title, team_id) => (id, title, team_id),
+            OverridesTarget::LegacySlug(id) => {
+                return Redirect::to(&overrides_url(&id)).into_response()
+            }
+            OverridesTarget::NotFound => return dashboard_not_found(&state, &auth_user),
+        };
     let is_team = team_id.is_some();
 
     let overrides: Vec<(String, String, Option<String>, Option<String>, i32)> = sqlx::query_as(
@@ -2547,7 +2743,7 @@ pub(super) async fn overrides_page(
             sidebar => sidebar_context(&auth_user, "event-types"),
             lang => auth_user.lang,
             event_type_title => et_title,
-            event_type_slug => slug,
+            event_type_id => et_id,
             overrides => overrides_ctx,
             is_team => is_team,
             impersonating => impersonating,
@@ -2571,35 +2767,25 @@ pub(super) async fn create_override(
     State(state): State<Arc<AppState>>,
     auth_user: crate::auth::AuthUser,
     headers: HeaderMap,
-    Path(slug): Path<String>,
+    Path(key): Path<String>,
     Form(form): Form<OverrideForm>,
 ) -> impl IntoResponse {
     if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
         return resp;
     }
     let user = &auth_user.user;
-    let is_global_admin = user.role == "admin";
 
-    let et_id: Option<String> = if is_global_admin {
-        sqlx::query_scalar("SELECT id FROM event_types WHERE slug = ? LIMIT 1")
-            .bind(&slug)
-            .fetch_optional(&state.pool)
-            .await
-            .unwrap_or(None)
-    } else {
-        find_manageable_event_type_by_slug(&state.pool, &user.id, &slug)
-            .await
-            .map(|(id, _, _)| id)
+    // A form from a page opened before the URLs moved to ids still posts to
+    // the slug: accepted when the slug names exactly one event type.
+    let et_id = match resolve_overrides_target(&state.pool, user, &key).await {
+        OverridesTarget::EventType(id, _, _) | OverridesTarget::LegacySlug(id) => id,
+        OverridesTarget::NotFound => return dashboard_not_found(&state, &auth_user),
     };
-
-    let et_id = match et_id {
-        Some(id) => id,
-        None => return Redirect::to("/dashboard/event-types").into_response(),
-    };
+    let back = overrides_url(&et_id);
 
     // Validate date
     if NaiveDate::parse_from_str(&form.date, "%Y-%m-%d").is_err() {
-        return Redirect::to(&format!("/dashboard/event-types/{}/overrides", slug)).into_response();
+        return Redirect::to(&back).into_response();
     }
 
     let is_blocked = form.override_type != "custom";
@@ -2607,8 +2793,7 @@ pub(super) async fn create_override(
         let s = form.start_time.as_deref().unwrap_or("");
         let e = form.end_time.as_deref().unwrap_or("");
         if s.is_empty() || e.is_empty() || s >= e {
-            return Redirect::to(&format!("/dashboard/event-types/{}/overrides", slug))
-                .into_response();
+            return Redirect::to(&back).into_response();
         }
         (Some(s.to_string()), Some(e.to_string()))
     } else {
@@ -2630,13 +2815,13 @@ pub(super) async fn create_override(
 
     tracing::info!(
         override_id = %id,
-        event_type = %slug,
+        event_type_id = %et_id,
         date = %form.date,
         is_blocked = is_blocked,
         "availability override created"
     );
 
-    Redirect::to(&format!("/dashboard/event-types/{}/overrides", slug)).into_response()
+    Redirect::to(&back).into_response()
 }
 
 #[derive(Deserialize)]
@@ -2648,7 +2833,7 @@ pub(super) async fn delete_override(
     State(state): State<Arc<AppState>>,
     auth_user: crate::auth::AuthUser,
     headers: HeaderMap,
-    Path((slug, override_id)): Path<(String, String)>,
+    Path((key, override_id)): Path<(String, String)>,
     Form(form): Form<DeleteOverrideForm>,
 ) -> impl IntoResponse {
     if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
@@ -2665,6 +2850,8 @@ pub(super) async fn delete_override(
             .await
             .unwrap_or(None);
 
+    // Back to the page of the override's own event type, whatever the URL
+    // said; the path key only matters when there is no such override.
     if let Some(et_id) = target_et_id {
         if can_manage_event_type(&state.pool, user, &et_id).await {
             let _ = sqlx::query("DELETE FROM availability_overrides WHERE id = ?")
@@ -2672,10 +2859,15 @@ pub(super) async fn delete_override(
                 .execute(&state.pool)
                 .await;
             tracing::info!(override_id = %override_id, deleted_by = %user.email, "availability override deleted");
+            return Redirect::to(&overrides_url(&et_id)).into_response();
         }
     }
 
-    Redirect::to(&format!("/dashboard/event-types/{}/overrides", slug)).into_response()
+    Redirect::to(&format!(
+        "/dashboard/event-types/{}/overrides",
+        urlencoding::encode(&key)
+    ))
+    .into_response()
 }
 
 // --- Group event type handlers ---
@@ -2697,20 +2889,15 @@ pub(super) async fn new_group_event_type_form(
         });
     }
 
-    let groups_ctx: Vec<minijinja::Value> = groups
-        .iter()
-        .map(|(id, name)| context! { id => id, name => name })
-        .collect();
+    // With their members, for the priority card of the creation flow.
+    let groups_ctx = form_teams_with_members(&state.pool, &groups).await;
 
     // Pre-fill availability from user's default schedule
     ensure_user_avail_seeded(&state.pool, &user.id).await;
     let user_avail = load_user_avail_schedule(&state.pool, &user.id).await;
 
-    // Load all teams for watcher selection (exclude the selected team itself in template)
-    let watcher_teams_ctx: Vec<minijinja::Value> = groups
-        .iter()
-        .map(|(id, name)| context! { id => id, name => name })
-        .collect();
+    // The same watcher choice as the edit form.
+    let watcher_teams_ctx = form_watcher_teams(&state.pool, user).await;
 
     let booking_form_ctx = questions::editor_context(&state.pool, None).await;
     let tmpl = match state.templates.get_template("event_type_form.html") {
@@ -2748,7 +2935,17 @@ pub(super) async fn new_group_event_type_form(
             form_buffer_after => 0,
             form_min_notice => 60,
             form_requires_confirmation => false,
+            form_scheduling_mode => "round_robin",
+            form_visibility => "public",
+            form_reminder_minutes => 1440,
+            form_max_additional_guests => 0,
             form_location_type => "link",
+            form_section => "",
+            section_suggestions => section_suggestions(&state.pool, &user.id, None, false).await,
+            order_url => groups
+                .first()
+                .map(|(id, _)| format!("/dashboard/teams/{id}/order"))
+                .unwrap_or_default(),
             form_location_value => "",
             form_meeting_pattern_override => "",
             form_avail_schedule => user_avail,
@@ -2944,13 +3141,16 @@ pub(super) async fn create_group_event_type(
         .filter(|s| !s.is_empty())
         .map(str::to_string);
 
-    // The event type and its booking questions (#210) are written in one
-    // transaction: a refused question list never leaves a half-saved type.
+    let watchable = watchable_team_ids(&state.pool, user).await;
+
+    // The event type, its booking questions (#210), member weights and
+    // watchers are written in one transaction: a refused question list never
+    // leaves a half-saved type.
     let written = async {
         let mut tx = state.pool.begin().await?;
         sqlx::query(
-            "INSERT INTO event_types (id, account_id, slug, title, description, duration_min, slot_interval_min, buffer_before, buffer_after, min_notice_min, requires_confirmation, location_type, location_value, team_id, created_by_user_id, default_calendar_view, first_slot_only, timezone, cancel_notice_min, reschedule_notice_min, meeting_pattern_override, sms_phone_mode, guest_email_footer, booking_horizon_days, bookable_from, bookable_until, week_start)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO event_types (id, account_id, slug, title, description, duration_min, slot_interval_min, buffer_before, buffer_after, min_notice_min, requires_confirmation, location_type, location_value, team_id, created_by_user_id, reminder_minutes, visibility, max_additional_guests, scheduling_mode, default_calendar_view, first_slot_only, timezone, cancel_notice_min, reschedule_notice_min, meeting_pattern_override, sms_phone_mode, guest_email_footer, booking_horizon_days, bookable_from, bookable_until, week_start)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&et_id)
         .bind(&account_id)
@@ -2967,6 +3167,10 @@ pub(super) async fn create_group_event_type(
         .bind(location_value)
         .bind(&team_id)
         .bind(&user.id)
+        .bind(posted_reminder_minutes(&form))
+        .bind(posted_visibility(&form))
+        .bind(parse_int_field(&form.max_additional_guests, 0))
+        .bind(posted_scheduling_mode(&form))
         .bind(&default_calendar_view)
         .bind(first_slot_only as i32)
         .bind(&timezone)
@@ -2986,6 +3190,16 @@ pub(super) async fn create_group_event_type(
             &et_id,
             booking_questions.as_deref(),
             form.notes_mode.as_deref(),
+        )
+        .await?;
+        save_section_in(&mut tx, &et_id, form.section.as_deref()).await?;
+        save_created_member_weights(&mut tx, &et_id, &team_id, &form.member_priorities).await?;
+        save_watcher_teams(
+            &mut tx,
+            &et_id,
+            form.watcher_team_ids.as_deref(),
+            &watchable,
+            &std::collections::HashSet::new(),
         )
         .await?;
         tx.commit().await
@@ -3030,22 +3244,6 @@ pub(super) async fn create_group_event_type(
             .bind(we)
             .execute(&state.pool)
             .await;
-        }
-    }
-
-    // Save watcher teams
-    if let Some(ref watcher_ids) = form.watcher_team_ids {
-        for wid in watcher_ids.split(',') {
-            let wid = wid.trim();
-            if !wid.is_empty() {
-                let _ = sqlx::query(
-                    "INSERT INTO event_type_watchers (event_type_id, team_id) VALUES (?, ?)",
-                )
-                .bind(&et_id)
-                .bind(wid)
-                .execute(&state.pool)
-                .await;
-            }
         }
     }
 
@@ -3271,6 +3469,8 @@ pub(super) async fn edit_group_event_type_form(
     };
 
     let watcher_teams_ctx = form_watcher_teams(&state.pool, user).await;
+    let locked_watcher_teams_ctx =
+        form_locked_watcher_teams(&state.pool, user, &et_id, auth_user.lang).await;
 
     // Load selected watcher team IDs
     let selected_watchers: Vec<(String,)> =
@@ -3333,6 +3533,7 @@ pub(super) async fn edit_group_event_type_form(
         tmpl.render(context! {
             editing => true,
             is_group => true,
+            overrides_url => overrides_url(&et_id),
             form_enabled => event_type_enabled(&state.pool, &et_id).await,
             toggle_url => format!("/dashboard/group-event-types/{team_id}/{et_slug}/toggle"),
             form_team_id => team_id,
@@ -3356,6 +3557,9 @@ pub(super) async fn edit_group_event_type_form(
             form_sms_phone_mode => form_sms_phone_mode,
             form_visibility => visibility,
             form_location_type => loc_type,
+            form_section => stored_section(&state.pool, &et_id).await,
+            section_suggestions => section_suggestions(&state.pool, &user.id, Some(&team_id), false).await,
+            order_url => format!("/dashboard/teams/{team_id}/order"),
             form_location_value => loc_value.unwrap_or_default(),
             form_meeting_pattern_override => meeting_pattern_override.clone().unwrap_or_default(),
             form_avail_days => avail_days,
@@ -3389,6 +3593,7 @@ pub(super) async fn edit_group_event_type_form(
             is_collective_team => is_collective_team,
             priority_members => members_ctx,
             watcher_teams => watcher_teams_ctx,
+            locked_watcher_teams => locked_watcher_teams_ctx,
             selected_watcher_team_ids => selected_watcher_team_ids,
             error => "",
             sidebar => sidebar_context(&auth_user, "event-types"),
@@ -3502,7 +3707,7 @@ pub(super) async fn update_group_event_type(
     // `None` keeps the stored footer: the update below leaves the column.
     let guest_email_footer =
         resolve_guest_footer(&state.pool, user, form.guest_email_footer.as_deref()).await;
-    let visibility = form.visibility.as_deref().unwrap_or("public").to_string();
+    let visibility = posted_visibility(&form);
 
     // Check slug uniqueness if changed: within the team, and within the
     // account the event type is stored under (its creator's).
@@ -3604,14 +3809,7 @@ pub(super) async fn update_group_event_type(
         .into_response();
     }
 
-    let reminder_minutes = {
-        let v = parse_int_field(&form.reminder_minutes, 0);
-        if v > 0 {
-            Some(v)
-        } else {
-            None
-        }
-    };
+    let reminder_minutes = posted_reminder_minutes(&form);
 
     let default_calendar_view = match form.default_calendar_view.as_deref().unwrap_or("month") {
         v @ ("month" | "week" | "column") => v.to_string(),
@@ -3636,8 +3834,20 @@ pub(super) async fn update_group_event_type(
         .filter(|s| !s.is_empty())
         .map(str::to_string);
 
-    // The event type and its booking questions (#210) are written in one
-    // transaction: a refused question list never leaves a half-saved type.
+    // A watcher team already attached that the editor may not change (they
+    // are not in it) stays, whatever the form posted: the form shows it as a
+    // read-only row (#405).
+    let watchable = watchable_team_ids(&state.pool, user).await;
+    let locked_watchers: std::collections::HashSet<String> =
+        locked_watcher_teams(&state.pool, user, &et_id)
+            .await
+            .into_iter()
+            .map(|(id, _, _)| id)
+            .collect();
+
+    // The event type, its booking questions (#210) and its watchers are
+    // written in one transaction: a refused question list never leaves a
+    // half-saved type.
     let written = async {
         let mut tx = state.pool.begin().await?;
         sqlx::query(
@@ -3655,9 +3865,9 @@ pub(super) async fn update_group_event_type(
         .bind(location_type)
         .bind(location_value)
         .bind(reminder_minutes)
-        .bind(&visibility)
+        .bind(visibility)
         .bind(parse_int_field(&form.max_additional_guests, 0))
-        .bind(form.scheduling_mode.as_deref().unwrap_or("round_robin"))
+        .bind(posted_scheduling_mode(&form))
         .bind(&default_calendar_view)
         .bind(if form.first_slot_only.as_deref() == Some("on") { 1 } else { 0 })
         .bind(&timezone)
@@ -3680,6 +3890,15 @@ pub(super) async fn update_group_event_type(
             &et_id,
             booking_questions.as_deref(),
             form.notes_mode.as_deref(),
+        )
+        .await?;
+        save_section_in(&mut tx, &et_id, form.section.as_deref()).await?;
+        save_watcher_teams(
+            &mut tx,
+            &et_id,
+            form.watcher_team_ids.as_deref(),
+            &watchable,
+            &locked_watchers,
         )
         .await?;
         tx.commit().await
@@ -3733,27 +3952,6 @@ pub(super) async fn update_group_event_type(
             .bind(we)
             .execute(&state.pool)
             .await;
-        }
-    }
-
-    // Update watcher teams: delete old, insert new
-    let _ = sqlx::query("DELETE FROM event_type_watchers WHERE event_type_id = ?")
-        .bind(&et_id)
-        .execute(&state.pool)
-        .await;
-
-    if let Some(ref watcher_ids) = form.watcher_team_ids {
-        for wid in watcher_ids.split(',') {
-            let wid = wid.trim();
-            if !wid.is_empty() {
-                let _ = sqlx::query(
-                    "INSERT INTO event_type_watchers (event_type_id, team_id) VALUES (?, ?)",
-                )
-                .bind(&et_id)
-                .bind(wid)
-                .execute(&state.pool)
-                .await;
-            }
         }
     }
 

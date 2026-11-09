@@ -328,7 +328,7 @@ async fn consume_code(
         .rows_affected()
             == 1);
     }
-    let secret = Zeroizing::new(crypto::decrypt_value(key, &encrypted)?);
+    let secret = crypto::decrypt_value(key, &encrypted)?;
     let Some(step) = matching_step(&secret, code, Utc::now().timestamp())? else {
         return Ok(false);
     };
@@ -431,7 +431,7 @@ async fn verify_challenge(
     let mut codes = Vec::new();
     if c.purpose == "enroll" {
         let encrypted = c.secret_enc.context("missing enrollment secret")?;
-        let secret = Zeroizing::new(crypto::decrypt_value(key, &encrypted)?);
+        let secret = crypto::decrypt_value(key, &encrypted)?;
         let Some(step) = matching_step(&secret, code, Utc::now().timestamp())? else {
             return Ok(None);
         };
@@ -473,8 +473,15 @@ pub fn router() -> Router<Arc<AppState>> {
 }
 
 fn render(state: &AppState, lang: &str, values: minijinja::Value) -> Response {
+    render_template(state, "auth/mfa.html", lang, values)
+}
+
+/// `name` rendered with a fresh CSRF token, never cached, never sent as a
+/// referrer: the login challenge (`auth/mfa.html`) and the owner's settings
+/// page in the dashboard (`mfa_settings.html`).
+fn render_template(state: &AppState, name: &str, lang: &str, values: minijinja::Value) -> Response {
     let csrf = web::generate_csrf_token();
-    let result = state.templates.get_template("auth/mfa.html").and_then(|t| {
+    let result = state.templates.get_template(name).and_then(|t| {
         t.render(minijinja::context! {
             lang => lang, csrf_token => csrf, ..values
         })
@@ -519,7 +526,7 @@ async fn challenge_view(
         return Ok(error(state, lang));
     };
     let (secret, qr) = if let Some(encrypted) = c.secret_enc {
-        let secret = Zeroizing::new(crypto::decrypt_value(&state.secret_key, &encrypted)?);
+        let secret = crypto::decrypt_value(&state.secret_key, &encrypted)?;
         let generator = totp(&secret, &c.email)?;
         (generator.secret().to_base32(), generator.to_qr_base64()?)
     } else {
@@ -615,11 +622,14 @@ async fn settings_page(State(state): State<Arc<AppState>>, user: auth::AuthUser)
     }
     .await;
     match result {
-        Ok((active, mandatory)) => render(
+        Ok((active, mandatory)) => render_template(
             &state,
+            "mfa_settings.html",
             user.lang,
             minijinja::context! {
-                mode => "settings", active => active, mandatory => mandatory,
+                sidebar => web::sidebar_context(&user, "settings"),
+                active => active,
+                mandatory => mandatory,
             },
         ),
         Err(e) => web::internal_error_response("MFA settings", &e),

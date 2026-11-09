@@ -1,6 +1,8 @@
 {% extends "dashboard_base.html" %}
 {% block title %}{{ t("admin-page-title") }}, calrs{% endblock %}
+{% block main_class %}has-cards{% endblock %}
 {% block dashboard_content %}
+{% import "partials/card_list.html" as cl %}
 {% macro icon(name) -%}
 {%- if name == "alert" -%}<svg class="adm-ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.5 15 14H1L8 1.5Z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M8 6v3.5M8 11.6v.4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
 {%- elif name == "warn" -%}<svg class="adm-ico" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 4.6v4M8 11v.4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
@@ -80,8 +82,9 @@
 
   {# A healthy instance shows nothing here: the masthead already says so. #}
   {% if attention %}
-  <section class="adm-sec adm-attention" aria-labelledby="adm-att-h">
-    <div class="adm-sec-h"><h2 id="adm-att-h">{{ t("admin-att-title") }}<span class="adm-n">{{ attention | length }}</span></h2></div>
+  <section class="card adm-sec adm-attention" aria-labelledby="adm-att-h">
+    <div class="card-head"><h2 id="adm-att-h">{{ t("admin-att-title") }}<span class="num">{{ attention | length }}</span></h2></div>
+    <div class="card-body">
     <ul class="adm-att-list">
       {% for a in attention %}
       {% set tab = "overview" if a.target in ["health", "overview"] else a.target %}
@@ -93,12 +96,14 @@
       </li>
       {% endfor %}
     </ul>
+    </div>
   </section>
   {% endif %}
 
     <!-- Bookings per week -->
-    <section class="adm-sec" aria-labelledby="adm-weekly-h">
-      <div class="adm-sec-h"><h2 id="adm-weekly-h">{{ t("admin-chart-weekly") }}<span class="adm-n">{{ stats.weekly_total }}</span></h2></div>
+    <section class="card adm-sec" aria-labelledby="adm-weekly-h">
+      <div class="card-head"><h2 id="adm-weekly-h">{{ t("admin-chart-weekly") }}<span class="num">{{ stats.weekly_total }}</span></h2></div>
+      <div class="card-body">
       <p class="adm-note">{{ t("admin-chart-weekly-help") }}{% if figures_age %} {{ t("admin-figures-cached", seconds=figures_age) }}{% endif %}</p>
       <div class="adm-chart" id="adm-weekly">
         <div class="adm-plot">
@@ -148,12 +153,14 @@
         </div>
       </details>
       {% endif %}
+      </div>
     </section>
 
   <div class="adm-cols adm-cols-even">
     <!-- Key figures -->
-    <section class="adm-sec" id="adm-kpis" aria-labelledby="adm-kpis-h">
-      <div class="adm-sec-h"><h2 id="adm-kpis-h">{{ t("admin-fig-title") }}</h2></div>
+    <section class="card adm-sec" id="adm-kpis" aria-labelledby="adm-kpis-h">
+      <div class="card-head"><h2 id="adm-kpis-h">{{ t("admin-fig-title") }}</h2></div>
+      <div class="card-body">
       <table class="adm-figs">
         <tr><th scope="row">{{ t("admin-kpi-bookings") }}</th><td class="adm-fig-n">{{ stats.bookings.created_30d }}</td><td class="adm-fig-cmp">{{ t("admin-kpi-prev", count=stats.bookings.created_prev_30d) }}</td></tr>
         <tr><th scope="row">{{ t("admin-kpi-upcoming") }}</th><td class="adm-fig-n">{{ stats.bookings.upcoming }}</td><td class="adm-fig-cmp">{{ t("admin-kpi-upcoming-week", count=stats.bookings.upcoming_7d) }}</td></tr>
@@ -161,11 +168,13 @@
         <tr><th scope="row">{{ t("admin-kpi-active") }}</th><td class="adm-fig-n">{{ stats.users.active_30d }}<span class="adm-of">/{{ stats.users.enabled }}</span></td><td class="adm-fig-cmp">{{ t("admin-kpi-active-sub") }}</td></tr>
         <tr><th scope="row">{{ t("admin-inv-new-users") }}</th><td class="adm-fig-n">{{ stats.users.new_30d }}</td><td class="adm-fig-cmp">{{ t("admin-kpi-prev", count=stats.users.new_prev_30d) }}</td></tr>
       </table>
+      </div>
     </section>
 
     <!-- Status breakdown -->
-    <section class="adm-sec" aria-labelledby="adm-status-h">
-      <div class="adm-sec-h"><h2 id="adm-status-h">{{ t("admin-status-title") }}<span class="adm-n">{{ stats.bookings.total }}</span></h2></div>
+    <section class="card adm-sec" aria-labelledby="adm-status-h">
+      <div class="card-head"><h2 id="adm-status-h">{{ t("admin-status-title") }}<span class="num">{{ stats.bookings.total }}</span></h2></div>
+      <div class="card-body">
       {% if stats.bookings.total > 0 %}
       <table class="adm-figs">
         {% for s in stats.status_segments %}
@@ -175,6 +184,7 @@
       {% else %}
       <p class="adm-empty">{{ t("admin-status-empty") }}</p>
       {% endif %}
+      </div>
     </section>
 
   </div>
@@ -182,8 +192,9 @@
   <div class="adm-cols adm-cols-even">
     <!-- Rankings -->
     {% for block in [("adm-top-et-h", t("admin-top-event-types"), stats.top_event_types), ("adm-top-hosts-h", t("admin-top-hosts"), stats.top_hosts)] %}
-    <section class="adm-sec" aria-labelledby="{{ block[0] }}">
-      <div class="adm-sec-h"><h2 id="{{ block[0] }}">{{ block[1] }}</h2><span class="adm-sec-aside">{{ t("admin-top-help") }}</span></div>
+    <section class="card adm-sec" aria-labelledby="{{ block[0] }}">
+      <div class="card-head"><h2 id="{{ block[0] }}">{{ block[1] }}</h2><span class="adm-sec-aside">{{ t("admin-top-help") }}</span></div>
+      <div class="card-body">
       {% if block[2] %}
       <table class="adm-figs adm-rank">
         {% for r in block[2] %}
@@ -197,14 +208,16 @@
       {% else %}
       <p class="adm-empty">{{ t("admin-top-empty") }}</p>
       {% endif %}
+      </div>
     </section>
     {% endfor %}
   </div>
 
   <div class="adm-cols adm-cols-even">
     <!-- Services -->
-    <section class="adm-sec" aria-labelledby="adm-svc-h">
-      <div class="adm-sec-h"><h2 id="adm-svc-h">{{ t("admin-svc-title") }}</h2></div>
+    <section class="card adm-sec" aria-labelledby="adm-svc-h">
+      <div class="card-head"><h2 id="adm-svc-h">{{ t("admin-svc-title") }}</h2></div>
+      <div class="card-body">
       <table class="adm-figs adm-svc">
         {% if smtp_error %}{{ svc("critical", t("admin-svc-email"), t("admin-state-error"), "notifications") }}
         {% elif smtp_configured and smtp_enabled %}{{ svc("ok", t("admin-svc-email"), t("admin-status-enabled"), "notifications") }}
@@ -226,10 +239,12 @@
         {{ svc("ok" if meeting_webhook_configured else "off", t("admin-svc-webhook"), t("admin-status-enabled") if meeting_webhook_configured else t("admin-status-disabled"), "meetings") }}
         {{ svc("ok" if base_url_set else "warning", t("admin-svc-base-url"), t("admin-status-configured") if base_url_set else t("admin-status-not-configured"), "system") }}
       </table>
+      </div>
     </section>
     <!-- Calendar health -->
-    <section class="adm-sec" id="adm-health" aria-labelledby="adm-health-h">
-      <div class="adm-sec-h"><h2 id="adm-health-h">{{ t("admin-health-title") }}<span class="adm-n">{{ stats.sources.total }}</span></h2></div>
+    <section class="card adm-sec" id="adm-health" aria-labelledby="adm-health-h">
+      <div class="card-head"><h2 id="adm-health-h">{{ t("admin-health-title") }}<span class="num">{{ stats.sources.total }}</span></h2></div>
+      <div class="card-body">
       <p class="adm-note">{{ t("admin-health-help") }}</p>
       {% if stats.sources.total > 0 %}
       <table class="adm-figs adm-health">
@@ -242,12 +257,14 @@
       {% else %}
       <p class="adm-empty">{{ t("admin-health-no-sources") }}</p>
       {% endif %}
+      </div>
     </section>
   </div>
 
     {% if stats.failing_sources %}
-    <section class="adm-sec">
-    <div class="adm-sec-h"><h2>{{ t("admin-health-failing-title") }}</h2></div>
+    <section class="card adm-sec">
+    <div class="card-head"><h2>{{ t("admin-health-failing-title") }}</h2></div>
+    <div class="card-body">
     <div class="adm-table-wrap">
       <table class="adm-table">
         <thead><tr><th>{{ t("admin-health-col-source") }}</th><th>{{ t("admin-health-col-owner") }}</th><th>{{ t("admin-health-col-error") }}</th><th>{{ t("admin-health-col-since") }}</th></tr></thead>
@@ -264,12 +281,14 @@
       </table>
     </div>
     <p class="adm-note">{{ t("admin-health-owner-hint") }}</p>
-    </section>
+    </div>
+  </section>
     {% endif %}
 
     {% if stats.writeback_failures %}
-    <section class="adm-sec">
-    <div class="adm-sec-h"><h2>{{ t("admin-health-writeback-title") }}</h2></div>
+    <section class="card adm-sec">
+    <div class="card-head"><h2>{{ t("admin-health-writeback-title") }}</h2></div>
+    <div class="card-body">
     <div class="adm-table-wrap">
       <table class="adm-table">
         <thead><tr><th>{{ t("admin-health-col-booking") }}</th><th>{{ t("admin-health-col-host") }}</th><th>{{ t("admin-health-col-error") }}</th><th>{{ t("admin-health-col-retry") }}</th></tr></thead>
@@ -285,23 +304,27 @@
         </tbody>
       </table>
     </div>
-    </section>
+    </div>
+  </section>
     {% endif %}
 
     {% if stats.failing_resources %}
-    <section class="adm-sec">
-    <div class="adm-sec-h"><h2>{{ t("admin-health-resources-title") }}</h2></div>
+    <section class="card adm-sec">
+    <div class="card-head"><h2>{{ t("admin-health-resources-title") }}</h2></div>
+    <div class="card-body">
     <table class="adm-figs">
       {% for r in stats.failing_resources %}
       <tr><th scope="row">{{ r.name }}</th><td class="adm-error-text">{{ r.error }}</td></tr>
       {% endfor %}
     </table>
-    </section>
+    </div>
+  </section>
     {% endif %}
 
   <!-- Inventory -->
-  <section class="adm-sec" aria-labelledby="adm-inv-h">
-    <div class="adm-sec-h"><h2 id="adm-inv-h">{{ t("admin-inv-title") }}</h2></div>
+  <section class="card adm-sec" aria-labelledby="adm-inv-h">
+    <div class="card-head"><h2 id="adm-inv-h">{{ t("admin-inv-title") }}</h2></div>
+    <div class="card-body">
     <table class="adm-figs adm-inv">
       <tr><th scope="row">{{ t("admin-inv-users") }}</th><td class="adm-fig-n">{{ stats.users.total }}</td><td class="adm-fig-cmp">{{ t("admin-inv-users-sub", admins=stats.users.admins, disabled=stats.users.disabled) }}; {{ t("admin-inv-signin-sub", local=stats.users.local, sso=stats.users.oidc) }}</td></tr>
       <tr><th scope="row">{{ t("mfa-title") }}</th><td class="adm-fig-n">{{ stats.users.mfa_enrolled }}<span class="adm-of">/{{ stats.users.local }}</span></td><td class="adm-fig-cmp">{{ t("admin-inv-mfa-sub") }}</td></tr>
@@ -314,6 +337,7 @@
       <tr><th scope="row">{{ t("admin-inv-sms") }}</th><td class="adm-fig-n">{{ stats.sms.sent_30d }}</td><td class="adm-fig-cmp">{% if stats.sms.currency %}{{ stats.sms.cost_30d }} {{ stats.sms.currency }}, {% endif %}{{ t("admin-inv-sms-today", count=sms_sent_today) }}</td></tr>
       {% endif %}
     </table>
+    </div>
   </section>
 </section>
 
@@ -321,48 +345,40 @@
 <section class="adm-panel" id="panel-users" role="tabpanel" data-panel="users" aria-label="{{ t('admin-tab-users') }}">
 
 <!-- Users -->
-<section class="adm-sec" aria-labelledby="adm-users-h">
-  <div class="adm-sec-h"><h2 id="adm-users-h">{{ t("admin-users") }}<span class="adm-n">{{ user_count }}</span></h2></div>
+<section class="card adm-sec" aria-labelledby="adm-users-h">
+  <div class="card-head is-tools">
+  <h2 id="adm-users-h">{{ t("admin-users") }}<span class="num">{{ user_count }}</span></h2>
   {% if user_count > 0 %}
-  {% if users_server %}
-  {# A large instance: search, chips, sort and pages go through the server,
-     so only one page of rows (and of action menus) is ever rendered. #}
-  <form method="get" action="/dashboard/admin#users" class="adm-toolbar" role="search">
-    <input type="search" name="uq" value="{{ users_list.q }}" maxlength="{{ users_list.search_max }}" class="adm-search" placeholder="{{ t('admin-user-filter') }}" aria-label="{{ t('admin-user-filter') }}" autocomplete="off">
+  {# Search, chips, sort and pages go through the server, so only one page
+     of rows (and of action menus) is ever rendered. #}
+  <form method="get" action="/dashboard/admin#users" role="search">
+    {{ cl.search(t("admin-user-filter"), name="uq", value=users_list.q, maxlength=users_list.search_max) }}
     {% if users_list.filter != "all" %}<input type="hidden" name="uf" value="{{ users_list.filter }}">{% endif %}
     {% if users_list.sort %}<input type="hidden" name="us" value="{{ users_list.sort }}"><input type="hidden" name="ud" value="{{ users_list.dir }}">{% endif %}
-    <button type="submit" class="adm-btn adm-btn-sm">{{ t("admin-users-search") }}</button>
+    {% for name, value in users_list.hidden %}<input type="hidden" name="{{ name }}" value="{{ value }}">{% endfor %}
+    <button type="submit" class="ui-btn ui-btn--sm">{{ t("admin-users-search") }}</button>
     <div class="adm-chips" role="group" aria-label="{{ t('admin-users-filter-label') }}">
       {% for key, label, n in [("all", t("admin-filter-all"), stats.users.total), ("admin", t("admin-filter-admins"), stats.users.admins), ("disabled", t("admin-filter-disabled"), stats.users.disabled), ("local", t("admin-provider-local"), stats.users.local), ("oidc", t("admin-provider-oidc"), stats.users.oidc), ("never", t("admin-filter-never"), none)] %}
       <a class="adm-chip" href="{{ users_list.filter_hrefs[key] }}"{% if users_list.filter == key %} aria-current="true"{% endif %}>{{ label }}{% if n is not none %} <span class="adm-chip-n">{{ n }}</span>{% endif %}</a>
       {% endfor %}
     </div>
   </form>
-  {% else %}
-  <div class="adm-toolbar">
-    <input type="search" id="user-search" class="adm-search" placeholder="{{ t('admin-user-filter') }}" aria-label="{{ t('admin-user-filter') }}" autocomplete="off">
-    <div class="adm-chips" role="group" aria-label="{{ t('admin-users-filter-label') }}">
-      <button type="button" class="adm-chip" data-filter="all" aria-pressed="true">{{ t("admin-filter-all") }} <span class="adm-chip-n">{{ stats.users.total }}</span></button>
-      <button type="button" class="adm-chip" data-filter="admin" aria-pressed="false">{{ t("admin-filter-admins") }} <span class="adm-chip-n">{{ stats.users.admins }}</span></button>
-      <button type="button" class="adm-chip" data-filter="disabled" aria-pressed="false">{{ t("admin-filter-disabled") }} <span class="adm-chip-n">{{ stats.users.disabled }}</span></button>
-      <button type="button" class="adm-chip" data-filter="local" aria-pressed="false">{{ t("admin-provider-local") }} <span class="adm-chip-n">{{ stats.users.local }}</span></button>
-      <button type="button" class="adm-chip" data-filter="oidc" aria-pressed="false">{{ t("admin-provider-oidc") }} <span class="adm-chip-n">{{ stats.users.oidc }}</span></button>
-      <button type="button" class="adm-chip" data-filter="never" aria-pressed="false">{{ t("admin-filter-never") }}</button>
-    </div>
-  </div>
   {% endif %}
+  </div>
+  <div class="card-body">
+  {% if user_count > 0 %}
   <table class="adm-table adm-users" id="user-table">
       <thead>
         <tr>
-          {% if users_server %}<th aria-sort="{{ users_list.sort_links.name.aria }}"><a class="adm-sort" href="{{ users_list.sort_links.name.href }}">{{ t("admin-col-user") }}</a></th>{% else %}<th aria-sort="none"><button type="button" class="adm-sort" data-sort="name">{{ t("admin-col-user") }}</button></th>{% endif %}
-          {% if users_server %}<th class="adm-col-role" aria-sort="{{ users_list.sort_links.role.aria }}"><a class="adm-sort" href="{{ users_list.sort_links.role.href }}">{{ t("admin-col-role") }}</a></th>{% else %}<th class="adm-col-role" aria-sort="none"><button type="button" class="adm-sort" data-sort="role">{{ t("admin-col-role") }}</button></th>{% endif %}
-          {% if users_server %}<th class="adm-col-provider" aria-sort="{{ users_list.sort_links.provider.aria }}"><a class="adm-sort" href="{{ users_list.sort_links.provider.href }}">{{ t("admin-col-signin") }}</a></th>{% else %}<th class="adm-col-provider" aria-sort="none"><button type="button" class="adm-sort" data-sort="provider">{{ t("admin-col-signin") }}</button></th>{% endif %}
-          {% if users_server %}<th aria-sort="{{ users_list.sort_links.last.aria }}"><a class="adm-sort" href="{{ users_list.sort_links.last.href }}">{{ t("admin-col-last") }}</a></th>{% else %}<th aria-sort="none"><button type="button" class="adm-sort" data-sort="last">{{ t("admin-col-last") }}</button></th>{% endif %}
-          {% if users_server %}<th class="adm-col-created" aria-sort="{{ users_list.sort_links.created.aria }}"><a class="adm-sort" href="{{ users_list.sort_links.created.href }}">{{ t("admin-col-created") }}</a></th>{% else %}<th class="adm-col-created" aria-sort="none"><button type="button" class="adm-sort" data-sort="created">{{ t("admin-col-created") }}</button></th>{% endif %}
+          <th aria-sort="{{ users_list.sort_links.name.aria }}"><a class="adm-sort" href="{{ users_list.sort_links.name.href }}">{{ t("admin-col-user") }}</a></th>
+          <th class="adm-col-role" aria-sort="{{ users_list.sort_links.role.aria }}"><a class="adm-sort" href="{{ users_list.sort_links.role.href }}">{{ t("admin-col-role") }}</a></th>
+          <th class="adm-col-provider" aria-sort="{{ users_list.sort_links.provider.aria }}"><a class="adm-sort" href="{{ users_list.sort_links.provider.href }}">{{ t("admin-col-signin") }}</a></th>
+          <th aria-sort="{{ users_list.sort_links.last.aria }}"><a class="adm-sort" href="{{ users_list.sort_links.last.href }}">{{ t("admin-col-last") }}</a></th>
+          <th class="adm-col-created" aria-sort="{{ users_list.sort_links.created.aria }}"><a class="adm-sort" href="{{ users_list.sort_links.created.href }}">{{ t("admin-col-created") }}</a></th>
           <th class="adm-num"><span class="sr-only">{{ t("admin-col-actions") }}</span></th>
         </tr>
       </thead>
-      <tbody id="{{ 'user-list-server' if users_server else 'user-list' }}">
+      <tbody id="user-list-server">
         {% for u in users %}
         <tr class="user-item{% if not u.enabled %} is-disabled{% endif %}" data-name="{{ u.name | lower }}" data-email="{{ u.email | lower }}" data-role="{{ u.role }}" data-provider="{{ u.auth_provider }}" data-enabled="{{ 1 if u.enabled else 0 }}" data-last="{{ u.last_login_at }}" data-created="{{ u.created_at }}">
           <td>
@@ -382,22 +398,22 @@
                 <form method="post" action="/dashboard/admin/impersonate/{{ u.id }}">
                   <button type="submit" class="adm-menu-item">{{ t("admin-impersonate") }}</button>
                 </form>
-                <form method="post" action="/dashboard/admin/users/{{ u.id }}/toggle-role">{% if users_server %}<input type="hidden" name="back" value="{{ users_list.back }}">{% endif %}
+                <form method="post" action="/dashboard/admin/users/{{ u.id }}/toggle-role"><input type="hidden" name="back" value="{{ users_list.back }}">
                   <button type="submit" class="adm-menu-item">{% if u.role == "admin" %}{{ t("admin-demote") }}{% else %}{{ t("admin-promote") }}{% endif %}</button>
                 </form>
                 {% if u.apps %}
-                <form method="post" action="/dashboard/admin/users/{{ u.id }}/revoke-apps">{% if users_server %}<input type="hidden" name="back" value="{{ users_list.back }}">{% endif %}
+                <form method="post" action="/dashboard/admin/users/{{ u.id }}/revoke-apps"><input type="hidden" name="back" value="{{ users_list.back }}">
                   <button type="submit" class="adm-menu-item adm-menu-danger">{{ t("admin-revoke-apps", count=u.apps) }}</button>
                 </form>
                 {% endif %}
-                <form method="post" action="/dashboard/admin/users/{{ u.id }}/toggle-enabled">{% if users_server %}<input type="hidden" name="back" value="{{ users_list.back }}">{% endif %}
+                <form method="post" action="/dashboard/admin/users/{{ u.id }}/toggle-enabled"><input type="hidden" name="back" value="{{ users_list.back }}">
                   <button type="submit" class="adm-menu-item{% if u.enabled %} adm-menu-danger{% endif %}">{% if u.enabled %}{{ t("admin-disable") }}{% else %}{{ t("admin-enable") }}{% endif %}</button>
                 </form>
                 <details class="adm-confirm">
                   <summary class="adm-menu-item adm-menu-danger">{{ t("admin-delete") }}&hellip;</summary>
                   <div class="adm-confirm-body">
                     <p>{{ t("admin-delete-user-confirm", email=u.email) }}</p>
-                    <form method="post" action="/dashboard/admin/users/{{ u.id }}/delete">{% if users_server %}<input type="hidden" name="back" value="{{ users_list.back }}">{% endif %}
+                    <form method="post" action="/dashboard/admin/users/{{ u.id }}/delete"><input type="hidden" name="back" value="{{ users_list.back }}">
                       <button type="submit" class="adm-btn-danger">{{ t("admin-delete-confirm-btn") }}</button>
                     </form>
                   </div>
@@ -410,31 +426,33 @@
         {% endfor %}
       </tbody>
     </table>
-  {% if users_server %}
   {% if users_matched == 0 %}<div class="adm-empty">{{ t("admin-no-users-match") }}</div>{% endif %}
-  <div class="adm-table-foot">
+  </div>
+  <div class="card-foot adm-table-foot">
     <span class="adm-muted">{{ t('admin-users-shown') | replace('%1', users_matched | string) | replace('%2', user_count | string) }}</span>
     {% with pager=users_pager %}{% include "partials/pager.html" %}{% endwith %}
   </div>
   {% else %}
-  <div class="adm-table-foot">
-    <span id="user-count" class="adm-muted" aria-live="polite"></span>
-    <div id="user-pagination" class="adm-pager"></div>
-  </div>
-  <div id="user-no-results" class="adm-empty" style="display: none;">{{ t("admin-no-users-match") }}</div>
-  {% endif %}
-  {% else %}
   <p class="adm-empty">{{ t("admin-no-users") }}</p>
+  </div>
   {% endif %}
 </section>
 
 <!-- Groups -->
-<section class="adm-sec" aria-labelledby="adm-groups-h">
-  <div class="adm-sec-h"><h2 id="adm-groups-h">{{ t("admin-groups") }}<span class="adm-n">{{ group_count }}</span></h2></div>
-  {% if groups %}
-  <div class="adm-toolbar">
-    <input type="search" id="group-search" class="adm-search" placeholder="{{ t('admin-group-filter') }}" aria-label="{{ t('admin-group-filter') }}" oninput="filterGroups()" autocomplete="off">
+<section class="card adm-sec" id="groups" aria-labelledby="adm-groups-h">
+  <div class="card-head is-tools">
+  <h2 id="adm-groups-h">{{ t("admin-groups") }}<span class="num">{{ group_count }}</span></h2>
+  {% if group_count > 0 %}
+  <form method="get" action="/dashboard/admin#groups" role="search">
+    {{ cl.search(t("admin-group-filter"), name="gq", value=groups_list.q, maxlength=groups_list.search_max) }}
+    {% for name, value in groups_list.hidden %}<input type="hidden" name="{{ name }}" value="{{ value }}">{% endfor %}
+    <button type="submit" class="ui-btn ui-btn--sm">{{ t("admin-users-search") }}</button>
+  </form>
+  {% endif %}
   </div>
+  <div class="card-body">
+  {% if group_count > 0 %}
+  {% if groups %}
   <div class="adm-table-wrap">
     <table class="adm-table adm-groups">
       <thead>
@@ -445,21 +463,19 @@
       </thead>
       <tbody id="group-list">
         {% for g in groups %}
-        <tr class="group-item" data-name="{{ g.name | lower }}">
+        <tr class="group-item" id="group-{{ g.id }}">
           <td class="adm-group-name">{{ g.name }}</td>
           <td>
             {% if g.members %}
             <div class="group-members">
               {% for m in g.members %}
-              <form method="POST" action="/dashboard/admin/groups/{{ g.id }}/members/{{ m.user_id }}/weight" class="adm-weight{% if loop.index > 5 %} group-member-extra{% endif %}"{% if loop.index > 5 %} data-group="{{ g.id }}" style="display: none;"{% endif %}>
+              <form method="POST" action="/dashboard/admin/groups/{{ g.id }}/members/{{ m.user_id }}/weight" class="adm-weight"><input type="hidden" name="return_to" value="{{ g.return_to }}">
                 <span class="adm-weight-name">{{ m.name }}</span>
                 <label>{{ t("admin-weight") }} <input type="number" name="weight" value="{{ m.weight }}" min="1" max="100"></label>
                 <button type="submit" class="adm-btn adm-btn-sm">{{ t("source-write-save") }}</button>
               </form>
               {% endfor %}
-              {% if g.members | length > 5 %}
-              <button type="button" class="group-expand-btn adm-linkbtn" data-group="{{ g.id }}" onclick="toggleGroupMembers('{{ g.id }}')">{{ t("admin-show-more", count=g.members | length - 5) }}&hellip;</button>
-              {% endif %}
+              {% with pager=g.members_pager %}{% include "partials/pager.html" %}{% endwith %}
             </div>
             {% else %}
             {{ g.member_count }}
@@ -470,10 +486,14 @@
       </tbody>
     </table>
   </div>
-  <div id="group-pagination" class="adm-pager adm-table-foot"></div>
-  <div id="group-no-results" class="adm-empty" style="display: none;">{{ t("admin-no-groups-match") }}</div>
+  {% else %}
+  <div class="adm-empty">{{ t("admin-no-groups-match") }}</div>
+  {% endif %}
+  </div>
+  {% if groups_list.pager %}<div class="card-foot adm-table-foot">{% with pager=groups_list.pager %}{% include "partials/pager.html" %}{% endwith %}</div>{% endif %}
   {% else %}
   <p class="adm-empty">{{ t("admin-no-groups") }}</p>
+  </div>
   {% endif %}
 </section>
 </section>
@@ -481,8 +501,9 @@
 <!-- ============ access ============ -->
 <section class="adm-panel" id="panel-access" role="tabpanel" data-panel="access" aria-label="{{ t('admin-tab-access') }}">
 <!-- Auth settings -->
-<div class="card">
-  <h2>{{ t("admin-auth-settings") }}</h2>
+<section class="card">
+  <div class="card-head"><h2>{{ t("admin-auth-settings") }}</h2></div>
+  <div class="card-body">
   <form method="post" action="/dashboard/admin/auth">
     <div style="margin-bottom: 1rem;">
       <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.925rem; cursor: pointer;">
@@ -496,11 +517,13 @@
     </div>
     <button type="submit" class="adm-btn adm-btn-primary">{{ t("admin-save-auth") }}</button>
   </form>
-</div>
+  </div>
+</section>
 
 <!-- Two-factor authentication policy for local accounts -->
-<div class="card">
-  <h2>{{ t("mfa-title") }}</h2>
+<section class="card">
+  <div class="card-head"><h2>{{ t("mfa-title") }}</h2></div>
+  <div class="card-body">
   <p>{{ t("mfa-policy-help") }}</p>
   {% if local_admin %}<p><a href="/dashboard/settings/mfa">{{ t("mfa-manage") }}</a></p>{% endif %}
   <form method="post" action="/dashboard/admin/mfa">
@@ -523,11 +546,13 @@
     {% endif %}
     <button class="adm-btn adm-btn-primary" type="submit">{{ t("mfa-save-policy") }}</button>
   </form>
-</div>
+  </div>
+</section>
 
 <!-- Personal access tokens for the REST API (#169) -->
-<div class="card">
-  <h2>{{ t("admin-api-tokens") }}</h2>
+<section class="card">
+  <div class="card-head"><h2>{{ t("admin-api-tokens") }}</h2></div>
+  <div class="card-body">
   <form method="post" action="/dashboard/admin/api-tokens">
     <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.925rem; cursor: pointer;">
       <input type="checkbox" name="allow_all_users" value="on" {% if api_tokens_allow_all_users %}checked{% endif %} style="width: 1rem; height: 1rem;">
@@ -536,11 +561,13 @@
     <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin: 0.375rem 0 0.75rem;">{{ t("admin-api-tokens-allow-all-help") }}</span>
     <button type="submit" class="adm-btn">{{ t("admin-save-policy") }}</button>
   </form>
-</div>
+  </div>
+</section>
 
 <!-- OIDC settings -->
-<div class="card">
-  <h2>{{ t("admin-oidc-settings") }}</h2>
+<section class="card">
+  <div class="card-head"><h2>{{ t("admin-oidc-settings") }}</h2></div>
+  <div class="card-body">
   <div style="margin-bottom: 1rem; font-size: 0.875rem; color: var(--text-secondary);">
     {{ t("admin-status") }} {% if oidc_enabled %}<strong style="color: var(--success);">{{ t("admin-status-enabled") }}</strong>{% else %}<span style="color: var(--text-muted);">{{ t("admin-status-disabled") }}</span>{% endif %}
     {% if oidc_issuer_url %}&middot; {{ t("admin-issuer") }} <span style="color: var(--text-muted);">{{ oidc_issuer_url }}</span>{% endif %}
@@ -573,11 +600,13 @@
     </div>
     <button type="submit" class="adm-btn adm-btn-primary">{{ t("admin-save-oidc") }}</button>
   </form>
-</div>
+  </div>
+</section>
 
 <!-- Google Calendar OAuth2 -->
-<div class="card">
-  <h2>{{ t("admin-google") }}</h2>
+<section class="card">
+  <div class="card-head"><h2>{{ t("admin-google") }}</h2></div>
+  <div class="card-body">
   <div style="margin-bottom: 1rem; font-size: 0.875rem; color: var(--text-secondary);">
     {{ t("admin-status") }} {% if google_oauth2_configured %}<strong style="color: var(--success);">{{ t("admin-status-configured") }}</strong>{% else %}<span style="color: var(--text-muted);">{{ t("admin-status-not-configured") }}</span>{% endif %}
     {% if google_oauth2_client_id %}&middot; {{ t("admin-client-id") }} <span style="color: var(--text-muted);">{{ google_oauth2_client_id }}</span>{% endif %}
@@ -596,11 +625,13 @@
     </div>
     <button type="submit" class="adm-btn adm-btn-primary">{{ t("admin-save-google") }}</button>
   </form>
-</div>
+  </div>
+</section>
 
 <!-- Microsoft Graph delegated OAuth2 (separate from SSO) -->
-<div class="card">
-  <h2>{{ t("microsoft-calendar-title") }}</h2>
+<section class="card">
+  <div class="card-head"><h2>{{ t("microsoft-calendar-title") }}</h2></div>
+  <div class="card-body">
   <div style="margin-bottom: 1rem; font-size: 0.875rem; color: var(--text-secondary);">
     {{ t("admin-status") }} {% if microsoft_oauth2_configured %}<strong style="color: var(--success);">{{ t("admin-status-configured") }}</strong>{% else %}<span style="color: var(--text-muted);">{{ t("admin-status-not-configured") }}</span>{% endif %}
     {% if microsoft_oauth2_client_id %}&middot; {{ t("admin-client-id") }} <span style="color: var(--text-muted);">{{ microsoft_oauth2_client_id }}</span>{% endif %}
@@ -628,11 +659,13 @@
     </div>
     <button type="submit" class="adm-btn adm-btn-primary">{{ t("microsoft-admin-save") }}</button>
   </form>
-</div>
+  </div>
+</section>
 
 <!-- Organization-wide Exchange (EWS) through impersonation -->
-<div class="card" id="ews-global">
-  <h2>{{ t("admin-ews-title") }}</h2>
+<section class="card" id="ews-global">
+  <div class="card-head"><h2>{{ t("admin-ews-title") }}</h2></div>
+  <div class="card-body">
   <div style="margin-bottom: 1rem; font-size: 0.875rem; color: var(--text-secondary);">
     {{ t("admin-status") }}
     {% if ews_global_enabled %}<strong style="color: var(--success);">{{ t("admin-status-enabled") }}</strong>
@@ -736,15 +769,15 @@
 
   {% if ews_search_shown %}
   <form method="get" action="/dashboard/admin#ews-global" class="adm-toolbar" role="search" style="margin-top: 1.5rem;">
-    <input type="search" name="ewsq" value="{{ ews_q }}" maxlength="{{ ews_search_max }}" class="adm-search" placeholder="{{ t('admin-ews-search') }}" aria-label="{{ t('admin-ews-search') }}" autocomplete="off">
-    <button type="submit" class="adm-btn adm-btn-sm">{{ t("admin-users-search") }}</button>
+    {{ cl.search(t("admin-ews-search"), name="ewsq", value=ews_q, maxlength=ews_search_max) }}
+    <button type="submit" class="ui-btn ui-btn--sm">{{ t("admin-users-search") }}</button>
   </form>
   {% if ews_q and not ews_managed_sources and not ews_untrusted_users %}<div class="adm-empty">{{ t("admin-ews-no-match") }}</div>{% endif %}
   {% endif %}
 
   {% if ews_managed_sources %}
-  <div style="margin-top: 1.5rem;">
-    <h3 style="margin-bottom: 0.5rem; font-size: 1rem;">{{ t("admin-ews-status-title") }}</h3>
+  <div class="card-part">
+    <div class="card-subhead"><h3>{{ t("admin-ews-status-title") }}</h3></div>
     <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.75rem;">
       {{ t("admin-ews-status-summary", ok=ews_managed_ok_count, total=ews_managed_source_count) }}
     </p>
@@ -794,8 +827,8 @@
   {% endif %}
 
   {% if ews_untrusted_users %}
-  <div style="margin-top: 1.5rem;" id="ews-trust">
-    <h3 style="margin-bottom: 0.5rem; font-size: 1rem;">{{ t("admin-ews-trust-title") }}</h3>
+  <div class="card-part" id="ews-trust">
+    <div class="card-subhead"><h3>{{ t("admin-ews-trust-title") }}</h3></div>
     <p class="adm-muted" style="font-size: 0.8rem; margin-bottom: 0.75rem;">{{ t("admin-ews-trust-help") }}</p>
     <div class="adm-table-wrap">
       <table class="adm-table">
@@ -821,11 +854,13 @@
     {% if ews_untrusted_pager %}<div class="adm-table-foot">{% with pager=ews_untrusted_pager %}{% include "partials/pager.html" %}{% endwith %}</div>{% endif %}
   </div>
   {% endif %}
-</div>
+  </div>
+</section>
 
 <!-- Captcha settings -->
-<div class="card">
-  <h2>{{ t("admin-captcha") }}</h2>
+<section class="card">
+  <div class="card-head"><h2>{{ t("admin-captcha") }}</h2></div>
+  <div class="card-body">
   <div style="margin-bottom: 1rem; font-size: 0.875rem; color: var(--text-secondary);">
     {{ t("admin-status") }} {% if captcha_configured %}<strong style="color: var(--success);">{{ t("admin-status-enabled") }}</strong>{% else %}<span style="color: var(--text-muted);">{{ t("admin-status-disabled") }}</span>{% endif %}
     {% if captcha_instance_url %}&middot; {{ t("admin-instance") }} <span style="color: var(--text-muted);">{{ captcha_instance_url }}</span>{% endif %}
@@ -856,13 +891,15 @@
     <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.75rem;">{{ t("admin-captcha-disable-help") }}</p>
     <button type="submit" class="adm-btn adm-btn-primary">{{ t("admin-save-captcha") }}</button>
   </form>
-</div>
+  </div>
+</section>
 </section>
 <!-- ============ notifications ============ -->
 <section class="adm-panel" id="panel-notifications" role="tabpanel" data-panel="notifications" aria-label="{{ t('admin-tab-notifications') }}">
 <!-- SMTP settings -->
-<div class="card">
-  <h2>{{ t("admin-smtp") }}</h2>
+<section class="card">
+  <div class="card-head"><h2>{{ t("admin-smtp") }}</h2></div>
+  <div class="card-body">
 
   {% if smtp_test_result == "sent" %}
   <p class="adm-flash adm-flash-ok">{{ t("admin-smtp-test-sent") }}</p>
@@ -953,11 +990,13 @@
 
   <p style="color: var(--text-muted); font-size: 0.8rem; margin-top: 1rem;">{{ t("admin-smtp-env-help") | safe }}</p>
   {% endif %}
-</div>
+  </div>
+</section>
 
 <!-- Guest email footer -->
-<div class="card">
-  <h2>{{ t("admin-guest-footer") }}</h2>
+<section class="card">
+  <div class="card-head"><h2>{{ t("admin-guest-footer") }}</h2></div>
+  <div class="card-body">
   <p style="color: var(--text-muted); font-size: 0.85rem; margin-top: -0.5rem; margin-bottom: 1rem;">
     {{ t("admin-guest-footer-help") }}
   </p>
@@ -1008,11 +1047,13 @@
     update();
   })();
   </script>
-</div>
+  </div>
+</section>
 
 <!-- SMS gateway settings -->
-<div class="card">
-  <h2>{{ t("admin-sms") }}</h2>
+<section class="card">
+  <div class="card-head"><h2>{{ t("admin-sms") }}</h2></div>
+  <div class="card-body">
   <p style="color: var(--text-muted); font-size: 0.85rem; margin-top: -0.5rem; margin-bottom: 1rem;">
     {{ t("admin-sms-help") }}
   </p>
@@ -1039,7 +1080,7 @@
 
   {% if sms_configured %}
   <div style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 1rem;">
-    {{ t("admin-sms-sent-today") }} <strong>{{ sms_sent_today }}</strong>{% if sms_daily_cap > 0 %} {{ t("admin-sms-of-cap", cap=sms_daily_cap) }}{% endif %}{% if sms_cost_currency %} &middot; {{ sms_cost_today }} {{ sms_cost_currency }}{% endif %}
+    {{ t("admin-sms-sent-today") }} <strong>{{ sms_sent_today }}</strong> &middot; {{ t("admin-sms-segments-today") }} <strong>{{ sms_segments_today }}</strong>{% if sms_daily_cap > 0 %} {{ t("admin-sms-of-cap", cap=sms_daily_cap) }}{% endif %}{% if sms_unknown_today > 0 %} &middot; {{ t("admin-sms-unknown-today") }} <strong>{{ sms_unknown_today }}</strong>{% endif %}{% if sms_cost_currency %} &middot; {{ sms_cost_today }} {{ sms_cost_currency }}{% endif %}
   </div>
   {% endif %}
 
@@ -1150,7 +1191,7 @@
 
   {# Instance policy, not gateway config, so it stays editable even when the
      environment block governs the gateway. #}
-  <form method="post" action="/dashboard/admin/sms/policy" style="margin-top: 1.25rem; padding-top: 1.25rem; border-top: 1px solid var(--border);">
+  <form method="post" action="/dashboard/admin/sms/policy" class="card-part">
     <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.925rem; cursor: pointer;">
       <input type="checkbox" name="allow_all_users" value="on" {% if sms_allow_all_users %}checked{% endif %} style="width: 1rem; height: 1rem;">
       {{ t("admin-sms-allow-all") }}
@@ -1162,7 +1203,8 @@
   <p style="color: var(--text-muted); font-size: 0.8rem; margin-top: 1.25rem;">
     {{ t("admin-sms-going-live") | safe }}
   </p>
-</div>
+  </div>
+</section>
 
 <script>
 (function() {
@@ -1189,8 +1231,9 @@
 })();
 </script>
 <!-- Booking webhooks (#168): who may add them -->
-<div class="card">
-  <h2>{{ t("admin-webhooks") }}</h2>
+<section class="card">
+  <div class="card-head"><h2>{{ t("admin-webhooks") }}</h2></div>
+  <div class="card-body">
   <p style="font-size: 0.875rem; color: var(--text-secondary); margin-bottom: 1rem;">{{ t("admin-webhooks-help", count=webhook_count) }}</p>
   <form method="post" action="/dashboard/admin/webhooks/policy">
     <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.925rem; cursor: pointer;">
@@ -1201,13 +1244,15 @@
     <button type="submit" class="adm-btn">{{ t("admin-save-policy") }}</button>
   </form>
   <p style="font-size: 0.8rem; color: var(--text-muted); margin-top: 1rem;"><a href="/dashboard/webhooks">{{ t("admin-webhooks-manage") }}</a></p>
-</div>
+  </div>
+</section>
 </section>
 <!-- ============ meetings ============ -->
 <section class="adm-panel" id="panel-meetings" role="tabpanel" data-panel="meetings" aria-label="{{ t('admin-tab-meetings') }}">
 <!-- Jitsi auto-generated meeting links -->
-<div class="card">
-  <h2>{{ t("admin-jitsi") }}</h2>
+<section class="card">
+  <div class="card-head"><h2>{{ t("admin-jitsi") }}</h2></div>
+  <div class="card-body">
   <div style="margin-bottom: 1rem; font-size: 0.875rem; color: var(--text-secondary);">
     {{ t("admin-status") }} {% if jitsi_configured %}<strong style="color: var(--success);">{{ t("admin-status-enabled") }}</strong>{% else %}<span style="color: var(--text-muted);">{{ t("admin-status-disabled") }}</span>{% endif %}
     {% if jitsi_base_url %}&middot; {{ t("admin-base-url") }}: <span style="color: var(--text-muted);">{{ jitsi_base_url }}</span>{% endif %}
@@ -1248,11 +1293,13 @@
     <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.75rem;">{{ t("admin-jitsi-disable-help") }}</p>
     <button type="submit" class="adm-btn adm-btn-primary">{{ t("admin-save-jitsi") }}</button>
   </form>
-</div>
+  </div>
+</section>
 
 <!-- Generic meeting webhook -->
-<div class="card">
-  <h2>{{ t("admin-meeting-webhook") }}</h2>
+<section class="card">
+  <div class="card-head"><h2>{{ t("admin-meeting-webhook") }}</h2></div>
+  <div class="card-body">
   <div style="margin-bottom: 1rem; font-size: 0.875rem; color: var(--text-secondary);">
     {{ t("admin-status") }} {% if meeting_webhook_configured %}<strong style="color: var(--success);">{{ t("admin-status-enabled") }}</strong>{% else %}<span style="color: var(--text-muted);">{{ t("admin-status-disabled") }}</span>{% endif %}
     {% if meeting_webhook_url %}&middot; URL: <span style="color: var(--text-muted);">{{ meeting_webhook_url }}</span>{% endif %}
@@ -1285,13 +1332,15 @@
     <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.75rem;">{{ t("admin-webhook-disable-help") }}</p>
     <button type="submit" class="adm-btn adm-btn-primary">{{ t("admin-save-webhook") }}</button>
   </form>
-</div>
+  </div>
+</section>
 </section>
 <!-- ============ resources ============ -->
 <section class="adm-panel" id="panel-resources" role="tabpanel" data-panel="resources" aria-label="{{ t('admin-tab-resources') }}">
 <!-- Shared bookable resources -->
-<div class="card">
-  <h2>{{ t("admin-resources") }}</h2>
+<section class="card">
+  <div class="card-head"><h2>{{ t("admin-resources") }}</h2></div>
+  <div class="card-body">
   <p style="color: var(--text-muted); font-size: 0.875rem; margin-bottom: 1rem;">
     {{ t("admin-resources-help") }}
   </p>
@@ -1442,17 +1491,22 @@
       });
     });
   </script>
-</div>
+  </div>
+</section>
 </section>
 <!-- ============ branding ============ -->
 <section class="adm-panel" id="panel-branding" role="tabpanel" data-panel="branding" aria-label="{{ t('admin-tab-branding') }}">
 <!-- Logo -->
-<div class="card">
-  <h2>{{ t("admin-logo") }}</h2>
+<section class="card">
+  <div class="card-head"><h2>{{ t("admin-logo") }}</h2></div>
+  <div class="card-body">
   <p style="font-size: 0.875rem; color: var(--text-secondary); margin-bottom: 1rem;">{{ t("admin-logo-help") }}</p>
+  <h3 style="font-size: 0.9rem; font-weight: 600; margin: 0 0 0.5rem;">{{ t("admin-logo-light") }}</h3>
+  {# Each preview sits on the background the public pages show it on, in the
+     instance theme, whatever theme this dashboard is in. #}
   {% if has_logo %}
-  <div style="margin-bottom: 1rem; padding: 1rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); text-align: center;">
-    <img src="/logo" alt="{{ t('admin-logo') }}" style="max-height: 80px; max-width: 280px; object-fit: contain;">
+  <div style="margin-bottom: 1rem; padding: 1rem; border: 1px solid var(--border); border-radius: var(--radius); background: {{ logo_bg_light }}; text-align: center;">
+    <img src="{{ company_logo().light }}" alt="{{ t('admin-logo-light') }}" style="max-height: 80px; max-width: 280px; object-fit: contain;">
   </div>
   {% endif %}
   <div style="display: flex; gap: 0.75rem; align-items: flex-start; flex-wrap: wrap;">
@@ -1471,7 +1525,31 @@
   {% elif upload_error == "logo-save" %}
   <p style="color: var(--error-text); font-size: 0.875rem; margin-top: 0.75rem;">{{ t("admin-upload-save-failed") }}</p>
   {% endif %}
-  <div style="margin-top: 1rem;">
+
+  <h3 style="font-size: 0.9rem; font-weight: 600; margin: 1.5rem 0 0.25rem;">{{ t("admin-logo-dark") }}</h3>
+  <p style="font-size: 0.8rem; color: var(--text-muted); margin: 0 0 0.5rem;">{{ t("admin-logo-dark-help") }}</p>
+  {% if has_dark_logo %}
+  <div style="margin-bottom: 1rem; padding: 1rem; border: 1px solid var(--border); border-radius: var(--radius); background: {{ logo_bg_dark }}; text-align: center;">
+    <img src="{{ company_logo().dark }}" alt="{{ t('admin-logo-dark') }}" style="max-height: 80px; max-width: 280px; object-fit: contain;">
+  </div>
+  {% endif %}
+  <div style="display: flex; gap: 0.75rem; align-items: flex-start; flex-wrap: wrap;">
+    <form method="post" action="/dashboard/admin/logo/dark" enctype="multipart/form-data" style="margin: 0; display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
+      <input type="file" name="logo_dark" accept="image/png,image/jpeg,image/gif,image/webp" data-max-bytes="{{ logo_max_bytes }}" data-too-big="{{ t('admin-logo-refused') }}" required style="font-size: 0.85rem;">
+      <button type="submit" class="adm-btn adm-btn-primary">{{ t("settings-upload") }}</button>
+    </form>
+    {% if has_dark_logo %}
+    <form method="post" action="/dashboard/admin/logo/dark/delete" style="margin: 0;">
+      <button type="submit" class="adm-btn adm-btn-danger-outline">{{ t("settings-remove") }}</button>
+    </form>
+    {% endif %}
+  </div>
+  {% if upload_error == "logo-dark" %}
+  <p style="color: var(--error-text); font-size: 0.875rem; margin-top: 0.75rem;">{{ t("admin-logo-refused") }}</p>
+  {% elif upload_error == "logo-dark-save" %}
+  <p style="color: var(--error-text); font-size: 0.875rem; margin-top: 0.75rem;">{{ t("admin-upload-save-failed") }}</p>
+  {% endif %}
+  <div style="margin-top: 1.5rem;">
     <form method="post" action="/dashboard/admin/company-link" style="margin: 0; display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
       <label for="company_link" style="font-size: 0.875rem; font-weight: 500; white-space: nowrap;">{{ t("admin-company-link") }}</label>
       <input type="url" id="company_link" name="company_link" value="{{ company_link }}" placeholder="https://yourcompany.com" style="flex: 1; min-width: 200px; padding: 0.4rem 0.75rem; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); font-size: 0.85rem;">
@@ -1479,11 +1557,13 @@
     </form>
     <span style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">{{ t("admin-company-link-help") }}</span>
   </div>
-</div>
+  </div>
+</section>
 
 <!-- Favicon -->
-<div class="card">
-  <h2>{{ t("admin-favicon") }}</h2>
+<section class="card">
+  <div class="card-head"><h2>{{ t("admin-favicon") }}</h2></div>
+  <div class="card-body">
   <p style="font-size: 0.875rem; color: var(--text-secondary); margin-bottom: 1rem;">{{ t("admin-favicon-help") }}</p>
   <div style="display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap;">
     <img src="/favicon" alt="{{ t('admin-favicon') }}" width="32" height="32" style="object-fit: contain;">
@@ -1502,16 +1582,18 @@
   {% elif upload_error == "favicon-save" %}
   <p style="color: var(--error-text); font-size: 0.875rem; margin-top: 0.75rem;">{{ t("admin-upload-save-failed") }}</p>
   {% endif %}
-</div>
+  </div>
+</section>
 
 <!-- Theme -->
-<div class="card">
-  <h2>{{ t("admin-theme") }}</h2>
+<section class="card">
+  <div class="card-head"><h2>{{ t("admin-theme") }}</h2></div>
+  <div class="card-body">
   <p style="font-size: 0.875rem; color: var(--text-secondary); margin-bottom: 1rem;">{{ t("admin-theme-help") }}</p>
   <form id="theme-form" method="post" action="/dashboard/admin/accent" style="margin: 0;">
     <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 0.75rem; margin-bottom: 1rem;">
       {% set themes = [
-        {"id": "default", "label": t("admin-theme-default"), "desc": t("admin-theme-default-desc"), "colors": ["#2563eb", "#eff6ff", "#f4f4f5", "#18181b"]},
+        {"id": "default", "label": t("admin-theme-default"), "desc": t("admin-theme-default-desc"), "colors": ["#2563eb", "#eff6ff", "#f4f2ee", "#1c1917"]},
         {"id": "nord", "label": "Nord", "desc": t("admin-theme-nord-desc"), "colors": ["#5e81ac", "#e8eef5", "#eceff4", "#2e3440"]},
         {"id": "dracula", "label": "Dracula", "desc": t("admin-theme-dracula-desc"), "colors": ["#bd93f9", "#f3eefe", "#f0edf5", "#282a36"]},
         {"id": "gruvbox", "label": "Gruvbox", "desc": t("admin-theme-gruvbox-desc"), "colors": ["#d65d0e", "#fabd2f", "#f9f5d7", "#282828"]},
@@ -1586,7 +1668,8 @@
 
     <button type="submit" class="adm-btn adm-btn-primary">{{ t("admin-save-theme") }}</button>
   </form>
-</div>
+  </div>
+</section>
 <script>
 function themeChanged(val) {
   document.getElementById('custom-colors').style.display = val === 'custom' ? 'block' : 'none';
@@ -1607,8 +1690,9 @@ document.querySelectorAll('input[type="color"]').forEach(function(picker) {
 <!-- ============ system ============ -->
 <section class="adm-panel" id="panel-system" role="tabpanel" data-panel="system" aria-label="{{ t('admin-tab-system') }}">
 <!-- System settings (base URL, SSRF private-host allowlist) -->
-<div class="card">
-  <h2>{{ t("admin-system-settings") }}</h2>
+<section class="card">
+  <div class="card-head"><h2>{{ t("admin-system-settings") }}</h2></div>
+  <div class="card-body">
   <p style="color: var(--text-muted); font-size: 0.875rem; margin-bottom: 1rem;">
     {{ t("admin-system-settings-help") | safe }}
   </p>
@@ -1639,6 +1723,19 @@ document.querySelectorAll('input[type="color"]').forEach(function(picker) {
         {% if allow_private_hosts_from_env %}{{ t("admin-unset-env") }}{% endif %}
       </span>
     </div>
+    <div class="form-group">
+      <label>{{ t("admin-trusted-proxies") }}
+        {% if trusted_proxies_from_env %}<span class="hint" style="color: var(--adm-warn);">{{ t("admin-set-by-env", var="CALRS_TRUSTED_PROXIES") }}</span>{% endif %}
+      </label>
+      <input type="text" name="trusted_proxies"
+        value="{% if trusted_proxies_from_env %}{{ trusted_proxies }}{% else %}{{ trusted_proxies_db }}{% endif %}"
+        placeholder="127.0.0.1, 10.0.0.0/8, none"
+        {% if trusted_proxies_from_env %}readonly style="opacity: 0.6; cursor: not-allowed;"{% endif %}>
+      <span style="font-size: 0.8rem; color: var(--text-muted);">
+        {{ t("admin-trusted-proxies-help") }}
+        {% if trusted_proxies_from_env %}{{ t("admin-unset-env") }}{% endif %}
+      </span>
+    </div>
     {% include "week_start_select.html" %}
     <div class="form-group">
       <label for="german_formal">{{ t("admin-german-formal") }}</label>
@@ -1650,13 +1747,15 @@ document.querySelectorAll('input[type="color"]').forEach(function(picker) {
     </div>
     <button type="submit" class="adm-btn adm-btn-primary">{{ t("admin-save-system") }}</button>
   </form>
-</div>
+  </div>
+</section>
 </section>
 
 <style>
 
-/* Admin panel in the timetable language: sections under 2px ink rules,
-   records on 1px rules, figures in tabular numbers, status by mark
+/* Admin panel in the timetable language: every block is a card (the
+   dashboard's head-band sheet), records on faint hairlines inside it,
+   figures in tabular numbers, status by mark
    (solid confirmed, hatched pending, hollow cancelled), and the accent
    only on "now". Every colour derives from the theme variables. The
    warning colour falls back to a mix of the theme's error and text colours
@@ -1697,12 +1796,16 @@ document.querySelectorAll('input[type="color"]').forEach(function(picker) {
 .adm-js .adm-panel { display: none; }
 .adm-js .adm-panel.is-active { display: block; }
 
-/* Sections: a 2px ink rule, a heading row, then content */
-.adm-sec { min-width: 0; margin-bottom: 2.75rem; }
-.adm-sec-h { display: flex; align-items: baseline; justify-content: space-between; gap: 0.25rem 1rem; flex-wrap: wrap; border-top: 2px solid var(--ink); padding-top: 0.55rem; margin-bottom: 0.25rem; }
-.adm-sec-h h2 { font-size: 15px; font-weight: 640; color: var(--ink); margin: 0; }
-.adm-n { color: var(--text-muted); font-weight: 500; margin-left: 0.4rem; }
+/* Blocks are cards (dashboard_base.html). Rows inside one sit on the
+   faint hairline and the last one has no rule: the card's edge ends it. */
+.adm-sec { min-width: 0; }
 .adm-sec-aside { font-size: 12.5px; color: var(--text-muted); }
+.card-body :is(.adm-att, .adm-figs th, .adm-figs td, .adm-table td) { border-bottom-color: var(--card-rule); }
+.card-body > .adm-att-list > .adm-att:last-child,
+.card-body > .adm-figs tr:last-child > *,
+.card-body > .adm-table-wrap > .adm-table > tbody > tr:last-child > td,
+.card-body > .adm-table > tbody > tr:last-child > td { border-bottom: 0; }
+.card-head.is-tools .adm-chips { flex: 1 1 100%; }
 .adm-note { font-size: 12.5px; color: var(--text-muted); margin: 0 0 0.5rem; }
 .adm-h3 { font-size: 13.5px; font-weight: 600; margin: 1.5rem 0 0.25rem; }
 .adm-empty { font-size: 13.5px; color: var(--text-muted); padding: 0.5rem 0; }
@@ -1711,7 +1814,7 @@ document.querySelectorAll('input[type="color"]').forEach(function(picker) {
 .adm-text-warning { color: var(--adm-warn) !important; }
 .adm-text-critical { color: var(--adm-crit); }
 .adm-error-text { color: var(--adm-crit); font-size: 12.5px; overflow-wrap: anywhere; }
-.adm-cols { display: grid; grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); gap: 0 3rem; }
+.adm-cols { display: grid; grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); gap: 0 1.25rem; }
 .adm-cols-even { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 
 /* Needs attention: a ledger, severity as a word in a fixed column */
@@ -1807,8 +1910,6 @@ document.querySelectorAll('input[type="color"]').forEach(function(picker) {
 
 /* Users */
 .adm-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem 1rem; margin: 0.75rem 0 0.5rem; }
-.adm-search { flex: 1 1 220px; max-width: 320px; height: 2rem; padding: 0 0.6rem; font: inherit; font-size: 13.5px; color: var(--ink); background: var(--surface); border: 1px solid var(--border-hover); border-radius: 4px; }
-.adm-search:focus { outline: 2px solid var(--now); outline-offset: 1px; }
 .adm-chips { display: flex; flex-wrap: wrap; gap: 0.25rem; }
 .adm-chip { display: inline-flex; align-items: center; gap: 0.35rem; height: 1.75rem; padding: 0 0.55rem; font: inherit; font-size: 12.5px; color: var(--text-secondary); background: none; border: 1px solid transparent; border-radius: 4px; cursor: pointer; transition: color 0.12s, background-color 0.12s; }
 .adm-chip:hover { color: var(--ink); background: var(--hours); }
@@ -1853,7 +1954,7 @@ th[aria-sort="descending"] .adm-sort::after { opacity: 1; }
 .adm-confirm-pop { position: absolute; left: 0; top: calc(100% + 4px); z-index: 20; width: 16rem; padding: 0.65rem; font-size: 12.5px; color: var(--text-secondary); background: var(--surface); border: 1px solid var(--rule); border-radius: 6px; box-shadow: var(--shadow-lg); }
 .adm-confirm-pop p { margin-bottom: 0.5rem; }
 .adm-table-foot { display: flex; justify-content: space-between; align-items: center; gap: 0.75rem; flex-wrap: wrap; margin-top: 0.75rem; }
-.adm-pager { display: flex; align-items: center; gap: 0.4rem; }
+.card-foot.adm-table-foot { margin-top: var(--card-gap); }
 
 /* Groups */
 .adm-group-name { font-weight: 500; }
@@ -1878,9 +1979,6 @@ th[aria-sort="descending"] .adm-sort::after { opacity: 1; }
 .adm-flash-ok { color: var(--ink); font-weight: 600; }
 .adm-flash-error { color: var(--adm-crit); }
 
-/* Settings forms keep a fieldset frame (SPEC 3.2): 1px rule, 6px, no shadow */
-.adm-root .card { box-shadow: none; border: 1px solid var(--rule); border-radius: 6px; background: var(--surface); }
-.adm-root .card h2 { font-size: 15px; font-weight: 640; color: var(--ink); }
 
 /* Theme picker (branding) */
 .theme-card { border: 1px solid var(--rule); border-radius: 6px; padding: 0.75rem; transition: border-color 0.12s; }
@@ -1914,10 +2012,6 @@ th[aria-sort="descending"] .adm-sort::after { opacity: 1; }
 <script>
 // %1/%2 are substituted client-side: the values depend on the live filter.
 var ADMIN_I18N = {
-  page: {{ t('admin-page-of') | tojson }},
-  showMore: {{ t('admin-show-more-js') | tojson }},
-  showFewer: {{ t('admin-show-fewer') | tojson }},
-  shown: {{ t('admin-users-shown') | tojson }},
   confirmed: {{ t('admin-series-confirmed') | tojson }},
   pending: {{ t('admin-series-pending') | tojson }},
   ended: {{ t('admin-series-ended') | tojson }},
@@ -1950,10 +2044,20 @@ var ADMIN_I18N = {
     var h = location.hash.replace(/^#(panel-)?/, '');
     return known(h) ? h : '';
   }
+  // A hash naming something inside a panel (a list's page link, #groups):
+  // that panel, then the element scrolled into view once it shows.
+  function targetPanel() {
+    var id = decodeURIComponent(location.hash.slice(1));
+    var el = id ? document.getElementById(id) : null;
+    var panel = el ? el.closest('.adm-panel') : null;
+    return panel && known(panel.dataset.panel) ? { name: panel.dataset.panel, el: el } : null;
+  }
   root.classList.add('adm-js');
   var stored = '';
   try { stored = sessionStorage.getItem(KEY) || ''; } catch (e) {}
-  activate(fromHash() || (known(stored) ? stored : 'overview'));
+  var inner = fromHash() ? null : targetPanel();
+  activate(fromHash() || (inner ? inner.name : '') || (known(stored) ? stored : 'overview'));
+  if (inner) inner.el.scrollIntoView({ block: 'start' });
 
   tabs.forEach(function(t, i) {
     t.addEventListener('click', function(e) { e.preventDefault(); activate(t.dataset.tab); });
@@ -2057,169 +2161,6 @@ var ADMIN_I18N = {
   });
 })();
 
-// Users table: search, filter chips, sortable columns, pagination.
-(function() {
-  var tbody = document.getElementById('user-list');
-  if (!tbody) return;
-  var PAGE_SIZE = 25;
-  var page = 1;
-  var filter = 'all';
-  var sortKey = '';
-  var sortDir = 1;
-  var rows = Array.prototype.slice.call(tbody.querySelectorAll('tr.user-item'));
-  var search = document.getElementById('user-search');
-  var chips = document.querySelectorAll('.adm-chip');
-  var headers = document.querySelectorAll('#user-table th[aria-sort]');
-
-  function matches(el, q) {
-    if (q && el.dataset.name.indexOf(q) === -1 && el.dataset.email.indexOf(q) === -1) return false;
-    switch (filter) {
-      case 'admin': return el.dataset.role === 'admin';
-      case 'disabled': return el.dataset.enabled === '0';
-      case 'local': return el.dataset.provider === 'local';
-      case 'oidc': return el.dataset.provider === 'oidc';
-      case 'never': return !el.dataset.last;
-      default: return true;
-    }
-  }
-  function value(el, key) {
-    switch (key) {
-      case 'name': return el.dataset.name;
-      case 'role': return el.dataset.role === 'admin' ? '0' : '1';
-      case 'provider': return el.dataset.provider;
-      case 'last': return el.dataset.last;
-      case 'created': return el.dataset.created;
-      default: return '';
-    }
-  }
-  function render() {
-    var q = search.value.trim().toLowerCase();
-    var list = rows.filter(function(el) { return matches(el, q); });
-    if (sortKey) {
-      list.sort(function(a, b) {
-        var va = value(a, sortKey), vb = value(b, sortKey);
-        // Users who never signed in sort last whichever the direction.
-        if (!va && vb) return 1;
-        if (va && !vb) return -1;
-        return va < vb ? -sortDir : va > vb ? sortDir : 0;
-      });
-    }
-    var pages = Math.max(1, Math.ceil(list.length / PAGE_SIZE));
-    if (page > pages) page = pages;
-    var start = (page - 1) * PAGE_SIZE;
-    rows.forEach(function(el) { el.style.display = 'none'; });
-    list.forEach(function(el, i) {
-      tbody.appendChild(el);
-      el.style.display = (i >= start && i < start + PAGE_SIZE) ? '' : 'none';
-    });
-    document.getElementById('user-no-results').style.display = list.length ? 'none' : '';
-    document.getElementById('user-count').textContent = ADMIN_I18N.shown.replace('%1', list.length).replace('%2', rows.length);
-    var pag = document.getElementById('user-pagination');
-    pag.innerHTML = '';
-    if (pages <= 1) return;
-    var label = document.createElement('span');
-    label.className = 'adm-muted';
-    label.textContent = ADMIN_I18N.page.replace('%1', page).replace('%2', pages);
-    pag.appendChild(label);
-    [[-1, '←', page > 1], [1, '→', page < pages]].forEach(function(b) {
-      var btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'adm-btn adm-btn-sm';
-      btn.textContent = b[1];
-      btn.disabled = !b[2];
-      btn.addEventListener('click', function() { page += b[0]; render(); });
-      pag.appendChild(btn);
-    });
-  }
-  search.addEventListener('input', function() { page = 1; render(); });
-  chips.forEach(function(chip) {
-    chip.addEventListener('click', function() {
-      filter = chip.dataset.filter;
-      chips.forEach(function(c) { c.setAttribute('aria-pressed', c === chip ? 'true' : 'false'); });
-      page = 1;
-      render();
-    });
-  });
-  headers.forEach(function(th) {
-    var btn = th.querySelector('.adm-sort');
-    if (!btn) return;
-    btn.addEventListener('click', function() {
-      var key = btn.dataset.sort;
-      if (sortKey === key) {
-        sortDir = -sortDir;
-      } else {
-        sortKey = key;
-        // Dates read best newest first; names and roles A to Z.
-        sortDir = (key === 'last' || key === 'created') ? -1 : 1;
-      }
-      headers.forEach(function(h) { h.setAttribute('aria-sort', 'none'); });
-      th.setAttribute('aria-sort', sortDir === 1 ? 'ascending' : 'descending');
-      render();
-    });
-  });
-  render();
-})();
-
-(function() {
-  var GROUP_PAGE_SIZE = 5;
-  var groupPage = 1;
-
-  function getFilteredGroups() {
-    var q = document.getElementById('group-search').value.toLowerCase();
-    var items = document.querySelectorAll('.group-item');
-    var filtered = [];
-    items.forEach(function(el) {
-      if (!q || el.dataset.name.indexOf(q) !== -1) {
-        filtered.push(el);
-      }
-    });
-    return filtered;
-  }
-
-  function renderGroupPage() {
-    var items = document.querySelectorAll('.group-item');
-    var filtered = getFilteredGroups();
-    var totalPages = Math.max(1, Math.ceil(filtered.length / GROUP_PAGE_SIZE));
-    if (groupPage > totalPages) groupPage = totalPages;
-    var start = (groupPage - 1) * GROUP_PAGE_SIZE;
-    var end = start + GROUP_PAGE_SIZE;
-
-    items.forEach(function(el) { el.style.display = 'none'; });
-    filtered.forEach(function(el, i) {
-      el.style.display = (i >= start && i < end) ? '' : 'none';
-    });
-
-    var noResults = document.getElementById('group-no-results');
-    if (noResults) noResults.style.display = (items.length > 0 && filtered.length === 0) ? '' : 'none';
-
-    var pag = document.getElementById('group-pagination');
-    if (!pag) return;
-    if (totalPages <= 1) { pag.innerHTML = ''; return; }
-
-    var html = '<span class="adm-muted">' + ADMIN_I18N.page.replace('%1', groupPage).replace('%2', totalPages) + '</span> ';
-    if (groupPage > 1) html += '<button onclick="window._groupPageNav(-1)" class="adm-btn adm-btn-sm">&larr;</button> ';
-    if (groupPage < totalPages) html += '<button onclick="window._groupPageNav(1)" class="adm-btn adm-btn-sm">&rarr;</button>';
-    pag.innerHTML = html;
-  }
-
-  window._groupPageNav = function(dir) { groupPage += dir; renderGroupPage(); };
-  window.filterGroups = function() { groupPage = 1; renderGroupPage(); };
-
-  if (document.getElementById('group-list')) renderGroupPage();
-})();
-
-window.toggleGroupMembers = function(groupId) {
-  var extras = document.querySelectorAll('.group-member-extra[data-group="' + groupId + '"]');
-  var btn = document.querySelector('.group-expand-btn[data-group="' + groupId + '"]');
-  if (!btn) return;
-  var hidden = extras[0] && extras[0].style.display === 'none';
-  extras.forEach(function(el) {
-    el.style.display = hidden ? 'flex' : 'none';
-  });
-  btn.textContent = hidden
-    ? ADMIN_I18N.showFewer
-    : ADMIN_I18N.showMore.replace('%1', extras.length) + '…';
-};
 </script>
 </div>
 {% endblock dashboard_content %}

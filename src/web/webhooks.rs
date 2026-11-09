@@ -39,6 +39,7 @@ use chrono_tz::Tz;
 use serde::Serialize;
 use sqlx::SqlitePool;
 use std::net::{IpAddr, SocketAddr};
+use std::sync::Arc;
 use std::time::Duration;
 
 /// Version of the JSON body. Bumped only for a change a receiver must handle;
@@ -302,6 +303,17 @@ struct Answer {
     consent: bool,
     link_url: Option<String>,
     answered_at: String,
+    /// A consent ticked by a host through the REST API rather than by the
+    /// guest: who recorded it, and with which credential. Null otherwise.
+    attested_by: Option<Attested>,
+}
+
+#[derive(Serialize, Clone, Debug)]
+struct Attested {
+    user_id: String,
+    name: String,
+    via: String,
+    credential_id: String,
 }
 
 impl From<crate::email::BookingAnswer> for Answer {
@@ -315,6 +327,12 @@ impl From<crate::email::BookingAnswer> for Answer {
             consent: a.consent,
             link_url: a.link_url,
             answered_at: a.answered_at,
+            attested_by: a.attested_by.map(|by| Attested {
+                user_id: by.user_id,
+                name: by.name,
+                via: by.via,
+                credential_id: by.credential_id,
+            }),
         }
     }
 }
@@ -579,6 +597,7 @@ fn ping_snapshot(event_type: Option<(String, String, String, Tz)>) -> Snapshot {
                 consent: false,
                 link_url: None,
                 answered_at: iso(Utc::now()),
+                attested_by: None,
             }],
             attendees: vec!["colleague@example.com".to_string()],
             hosts: vec![Host {
@@ -912,7 +931,7 @@ pub fn check_url_shape(
         .trim_start_matches('[')
         .trim_end_matches(']')
         .to_ascii_lowercase();
-    let allowlisted = allowlist.contains(&host);
+    let allowlisted = crate::net_guard::Allowlist::fixed(allowlist).allows(&host);
     match url.scheme() {
         "https" => {}
         "http" if allowlisted => {}
@@ -943,21 +962,18 @@ pub async fn check_target(raw: &str, allowlist: &[String]) -> Result<Target, Tar
         }
         return Ok(Target { url, pinned: None });
     }
-    let port = url.port_or_known_default().unwrap_or(443);
-    let addrs: Vec<SocketAddr> = tokio::time::timeout(
-        CONNECT_TIMEOUT,
-        tokio::net::lookup_host((host.as_str(), port)),
-    )
-    .await
-    .map_err(|_| TargetError::Unresolvable("timed out".to_string()))?
-    .map_err(|e| TargetError::Unresolvable(e.to_string()))?
-    .collect();
-    if addrs.is_empty() {
-        return Err(TargetError::Unresolvable("no address".to_string()));
-    }
-    if let Some(bad) = addrs.iter().find(|a| crate::caldav::is_private_ip(&a.ip())) {
-        return Err(TargetError::Private(bad.ip().to_string()));
-    }
+    let allow = crate::net_guard::Allowlist::fixed(allowlist);
+    let lookup = crate::net_guard::resolve_checked(&crate::net_guard::SystemLookup, &host, &allow);
+    let addrs = match tokio::time::timeout(CONNECT_TIMEOUT, lookup).await {
+        Err(_) => return Err(TargetError::Unresolvable("timed out".to_string())),
+        Ok(Err(crate::net_guard::GuardError::Private(ip))) => {
+            return Err(TargetError::Private(ip.to_string()))
+        }
+        Ok(Err(crate::net_guard::GuardError::Unresolvable(e))) => {
+            return Err(TargetError::Unresolvable(e))
+        }
+        Ok(Ok(addrs)) => addrs,
+    };
     Ok(Target {
         url,
         pinned: Some((host, addrs)),
@@ -1028,14 +1044,18 @@ async fn post(
             return Attempt::failed(None, format!("refused: {}", e.shown()));
         }
     };
-    // No proxy: reqwest honours HTTP(S)_PROXY and ALL_PROXY by default, and a
-    // proxy resolves the host itself, which would undo the address checks
-    // and the pinning below.
-    let mut builder = reqwest::Client::builder()
-        .no_proxy()
-        .timeout(REQUEST_TIMEOUT)
-        .connect_timeout(CONNECT_TIMEOUT)
-        .redirect(reqwest::redirect::Policy::none());
+    // The shared guarded client (#363) with no proxy (a proxy resolves the
+    // host itself, which would undo the address checks), no redirects, and any
+    // lookup it makes is checked again. The addresses checked above are
+    // pinned, so the connection goes to exactly those.
+    let allow = crate::net_guard::Allowlist::fixed(allowlist);
+    let mut builder = crate::net_guard::builder_with(
+        allow,
+        Arc::new(crate::net_guard::SystemLookup),
+        &crate::net_guard::ProxyConfig::none(),
+    )
+    .timeout(REQUEST_TIMEOUT)
+    .connect_timeout(CONNECT_TIMEOUT);
     if let Some((host, addrs)) = &target.pinned {
         builder = builder.resolve_to_addrs(host, addrs);
     }
@@ -1294,7 +1314,7 @@ impl Drop for InFlight {
 /// still sends, to the same URL with the same secret.
 async fn serve_endpoint(
     pool: SqlitePool,
-    key: [u8; 32],
+    key: crate::crypto::SecretKey,
     webhook_id: String,
     now: DateTime<Utc>,
     allowlist: Vec<String>,
@@ -1351,7 +1371,11 @@ pub(crate) async fn start_pass(
         let Some(guard) = InFlight::claim(&webhook_id) else {
             continue;
         };
-        let (pool, key, allowlist) = (pool.clone(), *key, allowlist.to_vec());
+        let (pool, key, allowlist) = (
+            pool.clone(),
+            crate::crypto::SecretKey::new(*key),
+            allowlist.to_vec(),
+        );
         handles.push(tokio::spawn(async move {
             let _guard = guard;
             serve_endpoint(pool, key, webhook_id, now, allowlist).await
@@ -1421,7 +1445,7 @@ pub(crate) async fn prune(pool: &SqlitePool, now: DateTime<Utc>) {
 /// The delivery task spawned by `calrs serve`. Wakes when a delivery is
 /// queued, and every 30 seconds for the retries. Deliveries queued by the
 /// CLI are picked up by that tick.
-pub async fn run_webhook_loop(pool: SqlitePool, key: [u8; 32]) {
+pub async fn run_webhook_loop(pool: SqlitePool, key: crate::crypto::SecretKey) {
     // At startup too: a server that was down a while has stale rows.
     prune(&pool, Utc::now()).await;
     let mut last_prune = std::time::Instant::now();

@@ -20,13 +20,93 @@ pub(crate) fn is_safe_company_link(url: &str) -> bool {
 
 // --- Users tab: listing ---
 
-/// Up to this many users, the Users tab renders everyone and the browser
-/// filters, sorts and pages them, as it always has. Past it, the server
-/// does all three and renders one page: 2,000 rows with their action menus
-/// were 6.6 MB of HTML (#343).
-pub(super) const USERS_INLINE_MAX: i64 = 100;
-/// Rows per page, the same as the browser-side pages.
+/// Users per page. The server searches, filters, sorts and pages the list
+/// and renders one page: 2,000 rows with their action menus were 6.6 MB of
+/// HTML (#343).
 pub(super) const USERS_PAGE_SIZE: i64 = 25;
+/// Groups per page of the Groups list, and members shown per group.
+pub(super) const GROUPS_PAGE_SIZE: i64 = 25;
+pub(super) const GROUP_MEMBERS_PAGE_SIZE: i64 = 10;
+
+/// The Groups list as carried in the URL: `gq` (search on the name), `gp`
+/// (page), and `gm` with `gmp`: the one group whose members are paged past
+/// the first page, and that page. Anything unknown falls back to the
+/// default, never to an error.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct GroupListState {
+    pub q: String,
+    pub page: i64,
+    pub members_of: Option<String>,
+    pub members_page: i64,
+}
+
+impl GroupListState {
+    pub(super) fn from_query(query: &HashMap<String, String>) -> Self {
+        let get = |k: &str| query.get(k).map(String::as_str);
+        Self {
+            q: listing::bounded_search(get("gq").unwrap_or_default()),
+            page: listing::lenient_page(get("gp")),
+            members_of: get("gm")
+                .map(str::trim)
+                .filter(|id| !id.is_empty() && id.len() <= 64)
+                .map(str::to_string),
+            members_page: listing::lenient_page(get("gmp")),
+        }
+    }
+
+    /// The query string for group page `page`, with group `members` on its
+    /// members' page (defaults left out).
+    pub(super) fn query_string(&self, page: i64, members: Option<(&str, i64)>) -> String {
+        let mut params = Vec::new();
+        if !self.q.is_empty() {
+            params.push(format!("gq={}", urlencoding::encode(&self.q)));
+        }
+        params.push(listing::page_part("gp", page));
+        if let Some((group, members_page)) = members.filter(|(_, p)| *p > 1) {
+            params.push(format!("gm={}", urlencoding::encode(group)));
+            params.push(format!("gmp={members_page}"));
+        }
+        params.retain(|p| !p.is_empty());
+        params.join("&")
+    }
+
+    /// The state as it stands, for the other lists' links to keep.
+    fn current(&self) -> String {
+        self.query_string(
+            self.page,
+            self.members_of
+                .as_deref()
+                .map(|group| (group, self.members_page)),
+        )
+    }
+
+    /// The search as a bound `GLOB` pattern.
+    fn push_filter(&self, qb: &mut sqlx::QueryBuilder<'_, sqlx::Sqlite>) {
+        if !self.q.is_empty() {
+            qb.push(" WHERE g.name GLOB ");
+            qb.push_bind(listing::ci_glob(&self.q));
+        }
+    }
+}
+
+/// `/dashboard/admin` with both lists of the Users tab where they are,
+/// scrolled to `anchor`.
+fn admin_href(users: String, groups: String, anchor: &str) -> String {
+    listing::href("/dashboard/admin", &[users, groups], anchor)
+}
+
+/// A query string this page built as hidden form fields, so one list's
+/// search form keeps the other list where it was.
+fn hidden_params(query: &str) -> Vec<(String, String)> {
+    query
+        .split('&')
+        .filter_map(|pair| pair.split_once('='))
+        .filter_map(|(k, v)| {
+            let v = urlencoding::decode(v).ok()?.into_owned();
+            Some((k.to_string(), v))
+        })
+        .collect()
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum UserFilter {
@@ -271,30 +351,29 @@ fn push_user_filter(qb: &mut sqlx::QueryBuilder<'_, sqlx::Sqlite>, state: &UserL
     }
 }
 
-/// One page of the server-side Users list and how many users match it.
+/// One page of the Users list, its links keeping the Groups list's state
+/// (`groups`, a query string).
 async fn user_list_page(
     pool: &SqlitePool,
     state: &UserListState,
-) -> Result<(Vec<UserRow>, i64, i64), sqlx::Error> {
+    groups: &str,
+) -> Result<listing::Page<UserRow>, sqlx::Error> {
     let mut count = sqlx::QueryBuilder::new("SELECT COUNT(*) FROM users");
     push_user_filter(&mut count, state);
-    let matched: i64 = count.build_query_scalar().fetch_one(pool).await?;
-    let page = listing::clamp_page(state.page, matched, USERS_PAGE_SIZE);
     let mut select = sqlx::QueryBuilder::new(USER_COLUMNS);
     push_user_filter(&mut select, state);
-    select.push(" ORDER BY ");
-    select.push(
+    listing::paged(
+        pool,
+        count,
+        select,
         state
             .sort
             .map(|s| s.order_by(state.desc))
             .unwrap_or("created_at, id"),
-    );
-    select.push(" LIMIT ");
-    select.push_bind(USERS_PAGE_SIZE);
-    select.push(" OFFSET ");
-    select.push_bind((page - 1) * USERS_PAGE_SIZE);
-    let rows: Vec<UserRow> = select.build_query_as().fetch_all(pool).await?;
-    Ok((rows, matched, page))
+        listing::PageParams::sized(state.page, USERS_PAGE_SIZE),
+        |n| admin_href(state.query_string(n), groups.to_string(), "users"),
+    )
+    .await
 }
 
 /// Where a user action returns: the server-side list page it was taken
@@ -345,7 +424,12 @@ pub(super) async fn admin_dashboard(
     let upload_error = query
         .get("upload_error")
         .map(String::as_str)
-        .filter(|reason| matches!(*reason, "logo" | "logo-save" | "favicon" | "favicon-save"))
+        .filter(|reason| {
+            matches!(
+                *reason,
+                "logo" | "logo-save" | "logo-dark" | "logo-dark-save" | "favicon" | "favicon-save"
+            )
+        })
         .unwrap_or_default();
 
     // Shared bookable resources
@@ -475,8 +559,9 @@ pub(super) async fn admin_dashboard(
         });
     }
 
-    // Users. A small instance renders all of them for the browser-side
-    // list; a large one renders the requested page only.
+    // Users, one page of them: the server searches, filters, sorts and
+    // pages, whatever the instance's size. The Groups list below shares
+    // the tab, so each list's links keep the other's state.
     let user_count: i64 = match sqlx::query_scalar("SELECT COUNT(*) FROM users")
         .fetch_one(&state.pool)
         .await
@@ -484,31 +569,17 @@ pub(super) async fn admin_dashboard(
         Ok(n) => n,
         Err(e) => return internal_error_html("count users", &e),
     };
-    let users_server = user_count > USERS_INLINE_MAX;
+    let groups_list = GroupListState::from_query(&query);
+    let groups_qs = groups_list.current();
     let mut users_list = UserListState::from_params(|k| query.get(k).map(String::as_str));
-    let (users, users_matched) = if users_server {
-        match user_list_page(&state.pool, &users_list).await {
-            Ok((rows, matched, page)) => {
-                users_list.page = page;
-                (rows, matched)
-            }
-            Err(e) => return internal_error_html("load users page", &e),
-        }
-    } else {
-        let rows: Vec<UserRow> = sqlx::query_as(&format!("{USER_COLUMNS} ORDER BY created_at"))
-            .fetch_all(&state.pool)
-            .await
-            .unwrap_or_default();
-        let matched = rows.len() as i64;
-        (rows, matched)
+    let users_page = match user_list_page(&state.pool, &users_list, &groups_qs).await {
+        Ok(page) => page,
+        Err(e) => return internal_error_html("load users page", &e),
     };
-    let users_pager = users_server
-        .then(|| {
-            listing::pager(users_list.page, users_matched, USERS_PAGE_SIZE, |n| {
-                users_list.href(n)
-            })
-        })
-        .flatten();
+    users_list.page = users_page.page;
+    let users_matched = users_page.total;
+    let users_pager = users_page.pager;
+    let users = users_page.rows;
 
     // Groups of the listed users only.
     let user_ids: Vec<&str> = users.iter().map(|u| u.0.as_str()).collect();
@@ -577,7 +648,16 @@ pub(super) async fn admin_dashboard(
         .collect();
     let users_filter_hrefs: HashMap<&str, String> = UserFilter::ALL
         .into_iter()
-        .map(|f| (f.key(), users_list.with_filter(f).href(1)))
+        .map(|f| {
+            (
+                f.key(),
+                admin_href(
+                    users_list.with_filter(f).query_string(1),
+                    groups_qs.clone(),
+                    "users",
+                ),
+            )
+        })
         .collect();
     let users_sort_links: HashMap<&str, minijinja::Value> = UserSort::ALL
         .into_iter()
@@ -585,7 +665,11 @@ pub(super) async fn admin_dashboard(
             (
                 s.key(),
                 context! {
-                    href => users_list.with_sort(s).href(1),
+                    href => admin_href(
+                        users_list.with_sort(s).query_string(1),
+                        groups_qs.clone(),
+                        "users",
+                    ),
                     aria => users_list.aria_sort(s),
                 },
             )
@@ -600,31 +684,90 @@ pub(super) async fn admin_dashboard(
         filter_hrefs => users_filter_hrefs,
         sort_links => users_sort_links,
         search_max => listing::MAX_SEARCH_CHARS,
+        // The other list's state, for the search form to carry.
+        hidden => hidden_params(&groups_qs),
     };
 
-    // Fetch groups with member count
-    let groups_rows: Vec<(String, String, i64)> = sqlx::query_as(
-        "SELECT g.id, g.name, COUNT(ug.user_id) as member_count \
-         FROM groups g LEFT JOIN user_groups ug ON ug.group_id = g.id \
-         GROUP BY g.id ORDER BY g.name",
+    // Groups, one page of them, each with one page of its members (by
+    // weight, then name), in one query for the whole page.
+    let group_count: i64 = match sqlx::query_scalar("SELECT COUNT(*) FROM groups")
+        .fetch_one(&state.pool)
+        .await
+    {
+        Ok(n) => n,
+        Err(e) => return internal_error_html("count groups", &e),
+    };
+    let users_qs = users_list.query_string(users_list.page);
+    let mut count = sqlx::QueryBuilder::new("SELECT COUNT(*) FROM groups g");
+    groups_list.push_filter(&mut count);
+    let mut select = sqlx::QueryBuilder::new(
+        "SELECT g.id, g.name,
+                (SELECT COUNT(*) FROM user_groups ug WHERE ug.group_id = g.id)
+         FROM groups g",
+    );
+    groups_list.push_filter(&mut select);
+    let groups_page = match listing::paged::<(String, String, i64)>(
+        &state.pool,
+        count,
+        select,
+        "g.name, g.id",
+        listing::PageParams::sized(groups_list.page, GROUPS_PAGE_SIZE),
+        |n| {
+            admin_href(
+                users_qs.clone(),
+                groups_list.query_string(n, None),
+                "groups",
+            )
+        },
     )
-    .fetch_all(&state.pool)
     .await
-    .unwrap_or_default();
-
-    let group_count = groups_rows.len();
-
-    // Fetch all group members with weights
+    {
+        Ok(page) => page,
+        Err(e) => return internal_error_html("load groups page", &e),
+    };
+    // The members' page of each listed group: the requested one for the
+    // group named in the URL (clamped to its members), the first otherwise.
+    let member_page_of = |gid: &str, member_count: i64| {
+        if groups_list.members_of.as_deref() == Some(gid) {
+            listing::clamp_page(
+                groups_list.members_page,
+                member_count,
+                GROUP_MEMBERS_PAGE_SIZE,
+            )
+        } else {
+            1
+        }
+    };
+    let offsets: HashMap<&str, i64> = groups_page
+        .rows
+        .iter()
+        .map(|(id, _, n)| {
+            (
+                id.as_str(),
+                (member_page_of(id, *n) - 1) * GROUP_MEMBERS_PAGE_SIZE,
+            )
+        })
+        .collect();
     let all_members: Vec<(String, String, String, i64)> = sqlx::query_as(
-        "SELECT ug.group_id, ug.user_id, u.name, ug.weight \
-         FROM user_groups ug JOIN users u ON u.id = ug.user_id \
-         ORDER BY ug.weight DESC, u.name",
+        "SELECT group_id, user_id, name, weight FROM (
+             SELECT ug.group_id AS group_id, ug.user_id AS user_id, u.name AS name,
+                    ug.weight AS weight,
+                    ROW_NUMBER() OVER (PARTITION BY ug.group_id
+                        ORDER BY ug.weight DESC, u.name, ug.user_id) AS rn
+             FROM user_groups ug JOIN users u ON u.id = ug.user_id
+             WHERE ug.group_id IN (SELECT key FROM json_each(?1)))
+         WHERE rn > json_extract(?1, '$.' || json_quote(group_id))
+           AND rn <= json_extract(?1, '$.' || json_quote(group_id)) + ?2
+         ORDER BY group_id, rn",
     )
+    .bind(serde_json::to_string(&offsets).unwrap_or_else(|_| "{}".to_string()))
+    .bind(GROUP_MEMBERS_PAGE_SIZE)
     .fetch_all(&state.pool)
     .await
     .unwrap_or_default();
 
-    let groups_ctx: Vec<minijinja::Value> = groups_rows
+    let groups_ctx: Vec<minijinja::Value> = groups_page
+        .rows
         .iter()
         .map(|(id, name, member_count)| {
             let members: Vec<minijinja::Value> = all_members
@@ -638,14 +781,44 @@ pub(super) async fn admin_dashboard(
                     }
                 })
                 .collect();
+            let members_pager = listing::pager(
+                member_page_of(id, *member_count),
+                *member_count,
+                GROUP_MEMBERS_PAGE_SIZE,
+                |n| {
+                    admin_href(
+                        users_qs.clone(),
+                        groups_list.query_string(groups_page.page, Some((id.as_str(), n))),
+                        &format!("group-{id}"),
+                    )
+                },
+            );
+            // The weight forms return to this group on this page.
+            let return_to = admin_href(
+                users_qs.clone(),
+                groups_list.query_string(
+                    groups_page.page,
+                    Some((id.as_str(), member_page_of(id, *member_count))),
+                ),
+                &format!("group-{id}"),
+            );
             context! {
                 id => id,
                 name => name,
                 member_count => member_count,
                 members => members,
+                members_pager => members_pager,
+                return_to => return_to,
             }
         })
         .collect();
+    let groups_list_ctx = context! {
+        q => groups_list.q,
+        search_max => listing::MAX_SEARCH_CHARS,
+        matched => groups_page.total,
+        pager => groups_page.pager,
+        hidden => hidden_params(&users_qs),
+    };
 
     let mfa_required = match crate::mfa::required(&state.pool).await {
         Ok(value) => value,
@@ -800,6 +973,8 @@ pub(super) async fn admin_dashboard(
 
     let (sms_cost_today, sms_cost_currency) = crate::sms::cost_today(&state.pool).await;
     let sms_sent_today = crate::sms::sent_today(&state.pool).await;
+    let sms_segments_today = crate::sms::segments_today(&state.pool).await;
+    let sms_unknown_today = crate::sms::unknown_today(&state.pool).await;
     let sms_allow_all_users: bool =
         sqlx::query_scalar("SELECT sms_allow_all_users FROM auth_config WHERE id = 'singleton'")
             .fetch_optional(&state.pool)
@@ -936,6 +1111,7 @@ pub(super) async fn admin_dashboard(
         .and_then(|w| w.display_name.clone())
         .unwrap_or_default();
     drop(meeting_cfg);
+    let (logo_bg_light, logo_bg_dark) = logo_preview_backgrounds(&state.theme_css.read().await);
 
     Html(
         tmpl.render(context! {
@@ -943,13 +1119,13 @@ pub(super) async fn admin_dashboard(
             current_user_id => current_user.id,
             users => users_ctx,
             user_count => user_count,
-            users_server => users_server,
             users_matched => users_matched,
             users_list => users_list_ctx,
             users_pager => users_pager,
             figures_age => figures_age.map(|age| age.max(1)),
             groups => groups_ctx,
             group_count => group_count,
+            groups_list => groups_list_ctx,
             mfa_required => mfa_required,
             local_admin => current_user.auth_provider == "local",
             registration_enabled => registration_enabled,
@@ -973,6 +1149,9 @@ pub(super) async fn admin_dashboard(
             allow_private_hosts => crate::settings::private_host_allowlist().join(", "),
             allow_private_hosts_db => crate::settings::private_host_allowlist_db().join(", "),
             allow_private_hosts_from_env => crate::settings::allow_private_hosts_from_env(),
+            trusted_proxies => crate::trusted_proxies::current().describe(),
+            trusted_proxies_db => crate::trusted_proxies::saved(&state.pool).await,
+            trusted_proxies_from_env => crate::trusted_proxies::set_by_env(),
             german_formal => state.german_formal.load(std::sync::atomic::Ordering::Relaxed),
             week_start_setting => context! { value => week_start::site(&state.pool).await },
             smtp_configured => smtp_configured,
@@ -994,6 +1173,8 @@ pub(super) async fn admin_dashboard(
             sms_default_country => sms_default_country,
             sms_daily_cap => sms_daily_cap,
             sms_sent_today => sms_sent_today,
+            sms_segments_today => sms_segments_today,
+            sms_unknown_today => sms_unknown_today,
             sms_cost_today => format!("{:.2}", sms_cost_today),
             sms_cost_currency => sms_cost_currency,
             sms_allow_all_users => sms_allow_all_users,
@@ -1032,7 +1213,10 @@ pub(super) async fn admin_dashboard(
             meeting_webhook_auth_mode => meeting_webhook_auth_mode,
             meeting_webhook_has_secret => meeting_webhook_has_secret,
             meeting_webhook_display_name => meeting_webhook_display_name,
-            has_logo => state.data_dir.join("logo.png").exists(),
+            has_logo => state.data_dir.join(LOGO_FILE).exists(),
+            has_dark_logo => state.data_dir.join(LOGO_DARK_FILE).exists(),
+            logo_bg_light => logo_bg_light,
+            logo_bg_dark => logo_bg_dark,
             has_favicon => state.data_dir.join(FAVICON_FILE).exists(),
             company_link => get_company_link(&state.pool).await.unwrap_or_default(),
             current_theme => get_theme_name(&state.pool).await,
@@ -1933,6 +2117,8 @@ pub(super) struct AdminGeneralForm {
     _csrf: Option<String>,
     base_url: Option<String>,
     allow_private_hosts: Option<String>,
+    /// Absent leaves the stored value alone.
+    trusted_proxies: Option<String>,
     /// "sie" or "du"; absent leaves the stored value alone.
     german_formal: Option<String>,
     week_start: Option<WeekStart>,
@@ -1953,86 +2139,123 @@ pub(super) async fn admin_update_general(
     // value back; writing it would either clobber the stored DB value with NULL
     // (disabled inputs) or leak the env value into the DB. The env keeps
     // precedence regardless, so there's nothing to save for those fields.
-    if !crate::settings::base_url_from_env() {
+    //
+    // Every field is validated first and the whole form saved in one
+    // transaction, so a refused value saves nothing (`None` below leaves a
+    // column as stored).
+    let refuse = |key: &str, args: Option<&fluent_bundle::FluentArgs>| {
+        let msg = urlencoding::encode(&crate::i18n::translate(_admin.lang, key, args)).into_owned();
+        Redirect::to(&format!("/dashboard/admin?error={}", msg)).into_response()
+    };
+
+    let base_url: Option<Option<String>> = if crate::settings::base_url_from_env() {
+        None
+    } else {
         // Normalise (strip trailing slash). Empty clears the override; a
         // non-empty value must be an absolute http(s) URL with a host. We do
-        // NOT run the SSRF guard here — the public base URL is legitimately
+        // NOT run the SSRF guard here: the public base URL is legitimately
         // allowed to be localhost / a private host in dev.
         let raw = form
             .base_url
             .as_deref()
             .map(|s| s.trim().trim_end_matches('/'))
             .filter(|s| !s.is_empty());
-        let base_url = match raw {
+        Some(match raw {
             None => None,
             Some(raw) => match reqwest::Url::parse(raw) {
                 Ok(u) if matches!(u.scheme(), "http" | "https") && u.host_str().is_some() => {
                     Some(raw.to_string())
                 }
-                _ => {
-                    let msg = urlencoding::encode(&crate::i18n::translate(
-                        _admin.lang,
-                        "admin-base-url-invalid",
-                        None,
-                    ))
-                    .into_owned();
-                    return Redirect::to(&format!("/dashboard/admin?error={}", msg))
-                        .into_response();
-                }
+                _ => return refuse("admin-base-url-invalid", None),
             },
+        })
+    };
+
+    let allow_private_hosts: Option<Option<String>> =
+        if crate::settings::allow_private_hosts_from_env() {
+            None
+        } else {
+            // Re-serialise through the canonical parser so what we store
+            // matches what `settings` reads back. Empty → NULL (clears the DB
+            // override).
+            Some(
+                form.allow_private_hosts
+                    .as_deref()
+                    .map(|s| crate::settings::parse_host_list(s).join(","))
+                    .filter(|s| !s.is_empty()),
+            )
         };
-        if let Err(e) = sqlx::query(
-            "UPDATE auth_config SET base_url = ?, updated_at = datetime('now') WHERE id = 'singleton'",
-        )
-        .bind(&base_url)
-        .execute(&state.pool)
-        .await
-        {
-            return internal_error_response("save base_url", &e);
-        }
-    }
 
-    if !crate::settings::allow_private_hosts_from_env() {
-        // Re-serialise through the canonical parser so what we store matches
-        // what `settings` reads back. Empty → NULL (clears the DB override).
-        let allow_private_hosts = form
-            .allow_private_hosts
-            .as_deref()
-            .map(|s| crate::settings::parse_host_list(s).join(","))
-            .filter(|s| !s.is_empty());
-        if let Err(e) = sqlx::query(
-            "UPDATE auth_config SET allow_private_hosts = ?, updated_at = datetime('now') WHERE id = 'singleton'",
-        )
-        .bind(&allow_private_hosts)
-        .execute(&state.pool)
-        .await
-        {
-            return internal_error_response("save allow_private_hosts", &e);
-        }
-    }
+    let trusted_proxies: Option<Option<String>> = match (
+        form.trusted_proxies.as_deref(),
+        crate::trusted_proxies::set_by_env(),
+    ) {
+        // Stored in its canonical form; empty is NULL, the default list.
+        (Some(raw), false) => match crate::trusted_proxies::TrustedProxies::parse(raw) {
+            Ok(_) if raw.trim().is_empty() => Some(None),
+            Ok(list) => Some(Some(list.describe())),
+            Err(e) => {
+                let key = match e {
+                    crate::trusted_proxies::ListError::Invalid(_) => {
+                        "admin-trusted-proxies-invalid"
+                    }
+                    crate::trusted_proxies::ListError::TrustsEveryone(_) => {
+                        "admin-trusted-proxies-everyone"
+                    }
+                };
+                let mut args = fluent_bundle::FluentArgs::new();
+                args.set("entry", fluent_bundle::FluentValue::from(e.entry()));
+                return refuse(key, Some(&args));
+            }
+        },
+        _ => None,
+    };
 
-    if let Some(form_of_address) = form.german_formal.as_deref() {
-        let formal = form_of_address == "sie";
-        if let Err(e) = sqlx::query(
-            "UPDATE auth_config SET german_formal = ?, updated_at = datetime('now') WHERE id = 'singleton'",
-        )
-        .bind(formal)
-        .execute(&state.pool)
-        .await
-        {
-            return internal_error_response("save german_formal", &e);
+    let german_formal = form.german_formal.as_deref().map(|form| form == "sie");
+
+    let saved = async {
+        let mut tx = state.pool.begin().await?;
+        // Each column in its own statement, written only when it is set.
+        for (column, value) in [
+            ("base_url", base_url.as_ref()),
+            ("allow_private_hosts", allow_private_hosts.as_ref()),
+            ("trusted_proxies", trusted_proxies.as_ref()),
+        ] {
+            if let Some(value) = value {
+                sqlx::query(&format!(
+                    "UPDATE auth_config SET {column} = ?, updated_at = datetime('now') WHERE id = 'singleton'"
+                ))
+                .bind(value)
+                .execute(&mut *tx)
+                .await?;
+            }
         }
+        if let Some(formal) = german_formal {
+            sqlx::query(
+                "UPDATE auth_config SET german_formal = ?, updated_at = datetime('now') WHERE id = 'singleton'",
+            )
+            .bind(formal)
+            .execute(&mut *tx)
+            .await?;
+        }
+        if let Some(day) = form.week_start {
+            sqlx::query(
+                "UPDATE auth_config SET week_start = ?, updated_at = datetime('now') WHERE id = 'singleton'",
+            )
+            .bind(day.key())
+            .execute(&mut *tx)
+            .await?;
+        }
+        tx.commit().await
+    }
+    .await;
+    if let Err(e) = saved {
+        return internal_error_response("save general settings", &e);
+    }
+    if let Some(formal) = german_formal {
         state
             .german_formal
             .store(formal, std::sync::atomic::Ordering::Relaxed);
-    }
-
-    if let Some(day) = form.week_start {
-        if let Err(e) = sqlx::query("UPDATE auth_config SET week_start = ?, updated_at = datetime('now') WHERE id = 'singleton'")
-            .bind(day.key()).execute(&state.pool).await
-        {
-            return internal_error_response("save week_start", &e);
-        }
     }
 
     // Refresh the process-global cache so the change takes effect immediately.
@@ -2493,15 +2716,15 @@ pub(super) async fn admin_update_sms(
     // Validate the configuration as it will actually be stored, secret
     // included, so a keep-current save of an incomplete row still fails loudly.
     let effective_secret = if secret_provided {
-        api_secret.trim().to_string()
+        zeroize::Zeroizing::new(api_secret.trim().to_string())
     } else if switching_provider {
-        String::new()
+        zeroize::Zeroizing::default()
     } else {
         match existing.as_ref().and_then(|(_, enc)| enc.as_deref()) {
             Some(enc) if !enc.is_empty() => {
                 crate::crypto::decrypt_password(&state.secret_key, enc).unwrap_or_default()
             }
-            _ => String::new(),
+            _ => zeroize::Zeroizing::default(),
         }
     };
 
@@ -2690,8 +2913,10 @@ pub(super) async fn admin_update_sms_test(
         }
     };
 
+    // Metered like a guest message: an admin test is billed like any other,
+    // so it shows in today's figures and stays inside the daily cap.
     let body = crate::i18n::translate(admin.lang, "admin-sms-test-body", None);
-    match crate::sms::send(&config, &to, &body).await {
+    match crate::sms::send_metered(&state.pool, &config, "test", &to, &body).await {
         Ok(_) => {
             tracing::info!(admin = %admin.user.email, provider = %config.provider, %to, "admin: test SMS sent");
             redirect(
@@ -2699,7 +2924,21 @@ pub(super) async fn admin_update_sms_test(
                 &crate::i18n::translate(admin.lang, "admin-sms-test-accepted", None),
             )
         }
-        Err(e) => {
+        Err(crate::sms::MeteredSendError::OverCap) => {
+            tracing::warn!(admin = %admin.user.email, cap = config.daily_cap, "admin: test SMS refused, daily cap reached");
+            redirect(
+                "error",
+                &crate::i18n::translate(admin.lang, "admin-sms-test-over-cap", None),
+            )
+        }
+        Err(crate::sms::MeteredSendError::Ledger(e)) => {
+            tracing::warn!(admin = %admin.user.email, error = %e, "admin: test SMS refused, usage ledger unavailable");
+            redirect(
+                "error",
+                &crate::i18n::translate(admin.lang, "admin-sms-test-ledger-failed", None),
+            )
+        }
+        Err(crate::sms::MeteredSendError::Gateway(e)) => {
             tracing::warn!(admin = %admin.user.email, provider = %config.provider, error = %e, "admin: test SMS failed");
             redirect("error", &e.to_string())
         }
@@ -2953,39 +3192,98 @@ fn admin_upload_refused(reason: &str) -> Response {
     Redirect::to(&format!("/dashboard/admin?upload_error={reason}")).into_response()
 }
 
-pub(super) async fn admin_upload_logo(
-    State(state): State<Arc<AppState>>,
-    admin: crate::auth::AdminUser,
-    headers: HeaderMap,
-    Query(csrf_query): Query<CsrfQuery>,
+/// Shared by the light and the dark logo upload: reads the multipart `field`,
+/// checks it, and stores it as `file`. `reason` is the `upload_error` value a
+/// refusal redirects with (`{reason}-save` when the write itself fails).
+async fn save_logo(
+    state: &AppState,
+    admin_email: &str,
     mut multipart: Multipart,
-) -> impl IntoResponse {
-    if let Err(resp) = verify_csrf_token(&headers, &csrf_query._csrf) {
-        return resp;
-    }
+    field_name: &str,
+    file: &str,
+    reason: &str,
+) -> Response {
     // A body over the size limit makes the multipart reader fail, which ends
     // this loop and lands on the refusal below like any other bad upload.
     while let Ok(Some(field)) = multipart.next_field().await {
-        if field.name() != Some("logo") {
+        if field.name() != Some(field_name) {
             continue;
         }
         let Ok(bytes) = field.bytes().await else {
-            return admin_upload_refused("logo");
+            return admin_upload_refused(reason);
         };
         // Trust magic bytes, not the multipart Content-Type header. SVG is
         // not accepted, so an upload served from this origin can never carry
         // script.
         if bytes.len() > LOGO_MAX_BYTES || detect_image_ext(&bytes).is_none() {
-            return admin_upload_refused("logo");
+            return admin_upload_refused(reason);
         }
-        if let Err(e) = tokio::fs::write(state.data_dir.join("logo.png"), &bytes).await {
-            tracing::error!(error = %e, "failed to save the logo");
-            return admin_upload_refused("logo-save");
+        // Written beside the target under a name of its own, flushed to disk,
+        // then renamed over it: a page loading the logo meanwhile gets the old
+        // file or the new one, never half, and two uploads at once cannot
+        // write into the same temporary file.
+        let staged = state
+            .data_dir
+            .join(format!("{file}.{}.upload", uuid::Uuid::new_v4()));
+        let saved = async {
+            let mut out = tokio::fs::File::create(&staged).await?;
+            tokio::io::AsyncWriteExt::write_all(&mut out, &bytes).await?;
+            out.sync_all().await?;
+            drop(out);
+            tokio::fs::rename(&staged, state.data_dir.join(file)).await
         }
-        tracing::info!(admin = %admin.user.email, "admin: logo uploaded");
+        .await;
+        if let Err(e) = saved {
+            let _ = tokio::fs::remove_file(&staged).await;
+            tracing::error!(error = %e, file, "failed to save the logo");
+            return admin_upload_refused(&format!("{reason}-save"));
+        }
+        tracing::info!(admin = %admin_email, file, "admin: logo uploaded");
         return Redirect::to("/dashboard/admin").into_response();
     }
-    admin_upload_refused("logo")
+    admin_upload_refused(reason)
+}
+
+pub(super) async fn admin_upload_logo(
+    State(state): State<Arc<AppState>>,
+    admin: crate::auth::AdminUser,
+    headers: HeaderMap,
+    Query(csrf_query): Query<CsrfQuery>,
+    multipart: Multipart,
+) -> impl IntoResponse {
+    if let Err(resp) = verify_csrf_token(&headers, &csrf_query._csrf) {
+        return resp;
+    }
+    save_logo(
+        &state,
+        &admin.user.email,
+        multipart,
+        "logo",
+        LOGO_FILE,
+        "logo",
+    )
+    .await
+}
+
+pub(super) async fn admin_upload_logo_dark(
+    State(state): State<Arc<AppState>>,
+    admin: crate::auth::AdminUser,
+    headers: HeaderMap,
+    Query(csrf_query): Query<CsrfQuery>,
+    multipart: Multipart,
+) -> impl IntoResponse {
+    if let Err(resp) = verify_csrf_token(&headers, &csrf_query._csrf) {
+        return resp;
+    }
+    save_logo(
+        &state,
+        &admin.user.email,
+        multipart,
+        "logo_dark",
+        LOGO_DARK_FILE,
+        "logo-dark",
+    )
+    .await
 }
 
 pub(super) async fn admin_delete_logo(
@@ -2997,8 +3295,20 @@ pub(super) async fn admin_delete_logo(
     if let Err(resp) = verify_csrf_token(&headers, &csrf._csrf) {
         return resp;
     }
-    let logo_path = state.data_dir.join("logo.png");
-    let _ = tokio::fs::remove_file(&logo_path).await;
+    let _ = tokio::fs::remove_file(state.data_dir.join(LOGO_FILE)).await;
+    Redirect::to("/dashboard/admin").into_response()
+}
+
+pub(super) async fn admin_delete_logo_dark(
+    State(state): State<Arc<AppState>>,
+    _admin: crate::auth::AdminUser,
+    headers: HeaderMap,
+    Form(csrf): Form<CsrfForm>,
+) -> impl IntoResponse {
+    if let Err(resp) = verify_csrf_token(&headers, &csrf._csrf) {
+        return resp;
+    }
+    let _ = tokio::fs::remove_file(state.data_dir.join(LOGO_DARK_FILE)).await;
     Redirect::to("/dashboard/admin").into_response()
 }
 
@@ -3130,6 +3440,9 @@ pub(super) async fn admin_stop_impersonate(
 pub(super) struct WeightForm {
     _csrf: Option<String>,
     weight: i64,
+    /// The Groups list page the weight was changed on.
+    #[serde(default)]
+    return_to: Option<String>,
 }
 
 pub(super) async fn admin_update_member_weight(
@@ -3155,5 +3468,7 @@ pub(super) async fn admin_update_member_weight(
         weight = w,
         "admin: updated member weight"
     );
-    Redirect::to("/dashboard/admin").into_response()
+    let back = listing::return_path(form.return_to.as_deref(), "/dashboard/admin")
+        .unwrap_or_else(|| "/dashboard/admin".to_string());
+    Redirect::to(&back).into_response()
 }

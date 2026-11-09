@@ -1,6 +1,6 @@
 [package]
 name = "calrs"
-version = "2.0.0-beta.3"
+version = "2.0.0-beta.4"
 edition = "2021"
 description = "A fast, self-hostable scheduling platform. Like Cal.com, but written in Rust."
 license = "AGPL-3.0"
@@ -21,8 +21,10 @@ async-trait = "0.1"
 # Database
 sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "sqlite", "migrate", "chrono", "uuid"] }
 
-# HTTP client (for CalDAV)
-reqwest = { version = "0.11", features = ["rustls-tls", "json"], default-features = false }
+# HTTP client (for CalDAV). `http2` and `charset` are on by default in
+# reqwest 0.12 but off here with the default features (which would bring
+# native-tls): 0.11 always offered HTTP/2 and decoded text() by charset.
+reqwest = { version = "0.12", features = ["rustls-tls", "json", "http2", "charset"], default-features = false }
 
 # XML (CalDAV/WebDAV multistatus responses)
 quick-xml = "0.39"
@@ -67,6 +69,8 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # Encryption (credential storage)
 aes-gcm = "0.10"
+# Wipes the expanded AES key schedule when a cipher is dropped (#85).
+aes = { version = "0.8", features = ["zeroize"] }
 zeroize = "1"
 
 # HMAC-SHA256 for outbound webhook signatures

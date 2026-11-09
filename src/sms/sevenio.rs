@@ -14,7 +14,7 @@ use async_trait::async_trait;
 use super::{factory, phone, SendReceipt, SmsConfig, SmsError, SmsProvider};
 
 pub struct SevenIoProvider {
-    api_key: String,
+    api_key: zeroize::Zeroizing<String>,
     sender: String,
     base_url: String,
 }
@@ -62,9 +62,17 @@ fn parse_status(code: &str, detail: Option<&str>) -> Result<(), SmsError> {
 }
 
 /// Parse a 200 response body into a receipt or a normalised error.
+///
+/// seven.io answers HTTP 200 whether or not it sent, and says which in the
+/// body, so a 200 whose body cannot be read may well have been sent:
+/// [`SmsError::Transport`], which keeps the cap's reservation.
 fn parse_response(body: &str) -> Result<SendReceipt, SmsError> {
-    let parsed: SendResponse = serde_json::from_str(body)
-        .map_err(|_| SmsError::Other(body.trim().chars().take(200).collect::<String>()))?;
+    let parsed: SendResponse = serde_json::from_str(body).map_err(|_| {
+        SmsError::Transport(format!(
+            "unreadable seven.io answer: {}",
+            body.trim().chars().take(200).collect::<String>()
+        ))
+    })?;
 
     let first = parsed.messages.as_ref().and_then(|m| m.first());
     let detail = first.and_then(|m| m.error_text.as_deref());
@@ -107,12 +115,12 @@ impl SmsProvider for SevenIoProvider {
 
         let response = super::http_client()
             .post(&url)
-            .header("X-Api-Key", &self.api_key)
+            .header("X-Api-Key", self.api_key.as_str())
             .header("Accept", "application/json")
             .form(&params)
             .send()
             .await
-            .map_err(|e| SmsError::Transport(e.to_string()))?;
+            .map_err(super::request_error)?;
 
         let status = response.status();
         let text = response.text().await.unwrap_or_default();
@@ -135,11 +143,11 @@ impl SmsProvider for SevenIoProvider {
         let url = format!("{}/api/balance", self.base_url);
         let response = super::http_client()
             .get(&url)
-            .header("X-Api-Key", &self.api_key)
+            .header("X-Api-Key", self.api_key.as_str())
             .header("Accept", "application/json")
             .send()
             .await
-            .map_err(|e| SmsError::Transport(e.to_string()))?;
+            .map_err(super::request_error)?;
 
         let status = response.status();
         let text = response.text().await.unwrap_or_default();
@@ -199,10 +207,16 @@ mod tests {
     }
 
     #[test]
-    fn falls_back_when_the_body_is_not_json() {
+    fn an_unreadable_200_may_have_been_sent() {
+        // seven.io says in the body whether it sent; without a readable body
+        // the outcome is unknown, so the message stays counted.
         assert!(matches!(
             parse_response("<html>oops</html>").unwrap_err(),
-            SmsError::Other(_)
+            SmsError::Transport(_)
+        ));
+        assert!(matches!(
+            parse_response("").unwrap_err(),
+            SmsError::Transport(_)
         ));
     }
 }

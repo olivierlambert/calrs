@@ -1,5 +1,12 @@
 //! Shared pieces of the long dashboard lists (booking directory, admin
-//! users): case-blind text search pushed into SQL, and page links.
+//! users and groups, bookings, invites, teams): case-blind text search
+//! pushed into SQL, offset paging (`paged`) and page links.
+
+use sqlx::sqlite::{Sqlite, SqliteRow};
+use sqlx::{QueryBuilder, SqlitePool};
+
+/// Rows on one page of a dashboard list, unless the list says otherwise.
+pub(super) const PAGE_SIZE: i64 = 50;
 
 /// Search text is cut to this many characters before it reaches SQL, so a
 /// pasted essay cannot turn into thousands of bound patterns.
@@ -143,6 +150,168 @@ pub(super) fn lenient_page(raw: Option<&str>) -> i64 {
         .unwrap_or(1)
 }
 
+/// The page asked for and how many rows a page holds.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct PageParams {
+    pub page: i64,
+    pub size: i64,
+}
+
+impl PageParams {
+    /// Page `page` of `PAGE_SIZE` rows.
+    pub(super) fn new(page: i64) -> Self {
+        Self::sized(page, PAGE_SIZE)
+    }
+
+    pub(super) fn sized(page: i64, size: i64) -> Self {
+        Self {
+            page: page.max(1),
+            size: size.max(1),
+        }
+    }
+
+    /// The page named by `key` in a request's query, leniently read.
+    pub(super) fn from_query(query: &std::collections::HashMap<String, String>, key: &str) -> Self {
+        Self::new(lenient_page(query.get(key).map(String::as_str)))
+    }
+}
+
+/// One page of a list, as `paged` reads it.
+#[derive(Debug)]
+pub(super) struct Page<T> {
+    pub rows: Vec<T>,
+    /// Every row the list holds, on all pages.
+    pub total: i64,
+    /// The page shown, after clamping to the pages that exist.
+    pub page: i64,
+    /// `None` when the whole list fits on one page.
+    pub pager: Option<Pager>,
+}
+
+/// Whether the last term of an `ORDER BY` is the row id, ascending, so that
+/// rows tied on every earlier key still come in one fixed order and no row
+/// shows up on two pages or on none.
+pub(super) fn order_ends_with_id(order: &str) -> bool {
+    let last = order.rsplit(',').next().unwrap_or("").trim();
+    let column = last.strip_suffix(" ASC").unwrap_or(last).trim();
+    column == "id" || column.rsplit_once('.').is_some_and(|(_, c)| c == "id")
+}
+
+/// One page of a list: `count` is `SELECT COUNT(...) FROM ... WHERE ...`,
+/// `select` the same rows' columns with the same filter; `paged` adds
+/// `ORDER BY order LIMIT size OFFSET ...` to it. The order is a fixed SQL
+/// string (never request text) ending with the row id. A page past the end
+/// lands on the last page. `href(n)` links page `n`.
+pub(super) async fn paged<'q, T>(
+    pool: &SqlitePool,
+    mut count: QueryBuilder<'q, Sqlite>,
+    mut select: QueryBuilder<'q, Sqlite>,
+    order: &'static str,
+    params: PageParams,
+    href: impl Fn(i64) -> String,
+) -> Result<Page<T>, sqlx::Error>
+where
+    T: for<'r> sqlx::FromRow<'r, SqliteRow> + Send + Unpin,
+{
+    debug_assert!(
+        order_ends_with_id(order),
+        "ORDER BY must end with the id: {order}"
+    );
+    let total: i64 = count.build_query_scalar().fetch_one(pool).await?;
+    let page = clamp_page(params.page, total, params.size);
+    select.push(" ORDER BY ");
+    select.push(order);
+    select.push(" LIMIT ");
+    select.push_bind(params.size);
+    select.push(" OFFSET ");
+    select.push_bind((page - 1) * params.size);
+    let rows: Vec<T> = select.build_query_as().fetch_all(pool).await?;
+    Ok(Page {
+        rows,
+        total,
+        page,
+        pager: pager(page, total, params.size, href),
+    })
+}
+
+/// Push the fixed SQL `sql` onto `qb`, binding `value` at each `?` it holds,
+/// so a scope written for `sqlx::query` (`NOTE_HOSTS`, the bookings page's
+/// scopes) can also build a paged query. `sql` is a constant with no `?`
+/// inside a string literal.
+pub(super) fn push_with_binds(qb: &mut QueryBuilder<'_, Sqlite>, sql: &'static str, value: &str) {
+    let mut parts = sql.split('?');
+    if let Some(first) = parts.next() {
+        qb.push(first);
+    }
+    for part in parts {
+        qb.push_bind(value.to_string());
+        qb.push(part);
+    }
+}
+
+/// `path?a=1&b=2#anchor` from query parts already encoded (`key=value`),
+/// empty parts skipped, so a list in its default state links the bare path.
+pub(super) fn href(path: &str, parts: &[String], anchor: &str) -> String {
+    let query = parts
+        .iter()
+        .filter(|p| !p.is_empty())
+        .map(String::as_str)
+        .collect::<Vec<_>>()
+        .join("&");
+    let anchor = if anchor.is_empty() {
+        String::new()
+    } else {
+        format!("#{anchor}")
+    };
+    if query.is_empty() {
+        format!("{path}{anchor}")
+    } else {
+        format!("{path}?{query}{anchor}")
+    }
+}
+
+/// `raw` when it is a path of this site under `prefix` (`/dashboard`,
+/// `/dashboard/admin`), so a form can say which page of a list to return
+/// to without opening a redirect to anywhere else: no scheme, no `//` or
+/// backslash host, no whitespace or control character, and no `.` or `..`
+/// segment (also percent-encoded), which the browser would resolve out of
+/// `prefix`. `None` otherwise.
+pub(super) fn return_path(raw: Option<&str>, prefix: &str) -> Option<String> {
+    let raw = raw?;
+    let rest = raw.strip_prefix(prefix)?;
+    let boundary = matches!(rest.chars().next(), None | Some('?' | '#' | '/'));
+    let path = raw.split(['?', '#']).next().unwrap_or("");
+    let dot_segment = path.split('/').any(|segment| {
+        let segment = segment.to_ascii_lowercase().replace("%2e", ".");
+        segment == "." || segment == ".."
+    });
+    let clean = !raw.contains('\\')
+        && !raw.starts_with("//")
+        && !dot_segment
+        && raw.len() <= 2048
+        && raw.chars().all(|c| !c.is_whitespace() && !c.is_control());
+    (boundary && clean).then(|| raw.to_string())
+}
+
+/// `path` with `key=value` added to its query, before its anchor.
+pub(super) fn with_param(path: &str, key: &str, value: &str) -> String {
+    let (head, anchor) = match path.split_once('#') {
+        Some((head, anchor)) => (head, format!("#{anchor}")),
+        None => (path, String::new()),
+    };
+    let sep = if head.contains('?') { '&' } else { '?' };
+    format!("{head}{sep}{key}={}{anchor}", urlencoding::encode(value))
+}
+
+/// `key=n` for a page past the first, nothing for the first.
+pub(super) fn page_part(key: &str, page: i64) -> String {
+    if page > 1 {
+        format!("{key}={page}")
+    } else {
+        String::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -201,6 +370,169 @@ mod tests {
         assert!(last.next_href.is_none());
         assert_eq!(clamp_page(9, 60, 25), 3);
         assert_eq!(clamp_page(0, 0, 25), 1);
+    }
+
+    #[test]
+    fn the_order_must_end_with_the_id() {
+        assert!(order_ends_with_id("created_at, id"));
+        assert!(order_ends_with_id("b.start_at DESC, b.id"));
+        assert!(order_ends_with_id("t.name, t.id ASC"));
+        assert!(!order_ends_with_id("b.start_at"));
+        assert!(!order_ends_with_id("b.id, b.start_at"));
+        assert!(!order_ends_with_id("b.id DESC"));
+        assert!(!order_ends_with_id("guest_id"));
+    }
+
+    #[test]
+    fn push_with_binds_binds_every_placeholder() {
+        let mut qb = QueryBuilder::<Sqlite>::new("SELECT 1 WHERE ");
+        push_with_binds(&mut qb, "(a = ? OR b = ?)", "x");
+        assert_eq!(qb.sql(), "SELECT 1 WHERE (a = ? OR b = ?)");
+        let mut qb = QueryBuilder::<Sqlite>::new("");
+        push_with_binds(&mut qb, "a = 1", "x");
+        assert_eq!(qb.sql(), "a = 1");
+    }
+
+    #[tokio::test]
+    async fn push_with_binds_reaches_sqlite_in_order() {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        let mut qb = QueryBuilder::<Sqlite>::new("SELECT ");
+        push_with_binds(&mut qb, "? || '-' || ?", "v");
+        qb.push(" || ");
+        qb.push_bind("w");
+        let joined: String = qb.build_query_scalar().fetch_one(&pool).await.unwrap();
+        assert_eq!(joined, "v-vw");
+    }
+
+    #[test]
+    fn return_paths_stay_on_this_site_under_their_prefix() {
+        let ok = |raw: &str| return_path(Some(raw), "/dashboard");
+        assert_eq!(ok("/dashboard").as_deref(), Some("/dashboard"));
+        assert_eq!(
+            ok("/dashboard/bookings?bp=3#bk-upcoming").as_deref(),
+            Some("/dashboard/bookings?bp=3#bk-upcoming")
+        );
+        for bad in [
+            "https://evil.example/dashboard",
+            "//evil.example/dashboard",
+            "/dashboardx",
+            "/dashboard/../u/x",
+            "/dashboard/..//evil.example",
+            "/dashboard/%2e%2e/u/x",
+            "/dashboard/.%2E/u/x",
+            "/dashboard/./bookings",
+            "/dashboard/bookings/..",
+            "/dashboard/..?x=1",
+            "/\\evil.example",
+            "/dashboard\\..",
+            "/dashboard/bookings?q=a b",
+            "/dashboard/\n",
+            "javascript:alert(1)",
+            "",
+        ] {
+            assert_eq!(ok(bad), None, "{bad:?}");
+        }
+        assert_eq!(return_path(None, "/dashboard"), None);
+        assert_eq!(
+            return_path(Some("/dashboard/bookings"), "/dashboard/admin"),
+            None
+        );
+    }
+
+    #[test]
+    fn with_param_goes_before_the_anchor() {
+        assert_eq!(with_param("/d#a", "error", "x y"), "/d?error=x%20y#a");
+        assert_eq!(with_param("/d?p=2#a", "error", "e"), "/d?p=2&error=e#a");
+        assert_eq!(with_param("/d", "e", "1"), "/d?e=1");
+    }
+
+    #[test]
+    fn hrefs_leave_out_defaults() {
+        assert_eq!(href("/x", &[], ""), "/x");
+        assert_eq!(href("/x", &[page_part("p", 1)], "a"), "/x#a");
+        assert_eq!(
+            href("/x", &[page_part("p", 2), String::new(), "q=a".into()], "a"),
+            "/x?p=2&q=a#a"
+        );
+    }
+
+    #[test]
+    fn page_params_never_go_below_one() {
+        assert_eq!(PageParams::sized(0, 0), PageParams { page: 1, size: 1 });
+        assert_eq!(PageParams::new(3).size, PAGE_SIZE);
+        let mut query = std::collections::HashMap::new();
+        query.insert("xp".to_string(), "abc".to_string());
+        assert_eq!(PageParams::from_query(&query, "xp").page, 1);
+        query.insert("xp".to_string(), "4".to_string());
+        assert_eq!(PageParams::from_query(&query, "xp").page, 4);
+        assert_eq!(PageParams::from_query(&query, "other").page, 1);
+    }
+
+    /// Ties on the sort key, the last page and a page past the end, on a
+    /// real query.
+    #[tokio::test]
+    async fn paged_reads_each_row_once_across_pages() {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query("CREATE TABLE t (id TEXT PRIMARY KEY, k INTEGER, tag TEXT)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        // 23 rows, all tied on k, inserted out of id order.
+        for i in (0..23).rev() {
+            sqlx::query("INSERT INTO t VALUES (?, 1, ?)")
+                .bind(format!("r{i:02}"))
+                .bind(if i % 2 == 0 { "even" } else { "odd" })
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+        let read = |page: i64, tag: Option<&'static str>| {
+            let pool = pool.clone();
+            async move {
+                let mut count = QueryBuilder::new("SELECT COUNT(*) FROM t WHERE 1");
+                let mut select = QueryBuilder::new("SELECT id FROM t WHERE 1");
+                if let Some(tag) = tag {
+                    for qb in [&mut count, &mut select] {
+                        qb.push(" AND tag = ");
+                        qb.push_bind(tag);
+                    }
+                }
+                paged::<(String,)>(
+                    &pool,
+                    count,
+                    select,
+                    "k, id",
+                    PageParams::sized(page, 10),
+                    |n| format!("?p={n}"),
+                )
+                .await
+                .unwrap()
+            }
+        };
+        let mut seen = Vec::new();
+        for page in 1..=3 {
+            let p = read(page, None).await;
+            assert_eq!(p.total, 23);
+            assert_eq!(p.page, page);
+            seen.extend(p.rows.into_iter().map(|(id,)| id));
+        }
+        let expected: Vec<String> = (0..23).map(|i| format!("r{i:02}")).collect();
+        assert_eq!(seen, expected, "every row once, in id order");
+        let last = read(3, None).await;
+        assert_eq!(last.rows.len(), 3);
+        let pager = last.pager.unwrap();
+        assert!(pager.next_href.is_none());
+        assert_eq!(pager.prev_href.as_deref(), Some("?p=2"));
+        let past = read(99, None).await;
+        assert_eq!(past.page, 3, "past the end lands on the last page");
+        assert_eq!(past.rows.len(), 3);
+        let filtered = read(2, Some("even")).await;
+        assert_eq!(filtered.total, 12);
+        assert_eq!(filtered.rows.len(), 2);
+        assert_eq!(filtered.rows[0].0, "r20");
+        let one = read(1, Some("nothing")).await;
+        assert_eq!((one.total, one.page, one.rows.len()), (0, 1, 0));
+        assert!(one.pager.is_none());
     }
 
     #[test]

@@ -7,6 +7,7 @@ use super::*;
 mod admin;
 mod admin_stats;
 mod api;
+mod api_answers;
 mod api_doc;
 mod auth_pages;
 mod availability;
@@ -21,6 +22,7 @@ mod dashboard;
 mod directory;
 mod duplicate_event_type;
 mod emails;
+mod event_type_create;
 mod event_types;
 mod ews_global;
 mod format;
@@ -29,16 +31,19 @@ mod guards;
 mod guest_footer;
 mod hosts;
 mod invites;
+mod landing;
 mod mcp;
 mod oauth;
 mod organizer;
 mod overview_stats;
 mod page_language;
+mod pagination;
 mod pending_hold;
 mod public_pages;
 mod questions;
 mod resources;
 mod security;
+mod sms_spend;
 mod sources;
 mod time_off;
 mod webhooks;
@@ -201,8 +206,11 @@ async fn insert_team_with_et(
     // Each team event gets its own placeholder account to avoid colliding
     // with personal events under the unique(account_id, slug) constraint.
     let account_id = uuid::Uuid::new_v4().to_string();
-    sqlx::query("INSERT INTO accounts (id, name, email, timezone) VALUES (?, 't', 't@x', 'UTC')")
+    // Its own address too: accounts.email is unique, and a test may need
+    // several teams.
+    sqlx::query("INSERT INTO accounts (id, name, email, timezone) VALUES (?, 't', ?, 'UTC')")
         .bind(&account_id)
+        .bind(format!("t-{account_id}@x"))
         .execute(pool)
         .await
         .unwrap();
@@ -353,10 +361,22 @@ async fn setup_test_app_with(connections: u32) -> (Router, SqlitePool, String, S
     // The router (and every clone a test makes) holds the directory, so it
     // is removed once the last one is dropped.
     let data_dir = std::sync::Arc::new(TestDataDir::new());
+    // A peer, as a socket would give: a trusted local proxy, so tests that
+    // set X-Forwarded-For pick their client address.
     let router = create_router(pool.clone(), data_dir.to_path_buf(), [0u8; 32])
         .await
-        .layer(axum::Extension(data_dir));
+        .layer(axum::Extension(data_dir))
+        .layer(local_proxy_peer());
     (router, pool, session_token, et_id)
+}
+
+/// The connection info a router gets from `calrs serve`, for a router
+/// driven without a socket: a reverse proxy on the same host.
+fn local_proxy_peer() -> axum::extract::connect_info::MockConnectInfo<std::net::SocketAddr> {
+    axum::extract::connect_info::MockConnectInfo(std::net::SocketAddr::from((
+        [127, 0, 0, 1],
+        40_000,
+    )))
 }
 
 /// A data directory under the system temp dir, removed when dropped. Keep

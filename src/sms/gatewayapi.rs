@@ -13,7 +13,7 @@ use async_trait::async_trait;
 use super::{factory, phone, SendReceipt, SmsConfig, SmsError, SmsProvider};
 
 pub struct GatewayApiProvider {
-    token: String,
+    token: zeroize::Zeroizing<String>,
     sender: String,
     base_url: String,
 }
@@ -103,11 +103,11 @@ impl SmsProvider for GatewayApiProvider {
 
         let response = super::http_client()
             .post(&url)
-            .header("Authorization", format!("Token {}", self.token))
+            .header("Authorization", format!("Token {}", self.token.as_str()))
             .json(&payload)
             .send()
             .await
-            .map_err(|e| SmsError::Transport(e.to_string()))?;
+            .map_err(super::request_error)?;
 
         let status = response.status();
         let text = response.text().await.unwrap_or_default();

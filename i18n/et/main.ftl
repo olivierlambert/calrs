@@ -219,6 +219,56 @@ base-powered-by = Töötab platvormil
 profile-pick-event-type-invite = Aja broneerimiseks vali sündmuse tüüp.
 profile-no-event-type = Sündmuse tüüpe pole veel saadaval.
 
+duration-short-m = { $minutes } min
+duration-short-h = { $hours } h
+duration-short-hm = { $hours } h { $minutes } min
+duration-long-m =
+    { $minutes ->
+        [one] { $minutes } minut
+       *[other] { $minutes } minutit
+    }
+duration-long-h =
+    { $hours ->
+        [one] { $hours } tund
+       *[other] { $hours } tundi
+    }
+duration-long-hm =
+    { $hours ->
+        [one] { $hours } tund
+       *[other] { $hours } tundi
+    } { $minutes ->
+        [one] { $minutes } minut
+       *[other] { $minutes } minutit
+    }
+duration-long-d =
+    { $days ->
+        [one] { $days } päev
+       *[other] { $days } päeva
+    }
+# Public landing pages (/u/{username}, /team/{slug}).
+landing-with-one-of = ühega neist
+faces-and-more = ja veel { $count }
+landing-with-everyone = kõigiga
+landing-days-range = { $first }–{ $last }
+landing-days-every = iga päev
+landing-on-request-hint = Iga päring kinnitatakse käsitsi enne broneerimist.
+landing-how-it-works = Vali teema ja sobiv aeg, kinnituse saad e-postiga.
+landing-based-in = Asukoht: { $place }
+landing-speaks = Keeled: { $languages }
+landing-meetings = Kohtumised
+landing-hours-vary = Tavaliselt saadaval { $days } ({ $zone } aja järgi), kellaajad on päeviti erinevad
+landing-time-range = %1–%2
+landing-time-range-next = %1 kuni järgmise päeva %2
+landing-other-meetings = Muud kohtumised
+landing-hours-heading = Tavaliselt saadaval ({ $zone } aja järgi)
+landing-hours-heading-yours = Tavaliselt saadaval (sinu aja järgi)
+landing-hours-toggle = Minu aeg
+landing-hours-toggle-hint = Näita neid aegu sinu ajavööndis
+landing-days-every-short = Iga päev
+landing-days-span = { $first }–{ $last }
+landing-host-confirms = Korraldaja kinnitab
+list-and = { $first } ja { $last }
+
 # Month and weekday names + per-locale date format patterns.
 # Used by server-side date formatters in src/i18n.rs.
 
@@ -296,8 +346,8 @@ email-cancel-ics-attached-html = Kalendritühistus on selle kirja manuses.
 
 # Confirmation email: notice-window policy lines (src/email.rs)
 
-email-confirm-cancel-notice = Pane tähele: tühistamine nõuab vähemalt { $minutes } minutit etteteatamist.
-email-confirm-reschedule-notice = Pane tähele: aja muutmine nõuab vähemalt { $minutes } minutit etteteatamist.
+email-confirm-cancel-notice = Pane tähele: tühistamine nõuab vähemalt { $duration } etteteatamist.
+email-confirm-reschedule-notice = Pane tähele: aja muutmine nõuab vähemalt { $duration } etteteatamist.
 
 # Event type form: cancel/reschedule minimum notice (templates/event_type_form.html)
 
@@ -339,14 +389,14 @@ event-type-form-saved = Salvestatud.
 
 # Booking confirmation: cancel/reschedule policy notices (templates/confirmed.html)
 
-confirmed-cancel-notice-info = Tühistamine nõuab enne kohtumist vähemalt { $minutes } minutit etteteatamist.
-confirmed-reschedule-notice-info = Aja muutmine nõuab enne kohtumist vähemalt { $minutes } minutit etteteatamist.
+confirmed-cancel-notice-info = Tühistamine nõuab enne kohtumist vähemalt { $duration } etteteatamist.
+confirmed-reschedule-notice-info = Aja muutmine nõuab enne kohtumist vähemalt { $duration } etteteatamist.
 
 # Booking action blocked page (templates/booking_action_blocked.html)
 
 booking-blocked-title-cancel = Seda broneeringut ei saa enam veebis tühistada
 booking-blocked-title-reschedule = Selle broneeringu aega ei saa enam veebis muuta
-booking-blocked-body = Korraldaja nõuab vähemalt { $minutes } minutit etteteatamist. Kui sa ei saa osaleda, kirjuta otse aadressil <a href="mailto:{ $host_email }">{ $host_email }</a>.
+booking-blocked-body = Korraldaja nõuab vähemalt { $duration } etteteatamist. Kui sa ei saa osaleda, kirjuta otse aadressil <a href="mailto:{ $host_email }">{ $host_email }</a>.
 
 # Dashboard event types listing (templates/dashboard_event_types.html)
 
@@ -410,18 +460,12 @@ overview-page-title = Töölaud
 overview-avail-banner-body = Sinu vaikimisi tööajaks määrati E–R kell 9.00–17.00. Seda kasutatakse siis, kui teised kaasavad sind dünaamilistesse rühmakohtumistesse.
 overview-avail-banner-cta = Vaata oma saadavus üle
 overview-dismiss = Peida
-overview-getting-started = Alustamine
 overview-step-connect-calendar = Ühenda kalender
 overview-step-first-event-type = Loo oma esimene sündmuse tüüp
-overview-step-share-link = Jaga oma broneerimislinki
 overview-pending-approval = Ootab kinnitust
 overview-confirm = Kinnita
 overview-decline = Lükka tagasi
 overview-copy-link = Kopeeri broneerimislink
-overview-duration-h = { $hours } h
-overview-duration-m = { $minutes } min
-overview-duration-hm = { $hours } h { $minutes } min
-overview-percent = { $value }%
 overview-chart-title = Kohtumised nädalas
 overview-chart-this-week = See nädal
 overview-chart-week-of = Nädal alates { $date }
@@ -435,7 +479,6 @@ overview-types-other = Muud tüübid
 overview-agenda-title = Järgmisena
 overview-agenda-today = Täna
 overview-agenda-tomorrow = Homme
-overview-agenda-now = Käimas
 overview-agenda-join = Liitu
 overview-agenda-empty = Järgmise 14 päeva jooksul kohtumisi pole. Jaga oma broneerimislinki, et neid saada.
 overview-agenda-all = Kõik broneeringud
@@ -457,33 +500,88 @@ overview-open-calendar = Ava oma kalender
 overview-week-title = See nädal
 overview-week-closed = suletud
 overview-week-total = broneeritud { $booked }
-overview-week-number = Nädal { $week }
 overview-week-short = N{ $week }
 overview-time-range = { $from } kuni { $to }
 overview-until = kuni { $time }
 overview-expires = Aegub { $when }
 overview-guest-and-more = { $name } ja veel { $count }
-overview-mast-now = Praegu: { $title }, külaline { $guest }, kuni { $time }
-overview-mast-next = Järgmine: { $title }, külaline { $guest }, kell { $time }
-overview-mast-next-day = Järgmine: { $title }, külaline { $guest }, { $day } kell { $time }
+overview-greeting-night = Tere, { $name }
+overview-greeting-morning = Tere hommikust, { $name }
+overview-greeting-afternoon = Tere päevast, { $name }
+overview-greeting-evening = Tere õhtust, { $name }
+overview-mast-date = { $date }, nädal { $week }
+overview-sum-now = Sinu kohtumine külalisega { $guest } kestab kuni { $time }.
+overview-sum-today = Täna kohtud külalisega { $guest } kell { $time }.
+overview-sum-tomorrow = Homme kohtud külalisega { $guest } kell { $time }.
+overview-sum-later = Sinu järgmine kohtumine on külalisega { $guest }, { $day } kell { $time }.
+overview-sum-more-today = { $count ->
+    [one] Täna on pärast seda veel üks kohtumine.
+   *[other] Täna on pärast seda veel { $count } kohtumist.
+}
+overview-sum-none = Järgmise 14 päeva jooksul pole midagi broneeritud.
+overview-sum-pending = { $count ->
+    [one] Üks taotlus ootab sinu vastust.
+   *[other] { $count } taotlust ootavad sinu vastust.
+}
+overview-sum-guests = { $count ->
+    [one] { $name } ja veel üks
+   *[other] { $name } ja veel { $count }
+}
+overview-hero-title = Järgmisena
+overview-when-now = Praegu, kuni { $time }
+overview-when-minutes = { $count ->
+    [one] 1 minuti pärast
+   *[other] { $count } minuti pärast
+}
+overview-when-hours = { $count ->
+    [one] 1 tunni pärast
+   *[other] { $count } tunni pärast
+}
+overview-when-today-night = hiljem öösel
+overview-when-today-morning = täna hommikul
+overview-when-today-afternoon = täna pärastlõunal
+overview-when-today-evening = täna õhtul
+overview-when-tomorrow-night = homme vara hommikul
+overview-when-tomorrow-morning = homme hommikul
+overview-when-tomorrow-afternoon = homme pärastlõunal
+overview-when-tomorrow-evening = homme õhtul
+overview-when-weekday-night = { $day }, vara hommikul
+overview-when-weekday-morning = { $day }, hommikul
+overview-when-weekday-afternoon = { $day }, pärastlõunal
+overview-when-weekday-evening = { $day }, õhtul
+overview-when-days = { $count ->
+    [one] 1 päeva pärast
+   *[other] { $count } päeva pärast
+}
+overview-pulse-held = { $count ->
+    [one] Üks kohtumine viimase 30 päeva jooksul, { $time } külalistega.
+   *[other] { $count } kohtumist viimase 30 päeva jooksul, { $time } külalistega.
+}
+overview-pulse-held-vs = { $count ->
+    [one] Üks kohtumine viimase 30 päeva jooksul, { $time } külalistega; eelneval 30 päeval { $prev }.
+   *[other] { $count } kohtumist viimase 30 päeva jooksul, { $time } külalistega; eelneval 30 päeval { $prev }.
+}
+overview-pulse-booked = { $count ->
+    [one] Samal ajal saabus üks uus broneering.
+   *[other] Samal ajal saabus { $count } uut broneeringut.
+}
+overview-pulse-booked-only = { $count ->
+    [one] Viimase 30 päeva jooksul saabus üks uus broneering.
+   *[other] Viimase 30 päeva jooksul saabus { $count } uut broneeringut.
+}
+overview-links-page = Sinu leht
+overview-agenda-nothing-else = Järgmise 14 päeva jooksul rohkem midagi pole.
+overview-setup-count = { $count ->
+    [one] 1 asi seadistada
+   *[other] { $count } asja seadistada
+}
 overview-ruler-booked = Broneeritud
 overview-ruler-pending = Ootab otsust
 overview-ruler-unavailable = Pole saadaval (sinu kalender)
 overview-key-open = Broneerimiseks avatud
-overview-ruler-aria = Täna, { $from } kuni { $to }
-overview-chart-now = praegu
+overview-ruler-unreadable = Korduv sündmus, mida calrs ei oska lugeda
+overview-ruler-unreadable-tip = Ettevaatusest loetud hõivatuks. Tõrkeotsing näitab, mis sündmusega on tegu.
 overview-figures-title = Viimased 30 päeva
-overview-fig-booked = Broneeritud kohtumised
-overview-fig-time = Aeg kohtumistel
-overview-fig-cancelled = Tühistatud
-overview-fig-notice = Keskmine etteteatamine
-overview-fig-before = eelneva 30 päeva jooksul { $value }
-overview-fig-prev-key = Eelnevad 30 päeva
-overview-fig-days =
-    { $count ->
-        [one] 1 päev
-       *[other] { $count } päeva
-    }
 
 # Dashboard bookings (templates/dashboard_bookings.html)
 
@@ -546,6 +644,7 @@ teams-empty-admin = { $link }, et oma meeskonnaga koos töötada.
 teams-empty-admin-link-label = Loo üks
 teams-empty-member = Meeskondi loovad haldajad. Palu neil luua meeskond ja lisada sind liikmeks.
 teams-subtitle = Inimesed, kes jagavad kohtumisi, broneeritakse kordamööda või kõik koos.
+teams-search-placeholder = Filtreeri nime või lingi järgi
 
 # Dashboard invite links (templates/dashboard_internal.html)
 
@@ -553,7 +652,6 @@ invite-links-page-title = Kutselingid
 invite-links-heading = Kutselingid
 invite-links-new = Uus sisemine sündmus
 invite-links-help = Loo sisemistele sündmuse tüüpidele ühekordseid broneerimislinke. Iga sisse loginud kolleeg saab siin linke luua ja jagada.
-invite-links-duration = { $minutes } min
 invite-links-hosted-by = Korraldab { $host }
 invite-links-get-link = Hangi link
 invite-links-invites = Kutsed
@@ -623,7 +721,6 @@ event-types-badge-expired = aegunud
 event-types-badge-range-from = alates { $date }
 event-types-badge-range-until = kuni { $date }
 event-types-send-invites = Saada kutsed
-event-types-duration = { $minutes } min
 event-types-mode-collective = ühine
 event-types-mode-round-robin = kordamööda
 event-types-edit = Muuda
@@ -704,6 +801,8 @@ settings-add-window = Lisa ajavahemik
 settings-remove-window = Eemalda ajavahemik
 settings-save = Salvesta seaded
 settings-appearance = Välimus
+settings-card-profile = Profiil
+settings-card-languages = Keeled
 settings-theme-system = Süsteemi järgi
 settings-theme-light = Hele
 settings-theme-dark = Tume
@@ -802,10 +901,9 @@ troubleshoot-page-title = Tõrkeotsing
 troubleshoot-empty = Sündmuse tüüpe ei leitud. { $link }, et alustada saadavuse tõrkeotsingut.
 troubleshoot-empty-link-label = Loo üks
 troubleshoot-subtitle = Vaata, miks sündmuse { $title } ajad on vabad või blokeeritud
-troubleshoot-duration = { $minutes } min
-troubleshoot-buffer-before = { $minutes } min puhvrit enne
-troubleshoot-buffer-after = { $minutes } min puhvrit pärast
-troubleshoot-min-notice = { $minutes } min etteteatamist
+troubleshoot-buffer-before = { $duration } puhvrit enne
+troubleshoot-buffer-after = { $duration } puhvrit pärast
+troubleshoot-min-notice = { $duration } etteteatamist
 troubleshoot-blocked-override = Blokeeritud kuupäevaerandiga (vaba päev)
 troubleshoot-custom-hours-active = Muudetud kellaaegade erand on aktiivne (asendab nädalareeglid)
 troubleshoot-microsoft-not-ready = Sinu Microsofti kalender pole veel esimest sünkroonimist lõpetanud: seni on iga aeg hõivatud. Vaata kalendriallikaid.
@@ -822,10 +920,10 @@ troubleshoot-none-no-rules = Sellel nädalapäeval saadavuse reegleid pole. Seda
 troubleshoot-none-all-bookable = Saadavuse aegade sees pole ühtegi blokeeritud aega. Kõik ajad on broneeritavad.
 troubleshoot-label-outside = Väljaspool saadavust
 troubleshoot-label-available = Vaba
-troubleshoot-label-min-notice = Vähim etteteatamine ({ $minutes } min)
+troubleshoot-label-min-notice = Vähim etteteatamine ({ $duration })
 troubleshoot-label-beyond-horizon = Väljaspool broneerimishorisonti ({ $days } päeva)
 troubleshoot-label-outside-date-range = Väljaspool broneeritavat ajavahemikku
-troubleshoot-label-buffer = Puhver ({ $minutes } min)
+troubleshoot-label-buffer = Puhver ({ $duration })
 troubleshoot-label-resource-busy = Ressurss hõivatud: { $names }
 troubleshoot-detail-around = Selle ümber: { $label }
 troubleshoot-detail-around-booking = Külalise { $guest } broneeringu ümber
@@ -839,7 +937,7 @@ invites-back-teams = Tagasi meeskondade juurde
 invites-back-event-types = Tagasi sündmuse tüüpide juurde
 invites-intro = Saada kutselinke sündmusele { $title }
 invites-capped = <strong>Sisestus piirati { $max } saajale korraga.</strong> Saada ülejäänud järgmise partiiga.
-invites-failed-hint = — üksikasjad leiad serveri logidest.
+invites-failed-hint = Üksikasjad leiad serveri logidest.
 invites-quick-link = Kiirlink
 invites-quick-link-help = Loo ühekordne link ja kopeeri see lõikelauale.
 invites-get-link = Hangi link
@@ -901,6 +999,7 @@ source-form-heading-edit = Muuda kalendriallikat
 source-form-heading-add = Ühenda kalender
 source-form-subtitle-edit = Uuenda ühendust. Jäta parool tühjaks, et praegune alles jääks. Pärast aadressi või kasutajanime muutmist käivita sünkroonimine, et leitud kalendrite loend värskeneks.
 source-form-subtitle-add = Ühenda CalDAV-server või Microsoft Exchange (EWS), et calrs saaks broneerimisel saadavust kontrollida.
+source-form-server-title = CalDAV- või Exchange'i server
 source-form-backend = Taustsüsteem
 source-form-preset = Eelseadistus
 source-form-connect-google = Ühenda Google’iga
@@ -967,7 +1066,7 @@ team-form-submit = Loo meeskond
 # Team settings (templates/team_settings.html)
 
 team-settings-page-title = Seaded
-team-settings-subtitle = Meeskonna seaded — neid saavad muuta meeskonna haldajad.
+team-settings-subtitle = Meeskonna seaded: neid saavad muuta meeskonna haldajad.
 team-settings-public-url = Avalik aadress
 team-settings-public-url-help = Selle lingi kaudu saab broneerida igaüks.
 team-settings-invite-link = Kutselink
@@ -1087,6 +1186,8 @@ etf-dynamic-group-note = Näidatakse ainult kasutajaid, kes lubavad dünaamilisi
 etf-dynamic-group-url = Rühmalingi aadress
 etf-watcher-teams = Jälgivad meeskonnad
 etf-watcher-teams-help = Valitud meeskondi teavitatakse igast broneeringust. Nende liikmed saavad broneeringu üle võtta, et sellel osaleda.
+etf-watcher-team-locked = See pole sinu meeskond, see jääb alles
+etf-watcher-team-private = Privaatne meeskond
 etf-save = Salvesta muudatused
 etf-create = Loo sündmuse tüüp
 etf-js-loading = Laadimine...
@@ -1164,6 +1265,9 @@ admin-action-refused = Toiming keelati:
 admin-error-last-admin = See on viimane aktiivne administraator. Anna esmalt administraatori õigused kellelegi teisele või lülita mõni teine administraator sisse.
 admin-logo = Ettevõtte logo
 admin-logo-help = Kuvatakse avalikel broneerimislehtedel. PNG, JPEG, GIF või WebP, kuni 2 MB.
+admin-logo-light = Hele teema
+admin-logo-dark = Tume teema
+admin-logo-dark-help = Valikuline. Kuvatakse, kui külastaja kasutab tumedat teemat; ilma selleta kasutatakse mõlema teema puhul heledat logo.
 admin-logo-refused = Logo jäi salvestamata. Laadi üles PNG-, JPEG-, GIF- või WebP-pilt suurusega kuni 2 MB.
 admin-favicon = Favicon
 admin-favicon-help = Kuvatakse brauseri vahekaartidel ja järjehoidjates. Soovitatav: ruudukujuline PNG, vähemalt 32×32 pikslit, kuni 512 KB. Kui seda pole, kuvatakse calrsi krabi.
@@ -1221,6 +1325,10 @@ admin-base-url = Baasaadress
 admin-base-url-help = Selle paigalduse avalik aadress. Kasutatakse OIDC-ümbersuunamistes ja e-kirjade linkides (kinnita/lükka tagasi, tühista, meeldetuletused).
 admin-private-hosts = Lubatud privaathostide loend
 admin-private-hosts-help = Komadega eraldatud hostinimed, mis tohivad CalDAV-i ja EWS-i allikate puhul osutada privaatsetele või reserveeritud IP-aadressidele (erand SSRF-kaitsest). Lisa ainult hoste, mida ise haldad (näiteks kalendriserver samas Dockeri võrgus). Jäta tühjaks, et kaitse kehtiks kõigi hostide kohta.
+admin-trusted-proxies = Usaldatud puhverserverid
+admin-trusted-proxies-help = Pöördpuhverserverite aadressid või CIDR-vahemikud, kelle X-Forwarded-For päist usaldatakse klientide eristamisel päringupiirangute jaoks. Jäta tühjaks vaikeväärtuse jaoks (tagasisilmuse, privaatsed, unikaalsed kohalikud ja lingikohalikud vahemikud: puhverserver samas masinas või samas Dockeri võrgus). Sisesta none, kui calrs on otse kättesaadav, et klient ei saaks end teise aadressina esitleda.
+admin-trusted-proxies-everyone = Usaldatud puhverserverid: „{ $entry }“ usaldaks iga aadressi ja iga klient saaks end teisena esitleda. Sisesta selle asemel oma puhverserveri aadress või vahemik.
+admin-trusted-proxies-invalid = Usaldatud puhverserverid: „{ $entry }“ ei ole IP-aadress ega CIDR-vahemik.
 admin-german-formal = Saksakeelne pöördumisviis
 admin-german-formal-du = Mitteametlik (du)
 admin-german-formal-sie = Viisakas (Sie)
@@ -1332,6 +1440,8 @@ admin-sms-test-checked = Pääsuandmed aktsepteeritud.
 admin-sms-test-error = SMS-lüüs lükkas päringu tagasi.
 admin-sms-captcha-warning = Broneerimisvorm on avalik ja saaja numbri annab külaline, seega on captchata SMS avatud edastuskanal, mille eest võib arve tulla sinule. Seadista ülal captcha ja piira sihtriike oma lüüsi enda seadetes.
 admin-sms-sent-today = Täna saadetud:
+admin-sms-segments-today = Täna arveldatud segmente:
+admin-sms-unknown-today = Lüüsilt vastuseta, limiidi sisse arvestatud:
 admin-sms-of-cap = { $cap }-st
 admin-sms-config-error = Viga SMS-i seadistuses:
 admin-sms-gateway = Lüüs:
@@ -1344,8 +1454,8 @@ admin-sms-docs = { $provider } API dokumentatsioon
 admin-sms-country = Vaikimisi riigi suunakood
 admin-sms-country-hint = (kasutatakse, kui külalised sisestavad kohaliku numbri)
 admin-sms-daily-cap = Päevalimiit
-admin-sms-daily-cap-hint = (sõnumeid päevas kogu paigalduse kohta, 0 tähendab piiranguta)
-admin-sms-daily-cap-help = Limiidi ületamisel lõpetab calrs lühisõnumite saatmise ja jätkab e-kirjadega, nii et ükski broneering ei ebaõnnestu otsa saanud SMS-eelarve tõttu.
+admin-sms-daily-cap-hint = (arveldatavaid SMS-segmente UTC-päevas kogu paigalduse kohta, 0 tähendab piiranguta)
+admin-sms-daily-cap-help = Kuni 160 märgiga sõnum on üks segment, või kuni 70 märki, kui selles on GSM-tähestikku mittekuuluv märk; pikema sõnumi eest arveldatakse üks segment iga 153 märgi (67) kohta ning ka testsõnumid lähevad arvesse. Limiidi ületamisel lõpetab calrs lühisõnumite saatmise ja jätkab e-kirjadega, nii et ükski broneering ei ebaõnnestu otsa saanud SMS-eelarve tõttu.
 admin-save-sms = Salvesta SMS-i seaded
 admin-send-test-sms = Saada testsõnum numbrile
 admin-send-test-sms-hint-check = (jäta tühjaks, et kontrollida ainult pääsuandmeid)
@@ -1362,9 +1472,6 @@ admin-guest-footer-default-help = Kasutatakse, kui sündmuse tüübil pole oma j
 admin-guest-footer-allow-all = Luba igal kasutajal määrata jalus oma sündmuse tüüpidele
 admin-guest-footer-allow-all-help = Vaikimisi väljas: jalus lahkub selle serveri nime all, seega saavad selle kirjutada ainult administraatorid. Sündmuse tüübil määratud jalus asendab ülaltoodud vaikejaluse.
 admin-save-guest-footer = Salvesta jalus
-admin-page-of = Lehekülg %1 / %2
-admin-show-more-js = Näita veel %1
-admin-show-fewer = Näita vähem
 
 # Admin panel: overview, section tabs, users table (templates/admin.html)
 
@@ -1532,12 +1639,6 @@ admin-sms-env-managed = Hallatakse <strong>keskkonnamuutujatega</strong> (need o
 admin-sms-env-help = Teise võimalusena seadista keskkonnamuutujatega (need on siinsest ülimuslikud): <code>CALRS_SMS_PROVIDER</code>, <code>CALRS_SMS_API_KEY</code>, <code>CALRS_SMS_API_SECRET</code>, <code>CALRS_SMS_SENDER</code>, <code>CALRS_SMS_BASE_URL</code>, <code>CALRS_SMS_DAILY_CAP</code>, <code>CALRS_SMS_DEFAULT_COUNTRY_CODE</code>.
 admin-sms-trial-warning = <strong>Twilio prooviredžiim on sees</strong> (<code>CALRS_SMS_TWILIO_TRIAL</code>). Külalised saavad tegeliku sõnumi asemel Twilio eelmääratud malli <code>sms_appointment_reminders</code> ja kohale jõuavad ainult sinu Twilio konsoolis kinnitatud numbrid. See on abivahend proovikontode testimiseks. Eemalda muutuja, enne kui hakkad broneeringuid vastu võtma.
 
-admin-show-more =
-    { $count ->
-        [one] Näita veel { $count }
-       *[other] Näita veel { $count }
-    }
-
 # Calendar source form: backend picker (templates/source_form.html)
 
 source-form-backend-help = Vali protokoll, mida sinu server räägib. EWS on mõeldud kohapeal majutatud Exchange 2019/2016/2013 jaoks.
@@ -1691,6 +1792,8 @@ bookings-error-reschedule-resend-too-soon = Palve saadeti külalisele vähem kui
 bookings-resend-reschedule = Saada palve uuesti
 bookings-resend-reschedule-hint = Saada külalisele sama link uuesti (kõige rohkem kord tunnis)
 troubleshoot-detail-pending-request = { $title } (ootel taotlus)
+troubleshoot-detail-claimed-booking = { $title } (üle võetud broneering)
+troubleshoot-detail-unsupported-recurrence = { $calendar } (kordusreegel, mida calrs ei oska lugeda, loetakse algusest peale hõivatuks)
 etf-pending-blocks-slot = Ootel taotlused blokeerivad aja
 etf-pending-blocks-slot-help = Kuni taotlus ootab sinu vastust, ei saa keegi teine seda aega broneerida, ei selles ega sinu teistes sündmuse tüüpides.
 etf-pending-expiry = Taotluste aegumine
@@ -1884,6 +1987,8 @@ admin-sms-check-accepted = Lüüs aktsepteeris mandaadid.
 admin-sms-bad-number = See telefoninumber ei ole kasutatav.
 admin-sms-test-body = calrs-i testsõnum. Sinu SMS-lüüs töötab.
 admin-sms-test-accepted = Lüüs võttis testsõnumi vastu.
+admin-sms-test-over-cap = Tänane SMS-limiit on täis, seega testsõnumit ei saadetud. Testsõnumid lähevad päevalimiidi sisse nagu kõik teised.
+admin-sms-test-ledger-failed = SMS-ide kasutust ei õnnestunud salvestada, seega testsõnumit ei saadetud.
 
 ## Local multi-factor authentication
 
@@ -2259,6 +2364,8 @@ answer-agreed = Nõustus
 answer-not-agreed = Ei nõustunud
 answer-you-agreed = Sa nõustusid
 answer-you-did-not-agree = Sa ei nõustunud
+answer-agreed-recorded-by = Nõustus, salvestas { $name }
+answer-recorded-for-you-by = Sinu eest salvestas { $name }
 bookings-answers = Vastused
 validate-notes-required = Palun lisa korraldajale märkus.
 validate-question-required = Palun vasta küsimusele „{ $question }”.
@@ -2318,3 +2425,54 @@ etf-q-key = Veebikonksude võti: %1
 etf-hint-questions-one = 1 küsimus
 etf-hint-questions-other = %1 küsimust
 etf-hint-no-questions = Küsimusi pole
+
+# Language names, for the languages a host speaks (landing.rs).
+language-name-en = inglise
+language-name-fr = prantsuse
+language-name-de = saksa
+language-name-es = hispaania
+language-name-it = itaalia
+language-name-pt = portugali
+language-name-nl = hollandi
+language-name-pl = poola
+language-name-et = eesti
+language-name-ar = araabia
+language-name-zh = hiina
+language-name-ja = jaapani
+language-name-ko = korea
+language-name-ru = vene
+language-name-uk = ukraina
+language-name-sv = rootsi
+language-name-da = taani
+language-name-nb = norra
+language-name-fi = soome
+language-name-cs = tšehhi
+language-name-ro = rumeenia
+language-name-el = kreeka
+language-name-tr = türgi
+language-name-hi = hindi
+language-name-he = heebrea
+language-name-hu = ungari
+
+# Sections and order of the landing pages (landing.rs, event type form, settings).
+etf-section = Jaotis
+etf-section-placeholder = Alustuseks
+etf-section-help = Sama jaotisega kohtumised on avalikul lehel selle alla koondatud, nii nagu see on kirjutatud.
+etf-section-order-link = Muuda järjekorda
+settings-based-in = Asukoht
+settings-based-in-placeholder = Pariis, Prantsusmaa
+settings-based-in-help = Linn või piirkond, mida näidatakse sinu avalikul lehel nime all.
+settings-speaks = Keeled, mida räägid
+settings-speaks-help = Näidatakse sinu avalikul lehel nime all, iga külastaja keeles.
+page-order-heading = Sinu lehe järjekord
+page-order-team-heading = Lehe { $team } järjekord
+page-order-subtitle = Jaotised ja kohtumised on avalikul lehel selles järjekorras. Kohtumise jaotise saab määrata selle seadetes.
+page-order-back = Tagasi
+page-order-empty = Kohtumisi veel pole.
+page-order-up = Liiguta üles
+page-order-down = Liiguta alla
+page-order-section-up = Liiguta { $section } üles
+page-order-section-down = Liiguta { $section } alla
+page-order-type-up = Liiguta { $title } üles
+page-order-type-down = Liiguta { $title } alla
+page-order-not-listed = Avalikul lehel pole (välja lülitatud, sisemine või privaatne)

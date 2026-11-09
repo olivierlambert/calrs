@@ -1,22 +1,47 @@
 //! Booking storage: version 0 is an untouched legacy wall clock; version 1 is
 //! an RFC3339 UTC instant. The database enforces the UTC marker for version 1.
-use chrono::{DateTime, Duration, NaiveDateTime, Offset, TimeZone, Utc};
+use chrono::{DateTime, Duration, NaiveDateTime, TimeZone, Utc};
 use chrono_tz::Tz;
 use sqlx::SqlitePool;
 
+/// SQL condition selecting the bookings one user hosts. Expects the aliases
+/// `b` (bookings), `et` (its event type) and `a` (that event type's account),
+/// and binds the user id four times.
+///
+/// A user hosts a booking when it is assigned to them, or when it is
+/// unassigned and they own the event type (personal bookings, and legacy
+/// unassigned round-robin rows), or when it is an unassigned team booking and
+/// they are a member of that team. An assigned booking must NOT mark the
+/// event type owner busy: on a round-robin team the owner stays free when
+/// another member took the booking (#146). An unassigned collective booking
+/// is its roster's, as on the collective booking path: members of the team
+/// not excluded from the event type (weight 0 or less in
+/// `event_type_member_weights`, as the slot engine and `hosts.rs` read it).
+/// Its owner hosts it only when on that roster, so an owner excluded from it
+/// or no longer in the team is free (#375). A co-host of a dynamic group
+/// booking (`booking_participants`, #46) hosts it too.
+pub const USER_HOSTS_BOOKING: &str = "(b.assigned_user_id = ?
+        OR (b.assigned_user_id IS NULL AND a.user_id = ?
+            AND NOT (et.team_id IS NOT NULL AND et.scheduling_mode = 'collective'))
+        OR (b.assigned_user_id IS NULL AND et.team_id IS NOT NULL AND EXISTS (
+              SELECT 1 FROM team_members tm
+              WHERE tm.team_id = et.team_id AND tm.user_id = ?
+                AND NOT EXISTS (SELECT 1 FROM event_type_member_weights etw
+                    WHERE etw.event_type_id = et.id AND etw.user_id = tm.user_id
+                      AND etw.weight <= 0)))
+        OR EXISTS (SELECT 1 FROM booking_participants bp
+              WHERE bp.booking_id = b.id AND bp.user_id = ?))";
+
 /// SQL condition selecting the bookings that make one user busy. Expects the
 /// aliases `b` (bookings), `et` (its event type) and `a` (that event type's
-/// account), and binds the user id four times.
+/// account), and binds the user id five times.
 ///
-/// A booking makes a user busy when it is assigned to them, or when it is
-/// unassigned and they own the event type (personal bookings), or when it is
-/// an unassigned team booking (collective mode) and they are a member of that
-/// team. An assigned booking must NOT mark the event type owner busy: on a
-/// round-robin team the owner stays free when another member took the
-/// booking (#146). A co-host of a dynamic group booking
-/// (`booking_participants`, #46) is busy during it too. Pending requests
-/// count when their own event type holds the slot (`pending_blocks_slot`,
-/// #234).
+/// The bookings the user hosts ([`USER_HOSTS_BOOKING`], four binds), plus the
+/// confirmed bookings they claimed as a watcher (`claimed_by_user_id`, one
+/// bind, #374): the claimant attends, so they are not free then either. A
+/// claimant who also hosts the booking matches it once, as one row. Pending
+/// requests count when their own event type holds the slot
+/// (`pending_blocks_slot`, #234).
 ///
 /// Shared by the web slot engine, the troubleshoot view and the CLI so the
 /// three can never disagree about who is busy. `include_pending_holds` is
@@ -29,13 +54,8 @@ pub fn user_busy_bookings(include_pending_holds: bool) -> String {
         "b.status = 'confirmed'"
     };
     format!(
-        "(b.assigned_user_id = ?
-        OR (b.assigned_user_id IS NULL AND a.user_id = ?)
-        OR (b.assigned_user_id IS NULL AND et.team_id IS NOT NULL AND EXISTS (
-              SELECT 1 FROM team_members tm
-              WHERE tm.team_id = et.team_id AND tm.user_id = ?))
-        OR EXISTS (SELECT 1 FROM booking_participants bp
-              WHERE bp.booking_id = b.id AND bp.user_id = ?))
+        "({USER_HOSTS_BOOKING}
+        OR (b.claimed_by_user_id = ? AND b.status = 'confirmed'))
    AND {status}"
     )
 }
@@ -66,23 +86,27 @@ pub fn local(value: &str, legacy_tz: Tz, target: Tz) -> Option<NaiveDateTime> {
     )
 }
 
-/// Conservative wall-clock envelope for the existing availability engine.
-/// On a backward clock change both occurrences of the repeated hour must be
-/// blocked. Sorting the endpoints alone would still miss occupied times.
-/// Legacy rows retain their historical wall-clock interpretation.
+/// Wall-clock envelope of a stored booking for the availability engine,
+/// which works in local times. Local time runs backwards where the clocks go
+/// back, so a booking at the repeated hour can read reversed or short
+/// (00:45Z to 01:15Z in Paris on 25 October 2026 reads 02:45 to 02:15).
+/// The range is the hull of every local time the booking covers, as for
+/// time off ([`crate::time_off::local_range`], #366): an end is moved out
+/// only when it lies inside the repeated hour, so a booking that merely
+/// spans the change keeps its own ends (#377). Legacy rows retain their
+/// historical wall-clock interpretation.
 pub fn busy_range(start: &str, end: &str, tz: Tz) -> Option<(NaiveDateTime, NaiveDateTime)> {
-    let mut first = local(start, tz, tz)?;
-    let mut last = local(end, tz, tz)?;
+    let first = local(start, tz, tz)?;
+    let last = local(end, tz, tz)?;
     if let (Ok(start), Ok(end)) = (
         DateTime::parse_from_rfc3339(start),
         DateTime::parse_from_rfc3339(end),
     ) {
-        let rollback = start.with_timezone(&tz).offset().fix().local_minus_utc()
-            - end.with_timezone(&tz).offset().fix().local_minus_utc();
-        if rollback > 0 {
-            first -= Duration::seconds(rollback.into());
-            last += Duration::seconds(rollback.into());
-        }
+        return Some(crate::time_off::local_range(
+            start.with_timezone(&Utc),
+            end.with_timezone(&Utc),
+            tz,
+        ));
     }
     Some((first, last))
 }
@@ -271,6 +295,164 @@ mod tests {
             assert!(ics.contains(&format!("DTSTART:{expected_start}")));
             assert!(ics.contains(&format!("DTEND:{expected_end}")));
         }
+    }
+
+    /// One zone's 2026 clock changes: the fall-back instant, the repeated
+    /// wall-clock span it creates, and the spring-forward instant.
+    struct Changes {
+        zone: &'static str,
+        fall_back: &'static str,
+        repeated: (&'static str, &'static str),
+        spring_forward: &'static str,
+    }
+
+    const CHANGES: [Changes; 4] = [
+        Changes {
+            zone: "Europe/Paris",
+            fall_back: "2026-10-25T01:00:00Z",
+            repeated: ("2026-10-25T02:00:00", "2026-10-25T03:00:00"),
+            spring_forward: "2026-03-29T01:00:00Z",
+        },
+        Changes {
+            zone: "America/New_York",
+            fall_back: "2026-11-01T06:00:00Z",
+            repeated: ("2026-11-01T01:00:00", "2026-11-01T02:00:00"),
+            spring_forward: "2026-03-08T07:00:00Z",
+        },
+        Changes {
+            zone: "Australia/Sydney",
+            fall_back: "2026-04-04T16:00:00Z",
+            repeated: ("2026-04-05T02:00:00", "2026-04-05T03:00:00"),
+            spring_forward: "2026-10-03T16:00:00Z",
+        },
+        // A 30-minute change: +11:00 back to +10:30, +10:30 on to +11:00.
+        Changes {
+            zone: "Australia/Lord_Howe",
+            fall_back: "2026-04-04T15:00:00Z",
+            repeated: ("2026-04-05T01:30:00", "2026-04-05T02:00:00"),
+            spring_forward: "2026-10-03T15:30:00Z",
+        },
+    ];
+
+    fn instant(value: &str) -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339(value)
+            .unwrap()
+            .with_timezone(&Utc)
+    }
+
+    fn range(start: DateTime<Utc>, end: DateTime<Utc>, tz: Tz) -> (NaiveDateTime, NaiveDateTime) {
+        let rfc = |t: DateTime<Utc>| t.format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        busy_range(&rfc(start), &rfc(end), tz).unwrap()
+    }
+
+    #[test]
+    fn busy_range_widens_only_an_end_inside_the_repeated_hour() {
+        for c in &CHANGES {
+            let tz: Tz = c.zone.parse().unwrap();
+            let change = instant(c.fall_back);
+            let wall = |t: DateTime<Utc>| t.with_timezone(&tz).naive_local();
+            let (repeat_low, repeat_high) =
+                (naive(c.repeated.0).unwrap(), naive(c.repeated.1).unwrap());
+            let shift = repeat_high - repeat_low;
+            assert_eq!(wall(change), repeat_low, "{}: the change", c.zone);
+            assert_eq!(
+                wall(change - Duration::seconds(1)) + Duration::seconds(1),
+                repeat_high,
+                "{}: the instant before the change",
+                c.zone
+            );
+            let hour = Duration::hours(2); // more than any shift
+
+            // Across the change, both ends outside the repeated hour: the
+            // booking's own ends, nothing outside it is blocked.
+            assert_eq!(
+                range(change - hour, change + hour, tz),
+                (wall(change - hour), wall(change + hour)),
+                "{}: spanning the change",
+                c.zone
+            );
+            // From the first occurrence into the second: the whole repeated
+            // hour, no more, although the plain ends read the same.
+            let half = shift / 2;
+            assert_eq!(wall(change + half), wall(change - half), "{}", c.zone);
+            assert_eq!(
+                range(change - half, change + half, tz),
+                (repeat_low, repeat_high),
+                "{}: inside the repeated hour",
+                c.zone
+            );
+            // Starting in the first occurrence: only the start moves back.
+            assert_eq!(
+                range(change - half, change + hour, tz),
+                (repeat_low, wall(change + hour)),
+                "{}: start in the first occurrence",
+                c.zone
+            );
+            // Ending in the second occurrence: only the end moves out.
+            assert_eq!(
+                range(change - hour, change + half, tz),
+                (wall(change - hour), repeat_high),
+                "{}: end in the second occurrence",
+                c.zone
+            );
+            // Ending before the change (in the first occurrence): untouched.
+            assert_eq!(
+                range(change - hour, change - half, tz),
+                (wall(change - hour), wall(change - half)),
+                "{}: before the change",
+                c.zone
+            );
+            // Starting after the change (in the second occurrence): untouched.
+            assert_eq!(
+                range(change + half, change + hour, tz),
+                (wall(change + half), wall(change + hour)),
+                "{}: after the change",
+                c.zone
+            );
+        }
+    }
+
+    #[test]
+    fn busy_range_adds_nothing_at_a_spring_forward() {
+        for c in &CHANGES {
+            let tz: Tz = c.zone.parse().unwrap();
+            let change = instant(c.spring_forward);
+            let wall = |t: DateTime<Utc>| t.with_timezone(&tz).naive_local();
+            let before = change - Duration::seconds(1);
+            assert!(
+                wall(change) - wall(before) > Duration::seconds(1),
+                "{}: the clocks jump at the change",
+                c.zone
+            );
+            for (start, end) in [
+                (change - Duration::hours(2), change + Duration::hours(2)),
+                (
+                    change - Duration::minutes(30),
+                    change + Duration::minutes(15),
+                ),
+                (change, change + Duration::hours(1)),
+                (change - Duration::hours(1), change),
+            ] {
+                assert_eq!(
+                    range(start, end, tz),
+                    (wall(start), wall(end)),
+                    "{}: {start} to {end}",
+                    c.zone
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn busy_range_keeps_legacy_wall_clocks() {
+        let paris: Tz = "Europe/Paris".parse().unwrap();
+        assert_eq!(
+            busy_range("2026-10-25T02:30:00", "2026-10-25T03:30:00", paris),
+            Some((
+                naive("2026-10-25T02:30:00").unwrap(),
+                naive("2026-10-25T03:30:00").unwrap()
+            ))
+        );
     }
 
     #[tokio::test]

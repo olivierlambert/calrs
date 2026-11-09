@@ -30,6 +30,8 @@
 //! [`crate::providers::CalendarProvider`].
 
 pub mod autodiscover;
+#[cfg(test)]
+mod fixtures;
 pub mod global;
 pub mod ical;
 pub mod operations;
@@ -55,7 +57,7 @@ use crate::providers::{CalendarProvider, DeltaResult, RawEvent, RemoteCalendar};
 pub struct EwsProvider {
     endpoint: String,
     username: String,
-    password: String,
+    password: zeroize::Zeroizing<String>,
     impersonate_email: Option<String>,
 }
 
@@ -64,7 +66,7 @@ impl EwsProvider {
         Self {
             endpoint: endpoint.trim_end_matches('/').to_string(),
             username: username.to_string(),
-            password: password.to_string(),
+            password: zeroize::Zeroizing::new(password.to_string()),
             impersonate_email: None,
         }
     }
@@ -80,7 +82,7 @@ impl EwsProvider {
         Self {
             endpoint: endpoint.trim_end_matches('/').to_string(),
             username: username.to_string(),
-            password: password.to_string(),
+            password: zeroize::Zeroizing::new(password.to_string()),
             impersonate_email: Some(mailbox_email.to_string()),
         }
     }

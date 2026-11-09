@@ -27,6 +27,12 @@ fn max_anchor_depth(html: &str) -> usize {
     max
 }
 
+/// A data directory that holds no logo, for templates rendered outside the
+/// router: they include the public logo partial, which calls `company_logo()`.
+fn no_logo_dir() -> std::path::PathBuf {
+    std::env::temp_dir().join(format!("calrs_no_logo_{}", uuid::Uuid::new_v4()))
+}
+
 /// Regression test for #239: an event-type description containing a
 /// markdown link must not produce an `<a>` nested inside the card link on
 /// the user and team profile pages, and the description link must survive.
@@ -36,6 +42,7 @@ fn profile_cards_do_not_nest_description_links() {
     env.set_undefined_behavior(minijinja::UndefinedBehavior::Lenient);
     env.set_loader(minijinja::path_loader("templates"));
     crate::i18n::register(&mut env);
+    register_company_logo(&mut env, no_logo_dir());
 
     let description =
         crate::utils::render_inline_markdown("See [the agenda](https://example.com/agenda)");
@@ -54,7 +61,7 @@ fn profile_cards_do_not_nest_description_links() {
         .render(context! {
             host_name => "Alice",
             username => "alice",
-            event_types => event_types.clone(),
+            cards => vec![context! { title => "Meetings", count => 1, items => event_types.clone() }],
             lang => "en",
         })
         .expect("profile.html should render");
@@ -64,7 +71,7 @@ fn profile_cards_do_not_nest_description_links() {
         .render(context! {
             team_name => "Sales",
             team_slug => "sales",
-            event_types => event_types,
+            cards => vec![context! { title => "Meetings", count => 1, items => event_types }],
             lang => "en",
         })
         .expect("team_profile.html should render");
@@ -91,6 +98,7 @@ fn slots_template_links_without_reschedule_context() {
     env.set_undefined_behavior(minijinja::UndefinedBehavior::Lenient);
     env.set_loader(minijinja::path_loader("templates"));
     crate::i18n::register(&mut env);
+    register_company_logo(&mut env, no_logo_dir());
 
     let tmpl = env
         .get_template("slots.html")
@@ -153,6 +161,7 @@ fn slots_template_links_with_reschedule_context() {
     env.set_undefined_behavior(minijinja::UndefinedBehavior::Lenient);
     env.set_loader(minijinja::path_loader("templates"));
     crate::i18n::register(&mut env);
+    register_company_logo(&mut env, no_logo_dir());
 
     let tmpl = env
         .get_template("slots.html")
@@ -229,6 +238,7 @@ fn slots_template_renders_absent_prev_month_as_empty() {
     env.set_undefined_behavior(minijinja::UndefinedBehavior::Lenient);
     env.set_loader(minijinja::path_loader("templates"));
     crate::i18n::register(&mut env);
+    register_company_logo(&mut env, no_logo_dir());
     let tmpl = env
         .get_template("slots.html")
         .expect("slots.html should load");
@@ -305,6 +315,7 @@ fn book_template_phone_field_degrades_without_javascript() {
     env.set_undefined_behavior(minijinja::UndefinedBehavior::Lenient);
     env.set_loader(minijinja::path_loader("templates"));
     crate::i18n::register(&mut env);
+    register_company_logo(&mut env, no_logo_dir());
     let tmpl = env
         .get_template("book.html")
         .expect("book.html should load");
@@ -421,6 +432,47 @@ async fn public_profile_trailing_slash_head_preserves_encoded_path_and_query() {
         "/u/test%75ser?value=%2F%3F%26"
     );
     assert!(body_string(response).await.is_empty());
+}
+
+/// #388: a slot page never waits for another task's sync of the host's
+/// source (the background sync, the dashboard's Sync button): it serves the
+/// cache that sync is refreshing, and does not sync the source a second time.
+#[tokio::test]
+async fn slots_page_does_not_wait_for_a_source_being_synced() {
+    let (app, pool, _, _) = setup_test_app().await;
+    let account: String = sqlx::query_scalar(
+        "SELECT a.id FROM accounts a JOIN users u ON u.id = a.user_id WHERE u.username = 'testuser'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let source = uuid::Uuid::new_v4().to_string();
+    // Stale, with credentials that cannot be decrypted: a sync attempt would
+    // fail and be recorded.
+    sqlx::query("INSERT INTO caldav_sources (id, account_id, name, url, username, password_enc) VALUES (?, ?, 'busy', 'https://dav.example.com/', 'u', 'deadbeef')")
+        .bind(&source)
+        .bind(&account)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let lock = crate::commands::sync::source_lock(&source).await;
+    let _being_synced = lock.lock().await;
+
+    let response = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        app.oneshot(get("/u/testuser/test-meeting")),
+    )
+    .await
+    .expect("the slot page waited for the source's sync")
+    .unwrap();
+    assert_eq!(response.status(), 200);
+    let error: Option<String> =
+        sqlx::query_scalar("SELECT last_sync_error_at FROM caldav_sources WHERE id = ?")
+            .bind(&source)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(error, None, "the page did not sync the source itself");
 }
 
 #[tokio::test]
@@ -710,6 +762,7 @@ fn book_template_sets_the_custom_wasm_url_before_the_widget() {
     env.set_undefined_behavior(minijinja::UndefinedBehavior::Lenient);
     env.set_loader(minijinja::path_loader("templates"));
     crate::i18n::register(&mut env);
+    register_company_logo(&mut env, no_logo_dir());
     let tmpl = env
         .get_template("book.html")
         .expect("book.html should load");

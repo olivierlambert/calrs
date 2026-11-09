@@ -120,8 +120,8 @@ fn set_cache(base_url: Option<String>, allow_private_hosts: Option<Vec<String>>)
 /// to call multiple times (startup, after admin save, before CLI validation).
 /// Silently leaves the cache untouched on error — the env fallback still works.
 pub async fn load_from_db(pool: &SqlitePool) {
-    let row: Option<(Option<String>, Option<String>)> = match sqlx::query_as(
-        "SELECT base_url, allow_private_hosts FROM auth_config WHERE id = 'singleton'",
+    let row: Option<(Option<String>, Option<String>, Option<String>)> = match sqlx::query_as(
+        "SELECT base_url, allow_private_hosts, trusted_proxies FROM auth_config WHERE id = 'singleton'",
     )
     .fetch_optional(pool)
     .await
@@ -136,7 +136,8 @@ pub async fn load_from_db(pool: &SqlitePool) {
     };
 
     // Ok(None) genuinely means no singleton row → reset to defaults.
-    let (base_url, allow_raw) = row.unwrap_or((None, None));
+    let (base_url, allow_raw, trusted_proxies) = row.unwrap_or((None, None, None));
+    crate::trusted_proxies::set_from_db(trusted_proxies.as_deref());
 
     let base_url = base_url
         .map(|v| v.trim().to_string())
@@ -178,6 +179,31 @@ fn parse_sync_min_age(raw: &str) -> Result<u64, String> {
         .map_err(|_| format!("CALRS_SYNC_MIN_AGE={raw:?} is not a whole number of seconds"))
 }
 
+/// `CALRS_SYNC_CONCURRENCY` (#388): how many calendar sources the background
+/// sync may sync at once, never more than one per server. `Ok(None)` when
+/// unset or empty (the default applies); `Err` names an unusable value,
+/// including 0. Values above the cap are returned as given, for the caller to
+/// clamp and say so.
+pub fn sync_concurrency() -> Result<Option<usize>, String> {
+    match std::env::var("CALRS_SYNC_CONCURRENCY") {
+        Ok(raw) => parse_sync_concurrency(&raw),
+        Err(_) => Ok(None),
+    }
+}
+
+fn parse_sync_concurrency(raw: &str) -> Result<Option<usize>, String> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return Ok(None);
+    }
+    match raw.parse::<usize>() {
+        Ok(0) | Err(_) => Err(format!(
+            "CALRS_SYNC_CONCURRENCY={raw:?} is not a whole number of at least 1"
+        )),
+        Ok(n) => Ok(Some(n)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -202,5 +228,17 @@ mod tests {
         assert_eq!(parse_sync_min_age("100000"), Ok(100_000));
         assert!(parse_sync_min_age("15m").is_err());
         assert!(parse_sync_min_age("-60").is_err());
+    }
+
+    #[test]
+    fn sync_concurrency_parses_a_positive_count() {
+        assert_eq!(parse_sync_concurrency(""), Ok(None));
+        assert_eq!(parse_sync_concurrency(" "), Ok(None));
+        assert_eq!(parse_sync_concurrency("1"), Ok(Some(1)));
+        assert_eq!(parse_sync_concurrency(" 8 "), Ok(Some(8)));
+        assert_eq!(parse_sync_concurrency("500"), Ok(Some(500)));
+        assert!(parse_sync_concurrency("0").is_err());
+        assert!(parse_sync_concurrency("-2").is_err());
+        assert!(parse_sync_concurrency("four").is_err());
     }
 }
