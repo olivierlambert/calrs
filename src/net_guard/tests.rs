@@ -181,15 +181,24 @@ fn redirects_to_a_private_literal_are_refused() {
     let url = |s: &str| Url::parse(s).unwrap();
     assert!(redirect_refused(
         &url("http://169.254.169.254/latest/"),
-        &none
+        &none,
+        &[]
     ));
     // Names are left to the resolver.
-    assert!(!redirect_refused(&url("https://other.example.com/"), &none));
+    assert!(!redirect_refused(
+        &url("https://other.example.com/"),
+        &none,
+        &[]
+    ));
     // No exemption for the host the request started at: a saved literal is
     // only reachable while it is allowlisted.
-    assert!(redirect_refused(&url("http://127.0.0.1:5232/dav/"), &none));
+    assert!(redirect_refused(
+        &url("http://127.0.0.1:5232/dav/"),
+        &none,
+        &[]
+    ));
     let list = Allowlist::fixed(&["10.0.0.5".to_string()]);
-    assert!(!redirect_refused(&url("http://10.0.0.5/"), &list));
+    assert!(!redirect_refused(&url("http://10.0.0.5/"), &list, &[]));
 }
 
 #[test]
@@ -310,9 +319,119 @@ fn proxy_settings_are_read_like_reqwest_reads_them() {
         ("HTTP_PROXY", "http://evil:3128"),
     ]));
     assert!(!cgi.is_set());
-    // A bare host:port, and credentials never reach the host list.
-    let bare = ProxyConfig::from_vars(vars(&[("https_proxy", "user:pw@Squid.corp:3128")]));
-    assert_eq!(bare.hosts(), vec!["squid.corp"]);
+    // Credentials never reach the host list; a bare IP and port is read as
+    // http, as reqwest reads it.
+    let creds = ProxyConfig::from_vars(vars(&[("https_proxy", "http://user:pw@Squid.corp:3128")]));
+    assert_eq!(creds.hosts(), vec!["squid.corp"]);
+    let bare = ProxyConfig::from_vars(vars(&[("HTTP_PROXY", "10.0.0.8:3128")]));
+    assert_eq!(bare.hosts(), vec!["10.0.0.8"]);
+}
+
+#[test]
+fn a_socks_proxy_this_build_cannot_use_is_dropped_with_its_exemption() {
+    let vars = |name: &str| (name == "ALL_PROXY").then(|| "socks5h://localhost:1080".to_string());
+    let cfg = ProxyConfig::from_vars(vars);
+    assert!(!cfg.is_set());
+    assert!(cfg.ignored);
+    assert!(cfg.hosts().is_empty());
+}
+
+#[tokio::test]
+async fn with_a_dropped_socks_proxy_localhost_is_not_exempt() {
+    let (server, hits) = counting_server().await;
+    let cfg = ProxyConfig::from_vars(|name: &str| {
+        (name == "ALL_PROXY").then(|| "socks5h://localhost:1080".to_string())
+    });
+    let client = builder_with(Allowlist::fixed(&[]), Arc::new(Fixed(vec![server])), &cfg)
+        .build()
+        .unwrap();
+    let url = format!("http://localhost:{}/", server.port());
+    assert!(client.get(&url).send().await.unwrap_err().is_connect());
+    assert_eq!(hits.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn urls_naming_the_proxy_host_are_refused_unless_allowlisted() {
+    let _strict = strict();
+    let url = |s: &str| Url::parse(s).unwrap();
+    let none = Allowlist::fixed(&[]);
+    let proxy = vec!["localhost".to_string()];
+    // A server href or redirect to the proxy's host, on any port.
+    assert!(url_refused_with(
+        &url("http://localhost:6379/"),
+        &none,
+        &proxy
+    ));
+    assert!(url_refused_with(
+        &url("https://LOCALHOST/dav/"),
+        &none,
+        &proxy
+    ));
+    assert!(!url_refused_with(
+        &url("https://cal.example.com/"),
+        &none,
+        &proxy
+    ));
+    // Literals stay refused whatever the proxies.
+    assert!(url_refused_with(&url("http://10.1.2.3/"), &none, &[]));
+    let list = Allowlist::fixed(&["localhost".to_string()]);
+    assert!(!url_refused_with(
+        &url("http://localhost:6379/"),
+        &list,
+        &proxy
+    ));
+}
+
+/// A server on `front.test` that redirects to `location`.
+async fn redirecting_server(location: String) -> SocketAddr {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let local = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        while let Ok((mut sock, _)) = listener.accept().await {
+            let location = location.clone();
+            tokio::spawn(async move {
+                use tokio::io::{AsyncReadExt, AsyncWriteExt};
+                let mut buf = [0u8; 2048];
+                let _ = sock.read(&mut buf).await;
+                let reply = format!(
+                    "HTTP/1.1 302 Found\r\nlocation: {location}\r\ncontent-length: 0\r\nconnection: close\r\n\r\n"
+                );
+                let _ = sock.write_all(reply.as_bytes()).await;
+            });
+        }
+    });
+    local
+}
+
+/// The usual corporate setup: a local proxy (cntlm, px) at
+/// `http://localhost:3128` with `NO_PROXY=localhost`. A redirect to
+/// `localhost` on another port goes direct, where the resolver would let
+/// the proxy's name through: the redirect policy refuses it first.
+#[tokio::test]
+async fn a_redirect_to_the_proxy_host_on_another_port_is_refused() {
+    let (internal, internal_hits) = counting_server().await;
+    let front = redirecting_server(format!("http://localhost:{}/", internal.port())).await;
+    let proxies = ProxyConfig {
+        http: Some("http://localhost:3128".to_string()),
+        no_proxy: Some("localhost, front.test".to_string()),
+        ..ProxyConfig::none()
+    };
+    let list = Allowlist::fixed(&["front.test".to_string()]);
+    let lookup = Arc::new(Fixed(vec![SocketAddr::new(
+        "127.0.0.1".parse().unwrap(),
+        0,
+    )]));
+    let client = builder_with(list.clone(), lookup, &proxies)
+        .redirect(redirects_with(10, list, proxies.hosts()))
+        .build()
+        .unwrap();
+    let err = client
+        .get(format!("http://front.test:{}/", front.port()))
+        .send()
+        .await
+        .unwrap_err();
+    assert!(err.is_redirect(), "{err:?}");
+    assert_eq!(internal_hits.load(Ordering::SeqCst), 0);
 }
 
 #[tokio::test]

@@ -150,6 +150,9 @@ async fn main() -> Result<()> {
     // private-host allowlist at connection time (#363), so `calrs sync` and
     // the probes need the DB-stored value too.
     settings::load_from_db(&pool).await;
+    // Most commands can make calendar requests (sync, source, resource
+    // probe, serve), so the proxy posture is logged for every one.
+    net_guard::log_proxy_posture();
 
     match cli.command {
         Commands::Source { command } => commands::source::run(&pool, &secret_key, command).await?,
@@ -171,7 +174,6 @@ async fn main() -> Result<()> {
             // into the process-global cache before anything reads them.
             settings::load_from_db(&pool).await;
 
-            net_guard::log_proxy_posture();
             let private_hosts = caldav::private_host_allowlist();
             if !private_hosts.is_empty() {
                 tracing::warn!(

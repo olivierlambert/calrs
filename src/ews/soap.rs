@@ -138,9 +138,7 @@ pub async fn post_soap_skipping(
     // Literals never reach the guarded resolver: check the endpoint against
     // the allowlist as it stands now, at every request (#363).
     if let Ok(url) = reqwest::Url::parse(endpoint) {
-        let allowlist = crate::net_guard::Allowlist::Settings;
-        if let Some(ip) = crate::net_guard::literal_refused(&url, &allowlist) {
-            tracing::warn!(%ip, "EWS request to a private or reserved address refused");
+        if crate::net_guard::url_refused(&url) {
             anyhow::bail!(crate::net_guard::REFUSED);
         }
     }

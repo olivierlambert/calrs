@@ -226,15 +226,20 @@ impl reqwest::dns::Resolve for GuardedResolver {
     }
 }
 
-/// Proxies from the standard environment variables, as reqwest reads them:
-/// `HTTP_PROXY` (ignored under CGI, where a request header can set it), then
-/// `http_proxy`; `HTTPS_PROXY`, then `https_proxy`; `ALL_PROXY` or
-/// `all_proxy` for a scheme with neither; `NO_PROXY`, then `no_proxy`.
+/// Proxies from the standard environment variables, in calrs's own order:
+/// `HTTP_PROXY`, then `http_proxy` (only `http_proxy` under CGI, where a
+/// request header can set `HTTP_PROXY`); `HTTPS_PROXY`, then `https_proxy`;
+/// `ALL_PROXY`, then `all_proxy`, for a scheme with neither; `NO_PROXY`,
+/// then `no_proxy`. Only settings reqwest accepts are kept: this build has
+/// no SOCKS support, so a `socks5://` proxy is dropped (see `ignored`) and
+/// its requests go direct, checked and pinned like any other.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ProxyConfig {
     pub http: Option<String>,
     pub https: Option<String>,
     pub no_proxy: Option<String>,
+    /// A proxy variable was set but reqwest refused its value.
+    pub ignored: bool,
 }
 
 impl ProxyConfig {
@@ -262,10 +267,19 @@ impl ProxyConfig {
         } else {
             get(&["HTTP_PROXY", "http_proxy"])
         };
+        let http = http.or_else(|| all.clone());
+        let https = get(&["HTTPS_PROXY", "https_proxy"]).or(all);
+        let ignored = http
+            .as_deref()
+            .is_some_and(|p| reqwest::Proxy::http(p).is_err())
+            || https
+                .as_deref()
+                .is_some_and(|p| reqwest::Proxy::https(p).is_err());
         Self {
-            http: http.or_else(|| all.clone()),
-            https: get(&["HTTPS_PROXY", "https_proxy"]).or(all),
+            http: http.filter(|p| reqwest::Proxy::http(p.as_str()).is_ok()),
+            https: https.filter(|p| reqwest::Proxy::https(p.as_str()).is_ok()),
             no_proxy: get(&["NO_PROXY", "no_proxy"]),
+            ignored,
         }
     }
 
@@ -273,8 +287,9 @@ impl ProxyConfig {
         self.http.is_some() || self.https.is_some()
     }
 
-    /// The proxies' host names, lowercased, for the startup log and the
-    /// resolver's exemption. Never the URLs: they can carry credentials.
+    /// The host names of the proxies in use, lowercased, for the startup
+    /// log, the resolver's exemption and [`url_refused`]. Never the URLs:
+    /// they can carry credentials.
     pub fn hosts(&self) -> Vec<String> {
         let mut hosts: Vec<String> = [&self.http, &self.https]
             .into_iter()
@@ -287,32 +302,27 @@ impl ProxyConfig {
 
     fn apply(&self, mut builder: reqwest::ClientBuilder) -> reqwest::ClientBuilder {
         let no_proxy = || reqwest::NoProxy::from_string(self.no_proxy.as_deref().unwrap_or(""));
-        if let Some(p) = &self.http {
-            match reqwest::Proxy::http(p.as_str()) {
-                Ok(proxy) => builder = builder.proxy(proxy.no_proxy(no_proxy())),
-                Err(_) => tracing::warn!("ignoring an invalid HTTP proxy setting"),
-            }
+        if let Some(Ok(proxy)) = self.http.as_deref().map(reqwest::Proxy::http) {
+            builder = builder.proxy(proxy.no_proxy(no_proxy()));
         }
-        if let Some(p) = &self.https {
-            match reqwest::Proxy::https(p.as_str()) {
-                Ok(proxy) => builder = builder.proxy(proxy.no_proxy(no_proxy())),
-                Err(_) => tracing::warn!("ignoring an invalid HTTPS proxy setting"),
-            }
+        if let Some(Ok(proxy)) = self.https.as_deref().map(reqwest::Proxy::https) {
+            builder = builder.proxy(proxy.no_proxy(no_proxy()));
         }
         builder
     }
 }
 
-/// A proxy setting as a URL; a bare `host:port` means `http://host:port`.
+/// A proxy setting as reqwest reads it: a URL, or, when it does not parse
+/// as one, `http://` in front of it.
 fn proxy_url(raw: &str) -> Option<Url> {
     Url::parse(raw)
+        .or_else(|_| Url::parse(&format!("http://{raw}")))
         .ok()
-        .filter(|u| u.host_str().is_some())
-        .or_else(|| Url::parse(&format!("http://{raw}")).ok())
 }
 
-/// Log, once at startup, that calendar requests go through a proxy and that
-/// private-address filtering for them is then the proxy's job.
+/// Log, once per process, how calendar requests leave: through a proxy
+/// (private-address filtering is then the proxy's job), or direct because
+/// the proxy setting was refused.
 pub fn log_proxy_posture() {
     let proxies = ProxyConfig::from_env();
     if proxies.is_set() {
@@ -324,6 +334,37 @@ pub fn log_proxy_posture() {
              still checked and pinned by calrs)"
         );
     }
+    if proxies.ignored {
+        tracing::warn!(
+            "a proxy setting was ignored (unsupported, for instance SOCKS): the requests it \
+             would have carried go direct, checked and pinned by calrs"
+        );
+    }
+}
+
+/// Whether a user- or server-supplied URL must not be requested at all: it
+/// names a private IP literal, or the host of a proxy in use, that is not on
+/// the allowlist. Literals never reach the guarded resolver, and the
+/// resolver lets a proxy's host through for the proxy connection, so these
+/// are refused before any request. Such URLs never need to reach the proxy
+/// itself. Logs the reason.
+pub fn url_refused(url: &Url) -> bool {
+    url_refused_with(url, &Allowlist::Settings, &ProxyConfig::from_env().hosts())
+}
+
+/// [`url_refused`] with a given allowlist and proxy hosts.
+pub fn url_refused_with(url: &Url, allowlist: &Allowlist, proxy_hosts: &[String]) -> bool {
+    if let Some(ip) = literal_refused(url, allowlist) {
+        tracing::warn!(%ip, "request to a private or reserved address refused");
+        return true;
+    }
+    if let Some(host) = url.host_str().map(normalize_host) {
+        if proxy_hosts.contains(&host) && !allowlist.allows(&host) {
+            tracing::warn!(host = %host, "request to the proxy's own host refused");
+            return true;
+        }
+    }
+    false
 }
 
 /// A client builder for a user- or admin-supplied URL: guarded resolution
@@ -378,21 +419,29 @@ pub fn literal_refused(url: &Url, allowlist: &Allowlist) -> Option<IpAddr> {
     Some(ip)
 }
 
-/// Whether a redirect to `target` is refused: a private IP literal that is
-/// not allowlisted.
-fn redirect_refused(target: &Url, allowlist: &Allowlist) -> bool {
-    literal_refused(target, allowlist).is_some()
+/// Whether a redirect to `target` is refused: see [`url_refused_with`].
+fn redirect_refused(target: &Url, allowlist: &Allowlist, proxy_hosts: &[String]) -> bool {
+    url_refused_with(target, allowlist, proxy_hosts)
 }
 
 /// Follow at most `max` redirects, as `Policy::limited(max)` does, refusing
 /// those [`redirect_refused`] names. Host names in a redirect go through the
 /// guarded resolver.
 pub fn redirects(max: usize, allowlist: Allowlist) -> reqwest::redirect::Policy {
+    redirects_with(max, allowlist, ProxyConfig::from_env().hosts())
+}
+
+/// [`redirects`] with given proxy hosts.
+pub fn redirects_with(
+    max: usize,
+    allowlist: Allowlist,
+    proxy_hosts: Vec<String>,
+) -> reqwest::redirect::Policy {
     reqwest::redirect::Policy::custom(move |attempt| {
         if attempt.previous().len() >= max {
             return attempt.error("too many redirects");
         }
-        if redirect_refused(attempt.url(), &allowlist) {
+        if redirect_refused(attempt.url(), &allowlist, &proxy_hosts) {
             return attempt.error("redirect to a private or reserved address refused");
         }
         attempt.follow()

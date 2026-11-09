@@ -58,6 +58,9 @@ pub async fn discover_ews_url(email: &str, password: &str) -> Result<String> {
             tracing::debug!(candidate = %url, error = %e, "skipping autodiscover candidate (validator rejected)");
             continue;
         }
+        if reqwest::Url::parse(url).is_ok_and(|u| crate::net_guard::url_refused(&u)) {
+            continue;
+        }
         match try_one(&client, url, email, password, &body).await {
             Ok(Some(ews_url)) => {
                 // The server-supplied EwsUrl is later validated again when

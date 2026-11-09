@@ -311,9 +311,7 @@ impl CaldavClient {
     /// all checked here, at every request.
     fn request(&self, method: reqwest::Method, url: &str) -> Result<RequestBuilder> {
         if let Ok(parsed) = reqwest::Url::parse(url) {
-            let allowlist = crate::net_guard::Allowlist::Settings;
-            if let Some(ip) = crate::net_guard::literal_refused(&parsed, &allowlist) {
-                tracing::warn!(%ip, "CalDAV request to a private or reserved address refused");
+            if crate::net_guard::url_refused(&parsed) {
                 bail!(crate::net_guard::REFUSED);
             }
         }

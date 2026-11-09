@@ -77,6 +77,9 @@ pub async fn fetch_feed(feed_url: &str) -> anyhow::Result<String> {
     // stored URL's host may have started resolving to an internal address
     // since (and background re-syncs are triggered from public pages).
     crate::caldav::validate_caldav_url(feed_url)?;
+    if reqwest::Url::parse(feed_url).is_ok_and(|u| crate::net_guard::url_refused(&u)) {
+        anyhow::bail!(crate::net_guard::REFUSED);
+    }
     // No redirects: following one would let a validated public URL bounce
     // the request to an internal host (SSRF). The guarded resolver connects
     // only to addresses it checked, so a second DNS answer cannot either
