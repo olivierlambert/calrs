@@ -208,6 +208,9 @@ pub(super) struct GuestRequest<'a> {
     /// `None` for a manager booking through the API, which, like
     /// `calrs booking create`, asks no questions: the host is booking.
     pub(super) fields: Option<&'a HashMap<String, String>>,
+    /// Lead-capture id from the booking form; closes the matching lead once
+    /// the booking exists. `None` for the REST API, which captures no leads.
+    pub(super) lead_id: Option<&'a str>,
 }
 
 impl<'a> GuestRequest<'a> {
@@ -221,6 +224,7 @@ impl<'a> GuestRequest<'a> {
             date: &form.date,
             time: &form.time,
             fields: Some(&form.fields),
+            lead_id: form.lead_id.as_deref(),
         }
     }
 }
@@ -900,7 +904,7 @@ pub(super) async fn book_team(
 
     tracing::info!(booking_id = %id, event_type = %slug, guest = %guest.email, "booking created");
 
-    if let Some(lead_id) = form.lead_id.as_deref() {
+    if let Some(lead_id) = guest.lead_id {
         crate::leads::mark_completed(&state.pool, lead_id, &et_id).await;
     }
 
@@ -2199,7 +2203,7 @@ pub(super) async fn book_personal(
 
     tracing::info!(booking_id = %id, event_type = %slug, guest = %guest.email, "booking created");
 
-    if let Some(lead_id) = form.lead_id.as_deref() {
+    if let Some(lead_id) = guest.lead_id {
         crate::leads::mark_completed(&state.pool, lead_id, &et_id).await;
     }
 

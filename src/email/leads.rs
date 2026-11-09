@@ -45,6 +45,7 @@ pub(super) fn compose_lead_abandoned(alert: &LeadAlert<'_>) -> ComposedEmail {
     );
     let view = t(lang, "email-lead-action-view");
     EmailParts {
+        guest_footer: None,
         lang,
         subject: ta(
             lang,
@@ -133,6 +134,7 @@ pub(super) fn compose_lead_digest(digest: &LeadDigest<'_>) -> ComposedEmail {
     }
     let view = t(lang, "email-lead-action-view");
     EmailParts {
+        guest_footer: None,
         lang,
         subject: ta(lang, "email-lead-digest-subject", [("count", &count)]),
         heading: t(lang, "email-lead-abandoned-heading"),
