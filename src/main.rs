@@ -174,7 +174,7 @@ async fn main() -> Result<()> {
             }
             tracing::info!(
                 trusted_proxies = %trusted_proxies::current().describe(),
-                from_env = std::env::var_os("CALRS_TRUSTED_PROXIES").is_some(),
+                from_env = trusted_proxies::set_by_env(),
                 "X-Forwarded-For is believed only from these peers"
             );
             // Spawn background reminder task

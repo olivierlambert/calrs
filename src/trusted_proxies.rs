@@ -170,6 +170,11 @@ fn from_env() -> Option<&'static TrustedProxies> {
         .as_ref()
 }
 
+/// Whether `CALRS_TRUSTED_PROXIES` decides the list (the default otherwise).
+pub fn set_by_env() -> bool {
+    from_env().is_some()
+}
+
 /// The list in force: the environment's, else the default.
 pub fn current() -> TrustedProxies {
     from_env()

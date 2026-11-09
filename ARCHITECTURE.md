@@ -140,7 +140,9 @@ Call sites use `crate::email::name` whatever file `name` lives in.
   (double-submit cookie, checked by `verify_csrf_token` in each POST handler),
   `csp_middleware` (CSP rebuilt from captcha settings, relaxed for embeds and
   booking forms). Booking POSTs are rate limited per client IP
-  (`client_ip_for_rate_limit`, rightmost `X-Forwarded-For`).
+  (`client_ip_for_rate_limit`: the TCP peer, or, when the peer is a trusted
+  proxy, `X-Forwarded-For` read right to left past trusted hops; see
+  `src/trusted_proxies.rs`).
 - **Auth extractors** (`src/auth.rs`). `AuthUser` redirects to login,
   `AdminUser` returns 403, `OptionalAuthUser` for public pages. Each resolves
   the viewer's language once.
