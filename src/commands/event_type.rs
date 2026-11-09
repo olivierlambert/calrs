@@ -353,10 +353,6 @@ pub async fn run(pool: &SqlitePool, cmd: EventTypeCommands) -> Result<()> {
                     anyhow::bail!("--bookable-until must be on or after --bookable-from");
                 }
             }
-            // /u/{username}/next-free is the landing page's hint endpoint.
-            if slug == "next-free" {
-                anyhow::bail!("The slug 'next-free' is reserved, pick another one");
-            }
             let account: (String,) = sqlx::query_as("SELECT id FROM accounts LIMIT 1")
                 .fetch_optional(pool)
                 .await?

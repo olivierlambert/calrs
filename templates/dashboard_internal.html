@@ -31,7 +31,7 @@
           {% if et.team_name %}<span class="badge">{{ et.team_name }}</span>{% endif %}
         </div>
         <div class="ui-row-meta">
-          <span>{{ t("invite-links-duration", minutes=et.duration_min) }}</span>
+          <span>{{ duration_label(et.duration_min) }}</span>
           <span>{{ t("invite-links-hosted-by", host=et.host_name) }}</span>
         </div>
       </div>

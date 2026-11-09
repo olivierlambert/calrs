@@ -1,0 +1,57 @@
+{% extends "dashboard_base.html" %}
+{% block title %}{{ heading }}, calrs{% endblock %}
+{% block main_class %}has-cards{% endblock %}
+{% block dashboard_content %}
+{#- The order of a landing page (landing.rs): its sections, each with its
+    meetings, then the meetings without a section, every one with a move
+    up and a move down. Sections come from the event type form. -#}
+<style>
+.po-head { align-items: center; }
+.po-moves { display: flex; gap: 0.25rem; flex-shrink: 0; }
+.po-moves form { margin: 0; }
+.po-moves button { min-width: 2rem; }
+.po-note { color: var(--text-muted); font-size: 12.5px; }
+</style>
+<header class="page-header">
+  <div class="page-header-text">
+    <h1 class="page-title">{{ heading }}</h1>
+    <p class="page-subtitle">{{ t("page-order-subtitle") }}{% if page_url %} <a href="{{ page_url }}">{{ page_url }}</a>{% endif %}</p>
+  </div>
+  <div class="page-actions">
+    <a href="{{ back }}" class="ui-btn">{{ t("page-order-back") }}</a>
+  </div>
+</header>
+
+<div class="po-cards">
+  {% if not has_types %}
+  <p class="po-note">{{ t("page-order-empty") }}</p>
+  {% endif %}
+  {% for g in groups %}
+  <section class="card">
+    <div class="card-head po-head">
+      <h2>{% if g.label %}{{ g.label }}{% elif groups | length > 1 %}{{ t("landing-other-meetings") }}{% else %}{{ t("landing-meetings") }}{% endif %}<span class="sr-only">, </span><span class="num">{{ g.items | length }}</span></h2>
+      {% if g.label %}
+      <div class="po-moves card-action">
+        <form method="post" action="{{ action }}"><input type="hidden" name="kind" value="section"><input type="hidden" name="target" value="{{ g.label }}"><input type="hidden" name="dir" value="up"><button type="submit" class="ui-btn ui-btn--sm"{% if loop.first %} disabled{% endif %} aria-label="{{ t('page-order-section-up', section=g.label) }}" title="{{ t('page-order-up') }}">&#8593;</button></form>
+        <form method="post" action="{{ action }}"><input type="hidden" name="kind" value="section"><input type="hidden" name="target" value="{{ g.label }}"><input type="hidden" name="dir" value="down"><button type="submit" class="ui-btn ui-btn--sm"{% if loop.last or (loop.revindex == 2 and not groups[loop.index].label) %} disabled{% endif %} aria-label="{{ t('page-order-section-down', section=g.label) }}" title="{{ t('page-order-down') }}">&#8595;</button></form>
+      </div>
+      {% endif %}
+    </div>
+    <div class="ui-list card-body">
+      {% for et in g.items %}
+      <div class="ui-row" style="align-items: center;">
+        <div class="ui-row-main">
+          <div class="ui-row-title"><strong>{{ et.title }}</strong></div>
+          {% if not et.listed %}<div class="ui-row-meta"><span class="po-note">{{ t("page-order-not-listed") }}</span></div>{% endif %}
+        </div>
+        <div class="ui-row-actions po-moves">
+          <form method="post" action="{{ action }}"><input type="hidden" name="kind" value="type"><input type="hidden" name="target" value="{{ et.id }}"><input type="hidden" name="dir" value="up"><button type="submit" class="ui-btn ui-btn--sm"{% if loop.first %} disabled{% endif %} aria-label="{{ t('page-order-type-up', title=et.title) }}" title="{{ t('page-order-up') }}">&#8593;</button></form>
+          <form method="post" action="{{ action }}"><input type="hidden" name="kind" value="type"><input type="hidden" name="target" value="{{ et.id }}"><input type="hidden" name="dir" value="down"><button type="submit" class="ui-btn ui-btn--sm"{% if loop.last %} disabled{% endif %} aria-label="{{ t('page-order-type-down', title=et.title) }}" title="{{ t('page-order-down') }}">&#8595;</button></form>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </section>
+  {% endfor %}
+</div>
+{% endblock %}

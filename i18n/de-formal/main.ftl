@@ -88,7 +88,7 @@ google-meet-prereq-missing = Google Meet setzt voraus, dass jeder Gastgeber Goog
 
 # Booking action blocked page (templates/booking_action_blocked.html)
 
-booking-blocked-body = Der Gastgeber verlangt mindestens { $minutes } Minuten Vorlaufzeit. Falls Sie nicht teilnehmen können, schreiben Sie bitte direkt an <a href="mailto:{ $host_email }">{ $host_email }</a>.
+booking-blocked-body = Der Gastgeber verlangt mindestens { $duration } Vorlaufzeit. Falls Sie nicht teilnehmen können, schreiben Sie bitte direkt an <a href="mailto:{ $host_email }">{ $host_email }</a>.
 
 # Timezone mismatch banner (templates/dashboard_base.html)
 
@@ -532,3 +532,11 @@ overview-sum-pending = { $count ->
    *[other] { $count } Anfragen warten auf Ihre Antwort.
 }
 overview-links-page = Ihre Seite
+
+landing-hours-heading-yours = Meist verfügbar, in Ihrer Zeit
+landing-hours-toggle-hint = Diese Zeiten in Ihrer Zeitzone zeigen
+landing-how-it-works = Wählen Sie ein Thema und eine passende Zeit, die Bestätigung kommt per E-Mail.
+settings-based-in-help = Eine Stadt oder Region, angezeigt unter Ihrem Namen auf Ihrer öffentlichen Seite.
+settings-speaks = Ihre Sprachen
+settings-speaks-help = Unter Ihrem Namen auf Ihrer öffentlichen Seite, in der Sprache der Besucher.
+page-order-heading = Reihenfolge Ihrer Seite

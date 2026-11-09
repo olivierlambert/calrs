@@ -123,6 +123,22 @@ pub(super) async fn redirect_team_link_to_team(
 
 // --- Group public pages ---
 
+/// A meeting as a landing page lists it: slug, title, description, length,
+/// visibility, id, scheduling mode, location type, whether each request is
+/// confirmed by hand, section.
+type LandingRow = (
+    String,
+    String,
+    Option<String>,
+    i32,
+    String,
+    String,
+    String,
+    String,
+    i32,
+    Option<String>,
+);
+
 /// The name shown under a member's face on the team page: the first word
 /// of `name` that is not an abbreviated title ("Dr.", "Prof."), so
 /// "Dr. Jane Doe" reads "Jane"; the whole name when every word is one.
@@ -193,33 +209,20 @@ pub(super) async fn team_profile_page(
     // including private/internal — they have view access via the slot pages
     // anyway, so showing them on the profile makes them discoverable. Anonymous
     // visitors and non-members continue to see only public event types.
-    let event_types: Vec<(String, String, Option<String>, i32, String, String, String)> =
-        if viewer_is_member_or_admin {
-            sqlx::query_as(
-                "SELECT et.slug, et.title, et.description, et.duration_min, et.visibility, et.id,
-                    et.scheduling_mode
-             FROM event_types et
-             WHERE et.team_id = ? AND et.enabled = 1
-             ORDER BY et.created_at",
-            )
-            .bind(&team_id)
-            .fetch_all(&state.pool)
-            .await
-            .unwrap_or_default()
-        } else {
-            sqlx::query_as(
-                "SELECT et.slug, et.title, et.description, et.duration_min, et.visibility, et.id,
-                    et.scheduling_mode
-             FROM event_types et
-             WHERE et.team_id = ? AND et.enabled = 1 AND et.visibility = 'public'
-             ORDER BY et.created_at",
-            )
-            .bind(&team_id)
-            .fetch_all(&state.pool)
-            .await
-            .unwrap_or_default()
-        };
+    let event_types: Vec<LandingRow> = sqlx::query_as(&format!(
+        "SELECT et.slug, et.title, et.description, et.duration_min, et.visibility, et.id,
+                et.scheduling_mode, et.location_type, et.requires_confirmation, et.section
+         FROM event_types et
+         WHERE et.team_id = ? AND et.enabled = 1 AND (? OR et.visibility = 'public')
+         ORDER BY {PAGE_ORDER}"
+    ))
+    .bind(&team_id)
+    .bind(viewer_is_member_or_admin)
+    .fetch_all(&state.pool)
+    .await
+    .unwrap_or_default();
     let event_types = without_expired(&state.pool, event_types, |row| &row.5).await;
+    let lang = crate::i18n::detect_from_headers(&headers);
 
     // A capped set of faces and how many there are in all: a public page
     // never lists a large team in full.
@@ -285,25 +288,37 @@ pub(super) async fn team_profile_page(
     .fetch_all(&state.pool)
     .await
     .unwrap_or_default();
-    let mut et_ctx: Vec<minijinja::Value> = Vec::with_capacity(event_types.len());
-    for (slug, title, desc, duration, visibility, et_id, mode) in &event_types {
-        let faces: Vec<_> = roster_rows.iter().filter(|r| &r.0 == et_id).collect();
+    let mut et_ctx: Vec<(Option<String>, minijinja::Value)> = Vec::with_capacity(event_types.len());
+    for row in &event_types {
+        let faces: Vec<_> = roster_rows.iter().filter(|r| r.0 == row.5).collect();
         let et_members: Vec<minijinja::Value> = faces
             .iter()
             .map(|r| member_ctx(&(r.1.clone(), r.2.clone(), r.3.clone())))
             .collect();
         let et_members_total = faces.first().map_or(0, |r| r.4);
-        et_ctx.push(context! {
-            slug => slug,
-            title => title,
-            description => desc.as_deref().map(crate::utils::render_inline_markdown),
-            duration_min => duration,
-            visibility => visibility,
-            scheduling_mode => mode,
-            members => et_members,
-            members_total => et_members_total,
-        });
+        et_ctx.push((
+            row.9.clone(),
+            context! {
+                slug => &row.0,
+                title => &row.1,
+                description => row.2.as_deref().map(crate::utils::render_inline_markdown),
+                duration_min => row.3,
+                visibility => &row.4,
+                scheduling_mode => &row.6,
+                location_type => &row.7,
+                requires_confirmation => row.8 != 0,
+                members => et_members,
+                members_total => et_members_total,
+            },
+        ));
     }
+    // The team's usual hours only when its listed meetings share one
+    // timezone; a team spread over zones gets no line.
+    let ids: Vec<&String> = event_types.iter().map(|row| &row.5).collect();
+    let team_hours = page_rules(&state.pool, &ids)
+        .await
+        .and_then(|(rules, tz)| usual_hours(lang, &rules, &tz));
+    let topic_count = et_ctx.len();
 
     // Pass invite token through if team is private (so links include it)
     let invite_token_for_template = if team_visibility == "private" && !passed_invite.is_empty() {
@@ -321,11 +336,13 @@ pub(super) async fn team_profile_page(
             team_has_avatar => team_avatar_path.is_some(),
             team_initials => compute_initials(&team_name),
             members => members_ctx,
+            cards => landing_cards(lang, et_ctx),
+            topic_count => topic_count,
+            hours => team_hours,
             members_total => members_total,
-            event_types => et_ctx,
             invite_token => invite_token_for_template,
             company_link => state.company_link.read().await.clone(),
-            lang => crate::i18n::detect_from_headers(&headers),
+            lang => lang,
         })
         .unwrap_or_else(|e| internal_error_body("template render", &e)),
     )
@@ -895,6 +912,7 @@ pub(super) async fn user_profile(
     Path(username): Path<String>,
 ) -> impl IntoResponse {
     let visitor = crate::i18n::detect_from_headers(&headers);
+    #[allow(clippy::type_complexity)]
     let user: Option<(
         String,
         String,
@@ -903,52 +921,79 @@ pub(super) async fn user_profile(
         Option<String>,
         Option<String>,
         String,
+        Option<String>,
+        Option<String>,
     )> = sqlx::query_as(
-        "SELECT id, name, title, bio, avatar_path, language, public_page_language FROM users WHERE username = ? AND enabled = 1",
+        "SELECT id, name, title, bio, avatar_path, language, public_page_language, based_in, spoken_languages FROM users WHERE username = ? AND enabled = 1",
     )
     .bind(&username)
     .fetch_optional(&state.pool)
     .await
     .unwrap_or(None);
 
-    let (user_id, user_name, user_title, user_bio, avatar_path, host_language, page_mode) =
-        match user {
-            Some(u) => u,
-            None => {
-                return Html(crate::i18n::translate(
-                    visitor,
-                    "error-user-not-found",
-                    None,
-                ))
-            }
-        };
+    let (
+        user_id,
+        user_name,
+        user_title,
+        user_bio,
+        avatar_path,
+        host_language,
+        page_mode,
+        based_in,
+        spoken,
+    ) = match user {
+        Some(u) => u,
+        None => {
+            return Html(crate::i18n::translate(
+                visitor,
+                "error-user-not-found",
+                None,
+            ))
+        }
+    };
     let lang = user_page_lang(host_language.as_deref(), &page_mode, visitor);
 
-    let event_types: Vec<(String, String, Option<String>, i32, String)> = sqlx::query_as(
-        "SELECT et.slug, et.title, et.description, et.duration_min, et.id
+    let event_types: Vec<LandingRow> = sqlx::query_as(&format!(
+        "SELECT et.slug, et.title, et.description, et.duration_min, et.visibility, et.id,
+                et.scheduling_mode, et.location_type, et.requires_confirmation, et.section
          FROM event_types et
          JOIN accounts a ON a.id = et.account_id
          WHERE a.user_id = ? AND et.enabled = 1 AND et.visibility = 'public'
          AND et.team_id IS NULL
-         ORDER BY et.created_at",
-    )
+         ORDER BY {PAGE_ORDER}"
+    ))
     .bind(&user_id)
     .fetch_all(&state.pool)
     .await
     .unwrap_or_default();
-    let event_types = without_expired(&state.pool, event_types, |row| &row.4).await;
+    let event_types = without_expired(&state.pool, event_types, |row| &row.5).await;
 
     let tmpl = match state.templates.get_template("profile.html") {
         Ok(t) => t,
         Err(e) => return internal_error_html("template render", &e),
     };
 
-    let et_ctx: Vec<minijinja::Value> = event_types
+    let et_ctx: Vec<(Option<String>, minijinja::Value)> = event_types
         .iter()
-        .map(|(slug, title, desc, duration, _)| {
-            context! { slug => slug, title => title, description => desc.as_deref().map(crate::utils::render_inline_markdown), duration_min => duration }
+        .map(|row| {
+            (
+                row.9.clone(),
+                context! {
+                    slug => &row.0,
+                    title => &row.1,
+                    description => row.2.as_deref().map(crate::utils::render_inline_markdown),
+                    duration_min => row.3,
+                    location_type => &row.7,
+                    requires_confirmation => row.8 != 0,
+                },
+            )
         })
         .collect();
+    let ids: Vec<&String> = event_types.iter().map(|row| &row.5).collect();
+    let host_hours = page_rules(&state.pool, &ids)
+        .await
+        .and_then(|(rules, tz)| usual_hours(lang, &rules, &tz));
+    let topic_count = et_ctx.len();
 
     Html(
         tmpl.render(context! {
@@ -959,7 +1004,11 @@ pub(super) async fn user_profile(
             host_user_id => user_id,
             host_has_avatar => avatar_path.is_some(),
             username => username,
-            event_types => et_ctx,
+            cards => landing_cards(lang, et_ctx),
+            topic_count => topic_count,
+            hours => host_hours,
+            based_in => based_in.as_deref().and_then(normalize_based_in),
+            speaks => spoken_phrase(lang, spoken.as_deref()),
             company_link => state.company_link.read().await.clone(),
             lang,
         })

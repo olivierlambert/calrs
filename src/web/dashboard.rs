@@ -1326,6 +1326,14 @@ pub(super) struct SettingsForm {
     username: Option<String>,
     title: Option<String>,
     bio: Option<String>,
+    /// "Based in" on the public page; absent (an older form): left as stored.
+    based_in: Option<String>,
+    /// The spoken languages' codes, one checkbox each.
+    #[serde(default)]
+    spoken_languages: Vec<String>,
+    /// Set by the form that shows the languages, so an older form without
+    /// them leaves the stored ones alone.
+    spoken_languages_shown: Option<String>,
     booking_email: Option<String>,
     timezone: Option<String>,
     language: Option<String>,
@@ -1363,11 +1371,13 @@ pub(super) async fn settings_page(
             .fetch_one(&state.pool)
             .await
             .unwrap_or(0);
+    let facts = profile_facts(&state.pool, &auth_user.user.id).await;
     let values = SettingsValues::from_user(
         &auth_user.user,
         &avail,
         lend_resource_write != 0,
         week_start::user(&state.pool, &auth_user.user.id).await,
+        &facts,
     );
     settings_render(
         &state,
@@ -1399,6 +1409,20 @@ pub(super) async fn dashboard_availability_default(
     }))
 }
 
+/// "Based in" and the spoken languages as stored, which are not on the
+/// user model.
+type ProfileFacts = (Option<String>, Option<String>);
+
+async fn profile_facts(pool: &SqlitePool, user_id: &str) -> ProfileFacts {
+    sqlx::query_as("SELECT based_in, spoken_languages FROM users WHERE id = ?")
+        .bind(user_id)
+        .fetch_optional(pool)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or((None, None))
+}
+
 /// The editable half of the settings form, as it should be rendered back.
 ///
 /// The GET and the success path fill this from the stored row; the error paths
@@ -1409,6 +1433,9 @@ struct SettingsValues<'a> {
     username: &'a str,
     title: &'a str,
     bio: &'a str,
+    based_in: &'a str,
+    /// The spoken languages' codes, joined with commas.
+    spoken_languages: &'a str,
     booking_email: &'a str,
     timezone: &'a str,
     language: &'a str,
@@ -1427,12 +1454,15 @@ impl<'a> SettingsValues<'a> {
         avail_schedule: &'a str,
         lend_resource_write: bool,
         week_start: WeekStartSetting,
+        facts: &'a ProfileFacts,
     ) -> Self {
         Self {
             name: &user.name,
             username: user.username.as_deref().unwrap_or(""),
             title: user.title.as_deref().unwrap_or(""),
             bio: user.bio.as_deref().unwrap_or(""),
+            based_in: facts.0.as_deref().unwrap_or(""),
+            spoken_languages: facts.1.as_deref().unwrap_or(""),
             booking_email: user.booking_email.as_deref().unwrap_or(""),
             timezone: &user.timezone,
             language: user.language.as_deref().unwrap_or(""),
@@ -1466,6 +1496,19 @@ fn settings_render(
     let lang_options: Vec<minijinja::Value> = crate::i18n::supported_with_labels()
         .map(|(code, label)| context! { value => code, label => label })
         .collect();
+    // The languages a host may say they speak, named in the reader's
+    // language, the ones picked first marked.
+    let picked = spoken_codes(Some(values.spoken_languages));
+    let spoken_options: Vec<minijinja::Value> = SPOKEN_LANGUAGES
+        .iter()
+        .map(|code| {
+            context! {
+                value => code,
+                label => language_name(lang, code),
+                checked => picked.contains(code),
+            }
+        })
+        .collect();
     Html(
         tmpl.render(context! {
             lang => lang,
@@ -1481,6 +1524,8 @@ fn settings_render(
             }),
             form_title => values.title,
             form_bio => values.bio,
+            form_based_in => values.based_in,
+            spoken_options => spoken_options,
             form_booking_email => values.booking_email,
             form_timezone => values.timezone,
             tz_options => tz_options,
@@ -1511,13 +1556,23 @@ pub(super) async fn settings_save(
     State(state): State<Arc<AppState>>,
     auth_user: crate::auth::AuthUser,
     headers: HeaderMap,
-    Form(form): Form<SettingsForm>,
+    axum_extra::extract::Form(form): axum_extra::extract::Form<SettingsForm>,
 ) -> impl IntoResponse {
     if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
         return resp;
     }
     let user = &auth_user.user;
     let name = form.name.trim().to_string();
+    let stored_facts = profile_facts(&state.pool, &user.id).await;
+    let based_in = match form.based_in.as_deref() {
+        Some(raw) => normalize_based_in(raw),
+        None => stored_facts.0.clone(),
+    };
+    let spoken_languages = if form.spoken_languages_shown.is_some() {
+        normalize_spoken_languages(&form.spoken_languages)
+    } else {
+        stored_facts.1.clone()
+    };
     let sidebar = sidebar_context(&auth_user, "settings");
     let (imp, imp_name, _) = impersonation_ctx(&auth_user);
 
@@ -1594,6 +1649,8 @@ pub(super) async fn settings_save(
             .unwrap_or(""),
         title: title.as_deref().unwrap_or(""),
         bio: bio.as_deref().unwrap_or(""),
+        based_in: based_in.as_deref().unwrap_or(""),
+        spoken_languages: spoken_languages.as_deref().unwrap_or(""),
         booking_email: booking_email.as_deref().unwrap_or(""),
         timezone: &timezone,
         language: language.as_deref().unwrap_or(""),
@@ -1673,12 +1730,14 @@ pub(super) async fn settings_save(
     }
 
     let result = sqlx::query(
-        "UPDATE users SET name = ?, username = COALESCE(?, username), title = ?, bio = ?, booking_email = ?, timezone = ?, language = ?, public_page_language = ?, week_start = ?, allow_dynamic_group = ?, lend_resource_write = ?, updated_at = datetime('now') WHERE id = ?",
+        "UPDATE users SET name = ?, username = COALESCE(?, username), title = ?, bio = ?, based_in = ?, spoken_languages = ?, booking_email = ?, timezone = ?, language = ?, public_page_language = ?, week_start = ?, allow_dynamic_group = ?, lend_resource_write = ?, updated_at = datetime('now') WHERE id = ?",
     )
     .bind(&name)
     .bind(&new_username)
     .bind(&title)
     .bind(&bio)
+    .bind(&based_in)
+    .bind(&spoken_languages)
     .bind(&booking_email)
     .bind(&timezone)
     .bind(&language)
@@ -1709,11 +1768,13 @@ pub(super) async fn settings_save(
             // auth_user.lang was resolved before the UPDATE, so a language
             // change would confirm in the old language without this.
             let lang = crate::i18n::resolve(updated_user.language.as_deref(), &headers);
+            let saved_facts = (based_in.clone(), spoken_languages.clone());
             let saved = SettingsValues::from_user(
                 &updated_user,
                 &form.avail_schedule,
                 lend_resource_write,
                 week_start,
+                &saved_facts,
             );
             settings_render(
                 &state,

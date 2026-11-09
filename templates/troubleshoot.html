@@ -40,7 +40,7 @@
 <header class="page-header">
   <div class="page-header-text">
     <h1 class="page-title">{{ t("troubleshoot-heading") }}</h1>
-    <p class="page-subtitle">{{ t("troubleshoot-subtitle", title='<strong>' ~ (et_title | escape) ~ '</strong>') | safe }} ({{ t("troubleshoot-duration", minutes=duration) }}{% if buf_before %}, {{ t("troubleshoot-buffer-before", minutes=buf_before) }}{% endif %}{% if buf_after %}, {{ t("troubleshoot-buffer-after", minutes=buf_after) }}{% endif %}{% if min_notice %}, {{ t("troubleshoot-min-notice", minutes=min_notice) }}{% endif %}).</p>
+    <p class="page-subtitle">{{ t("troubleshoot-subtitle", title='<strong>' ~ (et_title | escape) ~ '</strong>') | safe }} ({{ duration_label(duration) }}{% if buf_before %}, {{ t("troubleshoot-buffer-before", duration=duration_label(buf_before)) }}{% endif %}{% if buf_after %}, {{ t("troubleshoot-buffer-after", duration=duration_label(buf_after)) }}{% endif %}{% if min_notice %}, {{ t("troubleshoot-min-notice", duration=duration_label(min_notice)) }}{% endif %}).</p>
   </div>
 </header>
 

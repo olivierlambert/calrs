@@ -219,21 +219,20 @@ base-powered-by = Desenvolvido com
 profile-pick-event-type-invite = Escolha um tipo de evento para agendar um horário.
 profile-no-event-type = Ainda não há tipos de evento disponíveis.
 
-# Public landing pages (/u/{username}, /team/{slug}). In landing-next-free,
-# %1 is the time, filled in by the page itself.
-landing-duration-h = { $hours } h
-landing-duration-aria =
+duration-short-m = { $minutes } min
+duration-short-h = { $hours } h
+duration-short-hm = { $hours } h { $minutes } min
+duration-long-m =
     { $minutes ->
         [one] { $minutes } minuto
        *[other] { $minutes } minutos
     }
-landing-duration-hm = { $hours } h { $minutes }
-landing-duration-aria-h =
+duration-long-h =
     { $hours ->
         [one] { $hours } hora
        *[other] { $hours } horas
     }
-landing-duration-aria-hm =
+duration-long-hm =
     { $hours ->
         [one] { $hours } hora
        *[other] { $hours } horas
@@ -241,10 +240,34 @@ landing-duration-aria-hm =
         [one] { $minutes } minuto
        *[other] { $minutes } minutos
     }
-landing-next-free = Próximo: %1
+duration-long-d =
+    { $days ->
+        [one] { $days } dia
+       *[other] { $days } dias
+    }
+# Public landing pages (/u/{username}, /team/{slug}).
 landing-with-one-of = com um de
 faces-and-more = e mais { $count }
 landing-with-everyone = com todos
+landing-days-range = de { $first } a { $last }
+landing-days-every = todos os dias
+landing-on-request-hint = Cada pedido é confirmado manualmente antes de ser agendado.
+landing-how-it-works = Escolha um assunto e um horário que funcione para você, e você receberá uma confirmação por e-mail.
+landing-based-in = Localização: { $place }
+landing-speaks = Fala { $languages }
+landing-meetings = Reuniões
+landing-hours-vary = Normalmente disponível { $days } (horário de { $zone }), com horários diferentes conforme o dia
+landing-time-range = das %1 às %2
+landing-time-range-next = das %1 às %2 do dia seguinte
+landing-other-meetings = Outras reuniões
+landing-hours-heading = Normalmente disponível, horário de { $zone }
+landing-hours-heading-yours = Normalmente disponível, no seu horário
+landing-hours-toggle = Meu horário
+landing-hours-toggle-hint = Mostrar estes horários no seu fuso horário
+landing-days-every-short = Todos os dias
+landing-days-span = { $first } a { $last }
+landing-host-confirms = O anfitrião confirma
+list-and = { $first } e { $last }
 
 # Month and weekday names + per-locale date format patterns.
 # Used by server-side date formatters in src/i18n.rs.
@@ -323,8 +346,8 @@ email-cancel-ics-attached-html = Um cancelamento de calendário está anexado a 
 
 # Confirmation email: notice-window policy lines (src/email.rs)
 
-email-confirm-cancel-notice = Observação: o cancelamento exige pelo menos { $minutes } minutos de antecedência.
-email-confirm-reschedule-notice = Observação: o reagendamento exige pelo menos { $minutes } minutos de antecedência.
+email-confirm-cancel-notice = Observação: o cancelamento exige pelo menos { $duration } de antecedência.
+email-confirm-reschedule-notice = Observação: o reagendamento exige pelo menos { $duration } de antecedência.
 
 # Event type form: cancel/reschedule minimum notice (templates/event_type_form.html)
 
@@ -366,14 +389,14 @@ event-type-form-saved = Salvo.
 
 # Booking confirmation: cancel/reschedule policy notices (templates/confirmed.html)
 
-confirmed-cancel-notice-info = O cancelamento exige pelo menos { $minutes } minutos de antecedência em relação à reunião.
-confirmed-reschedule-notice-info = O reagendamento exige pelo menos { $minutes } minutos de antecedência em relação à reunião.
+confirmed-cancel-notice-info = O cancelamento exige pelo menos { $duration } de antecedência em relação à reunião.
+confirmed-reschedule-notice-info = O reagendamento exige pelo menos { $duration } de antecedência em relação à reunião.
 
 # Booking action blocked page (templates/booking_action_blocked.html)
 
 booking-blocked-title-cancel = Este agendamento não pode mais ser cancelado online
 booking-blocked-title-reschedule = Este agendamento não pode mais ser reagendado online
-booking-blocked-body = O anfitrião exige pelo menos { $minutes } minutos de antecedência. Se não puder comparecer, envie um e-mail diretamente para <a href="mailto:{ $host_email }">{ $host_email }</a>.
+booking-blocked-body = O anfitrião exige pelo menos { $duration } de antecedência. Se não puder comparecer, envie um e-mail diretamente para <a href="mailto:{ $host_email }">{ $host_email }</a>.
 
 # Dashboard event types listing (templates/dashboard_event_types.html)
 
@@ -443,9 +466,6 @@ overview-pending-approval = Aguardando aprovação
 overview-confirm = Confirmar
 overview-decline = Recusar
 overview-copy-link = Copiar link de agendamento
-overview-duration-h = { $hours } h
-overview-duration-m = { $minutes } min
-overview-duration-hm = { $hours } h { $minutes } min
 overview-chart-title = Reuniões por semana
 overview-chart-this-week = Esta semana
 overview-chart-week-of = Semana de { $date }
@@ -632,7 +652,6 @@ invite-links-page-title = Links de convite
 invite-links-heading = Links de convite
 invite-links-new = Novo evento interno
 invite-links-help = Gere links de agendamento de uso único para tipos de evento internos. Qualquer colega autenticado pode criar e compartilhar links aqui.
-invite-links-duration = { $minutes } min
 invite-links-hosted-by = Organizado por { $host }
 invite-links-get-link = Obter link
 invite-links-invites = Convites
@@ -702,7 +721,6 @@ event-types-badge-expired = expirado
 event-types-badge-range-from = a partir de { $date }
 event-types-badge-range-until = até { $date }
 event-types-send-invites = Enviar convites
-event-types-duration = { $minutes } min
 event-types-mode-collective = coletivo
 event-types-mode-round-robin = rodízio
 event-types-edit = Editar
@@ -883,10 +901,9 @@ troubleshoot-page-title = Diagnóstico
 troubleshoot-empty = Nenhum tipo de evento encontrado. { $link } para começar a diagnosticar a disponibilidade.
 troubleshoot-empty-link-label = Crie um
 troubleshoot-subtitle = Veja por que os horários de { $title } estão disponíveis ou bloqueados
-troubleshoot-duration = { $minutes } min
-troubleshoot-buffer-before = { $minutes } min de intervalo antes
-troubleshoot-buffer-after = { $minutes } min de intervalo depois
-troubleshoot-min-notice = { $minutes } min de antecedência
+troubleshoot-buffer-before = { $duration } de intervalo antes
+troubleshoot-buffer-after = { $duration } de intervalo depois
+troubleshoot-min-notice = { $duration } de antecedência
 troubleshoot-blocked-override = Bloqueado por uma exceção de data (folga)
 troubleshoot-custom-hours-active = Exceção de horário personalizado ativa (substitui as regras semanais)
 troubleshoot-microsoft-not-ready = Sua agenda Microsoft ainda não terminou a primeira sincronização: até lá, todos os horários aparecem ocupados. Veja Fontes de agenda.
@@ -903,10 +920,10 @@ troubleshoot-none-no-rules = Não há regras de disponibilidade para este dia da
 troubleshoot-none-all-bookable = Nenhum horário bloqueado dentro do período de disponibilidade. Todos os horários podem ser agendados.
 troubleshoot-label-outside = Fora da disponibilidade
 troubleshoot-label-available = Disponível
-troubleshoot-label-min-notice = Antecedência mínima ({ $minutes } min)
+troubleshoot-label-min-notice = Antecedência mínima ({ $duration })
 troubleshoot-label-beyond-horizon = Além do horizonte de agendamento ({ $days } dias)
 troubleshoot-label-outside-date-range = Fora do período agendável
-troubleshoot-label-buffer = Intervalo ({ $minutes } min)
+troubleshoot-label-buffer = Intervalo ({ $duration })
 troubleshoot-label-resource-busy = Recurso ocupado: { $names }
 troubleshoot-detail-around = Em torno de: { $label }
 troubleshoot-detail-around-booking = Em torno do agendamento de { $guest }
@@ -2408,3 +2425,54 @@ etf-q-key = Chave para webhooks: %1
 etf-hint-questions-one = 1 pergunta
 etf-hint-questions-other = %1 perguntas
 etf-hint-no-questions = Nenhuma pergunta
+
+# Language names, for the languages a host speaks (landing.rs).
+language-name-en = inglês
+language-name-fr = francês
+language-name-de = alemão
+language-name-es = espanhol
+language-name-it = italiano
+language-name-pt = português
+language-name-nl = holandês
+language-name-pl = polonês
+language-name-et = estoniano
+language-name-ar = árabe
+language-name-zh = chinês
+language-name-ja = japonês
+language-name-ko = coreano
+language-name-ru = russo
+language-name-uk = ucraniano
+language-name-sv = sueco
+language-name-da = dinamarquês
+language-name-nb = norueguês
+language-name-fi = finlandês
+language-name-cs = tcheco
+language-name-ro = romeno
+language-name-el = grego
+language-name-tr = turco
+language-name-hi = hindi
+language-name-he = hebraico
+language-name-hu = húngaro
+
+# Sections and order of the landing pages (landing.rs, event type form, settings).
+etf-section = Seção
+etf-section-placeholder = Para começar
+etf-section-help = Reuniões com a mesma seção ficam agrupadas sob ela na página pública, como foi escrita.
+etf-section-order-link = Alterar a ordem
+settings-based-in = Localização
+settings-based-in-placeholder = Paris, França
+settings-based-in-help = Uma cidade ou região, exibida abaixo do seu nome na sua página pública.
+settings-speaks = Idiomas que você fala
+settings-speaks-help = Exibidos abaixo do seu nome na sua página pública, no idioma de cada visitante.
+page-order-heading = Ordem da sua página
+page-order-team-heading = Ordem da página de { $team }
+page-order-subtitle = Seções e reuniões aparecem nesta ordem na página pública. A seção de uma reunião é definida nas configurações dela.
+page-order-back = Voltar
+page-order-empty = Ainda não há reuniões.
+page-order-up = Mover para cima
+page-order-down = Mover para baixo
+page-order-section-up = Mover { $section } para cima
+page-order-section-down = Mover { $section } para baixo
+page-order-type-up = Mover { $title } para cima
+page-order-type-down = Mover { $title } para baixo
+page-order-not-listed = Fora da página pública (desativada, interna ou privada)

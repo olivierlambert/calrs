@@ -292,6 +292,40 @@ pub fn format_date(date: NaiveDate, lang: &str) -> String {
     translate(lang, "common-format-date", Some(&args))
 }
 
+/// A length of time as a label, in `lang`: "45 min", "2 h", "1 h 30 min"
+/// (each locale writes its own units). The one formatter for a meeting's
+/// length on pages and in emails; negative lengths read as
+/// their absolute value.
+pub fn format_duration(lang: &str, minutes: i64) -> String {
+    duration_in(lang, minutes, false)
+}
+
+/// A length of time in words, in `lang`, with the language's plurals:
+/// "1 minute", "2 hours 30 minutes", and whole days as days ("2 days"), for
+/// sentences ("at least 2 days of notice") and screen readers.
+pub fn format_duration_long(lang: &str, minutes: i64) -> String {
+    duration_in(lang, minutes, true)
+}
+
+fn duration_in(lang: &str, minutes: i64, long: bool) -> String {
+    let total = minutes.unsigned_abs();
+    let (hours, rest) = (total / 60, total % 60);
+    let mut args = FluentArgs::new();
+    args.set("days", number((total / 1440) as f64));
+    args.set("hours", number(hours as f64));
+    args.set("minutes", number(rest as f64));
+    let key = match (long, hours, rest) {
+        (true, _, 0) if total >= 1440 && total.is_multiple_of(1440) => "duration-long-d",
+        (true, 0, _) => "duration-long-m",
+        (true, _, 0) => "duration-long-h",
+        (true, _, _) => "duration-long-hm",
+        (false, 0, _) => "duration-short-m",
+        (false, _, 0) => "duration-short-h",
+        (false, _, _) => "duration-short-hm",
+    };
+    translate(lang, key, Some(&args))
+}
+
 /// The BCP-47 tag for a locale code, for `<html lang>`. The codes are the
 /// bundle directory names, and `pt` is Brazilian Portuguese: declared as
 /// plain `pt`, browsers and screen readers would assume European Portuguese.
@@ -311,7 +345,27 @@ pub fn html_lang(code: &str) -> &str {
 /// rendering context's `lang` var.
 pub fn register(env: &mut Environment<'static>) {
     env.add_function("t", t_function);
+    // Named for what they return, not `duration`, which pages use as a
+    // variable. A missing length renders nothing rather than failing the page.
+    env.add_function("duration_label", |state: &State, minutes: Option<i64>| {
+        minutes
+            .map(|m| format_duration(&state_lang(state), m))
+            .unwrap_or_default()
+    });
+    env.add_function("duration_words", |state: &State, minutes: Option<i64>| {
+        minutes
+            .map(|m| format_duration_long(&state_lang(state), m))
+            .unwrap_or_default()
+    });
     env.add_filter("html_lang", |code: String| html_lang(&code).to_string());
+}
+
+/// The language a template renders in: its context's `lang`, else English.
+fn state_lang(state: &State) -> String {
+    state
+        .lookup("lang")
+        .and_then(|v| v.as_str().map(|s| s.to_string()))
+        .unwrap_or_else(|| DEFAULT_LANG.to_string())
 }
 
 /// A template argument on its way into Fluent.
@@ -357,10 +411,7 @@ pub fn number<'a>(n: f64) -> FluentValue<'a> {
 }
 
 fn t_function(state: &State, key: &str, kwargs: Kwargs) -> String {
-    let lang_owned: String = state
-        .lookup("lang")
-        .and_then(|v| v.as_str().map(|s| s.to_string()))
-        .unwrap_or_else(|| DEFAULT_LANG.to_string());
+    let lang_owned = state_lang(state);
 
     // Collect kwargs into FluentArgs. We hold the converted strings in a Vec
     // so FluentArgs (which borrows) stays valid for the format_pattern call.
@@ -1130,7 +1181,7 @@ mod tests {
         let mut env = Environment::new();
         env.set_undefined_behavior(minijinja::UndefinedBehavior::Lenient);
         register(&mut env);
-        env.add_template("p", "{{ t('confirmed-cancel-notice-info', minutes=m) }}")
+        env.add_template("p", "{{ t('troubleshoot-label-beyond-horizon', days=m) }}")
             .expect("template");
         let tmpl = env.get_template("p").expect("template");
         for lang in ["en", "fr"] {
@@ -1143,6 +1194,466 @@ mod tests {
                 "{lang}: {out}"
             );
         }
+    }
+
+    /// The variables each message of `lang` reads (`{ $name }`), by id. A
+    /// message runs from its `id =` line to the next message, term or
+    /// comment; its other lines (indented text, select variants, a closing
+    /// `}` at the start of a line, blank lines) belong to it.
+    fn message_variables(lang: &str) -> HashMap<String, std::collections::BTreeSet<String>> {
+        let src = SUPPORTED_LANGS
+            .iter()
+            .find(|(code, _, _)| *code == lang)
+            .map(|(_, _, src)| *src)
+            .unwrap_or("");
+        message_variables_in(src)
+    }
+
+    fn message_variables_in(src: &str) -> HashMap<String, std::collections::BTreeSet<String>> {
+        let mut out: HashMap<String, std::collections::BTreeSet<String>> = HashMap::new();
+        let mut current: Option<String> = None;
+        for line in src.lines() {
+            let starts_message =
+                line.starts_with(|c: char| c.is_ascii_lowercase()) && line.contains(" =");
+            if starts_message {
+                current = line.split(" =").next().map(str::to_string);
+            } else if line.starts_with('#') || line.starts_with('-') {
+                current = None;
+            }
+            let Some(id) = &current else { continue };
+            let vars = out.entry(id.clone()).or_default();
+            let mut rest = line;
+            while let Some(at) = rest.find('$') {
+                rest = &rest[at + 1..];
+                let name: String = rest
+                    .chars()
+                    .take_while(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-')
+                    .collect();
+                if !name.is_empty() {
+                    vars.insert(name);
+                }
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn message_variables_follow_a_message_past_its_closing_brace() {
+        let vars = message_variables_in(
+            "a-b = { $n ->\n    [one] x\n   *[other] y\n}, { $year }\n\nc-d = { $z }\n# c-e = { $no }\n",
+        );
+        let names = |id: &str| vars[id].iter().cloned().collect::<Vec<_>>();
+        assert_eq!(names("a-b"), ["n", "year"]);
+        assert_eq!(names("c-d"), ["z"]);
+        assert!(!vars.contains_key("c-e"));
+        // The Polish date formats read $year after a select closed at the
+        // start of a line.
+        assert!(message_variables("pl")["common-format-date"].contains("year"));
+    }
+
+    /// How a call's variables are known: exactly (a literal list), or at
+    /// least the ones a `FluentArgs` was given before the call (it may be
+    /// handed more than the message reads).
+    #[derive(Debug, PartialEq)]
+    enum Passed {
+        Exactly(Vec<String>),
+        AtLeast(Vec<String>),
+    }
+
+    /// Every `t("key", name=...)` call in a template, with the keyword
+    /// names at the call's own depth (none for `t("key")`).
+    fn template_calls_with_args(src: &str) -> Vec<(String, Passed)> {
+        let mut calls = Vec::new();
+        let bytes = src.as_bytes();
+        let mut i = 0;
+        while let Some(pos) = src[i..].find("t(") {
+            let start = i + pos;
+            i = start + 2;
+            if start > 0 && (bytes[start - 1].is_ascii_alphanumeric() || bytes[start - 1] == b'_') {
+                continue;
+            }
+            let rest = &src[i..];
+            let Some(quote) = rest.chars().next().filter(|c| *c == '"' || *c == '\'') else {
+                continue;
+            };
+            let Some(end) = rest[1..].find(quote) else {
+                continue;
+            };
+            let key = rest[1..1 + end].to_string();
+            // Walk the argument list to the closing parenthesis.
+            let mut depth = 1;
+            let mut names = Vec::new();
+            let mut in_str: Option<char> = None;
+            let mut word = String::new();
+            let chars: Vec<char> = rest[1 + end + 1..].chars().collect();
+            let mut k = 0;
+            while k < chars.len() && depth > 0 {
+                let c = chars[k];
+                match in_str {
+                    Some(q) if c == q => in_str = None,
+                    Some(_) => {}
+                    None => match c {
+                        '"' | '\'' => in_str = Some(c),
+                        '(' | '[' | '{' => depth += 1,
+                        ')' | ']' | '}' => depth -= 1,
+                        '=' if depth == 1 && chars.get(k + 1) != Some(&'=') && !word.is_empty() => {
+                            names.push(word.clone());
+                        }
+                        _ => {}
+                    },
+                }
+                if in_str.is_none() && (c.is_ascii_alphanumeric() || c == '_') {
+                    word.push(c);
+                } else if c != ' ' {
+                    word.clear();
+                }
+                k += 1;
+            }
+            if looks_like_key(&key) {
+                calls.push((key, Passed::Exactly(names)));
+            }
+        }
+        calls
+    }
+
+    /// The text of a call's arguments, from just after `(` to its closing
+    /// parenthesis (strings and nested brackets skipped over).
+    fn call_args(src: &str) -> &str {
+        let mut depth = 1;
+        let mut in_str = false;
+        let mut escaped = false;
+        for (at, c) in src.char_indices() {
+            if in_str {
+                match c {
+                    _ if escaped => escaped = false,
+                    '\\' => escaped = true,
+                    '"' => in_str = false,
+                    _ => {}
+                }
+                continue;
+            }
+            match c {
+                '"' => in_str = true,
+                '(' | '[' | '{' => depth += 1,
+                ')' | ']' | '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return &src[..at];
+                    }
+                }
+                _ => {}
+            }
+        }
+        src
+    }
+
+    /// The top-level arguments of a call, split on commas outside strings
+    /// and brackets, trimmed.
+    fn split_args(args: &str) -> Vec<&str> {
+        let mut parts = Vec::new();
+        let (mut depth, mut in_str, mut escaped, mut from) = (0, false, false, 0);
+        for (at, c) in args.char_indices() {
+            if in_str {
+                match c {
+                    _ if escaped => escaped = false,
+                    '\\' => escaped = true,
+                    '"' => in_str = false,
+                    _ => {}
+                }
+                continue;
+            }
+            match c {
+                '"' => in_str = true,
+                '(' | '[' | '{' => depth += 1,
+                ')' | ']' | '}' => depth -= 1,
+                ',' if depth == 0 => {
+                    parts.push(args[from..at].trim());
+                    from = at + 1;
+                }
+                _ => {}
+            }
+        }
+        if !args[from..].trim().is_empty() {
+            parts.push(args[from..].trim());
+        }
+        parts
+    }
+
+    /// The variable names a `FluentArgs` named `ident` is given between
+    /// its last `let mut ident = ...FluentArgs::new()` before `at` and
+    /// `at`, or `None` when no such binding is in sight (an argument list
+    /// built elsewhere).
+    fn fluent_args_set_before(src: &str, at: usize, ident: &str) -> Option<Vec<String>> {
+        let head = &src[..at];
+        let decl = format!("let mut {ident} = ");
+        let from = head.rfind(&decl)?;
+        let line_end = head[from..].find(';').map(|e| from + e)?;
+        if !head[from..line_end].contains("FluentArgs::new()") {
+            return None;
+        }
+        let setter = format!("{ident}.set(");
+        let mut names = Vec::new();
+        let mut i = line_end;
+        while let Some(pos) = head[i..].find(&setter) {
+            let start = i + pos + setter.len();
+            i = start;
+            if let Some(name) = head[start..]
+                .trim_start()
+                .strip_prefix('"')
+                .and_then(|s| s.split('"').next())
+            {
+                names.push(name.to_string());
+            }
+        }
+        Some(names)
+    }
+
+    /// Every message rendered from Rust with a literal key, with what it is
+    /// given: `ta(lang, "key", [("name", ..), ..])`, `tr1(lang, "key",
+    /// "name", ..)`, `t(lang, "key")` and `push_row(rows, lang, "key", ..)`
+    /// (none), `translate(lang, "key", None)` (none) and `translate(lang,
+    /// "key", Some(&args))` (at least the names `args.set(..)` was given
+    /// since its `FluentArgs::new()`). Calls whose key or argument list is
+    /// not literal in sight are not checked.
+    fn rust_calls_with_args(src: &str) -> Vec<(String, Passed)> {
+        let mut calls = Vec::new();
+        for (call, key_at) in [
+            ("ta(", 1),
+            ("tr1(", 1),
+            ("t(", 1),
+            ("translate(", 1),
+            ("push_row(", 2),
+        ] {
+            let mut i = 0;
+            while let Some(pos) = src[i..].find(call) {
+                let at = i + pos;
+                i = at + call.len();
+                if src[..at]
+                    .chars()
+                    .next_back()
+                    .is_some_and(|c| c.is_ascii_alphanumeric() || c == '_')
+                    || src[..at].ends_with("fn ")
+                {
+                    continue;
+                }
+                let args = split_args(call_args(&src[i..]));
+                let Some(key) = args
+                    .get(key_at)
+                    .and_then(|a| a.strip_prefix('"'))
+                    .and_then(|a| a.strip_suffix('"'))
+                    .filter(|k| looks_like_key(k))
+                else {
+                    continue;
+                };
+                let literal = |s: &str| {
+                    s.strip_prefix('"')
+                        .and_then(|s| s.strip_suffix('"'))
+                        .map(str::to_string)
+                };
+                let rest = &args[key_at + 1..];
+                let passed = match call {
+                    "ta(" => {
+                        let Some(list) = rest.first().and_then(|a| a.strip_prefix('[')) else {
+                            continue;
+                        };
+                        Passed::Exactly(
+                            list.split('(')
+                                .skip(1)
+                                .filter_map(|t| t.trim_start().strip_prefix('"'))
+                                .filter_map(|t| t.split('"').next())
+                                .map(str::to_string)
+                                .collect(),
+                        )
+                    }
+                    "tr1(" => match rest.first().and_then(|a| literal(a)) {
+                        Some(name) => Passed::Exactly(vec![name]),
+                        None => continue,
+                    },
+                    "t(" | "push_row(" => {
+                        if call == "t(" && !rest.is_empty() {
+                            continue;
+                        }
+                        Passed::Exactly(Vec::new())
+                    }
+                    _ => match rest.first().copied() {
+                        Some("None") => Passed::Exactly(Vec::new()),
+                        Some(arg) => {
+                            let Some(ident) = arg
+                                .strip_prefix("Some(&")
+                                .and_then(|a| a.strip_suffix(')'))
+                                .filter(|a| a.chars().all(|c| c.is_alphanumeric() || c == '_'))
+                            else {
+                                continue;
+                            };
+                            match fluent_args_set_before(src, at, ident) {
+                                Some(names) => Passed::AtLeast(names),
+                                None => continue,
+                            }
+                        }
+                        None => continue,
+                    },
+                };
+                calls.push((key.to_string(), passed));
+            }
+        }
+        calls
+    }
+
+    #[test]
+    fn rust_calls_are_read_with_what_they_pass() {
+        let src = r#"
+            fn x(lang: &str) {
+                let a = ta(lang, "k-one", [("minutes", "5"), (
+                    "b", "2")]);
+                let b = t(lang, "k-two");
+                let mut args = FluentArgs::new();
+                args.set("zone", FluentValue::from("x"));
+                if y { args.set("days", 1); }
+                let c = crate::i18n::translate(lang, "k-three", Some(&args));
+                let d = translate(lang, "k-four", None);
+                let e = translate(lang, key, None);
+                let f = tr1(lang, "k-five", "count", 3);
+                push_row(&mut rows, lang, "k-six", value.as_ref());
+            }
+        "#;
+        let exactly = |v: &[&str]| Passed::Exactly(v.iter().map(|s| s.to_string()).collect());
+        let mut calls = rust_calls_with_args(src);
+        calls.sort_by(|a, b| a.0.cmp(&b.0));
+        assert_eq!(
+            calls,
+            vec![
+                ("k-five".to_string(), exactly(&["count"])),
+                ("k-four".to_string(), exactly(&[])),
+                ("k-one".to_string(), exactly(&["minutes", "b"])),
+                ("k-six".to_string(), exactly(&[])),
+                (
+                    "k-three".to_string(),
+                    Passed::AtLeast(vec!["zone".to_string(), "days".to_string()])
+                ),
+                ("k-two".to_string(), exactly(&[])),
+            ]
+        );
+    }
+
+    /// Variables a locale may read although English does not: the word
+    /// Spanish picks for "and" before an i sound, and the month number the
+    /// Polish date patterns select the genitive month name on.
+    const LOCALE_ONLY_VARIABLES: &[(&str, &str)] = &[
+        ("list-and", "e"),
+        ("common-format-date", "monthnum"),
+        ("common-format-long-date", "monthnum"),
+        ("common-format-day-date", "monthnum"),
+    ];
+
+    /// A message gets the variables it reads: a renamed variable
+    /// (`$minutes` to `$duration`) left behind in a caller would print
+    /// `{$duration}` to the reader. Checked for every call with a literal
+    /// key in templates and Rust (see `rust_calls_with_args` for the Rust
+    /// forms): a call passing a fixed list must pass every variable the
+    /// English message reads and nothing no locale reads; a `FluentArgs`
+    /// built before the call must have been given every variable English
+    /// reads (extra ones are harmless). Not covered: calls whose key is a
+    /// variable (a helper's parameter, a key chosen at run time) and
+    /// argument lists built out of sight; those need a test of their own
+    /// output, as `reschedule_approved_notice_lines_write_the_window_out`.
+    /// Every locale reads only what English reads, plus
+    /// `LOCALE_ONLY_VARIABLES`.
+    #[test]
+    fn messages_get_the_variables_they_read() {
+        let vars = message_variables("en");
+        let mut errors = Vec::new();
+        for (id, name) in LOCALE_ONLY_VARIABLES {
+            let read = SUPPORTED_LANGS.iter().any(|(code, _, _)| {
+                message_variables(code)
+                    .get(*id)
+                    .is_some_and(|v| v.contains(*name))
+            });
+            if !read {
+                errors.push(format!(
+                    "LOCALE_ONLY_VARIABLES: no locale reads ${name} in {id}"
+                ));
+            }
+        }
+        for (code, _, _) in SUPPORTED_LANGS {
+            for (id, names) in message_variables(code) {
+                let english = vars.get(&id).cloned().unwrap_or_default();
+                for name in names.difference(&english) {
+                    if !LOCALE_ONLY_VARIABLES.contains(&(id.as_str(), name.as_str())) {
+                        errors.push(format!("{code}: {id} reads ${name}, English does not"));
+                    }
+                }
+            }
+        }
+        let allowed = |key: &str, name: &str| LOCALE_ONLY_VARIABLES.contains(&(key, name));
+        let mut check = |file: String, key: String, passed: Passed| {
+            let Some(declared) = vars.get(&key) else {
+                return;
+            };
+            let (names, exact) = match passed {
+                Passed::Exactly(names) => (names, true),
+                Passed::AtLeast(names) => (names, false),
+            };
+            let given: std::collections::BTreeSet<String> = names.into_iter().collect();
+            let missing: Vec<&String> = declared.difference(&given).collect();
+            let unknown: Vec<&String> = given
+                .difference(declared)
+                .filter(|n| !allowed(&key, n))
+                .collect();
+            if !missing.is_empty() || (exact && !unknown.is_empty()) {
+                errors.push(format!("{file}: {key} reads {declared:?}, gets {given:?}"));
+            }
+        };
+        let mut checked = 0;
+        for path in template_files() {
+            let src = std::fs::read_to_string(&path).expect("template");
+            for (key, passed) in template_calls_with_args(&src) {
+                checked += 1;
+                check(path.display().to_string(), key, passed);
+            }
+        }
+        for path in rust_files() {
+            let src = std::fs::read_to_string(&path).expect("source");
+            for (key, passed) in rust_calls_with_args(&src) {
+                checked += 1;
+                check(path.display().to_string(), key, passed);
+            }
+        }
+        assert!(
+            checked > 1000,
+            "only {checked} calls found: the scanners broke"
+        );
+        assert!(errors.is_empty(), "{}", errors.join("\n"));
+    }
+
+    /// One formatter for every length shown: short labels, long words with
+    /// the language's plurals, whole days as days, Polish few and many.
+    #[test]
+    fn durations_read_in_the_reader_language() {
+        assert_eq!(format_duration("en", 45), "45 min");
+        assert_eq!(format_duration("en", 120), "2 h");
+        assert_eq!(format_duration("en", 90), "1 h 30 min");
+        assert_eq!(format_duration("fr", 90), "1 h 30");
+        assert_eq!(format_duration("de", 90), "1 Std. 30 Min.");
+        assert_eq!(format_duration_long("en", 1), "1 minute");
+        assert_eq!(format_duration_long("en", 61), "1 hour 1 minute");
+        assert_eq!(format_duration_long("en", 150), "2 hours 30 minutes");
+        assert_eq!(format_duration_long("en", 1440), "1 day");
+        assert_eq!(format_duration_long("en", 2880), "2 days");
+        assert_eq!(format_duration_long("en", 1500), "25 hours");
+        assert_eq!(format_duration_long("pl", 2 * 60), "2 godziny");
+        assert_eq!(format_duration_long("pl", 5 * 60), "5 godzin");
+        assert_eq!(format_duration_long("pl", 22), "22 minuty");
+        assert_eq!(format_duration_long("de-formal", 1440), "1 Tag");
+        let mut env = Environment::new();
+        register(&mut env);
+        env.add_template("p", "{{ duration_label(m) }}, {{ duration_words(m) }}")
+            .expect("template");
+        let out = env
+            .get_template("p")
+            .expect("template")
+            .render(minijinja::context! { lang => "fr", m => 90 })
+            .expect("render");
+        assert_eq!(out, "1 h 30, 1 heure 30 minutes");
     }
 
     /// Every shipped locale is complete: a key added to English without a

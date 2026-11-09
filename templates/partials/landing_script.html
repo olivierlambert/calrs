@@ -1,14 +1,10 @@
-{#- Whether each row also shows the coming week as seven small day
-    markers (filled on the days with a free time). Off until the owner
-    decides; flip it to true to show the strip on both landing pages. -#}
-{%- set show_week_strip = false -%}
 {#- Behaviour of the landing pages, after the content:
     - faces get the overview's per-person hue (--h), a stable hash;
-    - the list asks its page's next-free endpoint (data-next, one request
-      per page view) for each meeting's first free start and free days of
-      the coming week, keyed by slug, then writes them in the guest's own
-      timezone and time format. Nothing blocks the page; on a failure the
-      rows simply show nothing. -#}
+    - the host's usual hours (landing_about.html) follow the guest's time
+      format (12 or 24 hours, as set on the slot page), and can be shown in
+      the guest's timezone with the "My time" button, which appears only
+      when that timezone differs. Nothing blocks the page; on a failure the
+      button stays hidden and the hours stay as the server wrote them. -#}
 <script>
 (function() {
   // FNV-1a over the UTF-8 bytes, as overview_stats::face_hue computes it.
@@ -24,76 +20,152 @@
     el.style.setProperty('--h', FACE_HUES[fnv(key(el.getAttribute('data-face'))) % FACE_HUES.length]);
   });
 
-  var list = document.querySelector('[data-next]');
-  if (!list || !window.fetch || !window.Intl) return;
-  var label = {{ t("landing-next-free") | tojson }};
+  // The host's usual hours (landing_about.html), which the "My time"
+  // button turns into the visitor's own when their timezone differs: for
+  // each row of the timetable, its first and last minute on the next day
+  // of that row (so a clock change between now and then is accounted
+  // for), converted with Intl alone; days move along when the shift
+  // carries the start past midnight. Nothing blocks the page; on a
+  // failure the button stays hidden and the host's hours stay.
+  var box = document.querySelector('.lp-hours[data-tz]');
+  var toggle = box && box.querySelector('.lp-tt-toggle');
+  var table = box && box.querySelector('.lp-tt tbody');
+  var label = box && box.querySelector('.lp-hours-label');
+  if (!toggle || !table || !label || !window.Intl) return;
+  var htz = box.getAttribute('data-tz');
+  var groups = [], week = [], weekRest = [];
+  try {
+    groups = JSON.parse(box.getAttribute('data-groups') || '[]');
+    week = JSON.parse(box.getAttribute('data-week') || '[]');
+    weekRest = JSON.parse(box.getAttribute('data-week-rest') || '[]');
+  } catch (e) { return; }
+  if (!Array.isArray(groups) || !groups.length || week.length !== 7 || weekRest.length !== 7) return;
   var lang = document.documentElement.lang || 'en';
   var h12 = false;
   try { h12 = localStorage.getItem('calrs_time_format') === '12'; } catch (e) {}
-  var tz = '';
-  try { tz = Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch (e) {}
-  function fmt(d, opts) {
-    if (tz) opts.timeZone = tz;
-    try { return new Intl.DateTimeFormat(lang, opts).format(d); } catch (e) { return ''; }
-  }
-  function when(d) {
-    var opts = { weekday: 'short', hour: h12 ? 'numeric' : '2-digit', minute: '2-digit', hourCycle: h12 ? 'h12' : 'h23' };
-    // Within the coming week the weekday is enough; further out, add the date.
-    if (d.getTime() - Date.now() > 6 * 86400000) { opts.day = 'numeric'; opts.month = 'short'; }
-    return fmt(d, opts);
-  }
-  // The guest's date (YYYY-MM-DD) of an instant, in their timezone.
-  function ymd(d) {
+  var WEEK = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  function fields(tz, ms) {
     var p = {};
     try {
-      new Intl.DateTimeFormat('en-CA', { timeZone: tz || undefined, year: 'numeric', month: '2-digit', day: '2-digit' })
-        .formatToParts(d).forEach(function(x) { p[x.type] = x.value; });
+      new Intl.DateTimeFormat('en-US', { timeZone: tz, hourCycle: 'h23', weekday: 'short',
+        year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric' })
+        .formatToParts(new Date(ms)).forEach(function(x) { p[x.type] = x.value; });
+    } catch (e) { return null; }
+    return p;
+  }
+  function offset(tz, ms) {
+    var p = fields(tz, ms);
+    if (!p) return null;
+    var minute = Math.floor(ms / 60000) * 60000;
+    return Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour % 24, +p.minute) - minute;
+  }
+  function instant(tz, y, m, d, hm) {
+    var parts = String(hm).split(':');
+    var guess = Date.UTC(y, m - 1, d, +parts[0], +parts[1]);
+    var o = offset(tz, guess);
+    if (o === null) return null;
+    var o2 = offset(tz, guess - o);
+    return guess - (o2 === null ? o : o2);
+  }
+  function hm(ms) {
+    try {
+      return new Intl.DateTimeFormat(lang, { timeZone: gtz, hour: '2-digit', minute: '2-digit',
+        hourCycle: h12 ? 'h12' : 'h23' }).format(new Date(ms));
     } catch (e) { return ''; }
-    return p.year + '-' + p.month + '-' + p.day;
   }
-  var showWeek = {{ show_week_strip | tojson }};
-  function days(el, free) {
-    var box = el.querySelector('.lp-days');
-    if (!showWeek) return;
-    if (!box || !Array.isArray(free)) return;
-    var now = Date.now();
-    for (var i = 0; i < 7; i++) {
-      var d = new Date(now + i * 86400000);
-      var cell = document.createElement('span');
-      cell.className = 'lp-day' + (free.indexOf(ymd(d)) >= 0 ? ' is-free' : '');
-      cell.title = fmt(d, { weekday: 'long', day: 'numeric', month: 'long' });
-      cell.appendChild(document.createElement('i'));
-      cell.appendChild(document.createTextNode(fmt(d, { weekday: 'narrow' })));
-      box.appendChild(cell);
+  // The page's own wording, with %1/%2 for what the script fills in; the
+  // weekday names as the server writes them at the start of a row and
+  // after another word (landing::short_week).
+  var L = {
+    week: week,
+    weekRest: weekRest,
+    every: {{ t("landing-days-every-short") | tojson }},
+    daysSpan: {{ t("landing-days-span", first="%1", last="%2") | tojson }},
+    and: {{ t("list-and", first="%1", last="%2", e="no") | tojson }},
+    range: {{ t("landing-time-range") | tojson }},
+    next: {{ t("landing-time-range-next") | tojson }},
+    yours: {{ t("landing-hours-heading-yours") | tojson }}
+  };
+  function fill(pattern, a, b) { return pattern.replace('%1', a).replace('%2', b); }
+  // As landing::days_phrase: every day, a run of three to six days as a
+  // range (wrapping past Sunday when the shift makes it so), else a list,
+  // Monday first.
+  var MONDAY_FIRST = [1, 2, 3, 4, 5, 6, 0];
+  function daysPhrase(days) {
+    var has = function(i) { return days.indexOf(MONDAY_FIRST[i % 7]) >= 0; };
+    var sorted = MONDAY_FIRST.filter(function(d) { return days.indexOf(d) >= 0; });
+    if (sorted.length === 7) return L.every;
+    if (sorted.length >= 3) {
+      for (var s = 0; s < 7; s++) {
+        if (!has(s) || has(s + 6)) continue;
+        var run = true;
+        for (var k = 0; k < sorted.length; k++) if (!has(s + k)) run = false;
+        if (run) return fill(L.daysSpan, L.week[MONDAY_FIRST[s]], L.weekRest[MONDAY_FIRST[(s + sorted.length - 1) % 7]]);
+        break;
+      }
     }
-    box.hidden = false;
+    var names = sorted.map(function(d, i) { return i ? L.weekRest[d] : L.week[d]; });
+    if (names.length === 1) return names[0];
+    return fill(L.and, names.slice(0, -1).join(', '), names[names.length - 1]);
   }
-  function fill(el, j) {
-    if (!j || typeof j !== 'object') return;
-    days(el, j.days);
-    if (!j.start) return;
-    var text = when(new Date(j.start));
-    var next = el.querySelector('.lp-next');
-    if (!text || !next) return;
-    var parts = label.split('%1');
-    next.textContent = parts[0];
-    var b = document.createElement('b');
-    b.textContent = text;
-    next.appendChild(b);
-    if (parts[1]) next.appendChild(document.createTextNode(parts[1]));
-    next.hidden = false;
+  // The host's own rows in the visitor's time format: the server writes
+  // 24-hour times.
+  function wall(hhmm) {
+    var p = String(hhmm).split(':');
+    try {
+      return new Intl.DateTimeFormat(lang, { timeZone: 'UTC', hour: '2-digit', minute: '2-digit',
+        hourCycle: 'h12' }).format(new Date(Date.UTC(2000, 0, 1, +p[0], +p[1])));
+    } catch (e) { return hhmm; }
   }
-  var url = list.getAttribute('data-next');
-  if (tz) url += (url.indexOf('?') >= 0 ? '&' : '?') + 'tz=' + encodeURIComponent(tz);
-  fetch(url, { headers: { 'Accept': 'application/json' }, credentials: 'same-origin' })
-    .then(function(r) { return r.ok ? r.json() : null; })
-    .then(function(all) {
-      if (!all || typeof all !== 'object') return;
-      Array.prototype.forEach.call(list.querySelectorAll('[data-slug]'), function(el) {
-        var slug = el.getAttribute('data-slug');
-        if (Object.prototype.hasOwnProperty.call(all, slug)) fill(el, all[slug]);
-      });
-    })
-    .catch(function() {});
+  if (h12 && table.rows.length === groups.length) {
+    groups.forEach(function(g, i) { table.rows[i].cells[1].textContent = fill(L.range, wall(g.start), wall(g.end)); });
+  }
+  var gtz = '';
+  try { gtz = Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch (e) {}
+  if (!htz || !gtz || htz === gtz) return;
+  // Each row in the visitor's zone.
+  var differs = false;
+  var rows = [];
+  for (var g = 0; g < groups.length; g++) {
+    var days = Array.isArray(groups[g].days) ? groups[g].days : [];
+    var day = null, hostDay = -1;
+    for (var i = 0; i < 8 && !day; i++) {
+      var p = fields(htz, Date.now() + i * 86400000);
+      if (p && days.indexOf(WEEK.indexOf(p.weekday)) >= 0) { day = p; hostDay = WEEK.indexOf(p.weekday); }
+    }
+    if (!day) return;
+    var start = instant(htz, +day.year, +day.month, +day.day, groups[g].start);
+    var end = instant(htz, +day.year, +day.month, +day.day, groups[g].end);
+    if (start === null || end === null || isNaN(start) || isNaN(end)) return;
+    if (offset(htz, start) !== offset(gtz, start) || offset(htz, end) !== offset(gtz, end)) differs = true;
+    var gs = fields(gtz, start), ge = fields(gtz, end);
+    if (!gs || !ge) return;
+    var shift = (WEEK.indexOf(gs.weekday) - hostDay + 7) % 7;
+    var from = hm(start), to = hm(end);
+    if (!from || !to) return;
+    rows.push([daysPhrase(days.map(function(d) { return (d + shift) % 7; })),
+      fill(gs.weekday !== ge.weekday ? L.next : L.range, from, to)]);
+  }
+  if (!differs || !rows.length) return;
+  function render(list) {
+    table.textContent = '';
+    list.forEach(function(r) {
+      var tr = document.createElement('tr');
+      var th = document.createElement('th'); th.scope = 'row'; th.textContent = r[0];
+      var td = document.createElement('td'); td.textContent = r[1];
+      tr.appendChild(th); tr.appendChild(td); table.appendChild(tr);
+    });
+  }
+  var hostRows = Array.prototype.map.call(table.rows, function(tr) {
+    return [tr.cells[0].textContent, tr.cells[1].textContent];
+  });
+  var hostLabel = label.textContent;
+  toggle.hidden = false;
+  toggle.addEventListener('click', function() {
+    var mine = toggle.getAttribute('aria-pressed') !== 'true';
+    toggle.setAttribute('aria-pressed', mine ? 'true' : 'false');
+    render(mine ? rows : hostRows);
+    label.textContent = mine ? L.yours : hostLabel;
+  });
 })();
 </script>

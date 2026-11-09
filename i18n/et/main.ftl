@@ -219,21 +219,20 @@ base-powered-by = Töötab platvormil
 profile-pick-event-type-invite = Aja broneerimiseks vali sündmuse tüüp.
 profile-no-event-type = Sündmuse tüüpe pole veel saadaval.
 
-# Public landing pages (/u/{username}, /team/{slug}). In landing-next-free,
-# %1 is the time, filled in by the page itself.
-landing-duration-h = { $hours } h
-landing-duration-aria =
+duration-short-m = { $minutes } min
+duration-short-h = { $hours } h
+duration-short-hm = { $hours } h { $minutes } min
+duration-long-m =
     { $minutes ->
         [one] { $minutes } minut
        *[other] { $minutes } minutit
     }
-landing-duration-hm = { $hours } h { $minutes }
-landing-duration-aria-h =
+duration-long-h =
     { $hours ->
         [one] { $hours } tund
        *[other] { $hours } tundi
     }
-landing-duration-aria-hm =
+duration-long-hm =
     { $hours ->
         [one] { $hours } tund
        *[other] { $hours } tundi
@@ -241,10 +240,34 @@ landing-duration-aria-hm =
         [one] { $minutes } minut
        *[other] { $minutes } minutit
     }
-landing-next-free = Järgmine: %1
+duration-long-d =
+    { $days ->
+        [one] { $days } päev
+       *[other] { $days } päeva
+    }
+# Public landing pages (/u/{username}, /team/{slug}).
 landing-with-one-of = ühega neist
 faces-and-more = ja veel { $count }
 landing-with-everyone = kõigiga
+landing-days-range = { $first }–{ $last }
+landing-days-every = iga päev
+landing-on-request-hint = Iga päring kinnitatakse käsitsi enne broneerimist.
+landing-how-it-works = Vali teema ja sobiv aeg, kinnituse saad e-postiga.
+landing-based-in = Asukoht: { $place }
+landing-speaks = Keeled: { $languages }
+landing-meetings = Kohtumised
+landing-hours-vary = Tavaliselt saadaval { $days } ({ $zone } aja järgi), kellaajad on päeviti erinevad
+landing-time-range = %1–%2
+landing-time-range-next = %1 kuni järgmise päeva %2
+landing-other-meetings = Muud kohtumised
+landing-hours-heading = Tavaliselt saadaval ({ $zone } aja järgi)
+landing-hours-heading-yours = Tavaliselt saadaval (sinu aja järgi)
+landing-hours-toggle = Minu aeg
+landing-hours-toggle-hint = Näita neid aegu sinu ajavööndis
+landing-days-every-short = Iga päev
+landing-days-span = { $first }–{ $last }
+landing-host-confirms = Korraldaja kinnitab
+list-and = { $first } ja { $last }
 
 # Month and weekday names + per-locale date format patterns.
 # Used by server-side date formatters in src/i18n.rs.
@@ -323,8 +346,8 @@ email-cancel-ics-attached-html = Kalendritühistus on selle kirja manuses.
 
 # Confirmation email: notice-window policy lines (src/email.rs)
 
-email-confirm-cancel-notice = Pane tähele: tühistamine nõuab vähemalt { $minutes } minutit etteteatamist.
-email-confirm-reschedule-notice = Pane tähele: aja muutmine nõuab vähemalt { $minutes } minutit etteteatamist.
+email-confirm-cancel-notice = Pane tähele: tühistamine nõuab vähemalt { $duration } etteteatamist.
+email-confirm-reschedule-notice = Pane tähele: aja muutmine nõuab vähemalt { $duration } etteteatamist.
 
 # Event type form: cancel/reschedule minimum notice (templates/event_type_form.html)
 
@@ -366,14 +389,14 @@ event-type-form-saved = Salvestatud.
 
 # Booking confirmation: cancel/reschedule policy notices (templates/confirmed.html)
 
-confirmed-cancel-notice-info = Tühistamine nõuab enne kohtumist vähemalt { $minutes } minutit etteteatamist.
-confirmed-reschedule-notice-info = Aja muutmine nõuab enne kohtumist vähemalt { $minutes } minutit etteteatamist.
+confirmed-cancel-notice-info = Tühistamine nõuab enne kohtumist vähemalt { $duration } etteteatamist.
+confirmed-reschedule-notice-info = Aja muutmine nõuab enne kohtumist vähemalt { $duration } etteteatamist.
 
 # Booking action blocked page (templates/booking_action_blocked.html)
 
 booking-blocked-title-cancel = Seda broneeringut ei saa enam veebis tühistada
 booking-blocked-title-reschedule = Selle broneeringu aega ei saa enam veebis muuta
-booking-blocked-body = Korraldaja nõuab vähemalt { $minutes } minutit etteteatamist. Kui sa ei saa osaleda, kirjuta otse aadressil <a href="mailto:{ $host_email }">{ $host_email }</a>.
+booking-blocked-body = Korraldaja nõuab vähemalt { $duration } etteteatamist. Kui sa ei saa osaleda, kirjuta otse aadressil <a href="mailto:{ $host_email }">{ $host_email }</a>.
 
 # Dashboard event types listing (templates/dashboard_event_types.html)
 
@@ -443,9 +466,6 @@ overview-pending-approval = Ootab kinnitust
 overview-confirm = Kinnita
 overview-decline = Lükka tagasi
 overview-copy-link = Kopeeri broneerimislink
-overview-duration-h = { $hours } h
-overview-duration-m = { $minutes } min
-overview-duration-hm = { $hours } h { $minutes } min
 overview-chart-title = Kohtumised nädalas
 overview-chart-this-week = See nädal
 overview-chart-week-of = Nädal alates { $date }
@@ -632,7 +652,6 @@ invite-links-page-title = Kutselingid
 invite-links-heading = Kutselingid
 invite-links-new = Uus sisemine sündmus
 invite-links-help = Loo sisemistele sündmuse tüüpidele ühekordseid broneerimislinke. Iga sisse loginud kolleeg saab siin linke luua ja jagada.
-invite-links-duration = { $minutes } min
 invite-links-hosted-by = Korraldab { $host }
 invite-links-get-link = Hangi link
 invite-links-invites = Kutsed
@@ -702,7 +721,6 @@ event-types-badge-expired = aegunud
 event-types-badge-range-from = alates { $date }
 event-types-badge-range-until = kuni { $date }
 event-types-send-invites = Saada kutsed
-event-types-duration = { $minutes } min
 event-types-mode-collective = ühine
 event-types-mode-round-robin = kordamööda
 event-types-edit = Muuda
@@ -883,10 +901,9 @@ troubleshoot-page-title = Tõrkeotsing
 troubleshoot-empty = Sündmuse tüüpe ei leitud. { $link }, et alustada saadavuse tõrkeotsingut.
 troubleshoot-empty-link-label = Loo üks
 troubleshoot-subtitle = Vaata, miks sündmuse { $title } ajad on vabad või blokeeritud
-troubleshoot-duration = { $minutes } min
-troubleshoot-buffer-before = { $minutes } min puhvrit enne
-troubleshoot-buffer-after = { $minutes } min puhvrit pärast
-troubleshoot-min-notice = { $minutes } min etteteatamist
+troubleshoot-buffer-before = { $duration } puhvrit enne
+troubleshoot-buffer-after = { $duration } puhvrit pärast
+troubleshoot-min-notice = { $duration } etteteatamist
 troubleshoot-blocked-override = Blokeeritud kuupäevaerandiga (vaba päev)
 troubleshoot-custom-hours-active = Muudetud kellaaegade erand on aktiivne (asendab nädalareeglid)
 troubleshoot-microsoft-not-ready = Sinu Microsofti kalender pole veel esimest sünkroonimist lõpetanud: seni on iga aeg hõivatud. Vaata kalendriallikaid.
@@ -903,10 +920,10 @@ troubleshoot-none-no-rules = Sellel nädalapäeval saadavuse reegleid pole. Seda
 troubleshoot-none-all-bookable = Saadavuse aegade sees pole ühtegi blokeeritud aega. Kõik ajad on broneeritavad.
 troubleshoot-label-outside = Väljaspool saadavust
 troubleshoot-label-available = Vaba
-troubleshoot-label-min-notice = Vähim etteteatamine ({ $minutes } min)
+troubleshoot-label-min-notice = Vähim etteteatamine ({ $duration })
 troubleshoot-label-beyond-horizon = Väljaspool broneerimishorisonti ({ $days } päeva)
 troubleshoot-label-outside-date-range = Väljaspool broneeritavat ajavahemikku
-troubleshoot-label-buffer = Puhver ({ $minutes } min)
+troubleshoot-label-buffer = Puhver ({ $duration })
 troubleshoot-label-resource-busy = Ressurss hõivatud: { $names }
 troubleshoot-detail-around = Selle ümber: { $label }
 troubleshoot-detail-around-booking = Külalise { $guest } broneeringu ümber
@@ -2408,3 +2425,54 @@ etf-q-key = Veebikonksude võti: %1
 etf-hint-questions-one = 1 küsimus
 etf-hint-questions-other = %1 küsimust
 etf-hint-no-questions = Küsimusi pole
+
+# Language names, for the languages a host speaks (landing.rs).
+language-name-en = inglise
+language-name-fr = prantsuse
+language-name-de = saksa
+language-name-es = hispaania
+language-name-it = itaalia
+language-name-pt = portugali
+language-name-nl = hollandi
+language-name-pl = poola
+language-name-et = eesti
+language-name-ar = araabia
+language-name-zh = hiina
+language-name-ja = jaapani
+language-name-ko = korea
+language-name-ru = vene
+language-name-uk = ukraina
+language-name-sv = rootsi
+language-name-da = taani
+language-name-nb = norra
+language-name-fi = soome
+language-name-cs = tšehhi
+language-name-ro = rumeenia
+language-name-el = kreeka
+language-name-tr = türgi
+language-name-hi = hindi
+language-name-he = heebrea
+language-name-hu = ungari
+
+# Sections and order of the landing pages (landing.rs, event type form, settings).
+etf-section = Jaotis
+etf-section-placeholder = Alustuseks
+etf-section-help = Sama jaotisega kohtumised on avalikul lehel selle alla koondatud, nii nagu see on kirjutatud.
+etf-section-order-link = Muuda järjekorda
+settings-based-in = Asukoht
+settings-based-in-placeholder = Pariis, Prantsusmaa
+settings-based-in-help = Linn või piirkond, mida näidatakse sinu avalikul lehel nime all.
+settings-speaks = Keeled, mida räägid
+settings-speaks-help = Näidatakse sinu avalikul lehel nime all, iga külastaja keeles.
+page-order-heading = Sinu lehe järjekord
+page-order-team-heading = Lehe { $team } järjekord
+page-order-subtitle = Jaotised ja kohtumised on avalikul lehel selles järjekorras. Kohtumise jaotise saab määrata selle seadetes.
+page-order-back = Tagasi
+page-order-empty = Kohtumisi veel pole.
+page-order-up = Liiguta üles
+page-order-down = Liiguta alla
+page-order-section-up = Liiguta { $section } üles
+page-order-section-down = Liiguta { $section } alla
+page-order-type-up = Liiguta { $title } üles
+page-order-type-down = Liiguta { $title } alla
+page-order-not-listed = Avalikul lehel pole (välja lülitatud, sisemine või privaatne)

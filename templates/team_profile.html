@@ -2,11 +2,11 @@
 {% block title %}{{ team_name }}, calrs{% endblock %}
 {% block head %}{% include "partials/landing_head.html" %}{% endblock %}
 {% block content %}
-{% import "partials/landing_hue.html" as dial %}
 {% set invite_q = ("?invite=" ~ (invite_token | urlencode)) if (invite_token is defined and invite_token) else "" %}
 <section class="lp-top">
   {% include "partials/public_logo.html" %}
-  <header class="lp-card">
+  {%- set has_practical = hours or based_in or speaks %}
+  <header class="lp-card{% if has_practical %} has-practical{% endif %}">
     <div class="lp-face lp-face-team" data-face="{{ team_name }}">
       {% if team_has_avatar %}
         <img src="/team-avatar/{{ team_id }}" alt="" data-initials="{{ team_initials }}" onerror="this.parentElement.textContent=this.dataset.initials">
@@ -16,59 +16,32 @@
     </div>
     <div class="lp-id">
       <h1 class="lp-name">{{ team_name }}</h1>
-    </div>
-    {% if team_description or members %}
-    <div class="lp-more">
-      {% if team_description %}<div class="lp-bio">{{ team_description|safe }}</div>{% endif %}
-      {% if members %}
-      <ul class="lp-members">
-        {% for m in members %}
-        <li class="lp-member" title="{{ m.name }}">
-          <span class="lp-face" data-face="{{ m.name }}">{% if m.has_avatar %}<img src="/avatar/{{ m.id }}" alt="">{% else %}{{ m.initials }}{% endif %}</span>
-          <span class="lp-member-name">{{ m.first_name if m.first_name is defined and m.first_name else m.name }}</span>
-        </li>
-        {% endfor %}
-        {% if members_total > members|length %}
-        <li class="lp-member lp-member-more" title="{{ t('teams-member-count', count=members_total) }}">
-          <span class="lp-face">+{{ members_total - members|length }}</span>
-        </li>
+      {% if team_description or members %}
+      <div class="lp-more">
+        {% if team_description %}<div class="lp-bio">{{ team_description|safe }}</div>{% endif %}
+        {% if members %}
+        <ul class="lp-members">
+          {% for m in members %}
+          <li class="lp-member" title="{{ m.name }}">
+            <span class="lp-face" data-face="{{ m.name }}">{% if m.has_avatar %}<img src="/avatar/{{ m.id }}" alt="">{% else %}{{ m.initials }}{% endif %}</span>
+            <span class="lp-member-name">{{ m.first_name if m.first_name is defined and m.first_name else m.name }}</span>
+          </li>
+          {% endfor %}
+          {% if members_total > members|length %}
+          <li class="lp-member lp-member-more" title="{{ t('teams-member-count', count=members_total) }}">
+            <span class="lp-face">+{{ members_total - members|length }}</span>
+          </li>
+          {% endif %}
+        </ul>
         {% endif %}
-      </ul>
-      {% endif %}
-    </div>
-    {% endif %}
-  </header>
-</section>
-
-<ul class="lp-list"{% if event_types %} data-next="/team/{{ team_slug }}/next-free{{ invite_q }}"{% endif %}>
-  {% for et in event_types %}
-  <li class="lp-row" style="--eh: {{ dial.hue(et.duration_min) }}" data-slug="{{ et.slug }}">
-    {% with d = et.duration_min %}{% include "partials/landing_dial.html" %}{% endwith %}
-    <div class="lp-main">
-      <a href="/team/{{ team_slug }}/{{ et.slug }}{{ invite_q }}" data-calrs-sync class="lp-et-title">{{ et.title }}</a>
-      {%- if et.visibility == "internal" %}<span class="lp-vis">{{ t("event-types-badge-internal") }}</span>{% elif et.visibility == "private" %}<span class="lp-vis">{{ t("event-types-badge-private") }}</span>{% endif %}
-      {% if et.description %}<p class="lp-desc">{{ et.description|safe }}</p>{% endif %}
-      {% if et.scheduling_mode is defined and et.members is defined and et.members %}
-      <div class="lp-with">
-        <span>{% if et.scheduling_mode == "collective" %}{{ t("landing-with-everyone") }}{% else %}{{ t("landing-with-one-of") }}{% endif %}</span>
-        {%- set more = et.members_total - et.members|length %}
-        <span class="lp-sr">{% for m in et.members %}{{ m.name }}{% if not loop.last %}, {% endif %}{% endfor %}{% if more > 0 %} {{ t("faces-and-more", count=more) }}{% endif %}</span>
-        <span class="lp-with-faces" aria-hidden="true">
-          {% for m in et.members %}<span class="lp-face" data-face="{{ m.name }}" title="{{ m.name }}">{% if m.has_avatar %}<img src="/avatar/{{ m.id }}" alt="">{% else %}{{ m.initials }}{% endif %}</span>{% endfor %}
-        </span>
-        {% if more > 0 %}<span class="lp-num" aria-hidden="true">+{{ more }}</span>{% endif %}
       </div>
       {% endif %}
     </div>
-    <div class="lp-side">
-      <span class="lp-next" hidden></span>
-      <span class="lp-days" hidden aria-hidden="true"></span>
-    </div>
-  </li>
-  {% else %}
-  <li class="lp-empty">{{ t("team-profile-empty") }}</li>
-  {% endfor %}
-</ul>
+    {% if has_practical %}{% include "partials/landing_about.html" %}{% endif %}
+  </header>
+</section>
+
+{% with href_kind = "team", href_owner = team_slug, href_tail = invite_q, empty_text = t("team-profile-empty") %}{% include "partials/landing_list.html" %}{% endwith %}
 {% include "partials/landing_script.html" %}
 {% endblock %}
 {% block footer %}<div class="lp-foot">{{ t("base-powered-by") }} <a href="https://cal.rs">calrs</a> <img src="/brand-logo" alt=""></div>{% endblock %}

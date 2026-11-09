@@ -69,14 +69,20 @@ pub async fn send_guest_confirmation_ex(
         ta(
             lang,
             "email-confirm-cancel-notice",
-            [("minutes", m.to_string().as_str())],
+            [(
+                "duration",
+                crate::i18n::format_duration_long(lang, i64::from(m)).as_str(),
+            )],
         )
     });
     let reschedule_notice_line = reschedule_notice_min.filter(|m| *m > 0).map(|m| {
         ta(
             lang,
             "email-confirm-reschedule-notice",
-            [("minutes", m.to_string().as_str())],
+            [(
+                "duration",
+                crate::i18n::format_duration_long(lang, i64::from(m)).as_str(),
+            )],
         )
     });
 
@@ -1568,9 +1574,16 @@ pub(super) fn compose_guest_reschedule_approved(
 
     // The same notice-window lines the confirmation shows.
     let notice = |key: &str, minutes: Option<i32>| {
-        minutes
-            .filter(|m| *m > 0)
-            .map(|m| ta(lang, key, [("minutes", m.to_string().as_str())]))
+        minutes.filter(|m| *m > 0).map(|m| {
+            ta(
+                lang,
+                key,
+                [(
+                    "duration",
+                    crate::i18n::format_duration_long(lang, i64::from(m)).as_str(),
+                )],
+            )
+        })
     };
     let notice_lines: Vec<String> = [
         notice("email-confirm-reschedule-notice", reschedule_notice_min),

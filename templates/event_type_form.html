@@ -101,6 +101,15 @@
     <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">{{ t("etf-description-help") }}</span>
   </div>
 
+  {% if section_suggestions is defined %}
+  <div class="form-group">
+    <label for="section">{{ t("etf-section") }} <span class="hint">{{ t("team-form-optional") }}</span></label>
+    <input type="text" id="section" name="section" maxlength="80" value="{{ form_section }}" list="section-suggestions" autocomplete="off" placeholder="{{ t('etf-section-placeholder') }}">
+    <datalist id="section-suggestions">{% for name in section_suggestions %}<option value="{{ name }}"></option>{% endfor %}</datalist>
+    <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">{{ t("etf-section-help") }}{% if order_url %} <a href="{{ order_url }}">{{ t("etf-section-order-link") }}</a>{% endif %}</span>
+  </div>
+  {% endif %}
+
   <div style="display: grid; grid-template-columns: auto 1fr; gap: 0.75rem; align-items: start;" class="form-grid-2">
     <div class="form-group" style="min-width: 140px;">
       <label for="location_type">{{ t("etf-location") }}</label>

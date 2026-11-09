@@ -2201,3 +2201,24 @@ fn host_notes_keep_their_line_breaks_in_html_emails() {
         .plain
         .contains("Host notes:"));
 }
+
+/// The notice lines of the "your new time is confirmed" email name the
+/// window in words, in the booking language, like the confirmation's.
+#[test]
+fn reschedule_approved_notice_lines_write_the_window_out() {
+    for (lang, cancel, reschedule) in [
+        ("en", "at least 1 day notice", "at least 2 hours notice"),
+        ("fr", "au moins 1 jour", "au moins 2 heures"),
+    ] {
+        let details = BookingDetails {
+            guest_language: Some(lang.to_string()),
+            ..sample_booking_details()
+        };
+        let mail = compose_guest_reschedule_approved(&details, None, None, Some(1440), Some(120));
+        for body in [&mail.plain, &mail.html] {
+            assert!(body.contains(cancel), "{lang}: {body}");
+            assert!(body.contains(reschedule), "{lang}: {body}");
+            assert!(!body.contains("{$"), "{lang}: {body}");
+        }
+    }
+}

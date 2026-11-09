@@ -18,11 +18,11 @@ mod ews_admin;
 mod format;
 mod hosts;
 mod invites;
+mod landing;
 mod listing;
 mod mcp;
 pub mod meeting;
 mod microsoft;
-mod next_free;
 mod notify;
 mod overview_stats;
 mod pending;
@@ -87,8 +87,8 @@ use format::*;
 pub(crate) use hosts::booking_host_identity;
 use hosts::*;
 use invites::*;
+use landing::*;
 use microsoft::*;
-use next_free::*;
 pub use notify::drain_emails;
 pub use notify::run_reminder_loop;
 pub(crate) use notify::spawn_emails;
@@ -336,11 +336,6 @@ pub struct AppState {
     pub api_limiter: RateLimiter,
     /// REST API slot reads and writes, per user (`api::heavy_limit`).
     pub api_heavy_limiter: RateLimiter,
-    /// Per-IP limit on the landing pages' next-free hints (`next_free`):
-    /// one request per page view.
-    pub next_free_limiter: RateLimiter,
-    /// The next-free answers per event type and zone, kept a minute.
-    pub next_free_cache: next_free::NextFreeCache,
     /// Personal access tokens just created, waiting to be shown once on the
     /// page the creation redirects to (`api_tokens`): flash id to
     /// (user id, secret, created).
@@ -960,8 +955,6 @@ pub async fn create_router(
         mcp_request_limiter: RateLimiter::new(600, 60),
         api_limiter: RateLimiter::new(300, 60),
         api_heavy_limiter: RateLimiter::new(60, 300),
-        next_free_limiter: RateLimiter::new(60, 60),
-        next_free_cache: Default::default(),
         api_token_flash: std::sync::Mutex::new(HashMap::new()),
         secret_key,
         data_dir,
@@ -1114,6 +1107,15 @@ pub async fn create_router(
         )
         .route("/dashboard/settings/avatar/delete", post(delete_avatar))
         .route("/avatar/{user_id}", get(serve_avatar))
+        // The order and sections of the landing pages
+        .route(
+            "/dashboard/event-types/order",
+            get(personal_page_order).post(personal_page_order_move),
+        )
+        .route(
+            "/dashboard/teams/{team_id}/order",
+            get(team_page_order).post(team_page_order_move),
+        )
         // Team settings & avatar
         .route(
             "/dashboard/teams/{team_id}/settings",
@@ -1319,7 +1321,6 @@ pub async fn create_router(
         )
         // Group public routes
         .route("/team/{team_slug}", get(team_profile_page))
-        .route("/team/{team_slug}/next-free", get(team_next_free))
         .route("/team/{team_slug}/{slug}", get(show_group_slots))
         .route(
             "/team/{team_slug}/{slug}/book",
@@ -1366,7 +1367,6 @@ pub async fn create_router(
             post(host_resend_reschedule),
         )
         .route("/u/{username}", get(user_profile))
-        .route("/u/{username}/next-free", get(user_next_free))
         .route("/u/{username}/", get(redirect_user_profile_trailing_slash))
         .route("/u/{username}/{slug}", get(show_slots_for_user))
         .route(

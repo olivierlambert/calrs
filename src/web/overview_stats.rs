@@ -273,16 +273,7 @@ fn tr1(lang: &str, key: &str, name: &str, n: i64) -> String {
 
 /// "2 h 30" in the reader's language ("45 min", "2 h").
 pub(super) fn duration_label(lang: &str, total_minutes: i64) -> String {
-    let total = total_minutes.abs();
-    let (h, m) = (total / 60, total % 60);
-    let mut args = fluent_bundle::FluentArgs::new();
-    args.set("hours", crate::i18n::number(h as f64));
-    args.set("minutes", crate::i18n::number(m as f64));
-    match (h, m) {
-        (0, _) => crate::i18n::translate(lang, "overview-duration-m", Some(&args)),
-        (_, 0) => crate::i18n::translate(lang, "overview-duration-h", Some(&args)),
-        _ => crate::i18n::translate(lang, "overview-duration-hm", Some(&args)),
-    }
+    crate::i18n::format_duration(lang, total_minutes)
 }
 
 /// Time of day on the 24-hour clock: the dashboard is a timetable, and the

@@ -61,7 +61,7 @@ fn profile_cards_do_not_nest_description_links() {
         .render(context! {
             host_name => "Alice",
             username => "alice",
-            event_types => event_types.clone(),
+            cards => vec![context! { title => "Meetings", count => 1, items => event_types.clone() }],
             lang => "en",
         })
         .expect("profile.html should render");
@@ -71,7 +71,7 @@ fn profile_cards_do_not_nest_description_links() {
         .render(context! {
             team_name => "Sales",
             team_slug => "sales",
-            event_types => event_types,
+            cards => vec![context! { title => "Meetings", count => 1, items => event_types }],
             lang => "en",
         })
         .expect("team_profile.html should render");

@@ -258,6 +258,12 @@ Auto providers (`jitsi_auto`, `webhook_auto`, `google_meet`) mint the URL only w
 
 Saving an event type as `google_meet` is rejected unless every scheduling-relevant host already has Google Calendar connected with a write-back calendar selected (you, for a personal event type; every eligible team member for a team event type).
 
+## Sections and order on your page
+
+**Section** (optional, in the form under the description) groups meetings on your public page: meetings with the same section sit in one card titled with it, exactly as you wrote it (the field suggests the sections you already use). Meetings without a section come last, under "Other meetings"; with no section at all, the page shows a single "Meetings" card. **Change the order**, next to the field, opens `/dashboard/event-types/order`, where up and down buttons move a section or a meeting within its section. A team event type's section and order belong to the team's admins, at `/dashboard/teams/{id}/order`, and show on the team page. Visitors see the public, enabled meetings; members of a team, signed in, also see its internal and private ones on the team page. The arrange page lists them all, so each keeps its place for when it shows.
+
+Your page also shows, beside your name (under it on a phone), your usual hours as a small timetable, one row per schedule, with a **My time** button that shows them in the visitor's timezone when it differs, and, when set in **Profile & Settings**, where you are based and the languages you speak, on one line. The hours are an approximation: for each day, from the earliest start to the latest end among the weekly hours of the meetings the page lists, so a lunch break or a meeting offered only in the morning does not show. They are left out when those meetings use different timezones. On a team page they come from the team's meetings only, not from the members' own working hours.
+
 ## Enabling/disabling
 
 Event types can be toggled on/off from the dashboard without deleting them. Disabled event types don't show up on your public profile and return 404 on their booking page.
