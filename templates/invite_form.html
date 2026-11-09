@@ -42,7 +42,7 @@
     {% if bulk_result.failed %}
       <div><strong>{{ t("invites-failed", count=bulk_result.failed|length) }}</strong>
         <span class="inv-muted">{{ bulk_result.failed|join(", ") }}</span>
-        {{ t("invites-failed-hint") }}
+        <div>{{ t("invites-failed-hint") }}</div>
       </div>
     {% endif %}
   </div></div>

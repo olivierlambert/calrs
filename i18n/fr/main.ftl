@@ -920,7 +920,7 @@ invites-back-teams = Retour aux équipes
 invites-back-event-types = Retour aux types d'événement
 invites-intro = Envoyez des liens d'invitation pour { $title }
 invites-capped = <strong>La saisie a été limitée à { $max } destinataires par envoi.</strong> Envoyez le reste dans un autre lot.
-invites-failed-hint = — consultez les journaux du serveur pour en savoir plus.
+invites-failed-hint = Consultez les journaux du serveur pour en savoir plus.
 invites-quick-link = Lien rapide
 invites-quick-link-help = Générez un lien à usage unique et copiez-le dans votre presse-papiers.
 invites-get-link = Obtenir un lien
@@ -1049,7 +1049,7 @@ team-form-submit = Créer l'équipe
 # Team settings (templates/team_settings.html)
 
 team-settings-page-title = Paramètres
-team-settings-subtitle = Paramètres de l'équipe: les administrateurs de l'équipe peuvent les modifier.
+team-settings-subtitle = Paramètres de l'équipe : les administrateurs de l'équipe peuvent les modifier.
 team-settings-public-url = URL publique
 team-settings-public-url-help = N'importe qui peut réserver via ce lien.
 team-settings-invite-link = Lien d'invitation
