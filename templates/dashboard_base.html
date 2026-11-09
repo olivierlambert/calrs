@@ -318,11 +318,16 @@
      lift off it, by filling the main_class block with "has-cards". */
   .dashboard-main.has-cards { background: var(--bg); }
   .dashboard-main.has-cards .form-savebar { background: var(--bg); }
+  /* One space (--card-pad) above the body (under the band, or at the top
+     of a card without one), under the body, and between the band and the
+     body, so content sits centred in its card. A row's own padding is the
+     same top and bottom, so a list keeps that balance too. */
   .dashboard-main .card {
+    --card-pad: 1.1rem;
     --card-px: 1.4rem;
-    --card-pt: 1.25rem;
-    --card-pb: 1.3rem;
-    --card-gap: 1rem;
+    --card-pt: var(--card-pad);
+    --card-pb: var(--card-pad);
+    --card-gap: var(--card-pad);
     --card-bg: var(--surface);
     --card-band: color-mix(in srgb, var(--text) 4%, var(--surface));
     --card-rule: color-mix(in srgb, var(--border) 50%, var(--card-bg));
@@ -381,12 +386,22 @@
   .card-part + .card-part, .card-body > * + .card-part { margin-top: 2.1rem; }
   .card-body > :last-child, .card-body > :last-child > .form-group:last-child { margin-bottom: 0; }
   .card-body > .ledger > li:last-child, .card-body.ledger > li:last-child, .card-body .figs tr:last-child > * { border-bottom: 0; }
+  /* A list that opens or closes a card body drops its outer row padding:
+     the card's own space (--card-pad) is then the margin on both sides,
+     as for a form or a paragraph. The last row is the last one of its
+     kind, so a hidden "no matches" line after it does not count. */
+  .card-body.ui-list > .ui-row:first-child,
+  .card-body > :is(.ui-list, .ledger):first-child > :is(.ui-row, .tt-row, .tt-day):first-child,
+  .card-body .directory-list > .directory-entry:first-child { padding-top: 0; }
+  .card-body.ui-list > .ui-row:not(:has(~ .ui-row)),
+  :is(.card-body, .card-body > .card-part:last-child) > :is(.ui-list, .ledger):last-child > :is(.ui-row, .tt-row):not(:has(~ :is(.ui-row, .tt-row))),
+  .card-body .directory-list > .directory-entry:not(:has(~ .directory-entry)) { padding-bottom: 0; }
   /* A list in a card part ends on its last row too; a list that ends on
      its hidden "no matches" line ends on the row before it. */
   .card-part > .ledger > li:last-child { border-bottom: 0; }
   :is(.card-body, .card-part) > .ledger > li:has(+ [data-filter-empty]:last-child) { border-bottom: 0; }
   @media (max-width: 700px) {
-    .dashboard-main .card { --card-px: 1.05rem; --card-pt: 1.05rem; --card-pb: 1.1rem; --card-gap: 0.85rem; }
+    .dashboard-main .card { --card-px: 1.05rem; --card-pad: 0.95rem; }
   }
   .dashboard-main a.card:hover, .dashboard-main .card.card-link:hover { transform: none; box-shadow: none; border-color: var(--rule-strong); }
 
@@ -449,11 +464,6 @@
   .sec-h a:hover, .sec-link:hover { color: var(--ink); text-decoration: underline; }
   .sec-note { font-size: 12.5px; color: var(--text-muted); margin: 0; }
 
-  /* Card header, still used inside fieldsets. Counts are muted figures. */
-  .card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 0.75rem; flex-wrap: wrap; margin-bottom: 0.5rem; }
-  .card-title { display: flex; align-items: baseline; gap: 0.35rem; font-size: 15px; font-weight: 640; color: var(--ink); margin: 0; }
-  .count-pill { color: var(--text-muted); font-weight: 500; font-variant-numeric: tabular-nums; }
-  .count-pill--attention { color: var(--warning); }
 
   /* ---- Status marks: solid, hatched, hollow, flat ---- */
   .g { width: 0.7rem; height: 0.7rem; display: inline-block; flex-shrink: 0; }
