@@ -310,18 +310,18 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
                 &et_id,
                 &buf_start.format("%Y-%m-%dT%H:%M:%S").to_string(),
                 &buf_end.format("%Y-%m-%dT%H:%M:%S").to_string(),
+                host_tz,
             )
             .await?;
 
-            for (bs, be) in &booking_conflicts {
-                if let Some((s, e)) = crate::booking_time::busy_range(bs, be, host_tz) {
-                    if s < buf_end && e > buf_start {
-                        bail!(
-                            "Conflict with an existing booking at {} – {}",
-                            s.format("%H:%M"),
-                            e.format("%H:%M")
-                        );
-                    }
+            // Each range includes that booking's own buffers (#422).
+            for (s, e) in &booking_conflicts {
+                if *s < buf_end && *e > buf_start {
+                    bail!(
+                        "Conflict with an existing booking or its buffer at {} – {}",
+                        s.format("%H:%M"),
+                        e.format("%H:%M")
+                    );
                 }
             }
 
@@ -1309,6 +1309,30 @@ mod tests {
         run(&pool, &[0u8; 32], create_at("11:00", "on@test.com"))
             .await
             .expect("the host is back at 11:00");
+    }
+
+    /// An existing booking keeps its own buffers against a CLI booking
+    /// (#422): with buffer_after = 30, 10:30 is refused after a 10:00
+    /// booking, and 11:00 is free.
+    #[tokio::test]
+    async fn create_refuses_an_existing_bookings_buffer() {
+        let pool = setup_db().await;
+        let (_user_id, _account, et_id) = seed_event_type(&pool).await;
+        sqlx::query("UPDATE event_types SET buffer_after = 30 WHERE id = ?")
+            .bind(&et_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        run(&pool, &[0u8; 32], create_at("10:00", "first@test.com"))
+            .await
+            .expect("10:00 is free");
+        let err = run(&pool, &[0u8; 32], create_at("10:30", "second@test.com"))
+            .await
+            .expect_err("10:30 is inside the 10:00 booking's buffer");
+        assert!(err.to_string().contains("Conflict"), "{err}");
+        run(&pool, &[0u8; 32], create_at("11:00", "third@test.com"))
+            .await
+            .expect("11:00 is past the buffer");
     }
 
     /// A time off table that cannot be read refuses the booking and says so.

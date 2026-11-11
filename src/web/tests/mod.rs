@@ -579,6 +579,22 @@ fn far_future_monday() -> String {
     d.format("%Y-%m-%d").to_string()
 }
 
+/// The slot start times the page offers for `date`, read from the JSON the
+/// slot picker renders from (the times themselves are drawn client-side).
+fn slot_times_on(page: &str, date: &str) -> Vec<String> {
+    let key = format!("\"{date}\": [");
+    let Some(i) = page.find(&key) else {
+        return Vec::new();
+    };
+    let rest = &page[i + key.len()..];
+    let end = rest.find(']').unwrap_or(0);
+    rest[..end]
+        .split("\"start\":\"")
+        .skip(1)
+        .filter_map(|chunk| chunk.split('"').next().map(str::to_string))
+        .collect()
+}
+
 fn book_body(csrf: &str) -> String {
     format!(
         "_csrf={}&date={}&time=10:00&name=Guest&email=guest%40test.com&tz=UTC",
