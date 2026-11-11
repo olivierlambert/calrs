@@ -388,8 +388,6 @@ async fn try_busy_for_resource(
     host_tz: Tz,
     exclude_booking_id: Option<&str>,
 ) -> Result<Vec<(NaiveDateTime, NaiveDateTime)>, sqlx::Error> {
-    let end_compact = window_end.format("%Y%m%dT%H%M%S").to_string();
-    let start_compact = window_start.format("%Y%m%dT%H%M%S").to_string();
     let end_iso = window_end.format("%Y-%m-%dT%H:%M:%S").to_string();
     let start_iso = window_start.format("%Y-%m-%dT%H:%M:%S").to_string();
 
@@ -399,6 +397,8 @@ async fn try_busy_for_resource(
     // booking was cancelled (release may have failed) must not keep
     // blocking until someone cleans the remote calendar by hand.
     let exclude_id = exclude_booking_id.unwrap_or("");
+    // Feed events keep their own zone's wall clock while the window is
+    // host-local: two days of slack, as for the bookings below (#420).
     let events: Vec<(String, String, Option<String>)> = sqlx::query_as(
         "SELECT start_at, end_at, timezone FROM resource_events
          WHERE resource_id = ?
@@ -407,13 +407,14 @@ async fn try_busy_for_resource(
            AND (transp IS NULL OR transp != 'TRANSPARENT')
            AND (? = '' OR uid NOT IN (SELECT uid FROM bookings WHERE id = ?))
            AND uid NOT IN (SELECT uid FROM bookings WHERE status IN ('cancelled', 'declined'))
-           AND start_at <= ? AND end_at >= ?",
+           AND start_at <= strftime('%Y%m%dT%H%M%S', ?, '+2 days')
+           AND end_at >= strftime('%Y%m%dT%H%M%S', ?, '-2 days')",
     )
     .bind(resource_id)
     .bind(exclude_id)
     .bind(exclude_id)
-    .bind(&end_compact)
-    .bind(&start_compact)
+    .bind(&end_iso)
+    .bind(&start_iso)
     .fetch_all(pool)
     .await?;
 
@@ -433,12 +434,13 @@ async fn try_busy_for_resource(
            AND (transp IS NULL OR transp != 'TRANSPARENT')
            AND (? = '' OR uid NOT IN (SELECT uid FROM bookings WHERE id = ?))
            AND uid NOT IN (SELECT uid FROM bookings WHERE status IN ('cancelled', 'declined'))
-           AND ((rrule IS NOT NULL AND rrule != '') OR rdate = 1) AND start_at <= ?",
+           AND ((rrule IS NOT NULL AND rrule != '') OR rdate = 1)
+           AND start_at <= strftime('%Y%m%dT%H%M%S', ?, '+2 days')",
     )
     .bind(resource_id)
     .bind(exclude_id)
     .bind(exclude_id)
-    .bind(&end_compact)
+    .bind(&end_iso)
     .fetch_all(pool)
     .await?;
 
@@ -834,6 +836,39 @@ mod tests {
             vec![(dt("2026-07-30T00:00"), dt("2026-08-01T00:00"))],
             "all-day event must span July 30 00:00 to August 1 00:00"
         );
+    }
+
+    /// A feed event in UTC blocks the slot it overlaps in the host's zone,
+    /// though its stored wall clock does not (#420).
+    #[tokio::test]
+    async fn busy_for_resource_reads_events_stored_in_another_timezone() {
+        use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+        use std::str::FromStr;
+        let pool = SqlitePoolOptions::new()
+            .max_connections(2)
+            .connect_with(
+                SqliteConnectOptions::from_str("sqlite::memory:")
+                    .unwrap()
+                    .foreign_keys(true),
+            )
+            .await
+            .unwrap();
+        crate::db::migrate(&pool).await.unwrap();
+        sqlx::raw_sql(
+            "INSERT INTO resources (id, name, feed_url, last_synced_at)
+                 VALUES ('lab', 'Lab', 'https://feed.invalid/cal.ics', datetime('now'));
+             INSERT INTO resource_events (id, resource_id, uid, start_at, end_at, all_day, timezone)
+                 VALUES ('e', 'lab', 'uid-1', '20261214T090000', '20261214T093000', 0, 'UTC');",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // 09:00 UTC is 10:00 in Paris in December.
+        let (start, end) = (dt("2026-12-14T10:00"), dt("2026-12-14T10:30"));
+        let paris: Tz = "Europe/Paris".parse().unwrap();
+        let busy = busy_for_resource(&pool, "lab", start, end, paris, None).await;
+        assert_eq!(busy, vec![(start, end)]);
     }
 
     #[test]

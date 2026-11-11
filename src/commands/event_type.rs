@@ -296,16 +296,15 @@ pub(crate) async fn host_microsoft_gaps(
 /// event sorts lexically after its own date prefix ("20260618T100000" >
 /// "20260618"), so a window ending on the event's own date would silently miss
 /// it. Returns raw (start_at, end_at, timezone) rows for tz conversion by the
-/// caller. UTC Google status events use a two-day SQL margin so host-local
-/// slots aren't missed before the caller converts the returned busy ranges.
+/// caller. Events keep their own zone's wall clock while the window is
+/// host-local, so the SQL bounds carry two days of slack: a row outside the
+/// window once converted only blocks times no slot is offered at (#420).
 async fn fetch_nonrecurring_busy_events(
     pool: &SqlitePool,
     et_id: &str,
     window_start: NaiveDateTime,
     window_end: NaiveDateTime,
 ) -> Result<Vec<(String, String, Option<String>)>> {
-    let end_compact = window_end.format("%Y%m%dT%H%M%S").to_string();
-    let start_compact = window_start.format("%Y%m%dT%H%M%S").to_string();
     let rows = sqlx::query_as(
         "SELECT e.start_at, e.end_at, e.timezone FROM events e
          JOIN calendars c ON c.id = e.calendar_id
@@ -319,16 +318,12 @@ async fn fetch_nonrecurring_busy_events(
            AND (e.rrule IS NULL OR e.rrule = '') AND e.rdate = 0
            AND (e.status IS NULL OR e.status != 'CANCELLED')
            AND (e.transp IS NULL OR e.transp != 'TRANSPARENT')
-           AND ((e.start_at <= ? AND e.end_at >= ?)
-                OR (e.google_out_of_office = 1
-                    AND e.start_at <= strftime('%Y%m%dT%H%M%S', ?, '+2 days')
-                    AND e.end_at >= strftime('%Y%m%dT%H%M%S', ?, '-2 days')))",
+           AND e.start_at <= strftime('%Y%m%dT%H%M%S', ?, '+2 days')
+           AND e.end_at >= strftime('%Y%m%dT%H%M%S', ?, '-2 days')",
     )
     .bind(et_id)
     .bind(et_id)
     .bind(et_id)
-    .bind(&end_compact)
-    .bind(&start_compact)
     .bind(window_end.format("%Y-%m-%dT%H:%M:%S").to_string())
     .bind(window_start.format("%Y-%m-%dT%H:%M:%S").to_string())
     .fetch_all(pool)
@@ -547,8 +542,11 @@ pub async fn run(pool: &SqlitePool, cmd: EventTypeCommands) -> Result<()> {
 
             busy_events.extend(booking_busy);
 
-            // Expand recurring events
-            let end_compact_rrule = end_date.format("%Y%m%dT235959").to_string();
+            // Expand recurring events. A series' DTSTART is in its own zone's
+            // wall clock, possibly a day ahead of the host's (#420).
+            let end_compact_rrule = (end_date + Duration::days(2))
+                .format("%Y%m%dT235959")
+                .to_string();
             let recurring: Vec<(String, String, String, Option<String>, Option<String>)> = sqlx::query_as(
                 "SELECT e.start_at, e.end_at, COALESCE(e.rrule, ''), e.raw_ical, e.timezone FROM events e
                  JOIN calendars c ON c.id = e.calendar_id
@@ -1064,6 +1062,55 @@ mod tests {
         .await
         .unwrap();
         assert!(busy.is_empty(), "{busy:?}");
+    }
+
+    /// The window is host-local but events keep their own zone's wall clock:
+    /// an event in Los Angeles ending at 01:00 ends at 10:00 in Paris, inside
+    /// a window opening at 09:30 there (#420).
+    #[tokio::test]
+    async fn slots_busy_query_reads_events_stored_in_another_timezone() {
+        let pool = setup_db().await;
+        let (_user_id, account_id) = seed_account(&pool).await;
+        sqlx::raw_sql(
+            "INSERT INTO caldav_sources (id, account_id, name, url, username)
+                 SELECT 'src', id, 'S', 'https://x/dav', 'u' FROM accounts;
+             INSERT INTO calendars (id, source_id, href, display_name, is_busy)
+                 VALUES ('cal', 'src', '/c/', 'C', 1);
+             INSERT INTO events (id, calendar_id, uid, summary, start_at, end_at, all_day, timezone, status, transp)
+                 VALUES ('ev', 'cal', 'u1', 'Busy', '20261214T003000', '20261214T010000', 0, 'America/Los_Angeles', 'CONFIRMED', 'OPAQUE');",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let et_id = Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO event_types (id, account_id, slug, title, duration_min, timezone) VALUES (?, ?, 'demo', 'Demo', 30, 'Europe/Paris')")
+            .bind(&et_id)
+            .bind(&account_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let day = NaiveDate::from_ymd_opt(2026, 12, 14).unwrap();
+        let busy = fetch_nonrecurring_busy_events(
+            &pool,
+            &et_id,
+            day.and_hms_opt(9, 30, 0).unwrap(),
+            day.and_hms_opt(23, 59, 59).unwrap(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(busy.len(), 1, "{busy:?}");
+        let paris: chrono_tz::Tz = "Europe/Paris".parse().unwrap();
+        let (start, end, tz) = &busy[0];
+        let convert =
+            |s: &str| convert_event_to_tz(parse_ical_datetime(s).unwrap(), tz.as_deref(), paris);
+        assert_eq!(
+            (convert(start), convert(end)),
+            (
+                day.and_hms_opt(9, 30, 0).unwrap(),
+                day.and_hms_opt(10, 0, 0).unwrap()
+            )
+        );
     }
 
     // --- Rolling booking horizon (migration 063) ---

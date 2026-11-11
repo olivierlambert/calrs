@@ -721,9 +721,7 @@ async fn busy_times(
     // ("20260618T100000" > "20260618"), so a same-day window (window_end on the
     // same date as the event, e.g. the single-slot window in pick_group_member)
     // would silently miss the event and treat a busy member as free.
-    let end_compact = window_end.format("%Y%m%dT%H%M%S").to_string();
-    let start_compact = window_start.format("%Y%m%dT%H%M%S").to_string();
-    // ISO bounds are for the bookings sub-query below (bookings store ISO times).
+    // The bounds are built by `strftime` from the ISO ones below.
     let end_iso = window_end.format("%Y-%m-%dT%H:%M:%S").to_string();
     let start_iso = window_start.format("%Y-%m-%dT%H:%M:%S").to_string();
 
@@ -734,8 +732,9 @@ async fn busy_times(
     // still make the booking conflict with its own calendar copy.
     let exclude_uid = exclude_booking_uid.unwrap_or("");
 
-    // API status events are UTC, while the requested window is host-local.
-    // Fetch them with timezone slack, then test overlap after conversion below.
+    // Events keep the wall clock of their own zone, while the window is
+    // host-local: fetch them with two days of slack (more than any two
+    // zones differ by), then test overlap after conversion below (#420).
     let events: Result<Vec<(String, String, Option<String>)>, _> = sqlx::query_as(
         "SELECT e.start_at, e.end_at, e.timezone FROM events e
          JOIN calendars c ON c.id = e.calendar_id
@@ -748,18 +747,14 @@ async fn busy_times(
            AND (e.status IS NULL OR e.status != 'CANCELLED')
            AND (e.transp IS NULL OR e.transp != 'TRANSPARENT')
            AND (? = '' OR e.uid != ?)
-           AND ((e.start_at <= ? AND e.end_at >= ?)
-                OR (e.google_out_of_office = 1
-                    AND e.start_at <= strftime('%Y%m%dT%H%M%S', ?, '+2 days')
-                    AND e.end_at >= strftime('%Y%m%dT%H%M%S', ?, '-2 days')))",
+           AND e.start_at <= strftime('%Y%m%dT%H%M%S', ?, '+2 days')
+           AND e.end_at >= strftime('%Y%m%dT%H%M%S', ?, '-2 days')",
     )
     .bind(user_id)
     .bind(et_id_for_filter)
     .bind(et_id_for_filter)
     .bind(exclude_uid)
     .bind(exclude_uid)
-    .bind(&end_compact)
-    .bind(&start_compact)
     .bind(&end_iso)
     .bind(&start_iso)
     .fetch_all(pool)
@@ -775,7 +770,13 @@ async fn busy_times(
         })
         .collect();
 
-    let end_compact_rrule = window_end.format("%Y%m%dT235959").to_string();
+    // A series starts at its DTSTART, in its own zone's wall clock, which
+    // can be a day ahead of the host's: the same slack applies (#420).
+    let end_compact_rrule = window_end
+        .checked_add_signed(Duration::days(2))
+        .unwrap_or(window_end)
+        .format("%Y%m%dT235959")
+        .to_string();
     let recurring: Result<Vec<(String, String, String, Option<String>, Option<String>)>, _> = sqlx::query_as(
         "SELECT e.start_at, e.end_at, COALESCE(e.rrule, ''), e.raw_ical, e.timezone FROM events e
          JOIN calendars c ON c.id = e.calendar_id
@@ -2745,14 +2746,12 @@ pub(super) async fn troubleshoot(
     };
 
     // Busy events for this date — enriched with title + calendar name
-    let day_start_compact = target_date.format("%Y%m%d").to_string();
-    let day_end_compact = (target_date + Duration::days(1))
-        .format("%Y%m%d")
-        .to_string();
     let day_start_iso = target_date.format("%Y-%m-%dT00:00:00").to_string();
     let day_end_iso = target_date.format("%Y-%m-%dT23:59:59").to_string();
 
-    // Non-recurring busy events for this date
+    // Non-recurring busy events for this date. Events keep their own zone's
+    // wall clock, so they are fetched with two days of slack and kept below
+    // only when they reach the day once converted (#420).
     let raw_busy_events: Vec<(
         String,
         String,
@@ -2771,17 +2770,14 @@ pub(super) async fn troubleshoot(
            AND (e.rrule IS NULL OR e.rrule = '') AND e.rdate = 0
            AND (e.status IS NULL OR e.status != 'CANCELLED')
            AND (e.transp IS NULL OR e.transp != 'TRANSPARENT')
-           AND ((e.start_at < ? AND e.end_at > ?) OR (e.start_at < ? AND e.end_at > ?)
-                OR (e.google_out_of_office = 1
-                    AND e.start_at <= strftime('%Y%m%dT%H%M%S', ?, '+2 days')
+           AND ((e.start_at < ? AND e.end_at > ?)
+                OR (e.start_at <= strftime('%Y%m%dT%H%M%S', ?, '+2 days')
                     AND e.end_at >= strftime('%Y%m%dT%H%M%S', ?, '-2 days')))
          ORDER BY e.start_at",
     )
     .bind(&user.id)
     .bind(&et_id)
     .bind(&et_id)
-    .bind(&day_end_compact)
-    .bind(&day_start_compact)
     .bind(&day_end_iso)
     .bind(&day_start_iso)
     .bind(&day_end_iso)
@@ -2836,13 +2832,13 @@ pub(super) async fn troubleshoot(
            AND (e.status IS NULL OR e.status != 'CANCELLED')
            AND (e.transp IS NULL OR e.transp != 'TRANSPARENT')
            AND ((e.rrule IS NOT NULL AND e.rrule != '') OR e.rdate = 1)
-           AND (e.start_at <= ? OR e.start_at <= ?)",
+           AND (e.start_at <= ? OR e.start_at <= strftime('%Y%m%dT%H%M%S', ?, '+2 days'))",
     )
     .bind(&user.id)
     .bind(&et_id)
     .bind(&et_id)
     .bind(&day_end_iso)
-    .bind(&day_end_compact)
+    .bind(&day_end_iso)
     .fetch_all(&state.pool)
     .await
     .unwrap_or_default();
