@@ -126,6 +126,7 @@ calrs supports OpenID Connect for single sign-on, tested with Keycloak and compa
 
 - **Authorization code flow with PKCE** — no client secret stored in the browser
 - **Auto-discovery** — reads `.well-known/openid-configuration` from the issuer URL
+- **Claims from the ID token or UserInfo** — the email, name and `email_verified` claims are read from the ID token; a provider that keeps its ID token minimal is asked at its UserInfo endpoint instead
 - **User linking by email** — if a local user exists with the same email, the OIDC identity is linked
 - **Auto-registration** — new users are created on first OIDC login (if enabled)
 - **Group sync** — groups from the `groups` JWT claim are synced on each login and can be linked to teams
