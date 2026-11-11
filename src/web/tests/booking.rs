@@ -1534,7 +1534,7 @@ async fn cli_booking_create_accepts_time_inside_custom_hours_override() {
 #[tokio::test]
 async fn cli_booking_create_on_a_plain_date_follows_weekly_rules() {
     let pool = setup_test_db().await;
-    let (_, _, et) = seed_test_data(&pool).await;
+    seed_test_data(&pool).await;
     let day = far_future_monday();
 
     let result = cli_book(&pool, &day, "10:00").await;
