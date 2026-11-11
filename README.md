@@ -668,7 +668,7 @@ calrs ships with ten complete translations: English, French, Spanish, Polish, Ge
 
 German comes in two registers: **Deutsch** addresses the reader as "du", **Deutsch (Sie)** as "Sie", as most businesses in Germany, Austria and Switzerland address their customers. Browsers only ask for "German", so visitors get "du" unless the instance chooses otherwise. An admin can set **German form of address** to *Formal (Sie)* under System settings, after which every visitor whose browser asks for German is addressed as "Sie": on all public pages, in the bookings they make, and in every email they receive. A single user can also pick *Deutsch (Sie)* as their language in Profile & Settings and set their public booking pages to *Always my language*.
 
-Each of these ten locales carries all 2004 message ids. A test holds them there, so a release cannot ship a half-translated language. Formal German is the exception by design: `i18n/de-formal/` is an overlay on `de` that only carries the messages addressing the reader and reads every other message from `de`. Do not copy unchanged German messages into it; a test rejects an override identical to `de`.
+Each of these ten locales carries all 2074 message ids. A test holds them there, so a release cannot ship a half-translated language. Formal German is the exception by design: `i18n/de-formal/` is an overlay on `de` that only carries the messages addressing the reader and reads every other message from `de`. Do not copy unchanged German messages into it; a test rejects an override identical to `de`.
 
 ### Translation quality
 
@@ -680,7 +680,7 @@ Each of these ten locales carries all 2004 message ids. A test holds them there,
 | Spanish, Polish, German, Italian, Estonian, Dutch | Complete, but machine-seeded. Native-speaker review very welcome |
 | Russian | Complete, machine-assisted and then reviewed section by section. Native-speaker review very welcome |
 
-Complete is not the same as good. The machine-seeded locales are grammatical and internally consistent, and they have been checked for the things automated translation usually gets wrong: the register stays consistent throughout (informal, except French and Russian, which use the formal "vous" and «вы» as their software usually does), Polish and Russian carry the plural categories its grammar needs rather than English's two, and sentences that interpolate a value avoid agreeing with it. What they have not had is a native speaker reading them in context, on the actual pages. If one of those is your language, the section below is for you.
+Complete is not the same as good. The machine-seeded locales are grammatical and internally consistent, and they have been checked for the things automated translation usually gets wrong: the register stays informal throughout, Polish carries the plural categories its grammar needs rather than English's two, and sentences that interpolate a value avoid agreeing with it. Russian was checked the same way, with two differences: it uses the formal «вы», as French uses "vous", and its own one/few/many plurals. What they have not had is a native speaker reading them in context, on the actual pages. If one of those is your language, the section below is for you.
 
 ### How language is selected
 
@@ -716,7 +716,7 @@ Four steps, and the order matters. Doing them out of order fails the build in a 
 3. **Declare its plural categories.** Add the locale to the `required` table in `plural_messages_carry_the_locale_categories` in `src/i18n.rs`. Most languages need `one, other`; Polish and Russian need `one, few, many`. The [CLDR plural rules chart](https://www.unicode.org/cldr/charts/47/supplemental/language_plural_rules.html) is the reference.
 4. Run `cargo test i18n::`
 
-Step 1 comes before step 2 for a reason: the coverage test demands every key the moment a locale appears in `SUPPORTED_LANGS`, so registering an empty file fails with 2004 errors at once.
+Step 1 comes before step 2 for a reason: the coverage test demands every key the moment a locale appears in `SUPPORTED_LANGS`, so registering an empty file fails with 2074 errors at once.
 
 That is the whole change on the calrs side. The language then appears in the **Profile & Settings** dropdown and is matched against `Accept-Language` automatically.
 
