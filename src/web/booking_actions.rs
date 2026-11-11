@@ -1968,6 +1968,42 @@ pub(super) async fn guest_reschedule_booking(
     }
     let booking_guard = crate::resources::booking_lock().await;
 
+    // The row was read before the lock was free. A cancellation, decline,
+    // expiry or another reschedule may have committed since: refuse then,
+    // before any check or write (#421). Raw stored values are kept for the
+    // conditional UPDATE below.
+    let current: Option<(String, String, String, String, String)> = match sqlx::query_as(
+        "SELECT status, reschedule_token, start_at, end_at,
+                CASE time_version WHEN 1 THEN start_at ELSE rtrim(start_at, 'Z') END || '|' ||
+                CASE time_version WHEN 1 THEN end_at ELSE rtrim(end_at, 'Z') END
+         FROM bookings WHERE id = ?",
+    )
+    .bind(&booking_id)
+    .fetch_optional(&state.pool)
+    .await
+    {
+        Ok(row) => row,
+        Err(e) => return internal_error_response("database query", &e),
+    };
+    let (raw_start_at, raw_end_at) = match current {
+        Some((status, tok, raw_start, raw_end, shown))
+            if matches!(status.as_str(), "confirmed" | "pending")
+                && tok == token
+                && shown == format!("{old_start_at}|{old_end_at}") =>
+        {
+            (raw_start, raw_end)
+        }
+        _ => {
+            drop(booking_guard);
+            return render_booking_action_error_keys_in(
+                &state,
+                lang,
+                "bae-title-invalid-link",
+                "bae-body-reschedule-link-invalid",
+            );
+        }
+    };
+
     let busy = match reschedule_busy_source(
         &state.pool,
         &hosts,
@@ -2158,7 +2194,8 @@ pub(super) async fn guest_reschedule_booking(
                 assigned_resource_id = ?,
                 pending_expires_at = ?, pending_since = ?, pending_reminder_sent_at = NULL,
                 ics_sequence = ics_sequence + 1
-         WHERE id = ?",
+         WHERE id = ? AND reschedule_token = ? AND status IN ('confirmed', 'pending')
+           AND start_at = ? AND end_at = ?",
     )
     .bind(&new_start_at)
     .bind(&new_end_at)
@@ -2171,9 +2208,23 @@ pub(super) async fn guest_reschedule_booking(
     .bind(&pending_expires_at)
     .bind(&pending_since)
     .bind(&booking_id)
+    .bind(&token)
+    .bind(&raw_start_at)
+    .bind(&raw_end_at)
     .execute(&state.pool)
     .await;
     drop(booking_guard);
+    // Nothing changed: the booking moved on after the check under the lock.
+    // No webhook, release, email or push may advertise a move that did not
+    // happen.
+    if matches!(&update_result, Ok(r) if r.rows_affected() == 0) {
+        return render_booking_action_error_keys_in(
+            &state,
+            lang,
+            "bae-title-invalid-link",
+            "bae-body-reschedule-link-invalid",
+        );
+    }
     if let Err(e) = update_result {
         // idx_bookings_no_overlap can reject the new time; do not proceed to
         // emails and pushes advertising a time the DB refused.
