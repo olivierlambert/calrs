@@ -1594,3 +1594,82 @@ async fn another_event_types_buffers_block_the_hosts_slots() {
     .unwrap();
     assert_eq!(mine, ["11:00"]);
 }
+
+async fn cli_book(pool: &sqlx::SqlitePool, day: &str, time: &str) -> anyhow::Result<()> {
+    crate::commands::booking::run(
+        pool,
+        &[0; 32],
+        crate::commands::booking::BookingCommands::Create {
+            slug: "test-meeting".into(),
+            date: Some(day.into()),
+            time: Some(time.into()),
+            name: Some("Guest".into()),
+            email: Some("guest@example.com".into()),
+            timezone: "UTC".into(),
+            notes: None,
+        },
+    )
+    .await
+}
+
+#[tokio::test]
+async fn cli_booking_create_refuses_a_blocked_date_override() {
+    let pool = setup_test_db().await;
+    let (_, _, et) = seed_test_data(&pool).await;
+    let day = far_future_monday();
+    sqlx::query("INSERT INTO availability_overrides (id, event_type_id, date, is_blocked) VALUES ('o1', ?, ?, 1)").bind(&et).bind(&day).execute(&pool).await.unwrap();
+    let result = cli_book(&pool, &day, "10:00").await;
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM bookings")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        count, 0,
+        "CLI created a booking on a blocked date: {result:?}"
+    );
+}
+
+#[tokio::test]
+async fn cli_booking_create_refuses_time_outside_custom_hours_override() {
+    let pool = setup_test_db().await;
+    let (_, _, et) = seed_test_data(&pool).await;
+    let day = far_future_monday();
+    sqlx::query("INSERT INTO availability_overrides (id, event_type_id, date, start_time, end_time, is_blocked) VALUES ('o1', ?, ?, '13:00', '15:00', 0)").bind(&et).bind(&day).execute(&pool).await.unwrap();
+    let result = cli_book(&pool, &day, "10:00").await;
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM bookings")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        count, 0,
+        "10:00 is outside the 13:00-15:00 override: {result:?}"
+    );
+}
+
+#[tokio::test]
+async fn cli_booking_create_accepts_time_inside_custom_hours_override() {
+    let pool = setup_test_db().await;
+    let (_, _, et) = seed_test_data(&pool).await;
+    let day = far_future_monday();
+    sqlx::query("INSERT INTO availability_overrides (id, event_type_id, date, start_time, end_time, is_blocked) VALUES ('o1', ?, ?, '13:00', '15:00', 0)").bind(&et).bind(&day).execute(&pool).await.unwrap();
+    let result = cli_book(&pool, &day, "13:00").await;
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM bookings")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 1, "13:00 is inside the override: {result:?}");
+}
+
+#[tokio::test]
+async fn cli_booking_create_on_a_plain_date_follows_weekly_rules() {
+    let pool = setup_test_db().await;
+    seed_test_data(&pool).await;
+    let day = far_future_monday();
+
+    let result = cli_book(&pool, &day, "10:00").await;
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM bookings")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 1, "plain date unchanged: {result:?}");
+}

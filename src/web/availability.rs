@@ -1770,29 +1770,18 @@ pub(super) fn compute_slots_from_rules(
             .filter(|(d, _, _, _)| *d == date_str)
             .collect();
 
-        // If any override blocks this day, skip entirely
-        if day_overrides.iter().any(|(_, _, _, blocked)| *blocked != 0) {
-            continue;
-        }
-
-        // Build time windows: use custom hours if overrides exist, else weekly rules
-        let windows: Vec<(String, String)> = if !day_overrides.is_empty() {
-            // Custom hours overrides replace weekly rules
-            day_overrides
-                .iter()
-                .filter_map(|(_, s, e, _)| match (s, e) {
-                    (Some(start), Some(end)) => Some((start.clone(), end.clone())),
-                    _ => None,
-                })
-                .collect()
-        } else {
-            let weekday = date.weekday().num_days_from_sunday() as i32;
-            rules
-                .iter()
-                .filter(|(d, _, _)| *d == weekday)
-                .map(|(_, s, e)| (s.clone(), e.clone()))
-                .collect()
-        };
+        let day_overrides: Vec<crate::availability_rules::DayOverride> = day_overrides
+            .iter()
+            .map(|(_, s, e, b)| (s.clone(), e.clone(), *b))
+            .collect();
+        let weekday = date.weekday().num_days_from_sunday() as i32;
+        let weekly: Vec<(String, String)> = rules
+            .iter()
+            .filter(|(d, _, _)| *d == weekday)
+            .map(|(_, s, e)| (s.clone(), e.clone()))
+            .collect();
+        // Blocked date: none; custom hours replace the weekly rules.
+        let windows = crate::availability_rules::effective_windows_for_day(&weekly, &day_overrides);
 
         if windows.is_empty() {
             continue;

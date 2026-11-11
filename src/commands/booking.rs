@@ -173,19 +173,34 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
 
             // Validate: within availability rules
             let weekday = slot_start.date().weekday().num_days_from_sunday() as i32;
-            let rule_match: Option<(String,)> = sqlx::query_as(
-                "SELECT id FROM availability_rules
-                 WHERE event_type_id = ? AND day_of_week = ?
-                   AND start_time <= ? AND end_time >= ?",
+            let weekly: Vec<(String, String)> = sqlx::query_as(
+                "SELECT start_time, end_time FROM availability_rules
+                 WHERE event_type_id = ? AND day_of_week = ?",
             )
             .bind(&et_id)
             .bind(weekday)
-            .bind(slot_start.time().format("%H:%M").to_string())
-            .bind(slot_end.time().format("%H:%M").to_string())
-            .fetch_optional(pool)
+            .fetch_all(pool)
             .await?;
+            // Date overrides, as on the booking page: a blocked date offers
+            // nothing, custom hours replace the weekly rules.
+            let overrides: Vec<crate::availability_rules::DayOverride> = sqlx::query_as(
+                "SELECT start_time, end_time, is_blocked FROM availability_overrides
+                 WHERE event_type_id = ? AND date = ?",
+            )
+            .bind(&et_id)
+            .bind(slot_start.date().format("%Y-%m-%d").to_string())
+            .fetch_all(pool)
+            .await?;
+            if overrides.iter().any(|(_, _, blocked)| *blocked != 0) {
+                bail!("{} is marked unavailable for '{}'", slot_start.date(), slug);
+            }
+            let start_hm = slot_start.time().format("%H:%M").to_string();
+            let end_hm = slot_end.time().format("%H:%M").to_string();
+            let fits = crate::availability_rules::effective_windows_for_day(&weekly, &overrides)
+                .iter()
+                .any(|(s, e)| *s <= start_hm && *e >= end_hm);
 
-            if rule_match.is_none() {
+            if !fits {
                 bail!(
                     "Slot {} {} – {} is outside availability windows",
                     date_str,
