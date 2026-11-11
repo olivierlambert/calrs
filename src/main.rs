@@ -7,6 +7,7 @@
 #![allow(clippy::too_many_arguments)]
 
 mod auth;
+mod availability_rules;
 mod booking_time;
 mod booking_window;
 mod caldav;
