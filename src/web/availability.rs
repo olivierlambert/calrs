@@ -3206,11 +3206,13 @@ pub(super) async fn troubleshoot(
             continue;
         }
 
-        // 4. Check bookings (with this event type's buffers and the
-        // booking's own, #422)
+        // 4. Check bookings, as the slot grid does: the booking widened by
+        // its own buffers (#422), the tick by this event type's, each on
+        // its own side (this type's buffer_after runs up to the booking's
+        // start, its buffer_before back to the booking's end).
         let booking_conflict = bookings_parsed.iter().find(|(s, e, _, _, before, after)| {
-            let buf_s = *s - Duration::minutes(i64::from(buf_before) + before);
-            let buf_e = *e + Duration::minutes(i64::from(buf_after) + after);
+            let buf_s = *s - Duration::minutes(before + i64::from(buf_after));
+            let buf_e = *e + Duration::minutes(after + i64::from(buf_before));
             tick_dt < buf_e && tick_end > buf_s
         });
 
@@ -3234,9 +3236,9 @@ pub(super) async fn troubleshoot(
                         &crate::i18n::format_duration(
                             lang,
                             if tick_dt < *bk_s {
-                                i64::from(buf_before) + bk_before
+                                bk_before + i64::from(buf_after)
                             } else {
-                                i64::from(buf_after) + bk_after
+                                bk_after + i64::from(buf_before)
                             },
                         ),
                     ),

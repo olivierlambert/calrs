@@ -3589,16 +3589,24 @@ async fn troubleshoot_labels_a_claimed_booking() {
 }
 
 /// The troubleshoot view shows a booking's own buffers around it (#422),
-/// here from another event type of the user, the one viewed having none.
+/// each on its side, as the slot grid applies them: the viewed type's
+/// buffer_after before the booking, the booking's own buffer_after after
+/// it, never the two added on one side. Here the booking is on another
+/// event type of the user, and the slot page offers the same times.
 #[tokio::test]
 async fn troubleshoot_shows_a_bookings_own_buffers() {
-    let (app, pool, session, _et_id) = setup_test_app().await;
+    let (app, pool, session, et_id) = setup_test_app().await;
     let me: String = sqlx::query_scalar("SELECT id FROM users WHERE username = 'testuser'")
         .fetch_one(&pool)
         .await
         .unwrap();
+    sqlx::query("UPDATE event_types SET buffer_before = 0, buffer_after = 30 WHERE id = ?")
+        .bind(&et_id)
+        .execute(&pool)
+        .await
+        .unwrap();
     let other = insert_personal_et(&pool, &me, "buffered-ts-422").await;
-    sqlx::query("UPDATE event_types SET buffer_before = 15, buffer_after = 30 WHERE id = ?")
+    sqlx::query("UPDATE event_types SET buffer_before = 0, buffer_after = 30 WHERE id = ?")
         .bind(&other)
         .execute(&pool)
         .await
@@ -3611,6 +3619,7 @@ async fn troubleshoot_shows_a_bookings_own_buffers() {
     insert_booking(&pool, &other, None, start, "confirmed").await;
 
     let response = app
+        .clone()
         .oneshot(get_authed(
             &format!("/dashboard/troubleshoot?date={day}&event_type=test-meeting"),
             &session,
@@ -3619,8 +3628,26 @@ async fn troubleshoot_shows_a_bookings_own_buffers() {
         .unwrap();
     assert_eq!(response.status(), 200);
     let body = body_string(response).await;
-    assert!(body.contains("09:45&ndash;10:00: Buffer ("), "{body}");
+    assert!(body.contains("09:30&ndash;10:00: Buffer ("), "{body}");
     assert!(body.contains("10:30&ndash;11:00: Buffer ("), "{body}");
+    assert!(!body.contains("&ndash;11:30: Buffer ("), "{body}");
+
+    let page = body_string(
+        app.oneshot(get(&format!(
+            "/u/testuser/test-meeting?month={}&tz=UTC",
+            &day[..7]
+        )))
+        .await
+        .unwrap(),
+    )
+    .await;
+    let offered = slot_times_on(&page, &day);
+    for free in ["09:00", "11:00"] {
+        assert!(offered.contains(&free.to_string()), "{offered:?}");
+    }
+    for blocked in ["09:30", "10:00", "10:30"] {
+        assert!(!offered.contains(&blocked.to_string()), "{offered:?}");
+    }
 }
 
 /// A member excluded from a collective event type (weight 0) is not made
