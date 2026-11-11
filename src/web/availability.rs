@@ -382,8 +382,14 @@ pub(super) async fn pick_group_member(
     buffer_after: i32,
     host_tz: Tz,
 ) -> Result<Option<(String, String, String)>, sqlx::Error> {
-    let buf_start = slot_start - Duration::minutes(buffer_before as i64);
-    let buf_end = slot_end + Duration::minutes(buffer_after as i64);
+    let (buf_start, buf_end) = crate::booking_time::buffered_busy_range(
+        &slot_start.to_string(),
+        &slot_end.to_string(),
+        host_tz,
+        buffer_before.into(),
+        buffer_after.into(),
+    )
+    .expect("valid local slot bounds");
 
     // Fetch members with per-event-type weight (fallback to default 1)
     // weight=0 means excluded from this event type
@@ -857,10 +863,15 @@ async fn busy_times(
             .as_deref()
             .and_then(|z| z.parse().ok())
             .unwrap_or(Tz::UTC);
-        if let Some(range) =
-            crate::booking_time::stored_busy_range(s, e, *version, legacy_tz, host_tz)
-        {
-            busy.push(crate::booking_time::with_buffers(range, *before, *after));
+        if let Some(range) = crate::booking_time::stored_buffered_busy_range(
+            s,
+            e,
+            *version,
+            legacy_tz,
+            host_tz,
+            (*before, *after),
+        ) {
+            busy.push(range);
         }
     }
 
@@ -1838,8 +1849,14 @@ pub(super) fn compute_slots_from_rules(
                     cursor += slot_step;
                     continue;
                 }
-                let buf_start = check_start - Duration::minutes(buffer_before as i64);
-                let buf_end = check_end + Duration::minutes(buffer_after as i64);
+                let (buf_start, buf_end) = crate::booking_time::buffered_busy_range(
+                    &slot_start_utc.to_rfc3339(),
+                    &slot_end_utc.to_rfc3339(),
+                    host_tz,
+                    buffer_before.into(),
+                    buffer_after.into(),
+                )
+                .unwrap();
 
                 if busy_source_is_free(&busy, buf_start, buf_end) {
                     day_slots.push(SlotTime {
@@ -2988,7 +3005,16 @@ pub(super) async fn troubleshoot(
     // A pending request is shown as such, so the host can tell a held slot
     // from a confirmed meeting.
     #[allow(clippy::type_complexity)]
-    let bookings_parsed: Vec<(NaiveDateTime, NaiveDateTime, String, String, i64, i64)> = bookings
+    let bookings_parsed: Vec<(
+        NaiveDateTime,
+        NaiveDateTime,
+        String,
+        String,
+        i64,
+        i64,
+        NaiveDateTime,
+        NaiveDateTime,
+    )> = bookings
         .iter()
         .filter_map(|(s, e, guest, et_title, status, claimed, before, after)| {
             let (start, end) = crate::booking_time::busy_range(s, e, host_tz)?;
@@ -3009,7 +3035,25 @@ pub(super) async fn troubleshoot(
             } else {
                 et_title.clone()
             };
-            Some((start, end, guest.clone(), detail, *before, *after))
+            // Widen the stored instants by both sides' buffers. Padding the
+            // local endpoints here would disagree with slots across DST.
+            let (buffered_start, buffered_end) = crate::booking_time::buffered_busy_range(
+                s,
+                e,
+                host_tz,
+                before + i64::from(buf_after),
+                after + i64::from(buf_before),
+            )?;
+            Some((
+                start,
+                end,
+                guest.clone(),
+                detail,
+                *before,
+                *after,
+                buffered_start,
+                buffered_end,
+            ))
         })
         .collect();
 
@@ -3195,13 +3239,11 @@ pub(super) async fn troubleshoot(
         // its own buffers (#422), the tick by this event type's, each on
         // its own side (this type's buffer_after runs up to the booking's
         // start, its buffer_before back to the booking's end).
-        let booking_conflict = bookings_parsed.iter().find(|(s, e, _, _, before, after)| {
-            let buf_s = *s - Duration::minutes(before + i64::from(buf_after));
-            let buf_e = *e + Duration::minutes(after + i64::from(buf_before));
-            tick_dt < buf_e && tick_end > buf_s
-        });
+        let booking_conflict = bookings_parsed
+            .iter()
+            .find(|(_, _, _, _, _, _, buf_s, buf_e)| tick_dt < *buf_e && tick_end > *buf_s);
 
-        if let Some((bk_s, bk_e, bk_guest, bk_et, bk_before, bk_after)) = booking_conflict {
+        if let Some((bk_s, bk_e, bk_guest, bk_et, bk_before, bk_after, _, _)) = booking_conflict {
             let in_booking = tick_dt < *bk_e && tick_end > *bk_s;
             if in_booking {
                 ticks.push(Tick {

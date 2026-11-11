@@ -210,8 +210,14 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
             }
 
             // Validate: no conflicts with existing events
-            let buf_start = check_start - Duration::minutes(buffer_before as i64);
-            let buf_end = check_end + Duration::minutes(buffer_after as i64);
+            let (buf_start, buf_end) = crate::booking_time::buffered_busy_range(
+                &start_at,
+                &end_at,
+                host_tz,
+                buffer_before.into(),
+                buffer_after.into(),
+            )
+            .unwrap();
 
             #[allow(clippy::type_complexity)]
             let conflicts: Vec<(
