@@ -1570,3 +1570,40 @@ async fn overview_figures_without_a_week_keep_the_two_column_grid() {
     assert!(body.contains("class=\"ov-grid\""), "two-column grid");
     assert!(!body.contains("ov-grid one"));
 }
+
+/// An event stored over a day ahead of the viewer still shows (#420):
+/// 00:30 on the 17th at Kiritimati (UTC+14) is 23:30 on the 15th at Pago
+/// Pago (UTC-11), cut at the end of the day viewed.
+#[tokio::test]
+async fn calendar_busy_reads_events_stored_a_day_ahead_in_another_timezone() {
+    let pool = setup_test_db().await;
+    let me = insert_role_user(&pool, "me@example.com", "user").await;
+    insert_personal_et(&pool, &me, "call").await;
+    let (acc,): (String,) = sqlx::query_as("SELECT id FROM accounts WHERE user_id = ?")
+        .bind(&me)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO caldav_sources (id, account_id, name, url, username) VALUES ('s', ?, 'S', 'https://dav.example', 'u')")
+        .bind(&acc)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::raw_sql(
+        "INSERT INTO calendars (id, source_id, href, is_busy) VALUES ('c', 's', '/c/', 1);
+         INSERT INTO events (id, calendar_id, uid, start_at, end_at, timezone)
+             VALUES ('e', 'c', 'kiritimati', '20261217T003000', '20261217T010000', 'Pacific/Kiritimati');",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let pago: Tz = "Pacific/Pago_Pago".parse().unwrap();
+    let from = dt(2026, 12, 15, 0, 0);
+    let busy = ov::fetch_calendar_busy(&pool, &me, pago, from, from + Duration::days(1))
+        .await
+        .times;
+    assert_eq!(
+        busy,
+        vec![(dt(2026, 12, 15, 23, 30), dt(2026, 12, 16, 0, 0))]
+    );
+}
