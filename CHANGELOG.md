@@ -206,6 +206,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 ### Fixed
 
 - **A reschedule can no longer revive a cancelled booking** (#421) - a guest reschedule that was waiting behind another booking while the booking was cancelled, declined, expired or rescheduled is now refused instead of putting it back to confirmed or pending with a new time.
+- **`calrs booking create` respects date overrides** (#423) - the command now refuses a date marked unavailable and a time outside the custom hours set for that date, as the booking page does, instead of checking only the weekly rules.
 
 ## [2.0.0-beta.4] - 2026-11-09
 
