@@ -203,6 +203,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Fixed
+
+- **A reschedule can no longer revive a cancelled booking** (#421) - a guest reschedule that was waiting behind another booking while the booking was cancelled, declined, expired or rescheduled is now refused instead of putting it back to confirmed or pending with a new time.
+
 ## [2.0.0-beta.4] - 2026-11-09
 
 Fourth pre-release of 2.0, and the last planned before a release candidate: every item agreed for 2.0 is now in. The dashboard is warmer (#403) and laid out in cards on every page (#414, #417), long lists are paged and searched on the server (#415), and the public landing pages are redesigned (#406, #416): the host's usual hours, place and languages under their name, meetings grouped in sections the host orders, and lengths of time written in the reader's language on pages and in emails. Also new: booking answers through the REST API (#398), a dark theme logo (#404), background sync that scales to thousands of sources (#388), and a long list of correctness fixes: recurring events far from their start, BYSETPOS, YEARLY and RDATE rules (#376), clock changes (#377), invite limits, claimed bookings and collective exclusions (#373, #374, #375), team event types losing their settings on create (#400), and the Exchange client moved onto the shared XML parser (#369). Security: outbound calendar requests now connect only to addresses they checked (#363), `X-Forwarded-For` is believed only from trusted proxies, and the remaining items of the 2026 audit are closed (#85), with the HTTP client moved to reqwest 0.12. Eight migrations, one of which does nothing. **Read the upgrade notes below**, and back up your database before upgrading, as for any pre-release.
