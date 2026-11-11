@@ -3588,6 +3588,41 @@ async fn troubleshoot_labels_a_claimed_booking() {
     assert!(body.contains("Alice Demo (claimed booking)"), "{body}");
 }
 
+/// The troubleshoot view shows a booking's own buffers around it (#422),
+/// here from another event type of the user, the one viewed having none.
+#[tokio::test]
+async fn troubleshoot_shows_a_bookings_own_buffers() {
+    let (app, pool, session, _et_id) = setup_test_app().await;
+    let me: String = sqlx::query_scalar("SELECT id FROM users WHERE username = 'testuser'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let other = insert_personal_et(&pool, &me, "buffered-ts-422").await;
+    sqlx::query("UPDATE event_types SET buffer_before = 15, buffer_after = 30 WHERE id = ?")
+        .bind(&other)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let day = far_future_monday();
+    let start = NaiveDate::parse_from_str(&day, "%Y-%m-%d")
+        .unwrap()
+        .and_hms_opt(10, 0, 0)
+        .unwrap();
+    insert_booking(&pool, &other, None, start, "confirmed").await;
+
+    let response = app
+        .oneshot(get_authed(
+            &format!("/dashboard/troubleshoot?date={day}&event_type=test-meeting"),
+            &session,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = body_string(response).await;
+    assert!(body.contains("09:45&ndash;10:00: Buffer ("), "{body}");
+    assert!(body.contains("10:30&ndash;11:00: Buffer ("), "{body}");
+}
+
 /// A member excluded from a collective event type (weight 0) is not made
 /// busy by its unassigned bookings, the owner included, while the other
 /// members are; and the excluded member's own busy time does not block the

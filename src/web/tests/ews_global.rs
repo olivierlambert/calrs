@@ -740,22 +740,6 @@ async fn spawn_mock_ews() -> (String, Arc<MockEws>) {
     (format!("http://127.0.0.1:{port}/EWS/Exchange.asmx"), ews)
 }
 
-/// The slot start times the page offers for `date`, read from the JSON the
-/// slot picker renders from (the times themselves are drawn client-side).
-fn slot_times_on(page: &str, date: &str) -> Vec<String> {
-    let key = format!("\"{date}\": [");
-    let Some(i) = page.find(&key) else {
-        return Vec::new();
-    };
-    let rest = &page[i + key.len()..];
-    let end = rest.find(']').unwrap_or(0);
-    rest[..end]
-        .split("\"start\":\"")
-        .skip(1)
-        .filter_map(|chunk| chunk.split('"').next().map(str::to_string))
-        .collect()
-}
-
 /// Store a global config pointing at `endpoint`, with the mailbox-domain
 /// override `(from, to)` when set.
 async fn store_config_for(pool: &SqlitePool, endpoint: &str, domain: Option<(&str, &str)>) {

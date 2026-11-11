@@ -217,6 +217,14 @@ By default, slot start times are spaced by the event's **duration** — a 20-min
 
 Set this when you want "every half hour on the dot" or similar rounded start times regardless of meeting length. Leave blank to preserve the legacy back-to-back behaviour. Buffers and minimum notice still apply on top.
 
+## Buffers
+
+A booking reserves its own event type's **buffer before** ahead of its start and its **buffer after** past its end. A new booking is refused, and its slot is not offered, when its own buffered time overlaps a calendar event or another booking's buffered time. This holds across all your event types: a meeting on a type with a 30-minute buffer after keeps the next 30 minutes free, even for a type that has no buffer of its own.
+
+Each side's buffer belongs to that side, so honouring both never counts one twice. With a 30-minute buffer before on every type, a 10:00 to 10:30 meeting and an 11:00 one fit together; a 10:30 one does not, since its buffer would start at 10:00.
+
+Pending requests that hold their slot keep their buffers the same way. Shared resources have no buffers of their own.
+
 ## Slot computation
 
 Available slots are computed by:
@@ -225,7 +233,7 @@ Available slots are computed by:
 2. Filtering out slots that overlap with calendar events (from CalDAV sync)
 3. Filtering out slots that overlap with confirmed bookings
 4. Filtering out slots blocked by required [shared resources](./resources.md) (all mode: any busy resource blocks; round-robin mode: blocked only when every resource is busy)
-5. Applying buffer times (before and after each slot)
+5. Applying buffer times (before and after each slot, and each existing booking's own, see [Buffers](#buffers))
 6. Removing slots that violate minimum notice (too close to now)
 7. Removing days past the booking horizon (too far ahead) and days outside the bookable date range
 8. If "one slot per day" is enabled, keeping only the earliest slot per day

@@ -101,8 +101,8 @@ struct EventTypeRow {
     bookable: String,
 }
 
-/// Bookings that make the host of `et_id` busy around a window, as raw
-/// (start_at, end_at) strings for `booking_time::busy_range`. The host is the
+/// Bookings that make the host of `et_id` busy around a window, as local
+/// ranges in `host_tz` widened by each booking's own buffers (#422). The host is the
 /// event type owner, and the rule is the web slot engine's
 /// (`booking_time::user_busy_bookings`): their own bookings, bookings assigned
 /// to them on other people's team event types, unassigned collective team
@@ -116,17 +116,20 @@ pub(crate) async fn host_busy_bookings(
     et_id: &str,
     window_start_iso: &str,
     window_end_iso: &str,
-) -> Result<Vec<(String, String)>> {
+    host_tz: chrono_tz::Tz,
+) -> Result<Vec<(NaiveDateTime, NaiveDateTime)>> {
     let Some(host) = event_type_host(pool, et_id).await? else {
         return Ok(Vec::new());
     };
-    let rows = sqlx::query_as(&format!(
-        "SELECT CASE b.time_version WHEN 1 THEN b.start_at ELSE rtrim(b.start_at, 'Z') END AS start_at, CASE b.time_version WHEN 1 THEN b.end_at ELSE rtrim(b.end_at, 'Z') END AS end_at FROM bookings b
+    let rows: Vec<(String, String, i64, i64)> = sqlx::query_as(&format!(
+        "SELECT CASE b.time_version WHEN 1 THEN b.start_at ELSE rtrim(b.start_at, 'Z') END AS start_at, CASE b.time_version WHEN 1 THEN b.end_at ELSE rtrim(b.end_at, 'Z') END AS end_at, {} FROM bookings b
          JOIN event_types et ON et.id = b.event_type_id
          JOIN accounts a ON a.id = et.account_id
          WHERE {}
-           AND b.start_at <= strftime('%Y-%m-%dT%H:%M:%S', ?, '+2 days') AND b.end_at >= strftime('%Y-%m-%dT%H:%M:%S', ?, '-2 days')",
-        crate::booking_time::user_busy_bookings(true)
+           AND {}",
+        crate::booking_time::BOOKING_BUFFERS,
+        crate::booking_time::user_busy_bookings(true),
+        crate::booking_time::BUFFERED_BOOKING_WINDOW,
     ))
     .bind(&host)
     .bind(&host)
@@ -137,7 +140,13 @@ pub(crate) async fn host_busy_bookings(
     .bind(window_start_iso)
     .fetch_all(pool)
     .await?;
-    Ok(rows)
+    Ok(rows
+        .iter()
+        .filter_map(|(s, e, before, after)| {
+            let range = crate::booking_time::busy_range(s, e, host_tz)?;
+            Some(crate::booking_time::with_buffers(range, *before, *after))
+        })
+        .collect())
 }
 
 /// The user who hosts `et_id` on the CLI paths: the owner of its account.
@@ -539,13 +548,16 @@ pub async fn run(pool: &SqlitePool, cmd: EventTypeCommands) -> Result<()> {
                 })
                 .collect();
 
-            // The host's bookings, converted by `busy_range` at the
-            // comparison below (UTC rows) or kept as wall clock (legacy rows).
-            let booking_busy = host_busy_bookings(pool, &et_id, &now_iso, &end_iso)
+            // The host's bookings with their own buffers, as local times.
+            let booking_busy = host_busy_bookings(pool, &et_id, &now_iso, &end_iso, host_tz)
                 .await
                 .unwrap_or_default();
-
-            busy_events.extend(booking_busy);
+            for (s, e) in booking_busy {
+                busy_events.push((
+                    s.format("%Y-%m-%dT%H:%M:%S").to_string(),
+                    e.format("%Y-%m-%dT%H:%M:%S").to_string(),
+                ));
+            }
 
             // Expand recurring events
             let end_compact_rrule = end_date.format("%Y%m%dT235959").to_string();
@@ -1302,11 +1314,12 @@ mod tests {
             "et-host",
             "2030-03-18T00:00:00",
             "2030-03-18T23:59:59",
+            chrono_tz::Tz::UTC,
         )
         .await
         .unwrap()
         .into_iter()
-        .map(|(s, _)| s)
+        .map(|(s, _)| s.format("%Y-%m-%dT%H:%M:%S").to_string())
         .collect();
         starts.sort();
         assert_eq!(

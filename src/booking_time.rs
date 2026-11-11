@@ -60,6 +60,34 @@ pub fn user_busy_bookings(include_pending_holds: bool) -> String {
     )
 }
 
+/// The buffers a booking holds around itself, its own event type's
+/// `buffer_before` and `buffer_after` in minutes (#422), as two columns.
+/// Expects the alias `et` for the booking's event type.
+pub const BOOKING_BUFFERS: &str =
+    "MAX(COALESCE(et.buffer_before, 0), 0), MAX(COALESCE(et.buffer_after, 0), 0)";
+
+/// SQL condition keeping the bookings whose buffered interval can touch a
+/// window, given as ISO local times (binds its end, then its start). The two
+/// days on each side cover stored UTC times; the booking's own buffers
+/// widen it further. Expects the aliases `b` and `et`.
+pub const BUFFERED_BOOKING_WINDOW: &str = "b.start_at <= strftime('%Y-%m-%dT%H:%M:%S', ?, '+2 days', printf('%+d minutes', MAX(COALESCE(et.buffer_before, 0), 0)))
+           AND b.end_at >= strftime('%Y-%m-%dT%H:%M:%S', ?, '-2 days', printf('%+d minutes', -MAX(COALESCE(et.buffer_after, 0), 0)))";
+
+/// A booking's busy range widened by its own buffers ([`BOOKING_BUFFERS`]).
+/// Each side's buffer belongs to that side, so a candidate slot widened by
+/// its own buffers and compared with this never counts one twice.
+pub fn with_buffers(
+    (start, end): (NaiveDateTime, NaiveDateTime),
+    before: i64,
+    after: i64,
+) -> (NaiveDateTime, NaiveDateTime) {
+    let minutes = |m: i64| Duration::minutes(m.clamp(0, i32::MAX.into()));
+    (
+        start.checked_sub_signed(minutes(before)).unwrap_or(start),
+        end.checked_add_signed(minutes(after)).unwrap_or(end),
+    )
+}
+
 pub fn naive(value: &str) -> Option<NaiveDateTime> {
     NaiveDateTime::parse_from_str(value.trim_end_matches('Z'), "%Y-%m-%dT%H:%M:%S")
         .or_else(|_| NaiveDateTime::parse_from_str(value, "%Y-%m-%d %H:%M:%S"))
