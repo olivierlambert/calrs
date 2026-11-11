@@ -205,6 +205,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
+- **A reschedule can no longer revive a cancelled booking** (#421) - a guest reschedule that was waiting behind another booking while the booking was cancelled, declined, expired or rescheduled is now refused instead of putting it back to confirmed or pending with a new time.
 - **A booking's buffers are kept against later bookings** (#422) - Only the slot being booked was padded by its buffers, so a meeting with a 30-minute buffer after let the next one start right at its end. Every booking now keeps its own event type's buffer before and after, on the slot pages, at submit, in the troubleshoot view and on the CLI, across all of a host's event types.
 
 ## [2.0.0-beta.4] - 2026-11-09
