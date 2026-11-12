@@ -1,0 +1,29 @@
+[
+  {
+    "name": "alice",
+    "prompt": "Create one square profile avatar for a fictional calrs scheduling demo user. Contemporary editorial illustration, softly shaded painterly shapes with clean contours, sophisticated and warm, recognizable at 32px, centered head and shoulders with generous headroom for circular cropping, face occupying roughly half of image height, direct gaze, gentle natural smile. A friendly woman in her thirties with a short chestnut bob haircut, light freckles, warm brown eyes, and a simple blue sweater. Muted warm ivory background. No text, initials, logos, borders, or watermarks. Opaque background. Save the generated image and provide its local path.",
+    "file": "alice.png",
+    "title": "Engineering lead",
+    "bio": "I help teams turn ambitious ideas into reliable software. Book a chat about architecture, open source or a tricky technical decision. Away from the keyboard, you’ll find me exploring Paris by bike.",
+    "based_in": "Paris, France",
+    "spoken_languages": "en,fr"
+  },
+  {
+    "name": "bob",
+    "prompt": "Create one square profile avatar for a fictional calrs scheduling demo user. Contemporary editorial illustration, softly shaded painterly shapes with clean contours, sophisticated and warm, recognizable at 32px, centered head and shoulders with generous headroom for circular cropping, face occupying roughly half of image height, direct gaze, gentle natural smile. A friendly man in his thirties with dark brown skin, close cropped curly black hair, subtle stubble, and a simple teal shirt. Muted pale sage background. No text, initials, logos, borders, or watermarks. Opaque background. Save the generated image and provide its local path.",
+    "file": "bob.png",
+    "title": "Solutions engineer",
+    "bio": "I connect the dots between your goals and the tools that get you there. Let’s talk integrations, infrastructure or your next proof of concept. I also make a very enthusiastic weekend bread baker.",
+    "based_in": "Lyon, France",
+    "spoken_languages": "en,fr"
+  },
+  {
+    "name": "carol",
+    "prompt": "Create one square profile avatar for a fictional calrs scheduling demo user. Contemporary editorial illustration, softly shaded painterly shapes with clean contours, sophisticated and warm, recognizable at 32px, centered head and shoulders with generous headroom for circular cropping, face occupying roughly half of image height, direct gaze, gentle natural smile. A friendly woman in her thirties with medium warm skin, shoulder length dark wavy hair, round glasses, and a simple rust colored sweater. Muted pale lavender background. No text, initials, logos, borders, or watermarks. Opaque background. Save the generated image and provide its local path.",
+    "file": "carol.png",
+    "title": "Product designer",
+    "bio": "I turn complex workflows into calm, useful experiences. Bring a prototype, a customer insight or a question about accessibility. Outside work, I collect sketchbooks and look for new hiking trails.",
+    "based_in": "Barcelona, Spain",
+    "spoken_languages": "en,es"
+  }
+]

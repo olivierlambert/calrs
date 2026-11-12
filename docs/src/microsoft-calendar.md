@@ -55,7 +55,7 @@ Users consent when they connect. An organization's consent policy may require an
 
 In Entra, open **Certificates & secrets → Client secrets → New client secret**. Choose an expiry suitable for your rotation policy and copy the secret **Value** immediately. The **Secret ID** is not a credential and will not work.
 
-In the calrs **Admin** dashboard (`/dashboard/admin`), open the **Access** tab, find the **Microsoft 365 / Outlook.com calendar** section and save:
+In the calrs **Admin** dashboard (`/dashboard/admin`), open the **Sign-in and security** tab, find the **Microsoft 365 / Outlook.com calendar** section and save:
 
 - **Client ID:** the app registration's **Application (client) ID**, not its object ID.
 - **Client secret:** the secret **Value**.
@@ -123,7 +123,7 @@ A successful Microsoft consent screen or source connection test is not a substit
 
 | Symptom | What to check |
 |---|---|
-| Microsoft connect is unavailable or cannot start | Save a client ID and secret under **Admin > Access**, check the tenant value and public HTTPS origin, and leave impersonation mode. |
+| Microsoft connect is unavailable or cannot start | Save a client ID and secret under **Admin > Sign-in and security**, check the tenant value and public HTTPS origin, and leave impersonation mode. |
 | Redirect mismatch (for example `AADSTS50011`) | Compare Entra's **Web** redirect URI with the exact callback shown in calrs. Check scheme, host, port, path, and trailing slash; do not use the proxy's internal address. |
 | Account is not permitted to use the application | Match the app registration audience to `common`, `organizations`, `consumers`, or the intended tenant. A personal account cannot use an organizational-only application. |
 | “Need admin approval,” consent denied, or access blocked by policy | Ask the Microsoft tenant administrator to review delegated permissions, user-consent restrictions, application assignment, and Conditional Access policy. Do not attempt to bypass tenant policy by granting application permissions. |
