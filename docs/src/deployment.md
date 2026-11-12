@@ -171,7 +171,10 @@ its paths reachable from wherever it runs.
 A restriction in the proxy only holds if calrs cannot be reached around it.
 Publish its port on the loopback address only (`-p 127.0.0.1:3000:3000`
 with Docker, `127.0.0.1:3000:3000` under `ports:` in Compose), or keep it
-off the published ports and reach it over the proxy's own network.
+off the published ports and reach it over the proxy's own network. With
+Docker Engine older than 28.0.0, a port published on `127.0.0.1` can still be
+reached by hosts on the same local network segment, so upgrade Docker, or
+filter that port in the host's firewall, or use the proxy's network instead.
 
 An nginx version that serves guest pages to everyone and the rest to one
 network only:
@@ -189,6 +192,9 @@ server {
     proxy_set_header X-Forwarded-Proto $scheme;
 
     # Guest pages, email links and the files they load: public.
+    # Old single-user links (/{slug}, /{slug}/book) are not listed, so guests
+    # outside the network get 403 for them: add a location if you still
+    # share such links.
     location ~ ^/(u|team|t|g|booking|avatar|team-avatar|fonts|static/intl-tel-input)/ {
         proxy_pass http://127.0.0.1:3000;
     }

@@ -382,14 +382,16 @@ pub(super) async fn pick_group_member(
     buffer_after: i32,
     host_tz: Tz,
 ) -> Result<Option<(String, String, String)>, sqlx::Error> {
-    let (buf_start, buf_end) = crate::booking_time::buffered_busy_range(
+    let Some((buf_start, buf_end)) = crate::booking_time::buffered_busy_range(
         &slot_start.to_string(),
         &slot_end.to_string(),
         host_tz,
         buffer_before.into(),
         buffer_after.into(),
-    )
-    .expect("valid local slot bounds");
+    ) else {
+        // Unreadable bounds: no member is offered, never a guess.
+        return Ok(None);
+    };
 
     // Fetch members with per-event-type weight (fallback to default 1)
     // weight=0 means excluded from this event type
@@ -1849,14 +1851,16 @@ pub(super) fn compute_slots_from_rules(
                     cursor += slot_step;
                     continue;
                 }
-                let (buf_start, buf_end) = crate::booking_time::buffered_busy_range(
+                let Some((buf_start, buf_end)) = crate::booking_time::buffered_busy_range(
                     &slot_start_utc.to_rfc3339(),
                     &slot_end_utc.to_rfc3339(),
                     host_tz,
                     buffer_before.into(),
                     buffer_after.into(),
-                )
-                .unwrap();
+                ) else {
+                    cursor += slot_step;
+                    continue;
+                };
 
                 if busy_source_is_free(&busy, buf_start, buf_end) {
                     day_slots.push(SlotTime {
@@ -2903,12 +2907,27 @@ pub(super) async fn troubleshoot(
     // user is busy for only because they claimed it, so it is labelled so.
     // Each booking comes with its own event type's buffers (#422).
     #[allow(clippy::type_complexity)]
-    let bookings: Vec<(String, String, String, String, String, i64, i64, i64)> = sqlx::query_as(&format!(
-        "SELECT CASE b.time_version WHEN 1 THEN b.start_at ELSE rtrim(b.start_at, 'Z') END AS start_at, CASE b.time_version WHEN 1 THEN b.end_at ELSE rtrim(b.end_at, 'Z') END AS end_at, b.guest_name, et.title, b.status,
-                CASE WHEN {} THEN 0 ELSE 1 END AS claimed, {}
+    // A legacy booking is read in its own event type's zone (else its
+    // owner's), as the slot grid reads it in `busy_times`.
+    let bookings: Vec<(
+        String,
+        String,
+        String,
+        String,
+        String,
+        i64,
+        i64,
+        i64,
+        i64,
+        Option<String>,
+    )> = sqlx::query_as(&format!(
+        "SELECT b.start_at, b.end_at, b.guest_name, et.title, b.status,
+                CASE WHEN {} THEN 0 ELSE 1 END AS claimed, {},
+                b.time_version, COALESCE(NULLIF(et.timezone, ''), u.timezone)
          FROM bookings b
          JOIN event_types et ON et.id = b.event_type_id
          JOIN accounts a ON a.id = et.account_id
+         LEFT JOIN users u ON u.id = a.user_id
          WHERE {}
            AND {}
          ORDER BY b.start_at",
@@ -3018,45 +3037,60 @@ pub(super) async fn troubleshoot(
         NaiveDateTime,
     )> = bookings
         .iter()
-        .filter_map(|(s, e, guest, et_title, status, claimed, before, after)| {
-            let (start, end) = crate::booking_time::busy_range(s, e, host_tz)?;
-            let detail = if *claimed == 1 {
-                tr1(
-                    auth_user.lang,
-                    "troubleshoot-detail-claimed-booking",
-                    "title",
-                    et_title,
-                )
-            } else if status == "pending" {
-                tr1(
-                    auth_user.lang,
-                    "troubleshoot-detail-pending-request",
-                    "title",
-                    et_title,
-                )
-            } else {
-                et_title.clone()
-            };
-            // Widen the stored instants by both sides' buffers. Padding the
-            // local endpoints here would disagree with slots across DST.
-            let (buffered_start, buffered_end) = crate::booking_time::buffered_busy_range(
-                s,
-                e,
-                host_tz,
-                before + i64::from(buf_after),
-                after + i64::from(buf_before),
-            )?;
-            Some((
-                start,
-                end,
-                guest.clone(),
-                detail,
-                *before,
-                *after,
-                buffered_start,
-                buffered_end,
-            ))
-        })
+        .filter_map(
+            |(s, e, guest, et_title, status, claimed, before, after, version, zone)| {
+                let legacy_tz = zone
+                    .as_deref()
+                    .and_then(|z| z.parse().ok())
+                    .unwrap_or(Tz::UTC);
+                let (start, end) = crate::booking_time::stored_buffered_busy_range(
+                    s,
+                    e,
+                    *version,
+                    legacy_tz,
+                    host_tz,
+                    (0, 0),
+                )?;
+                let detail = if *claimed == 1 {
+                    tr1(
+                        auth_user.lang,
+                        "troubleshoot-detail-claimed-booking",
+                        "title",
+                        et_title,
+                    )
+                } else if status == "pending" {
+                    tr1(
+                        auth_user.lang,
+                        "troubleshoot-detail-pending-request",
+                        "title",
+                        et_title,
+                    )
+                } else {
+                    et_title.clone()
+                };
+                // Widen the stored instants by both sides' buffers. Padding the
+                // local endpoints here would disagree with slots across DST.
+                let (buffered_start, buffered_end) =
+                    crate::booking_time::stored_buffered_busy_range(
+                        s,
+                        e,
+                        *version,
+                        legacy_tz,
+                        host_tz,
+                        (before + i64::from(buf_after), after + i64::from(buf_before)),
+                    )?;
+                Some((
+                    start,
+                    end,
+                    guest.clone(),
+                    detail,
+                    *before,
+                    *after,
+                    buffered_start,
+                    buffered_end,
+                ))
+            },
+        )
         .collect();
 
     // Intervals where required shared resources block this event type
