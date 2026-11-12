@@ -567,8 +567,8 @@ where
     Fut: std::future::Future<Output = ()>,
 {
     let guard = crate::resources::booking_lock().await;
-    // Armed while holding the lock, so no other test's reschedule with this
-    // token is in flight.
+    // Only the tests that go through this helper use this token, and they
+    // hold the lock while armed, so the checkpoint is this request's.
     let reached = crate::test_support::arm("reschedule:stale-reschedule");
     let mut request = Box::pin(app.clone().oneshot(post_form_unauthed(
         "/booking/reschedule/stale-reschedule",
@@ -738,12 +738,15 @@ async fn an_undisturbed_reschedule_moves_the_booking_and_rotates_the_token() {
         nine_utc(&day),
         30,
         "confirmed",
-        &stale_tokens(),
+        &[
+            ("reschedule_token", Some("undisturbed-reschedule".into())),
+            ("cancel_token", Some("undisturbed-cancel".into())),
+        ],
     )
     .await;
     let response = app
         .oneshot(post_form_unauthed(
-            "/booking/reschedule/stale-reschedule",
+            "/booking/reschedule/undisturbed-reschedule",
             "stale",
             &format!("_csrf=stale&date={day}&time=11:00&tz=UTC"),
         ))
@@ -762,5 +765,5 @@ async fn an_undisturbed_reschedule_moves_the_booking_and_rotates_the_token() {
         utc_stamp(nine_utc(&day) + Duration::hours(2)),
         "the booking moved to 11:00"
     );
-    assert_ne!(token, "stale-reschedule");
+    assert_ne!(token, "undisturbed-reschedule");
 }
