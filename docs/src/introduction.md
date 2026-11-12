@@ -1,47 +1,35 @@
-# calrs
+# calrs v2
 
-**Fast, self-hostable scheduling. Like Cal.com, but written in Rust.**
+**Self-hosted scheduling, built in Rust.**
 
-calrs is an open-source scheduling platform. Connect your CalDAV calendar (Nextcloud, Fastmail, BlueMind, iCloud...), define bookable meeting types, and share a link. No Node.js, no PostgreSQL, no subscription.
+Connect your calendars, define when people can book you, and share a link. calrs runs on your infrastructure with SQLite, a Rust executable and its HTML templates. It needs neither Node.js nor a separate database server.
 
-## Key features
+This book describes the **v2 feature set**, including the current prereleases. It does not announce a stable v2 release. Check [Releases](https://github.com/olivierlambert/calrs/releases) for available versions; the container's `latest` tag follows stable releases and `next` follows prereleases. Existing installations should read [Upgrading to v2](./upgrading.md).
 
-- **CalDAV sync** — pull events from any CalDAV server for free/busy computation, with multi-VEVENT support for recurring event modifications
-- **CalDAV write-back** — confirmed bookings are automatically pushed to your calendar
-- **Availability engine** — computes free slots from availability rules + calendar events
-- **Recurring events** — RRULE expansion (DAILY/WEEKLY/MONTHLY with INTERVAL, UNTIL, COUNT, BYDAY, EXDATE) blocks availability correctly
-- **Event types** — bookable meeting templates with duration, buffers, minimum notice
-- **Booking flow** — public slot picker, booking form, email confirmations with `.ics` invites
-- **Email approve/decline** — approve or decline pending bookings directly from the notification email
-- **HTML emails** — clean, responsive HTML notifications with plain text fallback
-- **Teams** — unified scheduling across team members with round-robin or collective modes
-- **Timezone support** — guest timezone picker with browser auto-detection; CalDAV events are converted from their original timezone to your host timezone, so availability is always accurate regardless of where your calendar events were created
-- **Authentication** — local accounts (Argon2) or OIDC/SSO (Keycloak, Authentik, etc.)
-- **Web dashboard** — manage event types, calendar sources, pending approvals, bookings
-- **Dark/light theme** — manual toggle (System/Light/Dark) on public pages and dashboard settings
-- **Admin panel** — user management, auth settings, OIDC config, SMTP status, impersonation
-- **Structured logging** — `tracing` + `tower-http` for production observability, configurable via `RUST_LOG`
-- **Three-level visibility** — public (listed on profile), internal (any team member generates invite links for external contacts), private (invite-only by owner)
-- **Availability overrides** — block specific dates or set custom hours per event type
-- **Security hardening** — CSRF protection, booking rate limiting, input validation, double-booking prevention
-- **Availability troubleshoot** — visual timeline showing why slots are blocked
-- **SQLite storage** — single-file WAL-mode database, zero ops
-- **Markdown descriptions** — bold, italic, links, and inline code in user bio, event type descriptions, and team descriptions. Formatting toolbar with live preview on all description fields
-- **Onboarding** — getting-started checklist and guided action cards on the dashboard overview
-- **Single binary** — no runtime dependencies
+## Start here
 
-![calrs dashboard](images/dashboard.png)
+- [Getting started](./getting-started.md): install, connect a calendar and make a first booking.
+- [Features in v2](./features.md): the feature map, with links to setup and usage guides.
+- [Dashboard and profile](./dashboard.md): your agenda, bookings, shareable links and personal settings.
+- [Deployment](./deployment.md): containers, systemd, reverse proxies, configuration and backups.
 
 ## How it works
 
-1. Connect your CalDAV calendar (or multiple calendars)
-2. Sync events so calrs knows when you're busy
-3. Create event types with your availability schedule
-4. Share your booking link (`/u/yourname/meeting-slug`)
-5. Guests pick a slot, fill in their details, and book
-6. Both parties get an email with a calendar invite
-7. The booking appears on your CalDAV calendar automatically
+1. Connect CalDAV, Google Calendar, Microsoft 365 / Outlook, or on-premises Exchange.
+2. Choose which calendars block your time and where confirmed bookings should be written.
+3. Create a personal or team event type with working hours, timezone, duration and booking rules.
+4. Share its booking link, generate an invitation, or embed it in your website.
+5. Guests choose a time and complete your booking form. You can confirm automatically or approve each request.
+6. calrs blocks the time, writes to the configured calendars and sends notifications through your configured email or SMS service.
 
-## License
+Calendars and notifications are optional: calrs can schedule against its own bookings and provide an `.ics` download without SMTP. Connecting your calendars is how it also avoids conflicts with meetings made elsewhere.
 
-AGPL-3.0 — free to use, modify, and self-host.
+![calrs v2 dashboard](images/dashboard.png)
+
+## Built for individuals and teams
+
+Personal meetings, round-robin teams, collective meetings and ad-hoc groups use the same booking flow. Public, internal and private visibility control how meetings are found and shared. Shared resources can reserve a room or lab alongside the people attending.
+
+The interface and notifications support English, French, Spanish, Polish, German, Italian, Estonian, Brazilian Portuguese and Dutch, with a formal German option. Hosts set their own language and timezone; guests can view times in theirs.
+
+Integrations include outgoing booking webhooks, a scoped REST API with an interactive OpenAPI reference, and an OAuth-protected MCP endpoint. See [Features in v2](./features.md) for the scope of each integration.

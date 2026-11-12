@@ -1,5 +1,7 @@
 # CLI Reference
 
+Run `calrs --help` or `calrs <command> --help` for the options of your installed version. There is no `init` command; create a user through registration or `calrs user create`.
+
 ## Global options
 
 ```
@@ -10,11 +12,13 @@
 
 ### `calrs source`
 
-Manage CalDAV calendar sources.
+Manage calendar sources. Run these operator commands with the same data directory and key as the server. Source creation and event-type creation select the first scheduling account; use the dashboard for user-specific setup on multi-user instances.
 
 ```
 calrs source add [OPTIONS]
-    --url <URL>           CalDAV server URL
+    --url <URL>           CalDAV discovery root or EWS endpoint
+    --provider <TYPE>     caldav (default) or ews
+    --email <EMAIL>       EWS Autodiscover address when --url is omitted
     --username <USERNAME> CalDAV username
     --name <NAME>         Display name for this source
     --no-test             Skip the connection test
@@ -23,6 +27,11 @@ calrs source add [OPTIONS]
 
 calrs source update <ID> [--name <NAME>] [--url <URL>] [--username <USERNAME>]
                          [--password | --password-stdin]
+
+calrs source add-google [--name <NAME>]  Google OAuth browser flow
+
+calrs source calendars <ID> [--enable <CALENDAR>] [--disable <CALENDAR>]
+    # Repeat enable/disable as needed; match ID prefix, href or display name
 
 calrs source list
 
@@ -42,7 +51,7 @@ printf '%s' "$CALDAV_PASSWORD" | calrs source add --url https://cal.example.com/
 
 ### `calrs sync`
 
-Pull latest events from all CalDAV sources.
+Pull the latest events from connected calendar sources using their provider.
 
 ```
 calrs sync [OPTIONS]
@@ -128,6 +137,10 @@ calrs config smtp [OPTIONS]
     --tls-mode <MODE>       starttls (default), tls, or none
 
 calrs config show           Display current configuration
+calrs config dump [--pretty] Export non-secret configuration as JSON
+
+calrs config general [--base-url <URL>] [--allow-private-hosts <HOSTS>]
+    # Empty values clear the stored setting; environment overrides are read-only
 
 calrs config smtp-test <EMAIL>   Send a test email
 
@@ -293,4 +306,5 @@ Start the web server.
 ```
 calrs serve [OPTIONS]
     --port <PORT>    Port to listen on (default: 3000)
+    --host <IP>      Bind address (default: 127.0.0.1; use 0.0.0.0 for all IPv4 interfaces)
 ```

@@ -1,20 +1,22 @@
 # Deployment
 
+This guide covers v2, currently a prerelease. Read [Upgrading to v2](./upgrading.md) before using an existing data directory. The examples use `next`; choose an exact tag from [Releases](https://github.com/olivierlambert/calrs/releases) for a repeatable deployment.
+
 ## Docker / Podman (recommended)
 
 Pre-built images are available on [GitHub Container Registry](https://github.com/olivierlambert/calrs/pkgs/container/calrs) for `amd64` and `arm64`:
 
 ```bash
 docker run -d --name calrs \
-  -p 3000:3000 \
+  -p 127.0.0.1:3000:3000 \
   -v calrs-data:/var/lib/calrs \
   -e CALRS_BASE_URL=https://cal.example.com \
-  ghcr.io/olivierlambert/calrs:latest
+  ghcr.io/olivierlambert/calrs:next
 ```
 
 > **Podman** works as a drop-in replacement — just use `podman` instead of `docker` in all commands. The Containerfile (Dockerfile) is compatible with both runtimes.
 
-To pin to a specific version: `ghcr.io/olivierlambert/calrs:0.14.0`
+`latest` follows stable releases; `next` follows prereleases. An exact prerelease tag looks like `ghcr.io/olivierlambert/calrs:2.0.0-beta.4`. The loopback port binding above assumes a reverse proxy on the host; adapt it if your proxy runs in a separate container.
 
 The image uses a multi-stage build:
 
@@ -31,9 +33,9 @@ To build from source instead: `docker build -t calrs .`
 ```yaml
 services:
   calrs:
-    image: ghcr.io/olivierlambert/calrs:latest
+    image: ghcr.io/olivierlambert/calrs:next
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     volumes:
       - calrs-data:/var/lib/calrs
     environment:
@@ -70,20 +72,31 @@ These packages are not maintained by the calrs project itself; for issues with t
 # Build from source
 cargo build --release
 
-# Install binary and templates
-sudo cp target/release/calrs /usr/local/bin/
-sudo cp -r templates /var/lib/calrs/templates
-
-# Create a system user
+# Create the service account and data directory first (new installation)
 sudo useradd -r -s /bin/false -m -d /var/lib/calrs calrs
+sudo install -d -o calrs -g calrs -m 750 /var/lib/calrs
+
+# Install the binary and matching templates
+sudo install -m 755 target/release/calrs /usr/local/bin/calrs
+sudo cp -r templates /var/lib/calrs/templates
 
 # Install the service
 sudo cp calrs.service /etc/systemd/system/
 sudo systemctl daemon-reload
+# Set the public URL before starting (see below)
+sudo systemctl edit calrs
 sudo systemctl enable --now calrs
 ```
 
-Edit `/etc/systemd/system/calrs.service` to set `CALRS_BASE_URL`.
+In the service override opened by `systemctl edit`, set:
+
+```ini
+[Service]
+Environment=CALRS_BASE_URL=https://cal.example.com
+Environment=CALRS_TRUSTED_PROXIES=127.0.0.1,::1
+```
+
+The included unit runs from `/var/lib/calrs`, where it finds `templates/`, and listens on `127.0.0.1:3000`. Put your TLS reverse proxy on that host, or deliberately change the bind address and proxy trust for a different topology. Install matching templates whenever you replace the binary.
 
 ### systemd service
 
@@ -101,8 +114,8 @@ The included `calrs.service` has security hardening:
 ## From source (development)
 
 ```bash
-cargo build --release
-calrs serve --port 3000
+cargo build --release --locked
+./target/release/calrs serve --port 3000
 ```
 
 Then register at `http://localhost:3000` — the first user becomes admin.
@@ -146,12 +159,14 @@ cal.example.com {
 
 | Variable | Description | Default |
 |---|---|---|
-| `CALRS_DATA_DIR` | SQLite database directory | `/var/lib/calrs` (Docker/systemd) or XDG (dev) |
+| `CALRS_DATA_DIR` | Database, credential key and uploaded files directory | `/var/lib/calrs` (Docker/systemd) or XDG (dev) |
 | `CALRS_BASE_URL` | Public URL (required for OIDC callbacks and email action links) | `http://localhost:3000` |
 | `CALRS_ALLOW_PRIVATE_HOSTS` | Comma-separated hostnames or IP addresses allowed to resolve to private IPs for CalDAV/EWS (SSRF opt-out) | _(none)_ |
 | `CALRS_TRUSTED_PROXIES` | Comma or space separated addresses and CIDR ranges of the reverse proxies whose `X-Forwarded-For` calrs believes for its rate limits, or `none` to trust no peer. A `/0` range is refused. See [Trusted proxies](./security.md#trusted-proxies) | loopback, private, unique local and link-local ranges |
-| `CALRS_SYNC_MIN_AGE` | Minimum time in seconds between two background syncs of the same calendar source, e.g. `900` for every 15 minutes. Booking pages still refresh a host's calendars on demand once they are 5 minutes old, and a source due its daily full resync is synced anyway. Capped at `86400` (one day). A failing source is retried at this interval too, so the email warning its owner (sent after three failures) comes later: after about 30 minutes at `900` | `0` (no minimum: each source about once an hour, see below) |
+| `CALRS_SYNC_MIN_AGE` | Minimum time in seconds between two background syncs of the same calendar source, e.g. `900` for every 15 minutes. Booking pages still refresh a host's calendars on demand once they are 5 minutes old, and a source due its daily full resync is synced anyway. Capped at `86400` (one day). A failing source is retried at this interval too, so longer intervals can delay the email warning its owner (sent after at least three failures spanning more than an hour) | `0` (no minimum: each source about once an hour, see below) |
 | `CALRS_SYNC_CONCURRENCY` | How many calendar sources the background sync may sync at once, never more than one per server. Capped at `8`: syncs share the database's five connections with web requests | `4` |
+| `CALRS_SECRET_KEY` | Optional external credential-encryption key: a base64-encoded 32-byte key. Preserve the same key across restarts and restores | Generated `secret.key` in the data directory |
+| `CALRS_SMTP_*` | SMTP environment configuration; overrides stored settings. See [SMTP](./admin.md#smtp-configuration) | _(none)_ |
 | `RUST_LOG` | Log level filter | `calrs=info,tower_http=info` |
 | `CALRS_SMS_*` | SMS gateway configuration, overriding the admin panel; see [SMS Notifications](./sms.md#environment-variables) | _(none)_ |
 
@@ -202,10 +217,12 @@ docker logs -f calrs
 
 ## Backup
 
-The entire state is in a single SQLite file (`calrs.db`). To back up:
+A complete backup includes **`calrs.db`, the credential key and uploaded files**. The key is normally `$CALRS_DATA_DIR/secret.key`; if `CALRS_SECRET_KEY` supplies it, preserve that external secret instead. Without the key, stored calendar passwords, OAuth credentials and MFA secrets cannot be decrypted.
+
+To make a consistent database snapshot while the server runs:
 
 ```bash
 sqlite3 /var/lib/calrs/calrs.db ".backup /path/to/backup.db"
 ```
 
-Or simply copy the file when the server is stopped.
+Also copy the key and uploaded assets, and retain service/environment configuration and the deployed version. For a filesystem backup of the whole data directory, stop calrs first and copy the directory, preserving ownership and any WAL files. Do not copy only a live SQLite main file while writes continue. Restore into a stopped instance with the matching key, then check access and calendar sync. See [Upgrading to v2](./upgrading.md) for rollback.

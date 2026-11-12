@@ -1,228 +1,99 @@
 # Architecture
 
-This page gives the big picture. For a file-by-file map of the source (what each module under `src/web/` and `src/email/` owns, the key concepts and where to add a page, an email, a string or a migration), see [`ARCHITECTURE.md`](https://github.com/olivierlambert/calrs/blob/main/ARCHITECTURE.md) in the repository.
+calrs is a Rust executable that runs either operator CLI commands or an Axum web server (`calrs serve`). SQLite stores application state, credentials are encrypted with an instance key, and Minijinja renders the HTML interface. The executable serves embedded static assets and translations; deploy its matching `templates/` directory alongside it.
 
-## Project structure
+For the file-by-file contributor map, see [`ARCHITECTURE.md`](https://github.com/olivierlambert/calrs/blob/main/ARCHITECTURE.md) in the repository. This chapter describes the main boundaries and runtime behavior.
 
-```
-calrs/
-├── Cargo.toml              Package manifest
-├── Dockerfile              Multi-stage Docker build
-├── calrs.service           systemd unit file
-├── migrations/             SQLite schema (incremental migrations, embedded by build.rs)
-├── templates/              Minijinja HTML templates
-│   ├── base.html           Base layout + CSS (light/dark mode)
-│   ├── auth/               Login, registration
-│   ├── dashboard_base.html Sidebar layout (all dashboard pages extend this)
-│   ├── dashboard_overview.html   Overview with stats
-│   ├── dashboard_event_types.html Event types listing
-│   ├── dashboard_bookings.html   Bookings listing
-│   ├── dashboard_sources.html    Calendar sources
-│   ├── dashboard_teams.html      Teams listing
-│   ├── dashboard_internal.html   Internal/organization event types
-│   ├── admin.html          Admin panel
-│   ├── settings.html       Profile & settings (avatar, title, bio)
-│   ├── event_type_form.html  Create/edit event types
-│   ├── invite_form.html    Invite management for private event types
-│   ├── source_form.html    Add CalDAV source
-│   ├── source_test.html    Connection test / sync results
-│   ├── source_write_setup.html Write-back calendar selection
-│   ├── team_form.html      Create/edit team
-│   ├── team_settings.html  Team settings (members, groups, danger zone)
-│   ├── overrides.html      Date overrides per event type
-│   ├── troubleshoot.html   Availability troubleshoot timeline
-│   ├── profile.html        Public user profile
-│   ├── team_profile.html   Public team page
-│   ├── slots.html          Slot picker (timezone-aware)
-│   ├── book.html           Booking form
-│   ├── confirmed.html      Confirmation / pending page
-│   ├── booking_approved.html     Token-based approve success
-│   ├── booking_decline_form.html Token-based decline form
-│   ├── booking_declined.html     Token-based decline success
-│   ├── booking_cancel_form.html  Guest self-cancel form
-│   ├── booking_cancelled_guest.html Guest self-cancel success
-│   ├── booking_host_reschedule.html Host-initiated reschedule
-│   ├── booking_reschedule_confirm.html Reschedule confirmation
-│   └── booking_action_error.html Invalid/expired token error
-├── docs/                   mdBook documentation
-└── src/
-    ├── main.rs             CLI entry point (clap)
-    ├── db.rs               SQLite connection + migrations
-    ├── models.rs           Domain types
-    ├── auth.rs             Authentication (local + OIDC)
-    ├── email/              SMTP email with .ics invites + HTML templates
-    ├── rrule.rs            RRULE expansion (DAILY/WEEKLY/MONTHLY)
-    ├── utils.rs            Shared utilities (iCal splitting/parsing)
-    ├── caldav/mod.rs       CalDAV client (RFC 4791) + write-back
-    ├── web/                Axum web server, one file per area
-    └── commands/           CLI subcommands
-        ├── source.rs
-        ├── sync.rs
-        ├── calendar.rs
-        ├── event_type.rs
-        ├── booking.rs
-        ├── config.rs
-        └── user.rs
-```
+## Request and booking flow
 
-## Database
+1. Public booking routes resolve a personal, team, invite or dynamic-group event type.
+2. Availability combines event rules, date overrides, selected calendar events, existing bookings, time off, participant hours, booking limits and resources.
+3. Submitting a booking revalidates access and availability before storing it. A pending request can hold the time; confirmation re-checks conflicts.
+4. Confirmed bookings are written to configured calendar destinations, with generated meeting links where selected. Notifications and lifecycle webhooks follow the booking transition.
+5. Token-based routes support guest cancellation/rescheduling and host approval/decline. Signed-in routes enforce the corresponding host and management permissions.
 
-**SQLite** in WAL mode. Single file, zero ops. Foreign keys with `ON DELETE CASCADE`.
+Bookings store UTC endpoints for new rows. Legacy rows retain their previous storage interpretation. Weekly rules remain local to the event's named timezone; each participant's working hours are interpreted in their own timezone.
 
-### Core tables
+A process-wide booking lock serializes the availability checks and booking writes that claim time. Network refreshes happen before the lock, and a database transaction wraps the writes. A partial unique index additionally prevents duplicate starts per event type and assigned member. The lock does not coordinate separate server or CLI processes; see [Security](./security.md#double-booking-prevention).
 
-| Table | Purpose |
+## Main components
+
+| Component | Responsibility |
 |---|---|
-| `accounts` | User profiles (name, email, timezone) |
-| `users` | Authentication (password hash, role, username) |
-| `sessions` | Server-side sessions |
-| `caldav_sources` | CalDAV server connections |
-| `calendars` | Discovered calendars |
-| `events` | Synced calendar events (unique on uid + recurrence_id) |
-| `event_types` | Bookable meeting templates |
-| `availability_rules` | Per-event-type availability (day + time range) |
-| `availability_overrides` | Date-specific exceptions (blocked days, custom hours) |
-| `bookings` | Guest bookings |
-| `booking_invites` | Tokenized invite links for private/internal event types |
-| `booking_attendees` | Additional attendees per booking |
-| `event_type_calendars` | Per-event-type calendar selection (junction table) |
-| `event_type_member_weights` | Per-event-type round-robin priority weights |
-| `smtp_config` | SMTP settings |
-| `auth_config` | Registration, OIDC, theme settings |
-| `groups` | OIDC groups (identity sync from Keycloak) |
-| `user_groups` | Group membership |
-| `teams` | Unified teams (name, slug, visibility, invite_token) |
-| `team_members` | Team membership (role: admin/member, source: direct/group) |
-| `team_groups` | Links teams to OIDC groups for automatic member sync |
+| `src/main.rs`, `src/commands/` | CLI, startup and background task launch |
+| `src/web/` | Routes, public pages, dashboard, availability, booking transitions and integration endpoints |
+| `src/providers/`, `src/caldav/`, `src/ews/` | Common calendar interface, CalDAV and Exchange EWS |
+| `src/microsoft_oauth.rs`, Microsoft provider | Delegated Microsoft Graph calendars and token handling |
+| `src/oauth2_caldav.rs`, `src/google_calendar.rs`, `src/google_meet.rs` | Google calendar OAuth, out-of-office snapshots and conferences |
+| `src/auth.rs`, `src/mfa.rs`, `src/oauth.rs` | Local/OIDC sign-in, TOTP and the OAuth server used by API/MCP clients |
+| `src/email/`, `src/sms/` | Notification rendering, transport and SMS gateway adapters |
+| `src/resources.rs`, `src/time_off.rs`, `src/rrule.rs` | Shared resources, absences and recurrence expansion |
+| `src/crypto.rs`, `src/net_guard.rs`, `src/trusted_proxies.rs` | Credential encryption, outgoing-request address checks and proxy trust |
+| `src/db.rs`, `migrations/`, `build.rs` | SQLite and embedded, ordered migrations |
+| `templates/`, `assets/`, `i18n/` | HTML, bundled browser assets and Fluent translations |
 
-## Web server
+## Storage
 
-**Axum 0.8** with `Arc<AppState>` shared state containing the `SqlitePool` and `minijinja::Environment`.
+SQLite runs in WAL mode with foreign keys enabled. Schema migrations run automatically on startup. Numbered historical migration names remain unchanged; newer migrations use timestamped filenames and are embedded at build time.
 
-### Route structure
-
-| Route | Handler |
+| Tables | Purpose |
 |---|---|
-| `/auth/login`, `/auth/register` | Authentication (redirects to dashboard if already logged in) |
-| `/auth/oidc/login`, `/auth/oidc/callback` | OIDC flow |
-| `/dashboard` | Overview with stats |
-| `/dashboard/admin` | Admin panel + impersonation |
-| `/dashboard/event-types/*` | Event type CRUD |
-| `/dashboard/sources/*` | CalDAV source management |
-| `/dashboard/bookings/*` | Booking actions (confirm, cancel) |
-| `/dashboard/teams/*` | Team CRUD |
-| `/dashboard/teams/{id}/settings` | Team settings (members, OIDC groups, danger zone) |
-| `/dashboard/organization` | Internal event types + invite link generation |
-| `/dashboard/invites/{event_type_id}` | Invite management for private event types |
-| `/dashboard/troubleshoot/{id}` | Availability troubleshoot timeline |
-| `/booking/approve/{token}` | Token-based booking approval (from email) |
-| `/booking/decline/{token}` | Token-based booking decline (from email) |
-| `/booking/cancel/{token}` | Guest self-cancellation |
-| `/u/{username}` | Public user profile |
-| `/u/{username}/{slug}` | Public slot picker |
-| `/u/{username}/{slug}/book` | Booking form + submit |
-| `/team/{slug}` | Public team page |
-| `/team/{slug}/{event-slug}` | Team event type booking |
-| `/g/{group-slug}` | Redirects to `/team/{slug}` (legacy) |
+| `users`, `accounts`, `sessions` | Identity, scheduling ownership and sessions |
+| `caldav_sources`, `calendars`, `events` | Provider connections and cached events; historical table names also hold non-CalDAV sources |
+| `event_types`, `availability_rules`, `availability_overrides` | Meeting configuration and hours |
+| `event_type_calendars`, `event_type_write_targets`, `booking_write_copies` | Conflict selection, per-host write destinations and recorded calendar copies |
+| `bookings`, `booking_attendees`, `booking_invites` | Booking state, guests and invitation access |
+| `event_type_questions`, `booking_answers` | Form questions and snapshots of submitted answers |
+| `teams`, `team_members`, `team_groups`, `groups`, `user_groups` | Scheduling teams and OIDC-derived identity groups |
+| `user_time_off`, `booking_frequency_limits` | Absences and caps |
+| `event_type_favorites` | Personal directory shortcuts |
+| `webhooks`, `webhook_deliveries`, `sms_usage` | Outgoing integration queues and SMS accounting |
+| `auth_config`, `smtp_config` | Instance policies and notification configuration |
 
-### Middleware
+Cached events are unique by UID, calendar and recurrence instance. Credential encryption depends on `secret.key` or `CALRS_SECRET_KEY`; [backups](./deployment.md#backup) must preserve the key and uploads as well as the database.
 
-| Layer | Purpose |
+## Calendars and background work
+
+CalDAV uses discovery (`PROPFIND`), event queries and delta sync (`REPORT`), plus `PUT`/`DELETE` for bookings. XML is parsed by namespace rather than by hard-coded prefixes. EWS performs SOAP operations; Microsoft Graph reads calendar snapshots and writes appointments through its native API. Google uses OAuth-backed CalDAV together with the Calendar API for out-of-office events, attendee updates and Meet.
+
+Three background activities run separately:
+
+- Calendar sync schedules due sources every minute, with bounded concurrency and at most one background request sequence per server. See [background sync](./deployment.md#background-calendar-sync).
+- The notification loop handles reminders, pending-request expiry, cleanup and calendar write-back retries.
+- The outgoing webhook task delivers queued events when woken and on a periodic pass, with retry limits and signed payloads.
+
+A failed sync retains cached data and reports an error. A failed availability read while accepting a booking refuses the request rather than treating missing data as free. Those are distinct failure modes. See [CalDAV](./caldav.md#when-a-sync-fails) and the provider guides for recovery and snapshot limits.
+
+## Interfaces and authentication
+
+| Interface | Authentication and scope |
 |---|---|
-| `TraceLayer` | Logs every HTTP request (method, path, status, latency) |
-| `csrf_cookie_middleware` | Sets `calrs_csrf` cookie on responses for CSRF protection |
+| Dashboard and admin pages | Server-side session, role/ownership checks and CSRF on browser forms |
+| Public booking pages | Public event access or the required invitation tokens |
+| Guest/host action links | Sensitive action tokens plus booking-state checks |
+| `/api/v1` | Scoped personal access token or OAuth Bearer token; session cookies do not authenticate it |
+| `/api/v1/openapi.json` | Public OpenAPI description; contains no booking data |
+| `/api/docs` | Signed-in interactive reference; API operations still require a Bearer token |
+| `/mcp` | OAuth Bearer tokens for the MCP resource, Streamable HTTP |
+| CLI | Direct access to the data directory, outside browser-session authorization |
 
-## CalDAV client
+OIDC sign-in identifies returning users by their stored subject. New account registration or linking requires the verified-email rules described in [Authentication](./authentication.md). Calendar OAuth consent and API/MCP grants are separate from OIDC login.
 
-Minimal RFC 4791 implementation:
+## Rendering and notifications
 
-- **PROPFIND** — principal discovery, calendar-home-set, calendar listing
-- **REPORT** — event fetch (calendar-query)
-- **PUT** — write events to calendar
-- **DELETE** — remove events from calendar
-- **OPTIONS** — connection test
+Minijinja templates use shared layouts and card/list components. Browser interaction uses vanilla JavaScript; there is no Node.js production runtime. Fluent translations and locale-aware formatting cover the dashboard, public flow and notifications. Browser assets are bundled; optional integrations such as an externally hosted captcha can introduce additional requests.
 
-Handles absolute and relative hrefs, BlueMind/Apple namespace prefixes, tags with attributes.
+SMTP supports STARTTLS, implicit TLS and a trusted local relay. Notifications contain HTML and plain text; calendar attachments and provider copies use the booking UID and sequence to track updates. Guest-facing and host-facing content are separate: host notes never enter guest messages, calendar invitations or webhook payloads. Question answers follow their documented [visibility rules](./booking-questions.md#where-the-answers-appear).
 
-## Templates
+## Validation and contributions
 
-**Minijinja 2** with file-based loader. Templates extend `base.html` which provides:
-
-- CSS custom properties for theming
-- Dark mode via `prefers-color-scheme`
-- Responsive layout
-- No JavaScript framework — vanilla JS only where needed (timezone detection, provider presets, CSRF token injection)
-
-## Email
-
-**Lettre** for SMTP with STARTTLS. All emails are **HTML with plain text fallback** (multipart/alternative). ICS generation is hand-crafted (no icalendar crate dependency for generation):
-
-- `METHOD:REQUEST` for confirmations
-- `METHOD:PUBLISH` for guest confirmations (avoids mail server re-invites)
-- `METHOD:CANCEL` for cancellations
-- Events include `ORGANIZER`, `ATTENDEE`, `LOCATION`, `STATUS`
-
-The approval request email includes Approve and Decline action buttons (table-based layout for email client compatibility). These link to token-based public endpoints that don't require authentication.
-
-## Authentication flow
-
-### Local
-1. Registration/login form → POST with email + password
-2. Password verified with Argon2
-3. Session created in SQLite → session ID in HttpOnly cookie
-4. Extractors (`AuthUser`, `AdminUser`) validate session on each request
-
-### OIDC
-1. User clicks "Sign in with SSO"
-2. Redirect to OIDC provider with PKCE challenge
-3. Provider redirects back with authorization code
-4. calrs exchanges code for tokens
-5. Extracts email, name, groups from ID token
-6. Links to existing user by email or creates new user
-7. Session created as with local auth
-
-## Testing
-
-calrs has an automated test suite with 219 tests, run on every push and pull request via [GitHub Actions](https://github.com/olivierlambert/calrs/actions/workflows/ci.yml).
-
-**What's tested:**
-
-| Area | Examples |
-|---|---|
-| RRULE expansion | DAILY/WEEKLY/MONTHLY recurrence, INTERVAL, UNTIL, COUNT, BYDAY, EXDATE |
-| iCal parsing | Multi-VEVENT splitting, field extraction, RECURRENCE-ID handling |
-| Timezone conversion | TZID extraction, floating times, UTC suffix, all-day events |
-| Email rendering | HTML/plain text output, cancellation attribution (host vs guest), .ics attachments |
-| Availability engine | Free/busy computation, buffer times, minimum notice, conflict detection |
-| Web server | Rate limiter (allow/block/reset/per-IP isolation) |
-| Authentication | Argon2 password hashing roundtrip, hash uniqueness |
-| Input validation | Booking name/email/notes/date validation, CSRF token verification |
-| ICS regression | UTC timezone suffix, location field integrity, convert_to_utc |
+CI checks formatting, templates, migration order, Clippy, tests and coverage. Tests cover scheduling, recurrence, timezone transitions, authorization, migrations, providers, APIs, notifications and translations. Browser verification scripts live in [`scripts/`](https://github.com/olivierlambert/calrs/tree/main/scripts).
 
 ```bash
-# Run the full suite
-cargo test
-
-# Check formatting and lint
 cargo fmt --check
-cargo clippy -- -D warnings
+cargo clippy --profile=test
+cargo test
+mdbook build docs
 ```
 
-## Dependencies
-
-Key crates:
-
-| Crate | Purpose |
-|---|---|
-| `clap` | CLI argument parsing |
-| `axum` | Web framework |
-| `sqlx` | Async SQLite |
-| `reqwest` | HTTP client (CalDAV) |
-| `minijinja` | HTML templating |
-| `lettre` | SMTP email |
-| `chrono` + `chrono-tz` | Time and timezone handling |
-| `argon2` | Password hashing |
-| `openidconnect` | OIDC client |
-| `icalendar` | ICS parsing |
-| `tracing` + `tracing-subscriber` | Structured logging |
-| `tower-http` | HTTP request tracing (TraceLayer) |
+For a source-only documentation change, build the book and check its internal links. For application changes, run the checks relevant to the affected behavior. Translation contributions target the permanent `i18n` branch; see the [contributor instructions](https://github.com/olivierlambert/calrs#contributing-a-translation).

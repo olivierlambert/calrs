@@ -126,8 +126,8 @@ calrs supports OpenID Connect for single sign-on, tested with Keycloak and compa
 
 - **Authorization code flow with PKCE** — no client secret stored in the browser
 - **Auto-discovery** — reads `.well-known/openid-configuration` from the issuer URL
-- **User linking by email** — if a local user exists with the same email, the OIDC identity is linked
-- **Auto-registration** — new users are created on first OIDC login (if enabled)
+- **User linking by email** — first-time linking requires the provider to assert a verified email. An account already linked to another OIDC subject cannot be claimed through that email, and an account with local MFA is not automatically linked
+- **Auto-registration** — new users with a verified email are created on first OIDC login when enabled; returning users are identified by their stored OIDC subject
 - **Group sync** — groups from the `groups` JWT claim are synced on each login and can be linked to teams
 
 ### Configuration
@@ -165,6 +165,10 @@ The login page will show a **"Sign in with SSO"** button when OIDC is enabled.
 
 The first registered user is automatically promoted to admin.
 
+## Connected applications
+
+Calendar OAuth credentials connect [Google](./google-calendar.md) and [Microsoft](./microsoft-calendar.md) calendars; they are separate from OIDC sign-in. calrs also acts as an OAuth authorization server for [MCP](./mcp.md) and the [REST API](./api.md). Review and revoke those grants under **Connected apps**. Personal API tokens have their own settings page and scopes.
+
 ## Email notifications (SMTP)
 
 SMTP configuration is required for booking confirmation emails. Without it, bookings still work but no emails are sent.
@@ -184,4 +188,4 @@ calrs config smtp-test you@example.com
 calrs config show
 ```
 
-Or configure from the **Admin dashboard > SMTP** section.
+Or configure from **Admin > Email and SMS > SMTP**. Environment variables override stored SMTP settings; see [SMTP configuration](./admin.md#smtp-configuration).
