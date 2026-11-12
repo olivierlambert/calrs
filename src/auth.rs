@@ -1506,19 +1506,15 @@ async fn oidc_callback(
 
     if email.is_empty() {
         tracing::warn!("OIDC callback failed: no email in the ID token or from UserInfo");
-        return Html("OIDC provider did not return an email address.".to_string()).into_response();
+        let lang = crate::i18n::detect_from_headers(&headers);
+        return render_sso_refusal(&state, lang, "auth-sso-no-email").await;
     }
 
     // Check email domain restriction
     if !is_email_allowed(&email, &auth_config.allowed_email_domains) {
         tracing::warn!(email = %email, "OIDC callback failed: email domain not allowed");
         let lang = crate::i18n::detect_from_headers(&headers);
-        return Html(crate::i18n::translate(
-            lang,
-            "auth-error-email-domain",
-            None,
-        ))
-        .into_response();
+        return render_sso_refusal(&state, lang, "auth-error-email-domain").await;
     }
 
     // Find or create user
@@ -1535,6 +1531,12 @@ async fn oidc_callback(
         Ok(id) => id,
         Err(e) => {
             tracing::warn!(email = %email, error = %e, "OIDC callback failed: account error");
+            // A refusal the user can act on (or take to an administrator) is
+            // shown on the sign-in page; anything else stays a generic 500.
+            if let Some(refusal) = e.downcast_ref::<SsoRefusal>() {
+                let lang = crate::i18n::detect_from_headers(&headers);
+                return render_sso_refusal(&state, lang, refusal.key).await;
+            }
             return crate::web::oidc_error_response("oidc account link/create", &format!("{e:#}"));
         }
     };
@@ -1709,18 +1711,27 @@ async fn find_or_create_oidc_user_with_claim(
                 email = %email, subject = %subject,
                 "OIDC login refused: the address belongs to an account linked to another identity"
             );
-            anyhow::bail!(
-                "An account with this email is already linked to another single sign-on identity. Contact an administrator."
-            );
+            // Only an identity that proved it owns the address learns that
+            // an account holds it; an unverified one reads the same refusal
+            // whether an account exists or not, so it cannot probe addresses.
+            return Err(sso_refusal(
+                if email_verified {
+                    "auth-sso-linked-elsewhere"
+                } else {
+                    "auth-sso-unverified"
+                },
+                "An account with this email is already linked to another single sign-on identity. Contact an administrator.",
+            ));
         }
         if !email_verified {
             tracing::warn!(
                 email = %email, subject = %subject,
                 "OIDC login refused: email matches existing local user but IdP did not assert email_verified=true"
             );
-            anyhow::bail!(
-                "An account with this email already exists. The identity provider has not verified that you own this address, so we cannot link them automatically. Contact an administrator."
-            );
+            return Err(sso_refusal(
+                "auth-sso-unverified",
+                "An account with this email already exists. The identity provider has not verified that you own this address, so we cannot link them automatically. Contact an administrator.",
+            ));
         }
         // Linking hands the account to the identity provider, whose own MFA
         // then applies instead of the local one. Not automatically for an
@@ -1736,9 +1747,10 @@ async fn find_or_create_oidc_user_with_claim(
                 email = %email, subject = %subject,
                 "OIDC login refused: email matches a local user with two-factor authentication"
             );
-            anyhow::bail!(
-                "An account with this email already exists and uses two-factor authentication, so it cannot be linked to single sign-on automatically. Contact an administrator."
-            );
+            return Err(sso_refusal(
+                "auth-sso-local-mfa",
+                "An account with this email already exists and uses two-factor authentication, so it cannot be linked to single sign-on automatically. Contact an administrator.",
+            ));
         }
         // A local session must not become an OIDC-authenticated session just
         // because the account is linked. In particular it must not inherit the
@@ -1762,17 +1774,23 @@ async fn find_or_create_oidc_user_with_claim(
     // 3. Create new user if auto-register is enabled — also gated on
     //    email_verified. Otherwise an attacker could create accounts keyed on
     //    addresses they don't own (squatting) or pollute the directory.
-    if !auth_config.oidc_auto_register {
-        anyhow::bail!("No account found for this email. Contact an administrator.");
-    }
+    // Checked before the auto-register setting, so an unverified identity
+    // reads the same refusal whether an account exists or not.
     if !email_verified {
         tracing::warn!(
             email = %email, subject = %subject,
-            "OIDC auto-register refused: IdP did not assert email_verified=true"
+            "OIDC login refused: no account matches and IdP did not assert email_verified=true"
         );
-        anyhow::bail!(
-            "The identity provider has not verified your email address. Ask your administrator to verify it at the provider and try again."
-        );
+        return Err(sso_refusal(
+            "auth-sso-unverified",
+            "The identity provider has not verified your email address. Ask your administrator to verify it at the provider and try again.",
+        ));
+    }
+    if !auth_config.oidc_auto_register {
+        return Err(sso_refusal(
+            "auth-sso-no-account",
+            "No account found for this email. Contact an administrator.",
+        ));
     }
 
     let user_id = uuid::Uuid::new_v4().to_string();
@@ -1801,6 +1819,65 @@ async fn find_or_create_oidc_user_with_claim(
 }
 
 // --- Helpers ---
+
+/// A single sign-on login refused for a reason the user can act on, or take
+/// to an administrator: `key` is the Fluent message shown on the sign-in page,
+/// `message` the English text logged with it.
+#[derive(Debug)]
+pub(crate) struct SsoRefusal {
+    key: &'static str,
+    message: &'static str,
+}
+
+impl std::fmt::Display for SsoRefusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.message)
+    }
+}
+
+impl std::error::Error for SsoRefusal {}
+
+fn sso_refusal(key: &'static str, message: &'static str) -> anyhow::Error {
+    anyhow::Error::new(SsoRefusal { key, message })
+}
+
+/// The sign-in page with the reason a single sign-on login was refused, as a
+/// 403. The SSO button stays, so the user can retry once the cause is fixed.
+async fn render_sso_refusal(state: &AppState, lang: &str, error_key: &str) -> Response {
+    let registration_enabled = get_auth_config(&state.pool)
+        .await
+        .map(|c| c.registration_enabled)
+        .unwrap_or(false);
+    sso_refusal_page(&state.templates, lang, error_key, registration_enabled)
+}
+
+fn sso_refusal_page(
+    templates: &minijinja::Environment<'_>,
+    lang: &str,
+    error_key: &str,
+    registration_enabled: bool,
+) -> Response {
+    let csrf_token = generate_csrf_token();
+    let error = crate::i18n::translate(lang, error_key, None);
+    let body = match templates.get_template("auth/login.html") {
+        Ok(tmpl) => tmpl
+            .render(minijinja::context! {
+                lang => lang,
+                error => error,
+                oidc_enabled => true,
+                registration_enabled => registration_enabled,
+                csrf_token => csrf_token,
+            })
+            .unwrap_or_else(|_| error.clone()),
+        Err(_) => error,
+    };
+    (
+        StatusCode::FORBIDDEN,
+        [("Set-Cookie", csrf_cookie_value(&csrf_token))],
+        Html(body),
+    )
+        .into_response()
+}
 
 fn render_login_error(state: &AppState, lang: &str, error_key: &str) -> Response {
     // Best-effort: try to show OIDC button even on error page
@@ -3562,6 +3639,108 @@ mod tests {
                 .unwrap();
         assert_eq!(provider, "local", "auth_provider must not change");
         assert!(oidc_subject.is_none(), "oidc_subject must remain NULL");
+    }
+
+    // --- SSO refusals reach the user (beta.4 feedback) ---
+
+    fn refusal_key(err: &anyhow::Error) -> Option<&'static str> {
+        err.downcast_ref::<SsoRefusal>().map(|r| r.key)
+    }
+
+    /// Each refusal a user can act on carries the message shown on the
+    /// sign-in page, rather than ending as a 500 with the reason in the log.
+    #[tokio::test]
+    async fn sso_refusals_carry_their_message() {
+        let pool = setup_db().await;
+        let closed = auth_config_with_oidc(&pool, false).await;
+        let open = auth_config_with_oidc(&pool, true).await;
+        let refuse = |subject: &'static str, email: &'static str, verified: Option<bool>, cfg| {
+            let pool = pool.clone();
+            async move {
+                let err = find_or_create_oidc_user_with_claim(
+                    &pool, subject, email, verified, "Someone", &cfg,
+                )
+                .await
+                .unwrap_err();
+                refusal_key(&err)
+            }
+        };
+        insert_user(&pool, "local@company.com", "Local", "user").await;
+        let linked = insert_user(&pool, "linked@company.com", "Linked", "user").await;
+        sqlx::query("UPDATE users SET oidc_subject = 'other', auth_provider = 'oidc' WHERE id = ?")
+            .bind(&linked)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let mfa = insert_user(&pool, "mfa@company.com", "Mfa", "user").await;
+        sqlx::query(
+            "INSERT INTO user_mfa (user_id, secret_enc, last_step) VALUES (?, 'enc:v1:x', 0)",
+        )
+        .bind(&mfa)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // An identity that proved it owns the address learns why.
+        assert_eq!(
+            refuse("v1", "nobody@company.com", Some(true), closed.clone()).await,
+            Some("auth-sso-no-account")
+        );
+        assert_eq!(
+            refuse("v2", "linked@company.com", Some(true), open.clone()).await,
+            Some("auth-sso-linked-elsewhere")
+        );
+        assert_eq!(
+            refuse("v3", "mfa@company.com", Some(true), open.clone()).await,
+            Some("auth-sso-local-mfa")
+        );
+
+        // An unverified one reads the same refusal whether an account holds
+        // the address or not, so it cannot probe which addresses have one.
+        for email in [
+            "nobody@company.com",
+            "local@company.com",
+            "linked@company.com",
+            "mfa@company.com",
+        ] {
+            for verified in [Some(false), None] {
+                for cfg in [&closed, &open] {
+                    assert_eq!(
+                        refuse("u", email, verified, cfg.clone()).await,
+                        Some("auth-sso-unverified"),
+                        "{email} {verified:?} auto_register={}",
+                        cfg.oidc_auto_register
+                    );
+                }
+            }
+        }
+    }
+
+    /// The refusal is the sign-in page, in the reader's language, with the
+    /// SSO button kept, answered as 403.
+    #[tokio::test]
+    async fn sso_refusal_page_is_a_translated_403() {
+        let mut env = minijinja::Environment::new();
+        env.set_undefined_behavior(minijinja::UndefinedBehavior::Lenient);
+        env.set_loader(minijinja::path_loader("templates"));
+        crate::i18n::register(&mut env);
+        for (lang, key) in [
+            ("en", "auth-sso-unverified"),
+            ("fr", "auth-sso-no-account"),
+            ("de", "auth-error-email-domain"),
+            ("ru", "auth-sso-no-email"),
+        ] {
+            let response = sso_refusal_page(&env, lang, key, false);
+            assert_eq!(response.status(), StatusCode::FORBIDDEN);
+            let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            let body = String::from_utf8(body.to_vec()).unwrap();
+            let message = crate::i18n::translate(lang, key, None);
+            let shown = message.replace('\'', "&#x27;");
+            assert!(body.contains(&shown), "{lang}: {message}");
+            assert!(body.contains("/auth/oidc/login"), "{lang}: SSO button kept");
+        }
     }
 
     /// The matching address alone must not switch off an account's local

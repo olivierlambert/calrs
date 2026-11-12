@@ -847,6 +847,11 @@ auth-error-email-invalid = Veuillez saisir une adresse e-mail valide
 auth-error-email-domain = Domaine de messagerie non autorisé
 auth-error-password-length = Le mot de passe doit contenir au moins 12 caractères
 auth-error-email-taken = Cette adresse e-mail est déjà utilisée
+auth-sso-linked-elsewhere = Un compte avec cette adresse e-mail est déjà associé à une autre identité SSO. Contactez votre administrateur.
+auth-sso-local-mfa = Un compte avec cette adresse e-mail existe déjà et utilise l'authentification à deux facteurs : il ne peut donc pas être associé automatiquement au SSO. Contactez votre administrateur.
+auth-sso-no-account = Aucun compte n'existe pour cette adresse e-mail, et les nouveaux comptes ne sont pas créés automatiquement. Contactez votre administrateur.
+auth-sso-unverified = Votre fournisseur d'identité n'a pas vérifié votre adresse e-mail. Demandez à votre administrateur de la faire vérifier auprès du fournisseur, puis réessayez.
+auth-sso-no-email = Votre fournisseur d'identité n'a pas transmis d'adresse e-mail. Demandez à votre administrateur de la partager avec calrs, puis réessayez.
 auth-error-create-failed = Échec de la création du compte
 
 # Calendar source test and write-back setup (templates/source_test.html, templates/source_write_setup.html)

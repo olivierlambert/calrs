@@ -848,6 +848,11 @@ auth-error-email-invalid = Voer een geldig e-mailadres in
 auth-error-email-domain = E-maildomein niet toegestaan
 auth-error-password-length = Wachtwoord moet minimaal 12 tekens lang zijn
 auth-error-email-taken = E-mailadres is al geregistreerd
+auth-sso-linked-elsewhere = Een account met dit e-mailadres is al gekoppeld aan een andere SSO-identiteit. Neem contact op met je beheerder.
+auth-sso-local-mfa = Er bestaat al een account met dit e-mailadres dat tweestapsverificatie gebruikt, dus het kan niet automatisch aan SSO worden gekoppeld. Neem contact op met je beheerder.
+auth-sso-no-account = Er is geen account voor dit e-mailadres en nieuwe accounts worden niet automatisch aangemaakt. Neem contact op met je beheerder.
+auth-sso-unverified = Je identiteitsprovider heeft je e-mailadres niet geverifieerd. Vraag je beheerder om het bij de provider te laten verifiëren en probeer het daarna opnieuw.
+auth-sso-no-email = Je identiteitsprovider heeft geen e-mailadres meegestuurd. Vraag je beheerder om het met calrs te delen en probeer het daarna opnieuw.
 auth-error-create-failed = Account aanmaken mislukt
 
 # Calendar source test and write-back setup (templates/source_test.html, templates/source_write_setup.html)
