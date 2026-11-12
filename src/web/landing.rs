@@ -264,9 +264,9 @@ fn weekday_name(lang: &str, day: u32, short: bool) -> String {
 /// Languages whose weekday names are lowercase in running text: the short
 /// names (capitalised as column headings on the slot page) start a
 /// timetable row capitalised, and the ones after it are lowercased ("Lun
-/// au jeu", "Lun, mer et ven"). German capitalises them, Estonian writes
-/// capital letters, Dutch already lowercase.
-const LOWERCASE_WEEKDAYS: &[&str] = &["fr", "es", "pt", "it", "pl"];
+/// au jeu", "Lun, mer et ven", "Пн–ср"). German capitalises them, Estonian
+/// writes capital letters, Dutch already lowercase.
+const LOWERCASE_WEEKDAYS: &[&str] = &["fr", "es", "pt", "it", "pl", "ru"];
 
 /// A short weekday name as it reads in a timetable row, `first` or after
 /// another word.
@@ -859,6 +859,7 @@ mod tests {
         assert_eq!(days_phrase("it", &[1, 2, 3], true), "Lun–mer");
         assert_eq!(days_phrase("pl", &[1, 2, 3], true), "Pon–śr");
         assert_eq!(days_phrase("nl", &[1, 2, 3], true), "ma t/m wo");
+        assert_eq!(days_phrase("ru", &[1, 2, 3], true), "Пн–ср");
         let v = usual_hours("de", &week, "Europe/Berlin").unwrap();
         assert_eq!(rows(&v), ["Mo–Do: 09:00 bis 17:30", "Fr: 09:00 bis 16:00"]);
         let every: Vec<_> = (0..=6).map(|d| rule(d, "10:00", "16:00")).collect();
