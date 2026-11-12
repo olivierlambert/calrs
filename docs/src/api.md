@@ -59,7 +59,7 @@ the first characters, permissions, creation, expiry, last use) with a
 By default only administrators can use the REST API, with a personal token
 or an OAuth application: both read guest names, addresses and notes, so
 letting every user pull them programmatically is the operator's call.
-**Admin panel → Access → API tokens → Let all users use the REST API** opens it
+**Admin panel → Sign-in and security → API tokens → Let all users use the REST API** opens it
 to everyone. Turning it off again stops the personal tokens and the API grants
 of users who are not administrators at once (they work again if it is turned
 back on), and they cannot approve a new API application meanwhile (the

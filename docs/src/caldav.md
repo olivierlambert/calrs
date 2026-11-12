@@ -84,14 +84,14 @@ calrs source calendars <id-prefix>
 calrs source calendars <id-prefix> --disable "Colleague" --enable "Personal"
 ```
 
-The **Conflict calendars** section of an event type then picks, among the synced calendars, the ones that count for that event type. If none of the calendars it picked is synced any more, it falls back to every synced calendar, as when it picks none, so turning calendars off never leaves an event type with no conflicts at all.
+The **Conflict calendars** section of an event type then picks, among the synced calendars, the ones that count for that event type. If none of the calendars it picked is synced any more, it falls back to every synced busy calendar, as when it picks none, so turning calendars off never leaves an event type with no conflicts at all.
 
 ### Multi-VEVENT resources
 
 Some CalDAV servers (notably BlueMind) bundle recurring events and their modified instances into a single CalDAV resource containing multiple VEVENTs. calrs splits these and stores each VEVENT as a separate row:
 
 - The **parent event** has the RRULE and is stored with its UID
-- **Modified instances** have a RECURRENCE-ID and are stored alongside the parent with a composite unique key `(uid, recurrence_id)`
+- **Modified instances** have a RECURRENCE-ID and are stored alongside the parent with a composite unique key scoped to the calendar: `(uid, calendar_id, recurrence_id)`
 - This ensures modified occurrences correctly block (or free) availability
 
 Recurring events are expanded over the window asked for, however long ago the series started: a daily stand-up created years ago still blocks today. Supported rules are `DAILY`, `WEEKLY`, `MONTHLY` and `YEARLY`, with `INTERVAL`, `UNTIL`, `COUNT`, `BYDAY`, `BYMONTH`, `BYMONTHDAY`, `BYSETPOS`, `WKST`, `RDATE` (extra dates, with or without a rule) and `EXDATE`; cancelled occurrences count toward `COUNT`, as RFC 5545 says. A rule calrs cannot expand is never read as free: an hourly one or one with `BYHOUR` blocks every slot from its start, any other (`BYYEARDAY`, `BYWEEKNO`, `RSCALE`) the event's own time every day from its start, up to its `UNTIL`; the troubleshoot view shows it as a repeat rule calrs cannot read, and each sync logs a warning.
@@ -156,6 +156,12 @@ If a source cannot be synced (server down, password changed, OAuth access revoke
 - slot pages retry a failing source at most every five minutes, so a dead server does not slow down every page load
 - `calrs sync` lists the sources that failed and exits with status 1
 
+## Recurring events
+
+calrs expands daily, weekly, monthly and yearly recurrence rules within the requested window, including intervals, counts, end dates, weekday/month-day selections and positional rules. `RDATE` adds occurrences, `EXDATE` removes them, and `RECURRENCE-ID` replaces moved or cancelled instances. Long-running series are expanded near the requested dates rather than stopping after a fixed number of occurrences from their original start.
+
+An unsupported rule does not make a calendar look free. calrs blocks conservatively within the rule's known bounds: usually the event's time each day, or all time for sub-daily rules and unsupported time selectors. **Troubleshoot** explains the fallback, and the dashboard week marks it with a dashed busy band. Inspect these entries if fewer slots appear after upgrading.
+
 ## Managing sources
 
 ```bash
@@ -169,8 +175,8 @@ calrs source test <id-prefix>
 calrs source remove <id-prefix>
 ```
 
-From the dashboard: **Sync**, **Test**, and **Remove** buttons are available for each source.
+From the dashboard, use **Edit** to update connection details, **Calendars** to select synced calendars, and the sync, connection-test and remove actions. An empty password on edit preserves the existing password. OAuth and centrally managed Exchange sources have their own connection controls; see the corresponding provider guide.
 
 ## Credentials
 
-Passwords are hex-encoded and stored in the SQLite database. This is not encryption — it prevents accidental display in logs but does not protect against database access. Secure your data directory appropriately.
+Passwords and OAuth tokens are encrypted at rest with AES-256-GCM. The key is stored in `secret.key` in the data directory, unless supplied through `CALRS_SECRET_KEY`. Back up the key with the database; a database backup alone cannot restore the encrypted credentials. Legacy hex-encoded passwords are migrated on startup. See [Security](./security.md#caldav-credential-storage).
