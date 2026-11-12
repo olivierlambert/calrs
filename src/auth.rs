@@ -1106,8 +1106,8 @@ use openidconnect::core::{
 };
 use openidconnect::{
     AsyncHttpClient, AuthType, AuthenticationFlow, AuthorizationCode, ClientId, ClientSecret,
-    CsrfToken, EndpointMaybeSet, EndpointNotSet, EndpointSet, IssuerUrl, Nonce, PkceCodeChallenge,
-    PkceCodeVerifier, RedirectUrl, Scope, TokenResponse,
+    CsrfToken, EndpointMaybeSet, EndpointNotSet, EndpointSet, IssuerUrl, Nonce,
+    OAuth2TokenResponse, PkceCodeChallenge, PkceCodeVerifier, RedirectUrl, Scope, TokenResponse,
 };
 
 /// An HTTP client for `oauth2` that remembers the status of the last response.
@@ -1154,26 +1154,31 @@ impl<'c> AsyncHttpClient<'c> for StatusRecordingClient {
 }
 
 fn build_http_client() -> Result<openidconnect::reqwest::Client> {
+    // Discovery, the token exchange and UserInfo all run inside a browser
+    // request, so a provider that stops answering must not hold it forever.
     let client = crate::net_guard::plain_builder()
         .redirect(openidconnect::reqwest::redirect::Policy::none())
+        .timeout(std::time::Duration::from_secs(30))
         .build()
         .map_err(|e| anyhow::anyhow!("Failed to build HTTP client: {}", e))?;
     Ok(client)
 }
 
+/// The client built from the provider's discovery document: the token and
+/// UserInfo endpoints are whatever the document lists.
+type OidcClient = CoreClient<
+    EndpointSet,
+    EndpointNotSet,
+    EndpointNotSet,
+    EndpointNotSet,
+    EndpointMaybeSet,
+    EndpointMaybeSet,
+>;
+
 async fn build_oidc_client_with_redirect(
     auth_config: &AuthConfig,
     secret_key: &[u8; 32],
-) -> Result<
-    CoreClient<
-        EndpointSet,
-        EndpointNotSet,
-        EndpointNotSet,
-        EndpointNotSet,
-        EndpointMaybeSet,
-        EndpointMaybeSet,
-    >,
-> {
+) -> Result<OidcClient> {
     let issuer_url = IssuerUrl::new(
         auth_config
             .oidc_issuer_url
@@ -1451,7 +1456,7 @@ async fn oidc_callback(
     }
 
     let subject = claims.subject().to_string();
-    let email = claims
+    let mut email = claims
         .email()
         .map(|e: &openidconnect::EndUserEmail| e.to_string())
         .unwrap_or_default();
@@ -1459,19 +1464,48 @@ async fn oidc_callback(
     // it by default). Absent, it never links or creates an account; for a
     // returning user it leaves an admin's confirmation of an unchanged
     // address in place (see `find_or_create_oidc_user_with_claim`).
-    let email_verified_claim = claims.email_verified();
-    let name = claims
-        .name()
-        .and_then(
-            |n: &openidconnect::LocalizedClaim<openidconnect::EndUserName>| {
-                n.get(None)
-                    .map(|v: &openidconnect::EndUserName| v.to_string())
-            },
+    let mut email_verified_claim = claims.email_verified();
+    let mut name = claims.name().and_then(
+        |n: &openidconnect::LocalizedClaim<openidconnect::EndUserName>| {
+            n.get(None)
+                .map(|v: &openidconnect::EndUserName| v.to_string())
+        },
+    );
+    // Groups and title from the ID token JWT payload (not standard claims).
+    let mut extra = extract_claims_from_id_token(id_token.to_string().as_str());
+
+    // OIDC Core 5.4: the claims the `email` and `profile` scopes ask for come
+    // back from the UserInfo endpoint whenever an access token is issued,
+    // which the code flow always does. Most providers copy them into the ID
+    // token as well; a provider that keeps its ID token minimal does not
+    // (#264), so an ID token without an email is completed from UserInfo.
+    // The answer must carry the ID token's `sub`, so a substituted access
+    // token cannot attach someone else's address to this login.
+    if email.is_empty() {
+        match fetch_userinfo(
+            &client,
+            &recording_client,
+            token_response.access_token().clone(),
+            claims.subject().clone(),
         )
-        .unwrap_or_else(|| email.split('@').next().unwrap_or("User").to_string());
+        .await
+        {
+            Ok(info) => {
+                email = info.email.unwrap_or_default();
+                email_verified_claim = info.email_verified;
+                name = name.or(info.name);
+                extra.groups = extra.groups.or(info.extra.groups);
+                extra.title = extra.title.or(info.extra.title);
+            }
+            Err(reason) => {
+                tracing::warn!(reason = %reason, "OIDC callback: UserInfo request failed")
+            }
+        }
+    }
+    let name = name.unwrap_or_else(|| email.split('@').next().unwrap_or("User").to_string());
 
     if email.is_empty() {
-        tracing::warn!("OIDC callback failed: no email in token");
+        tracing::warn!("OIDC callback failed: no email in the ID token or from UserInfo");
         return Html("OIDC provider did not return an email address.".to_string()).into_response();
     }
 
@@ -1486,9 +1520,6 @@ async fn oidc_callback(
         ))
         .into_response();
     }
-
-    // Extract groups and title from ID token JWT payload
-    let claims = extract_claims_from_id_token(id_token.to_string().as_str());
 
     // Find or create user
     let user_id = match find_or_create_oidc_user_with_claim(
@@ -1509,7 +1540,7 @@ async fn oidc_callback(
     };
 
     // Sync title from OIDC token (best-effort)
-    if let Some(ref title) = claims.title {
+    if let Some(ref title) = extra.title {
         let _ =
             sqlx::query("UPDATE users SET title = ?, updated_at = datetime('now') WHERE id = ?")
                 .bind(title)
@@ -1519,7 +1550,7 @@ async fn oidc_callback(
     }
 
     // Sync groups from OIDC token (best-effort, don't fail login)
-    if let Some(groups) = &claims.groups {
+    if let Some(groups) = &extra.groups {
         if let Err(e) = sync_user_groups(&state.pool, &user_id, groups).await {
             tracing::warn!(error = %e, "failed to sync OIDC groups");
         }
@@ -2072,6 +2103,7 @@ fn prefers_client_secret_post(methods: Option<&[CoreClientAuthMethod]>) -> bool 
 /// Decodes the payload (middle part) as base64 and parses JSON.
 /// Returns None if the token has no groups claim or cannot be parsed.
 /// Parsed claims from an OIDC ID token JWT payload.
+#[derive(Debug)]
 struct OidcClaims {
     groups: Option<Vec<String>>,
     title: Option<String>,
@@ -2103,7 +2135,77 @@ fn extract_claims_from_id_token(raw_token: &str) -> OidcClaims {
             }
         }
     };
+    extra_claims_from_payload(&payload)
+}
 
+/// The claims of a UserInfo answer beyond the standard ones: `groups` and
+/// `title` as calrs reads them from the ID token.
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
+struct UserInfoExtraClaims {
+    #[serde(flatten)]
+    rest: serde_json::Map<String, serde_json::Value>,
+}
+
+impl openidconnect::AdditionalClaims for UserInfoExtraClaims {}
+
+/// What a UserInfo answer tells about the signed-in user.
+#[derive(Debug)]
+struct UserInfoResult {
+    email: Option<String>,
+    email_verified: Option<bool>,
+    name: Option<String>,
+    extra: OidcClaims,
+}
+
+/// Fetch the UserInfo claims of the user `access_token` was issued to, and
+/// check that they belong to `subject` (the `sub` of the verified ID token).
+/// The error is a short reason for the log: the status and shape of a refusal,
+/// a parse failure with its quoted values masked, never the body.
+async fn fetch_userinfo(
+    client: &OidcClient,
+    http_client: &StatusRecordingClient,
+    access_token: openidconnect::AccessToken,
+    subject: openidconnect::SubjectIdentifier,
+) -> Result<UserInfoResult, String> {
+    let request = client
+        .user_info(access_token, Some(subject))
+        .map_err(|e| format!("the provider metadata lists no UserInfo endpoint ({e})"))?;
+    let info = request
+        .request_async::<UserInfoExtraClaims, _, openidconnect::core::CoreGenderClaim>(http_client)
+        .await
+        .map_err(|e| match e {
+            openidconnect::UserInfoError::Parse(parse_err) => format!(
+                "UserInfo response did not parse: {}",
+                redact_reason(&parse_err.inner().to_string())
+            ),
+            openidconnect::UserInfoError::Response(status, _body, what) => {
+                format!("UserInfo answered {status}: {what}")
+            }
+            e => format!("{e}: {}", crate::web::error_source_chain(&e)),
+        })?;
+    let extra = extra_claims_from_payload(&serde_json::Value::Object(
+        info.additional_claims().rest.clone(),
+    ));
+    Ok(UserInfoResult {
+        email: info
+            .email()
+            .map(|e: &openidconnect::EndUserEmail| e.to_string())
+            .filter(|e| !e.is_empty()),
+        email_verified: info.email_verified(),
+        name: info.name().and_then(
+            |n: &openidconnect::LocalizedClaim<openidconnect::EndUserName>| {
+                n.get(None)
+                    .map(|v: &openidconnect::EndUserName| v.to_string())
+            },
+        ),
+        extra,
+    })
+}
+
+/// `groups` (leading `/` stripped, as Keycloak writes paths) and `title`
+/// from a claims object, whether it is an ID token payload or a UserInfo
+/// answer.
+fn extra_claims_from_payload(payload: &serde_json::Value) -> OidcClaims {
     let groups = payload.get("groups").and_then(|g| {
         let arr = g.as_array()?;
         let group_strings: Vec<String> = arr
@@ -2532,6 +2634,163 @@ mod tests {
         let logged = format!("{err:#}");
         assert!(logged.starts_with("OIDC discovery failed: "), "{logged}");
         assert!(logged.contains("invalid type"), "{logged}");
+    }
+
+    // --- UserInfo fallback (#264) ---
+
+    /// A provider on loopback whose `/userinfo` gives `answer` (status, JSON
+    /// body) to the bearer token `ACCESS` and 401 to anything else; with no
+    /// answer the discovery document lists no UserInfo endpoint at all.
+    async fn userinfo_provider(
+        answer: Option<(u16, &'static str)>,
+    ) -> (OidcClient, StatusRecordingClient) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let issuer = format!("http://{addr}");
+        let mut metadata = serde_json::json!({
+            "issuer": issuer,
+            "authorization_endpoint": format!("{issuer}/authorize"),
+            "token_endpoint": format!("{issuer}/token"),
+            "jwks_uri": format!("{issuer}/jwks"),
+            "response_types_supported": ["code"],
+            "subject_types_supported": ["public"],
+            "id_token_signing_alg_values_supported": ["RS256"],
+        });
+        if answer.is_some() {
+            metadata["userinfo_endpoint"] = format!("{issuer}/userinfo").into();
+        }
+        let app = Router::new()
+            .route(
+                "/.well-known/openid-configuration",
+                get(move || {
+                    let metadata = metadata.clone();
+                    async move { axum::Json(metadata) }
+                }),
+            )
+            // Discovery fetches the key set too.
+            .route(
+                "/jwks",
+                get(|| async { axum::Json(serde_json::json!({ "keys": [] })) }),
+            )
+            .route(
+                "/userinfo",
+                get(move |headers: HeaderMap| async move {
+                    let json = [("content-type", "application/json")];
+                    let bearer = format!("Bearer {ACCESS}");
+                    if headers.get("authorization").and_then(|v| v.to_str().ok()) != Some(&bearer) {
+                        return (
+                            StatusCode::UNAUTHORIZED,
+                            json,
+                            r#"{"error":"invalid_token"}"#,
+                        )
+                            .into_response();
+                    }
+                    let (status, body) = answer.unwrap();
+                    (StatusCode::from_u16(status).unwrap(), json, body).into_response()
+                }),
+            );
+        tokio::spawn(async move { axum::serve(listener, app).await });
+        let cfg = AuthConfig {
+            id: "singleton".to_string(),
+            registration_enabled: false,
+            allowed_email_domains: None,
+            created_at: String::new(),
+            updated_at: String::new(),
+            oidc_enabled: true,
+            oidc_issuer_url: Some(issuer),
+            oidc_client_id: Some("c".to_string()),
+            oidc_client_secret: None,
+            oidc_auto_register: false,
+            google_oauth2_client_id: None,
+            google_oauth2_client_secret: None,
+        };
+        let client = build_oidc_client_with_redirect(&cfg, &[0u8; 32])
+            .await
+            .unwrap();
+        let http = StatusRecordingClient::new(build_http_client().unwrap());
+        (client, http)
+    }
+
+    fn access() -> openidconnect::AccessToken {
+        openidconnect::AccessToken::new(ACCESS.to_string())
+    }
+
+    fn sub(s: &str) -> openidconnect::SubjectIdentifier {
+        openidconnect::SubjectIdentifier::new(s.to_string())
+    }
+
+    const USERINFO: &str = r#"{"sub":"u-1","email":"ann@example.com","email_verified":true,"name":"Ann Example","groups":["/staff","sales"],"title":"CTO"}"#;
+
+    #[tokio::test]
+    async fn userinfo_completes_an_id_token_without_email() {
+        // A provider that keeps its ID token minimal answers UserInfo with
+        // the claims the `email` and `profile` scopes asked for.
+        let (client, http) = userinfo_provider(Some((200, USERINFO))).await;
+        let info = fetch_userinfo(&client, &http, access(), sub("u-1"))
+            .await
+            .unwrap();
+        assert_eq!(info.email.as_deref(), Some("ann@example.com"));
+        assert_eq!(info.email_verified, Some(true));
+        assert_eq!(info.name.as_deref(), Some("Ann Example"));
+        assert_eq!(
+            info.extra.groups,
+            Some(vec!["staff".to_string(), "sales".to_string()])
+        );
+        assert_eq!(info.extra.title.as_deref(), Some("CTO"));
+    }
+
+    #[tokio::test]
+    async fn userinfo_of_another_subject_is_refused() {
+        // The answer must be about the user the verified ID token names, so
+        // a substituted access token cannot attach someone else's address.
+        let (client, http) = userinfo_provider(Some((200, USERINFO))).await;
+        let err = fetch_userinfo(&client, &http, access(), sub("u-2"))
+            .await
+            .unwrap_err();
+        assert!(err.contains("Invalid subject"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn userinfo_without_email_leaves_it_unset() {
+        let body = r#"{"sub":"u-1","name":"Ann Example","email":""}"#;
+        let (client, http) = userinfo_provider(Some((200, body))).await;
+        let info = fetch_userinfo(&client, &http, access(), sub("u-1"))
+            .await
+            .unwrap();
+        assert_eq!(info.email, None);
+        assert_eq!(info.email_verified, None);
+        assert_eq!(info.name.as_deref(), Some("Ann Example"));
+    }
+
+    #[tokio::test]
+    async fn userinfo_refusal_is_logged_without_its_body() {
+        let body = r#"{"error":"invalid_token","error_description":"body-secret"}"#;
+        let (client, http) = userinfo_provider(Some((401, body))).await;
+        let err = fetch_userinfo(&client, &http, access(), sub("u-1"))
+            .await
+            .unwrap_err();
+        assert!(err.contains("401"), "{err}");
+        assert!(!err.contains("body-secret"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn userinfo_parse_failure_masks_the_values() {
+        let body = r#"{"sub":"u-1","email_verified":"ann-secret"}"#;
+        let (client, http) = userinfo_provider(Some((200, body))).await;
+        let err = fetch_userinfo(&client, &http, access(), sub("u-1"))
+            .await
+            .unwrap_err();
+        assert!(err.contains("email_verified"), "{err}");
+        assert!(!err.contains("ann-secret"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn userinfo_needs_an_endpoint_in_the_metadata() {
+        let (client, http) = userinfo_provider(None).await;
+        let err = fetch_userinfo(&client, &http, access(), sub("u-1"))
+            .await
+            .unwrap_err();
+        assert!(err.contains("no UserInfo endpoint"), "{err}");
     }
 
     #[test]

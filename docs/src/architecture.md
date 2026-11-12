@@ -177,7 +177,7 @@ The approval request email includes Approve and Decline action buttons (table-ba
 2. Redirect to OIDC provider with PKCE challenge
 3. Provider redirects back with authorization code
 4. calrs exchanges code for tokens
-5. Extracts email, name, groups from ID token
+5. Extracts email, name, groups from the ID token (from the UserInfo endpoint when the ID token carries no email)
 6. Links to existing user by email or creates new user
 7. Session created as with local auth
 
