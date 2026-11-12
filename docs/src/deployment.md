@@ -144,9 +144,13 @@ cal.example.com {
 
 ### Which paths to expose
 
-Exposing every path, as the examples above do, is the default and is safe:
-everything beyond the guest pages asks for a session, a token or an
-OAuth grant. Some operators still prefer a public site that serves guest
+Exposing every path, as the examples above do, is the default and is safe
+once the instance is set up: everything beyond the guest pages asks for a
+session, a token or an OAuth grant. Two things come first. The first account
+registered becomes the admin, so register it before the instance is
+reachable from the internet. And anyone may create an account at
+`/auth/register` while registration is open, so turn it off in the admin
+panel, or limit it to your email domains, if strangers should not sign up. Some operators still prefer a public site that serves guest
 pages only, and keep the rest on an office network or a VPN. These are the
 groups of paths calrs serves:
 
@@ -163,6 +167,11 @@ groups of paths calrs serves:
 Keep `/booking/` public even when hosts work from the office: the approve
 and decline buttons in their emails point there. An MCP or API client needs
 its paths reachable from wherever it runs.
+
+A restriction in the proxy only holds if calrs cannot be reached around it.
+Publish its port on the loopback address only (`-p 127.0.0.1:3000:3000`
+with Docker, `127.0.0.1:3000:3000` under `ports:` in Compose), or keep it
+off the published ports and reach it over the proxy's own network.
 
 An nginx version that serves guest pages to everyone and the rest to one
 network only:
