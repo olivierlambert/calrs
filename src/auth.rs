@@ -1711,8 +1711,15 @@ async fn find_or_create_oidc_user_with_claim(
                 email = %email, subject = %subject,
                 "OIDC login refused: the address belongs to an account linked to another identity"
             );
+            // Only an identity that proved it owns the address learns that
+            // an account holds it; an unverified one reads the same refusal
+            // whether an account exists or not, so it cannot probe addresses.
             return Err(sso_refusal(
-                "auth-sso-linked-elsewhere",
+                if email_verified {
+                    "auth-sso-linked-elsewhere"
+                } else {
+                    "auth-sso-unverified"
+                },
                 "An account with this email is already linked to another single sign-on identity. Contact an administrator.",
             ));
         }
@@ -1722,7 +1729,7 @@ async fn find_or_create_oidc_user_with_claim(
                 "OIDC login refused: email matches existing local user but IdP did not assert email_verified=true"
             );
             return Err(sso_refusal(
-                "auth-sso-unverified-link",
+                "auth-sso-unverified",
                 "An account with this email already exists. The identity provider has not verified that you own this address, so we cannot link them automatically. Contact an administrator.",
             ));
         }
@@ -1767,20 +1774,22 @@ async fn find_or_create_oidc_user_with_claim(
     // 3. Create new user if auto-register is enabled — also gated on
     //    email_verified. Otherwise an attacker could create accounts keyed on
     //    addresses they don't own (squatting) or pollute the directory.
+    // Checked before the auto-register setting, so an unverified identity
+    // reads the same refusal whether an account exists or not.
+    if !email_verified {
+        tracing::warn!(
+            email = %email, subject = %subject,
+            "OIDC login refused: no account matches and IdP did not assert email_verified=true"
+        );
+        return Err(sso_refusal(
+            "auth-sso-unverified",
+            "The identity provider has not verified your email address. Ask your administrator to verify it at the provider and try again.",
+        ));
+    }
     if !auth_config.oidc_auto_register {
         return Err(sso_refusal(
             "auth-sso-no-account",
             "No account found for this email. Contact an administrator.",
-        ));
-    }
-    if !email_verified {
-        tracing::warn!(
-            email = %email, subject = %subject,
-            "OIDC auto-register refused: IdP did not assert email_verified=true"
-        );
-        return Err(sso_refusal(
-            "auth-sso-unverified-register",
-            "The identity provider has not verified your email address. Ask your administrator to verify it at the provider and try again.",
         ));
     }
 
@@ -3656,34 +3665,13 @@ mod tests {
                 refusal_key(&err)
             }
         };
-        assert_eq!(
-            refuse("s1", "nobody@company.com", Some(true), closed.clone()).await,
-            Some("auth-sso-no-account")
-        );
-        assert_eq!(
-            refuse("s2", "new@company.com", Some(false), open.clone()).await,
-            Some("auth-sso-unverified-register")
-        );
-        assert_eq!(
-            refuse("s3", "new@company.com", None, open.clone()).await,
-            Some("auth-sso-unverified-register")
-        );
         insert_user(&pool, "local@company.com", "Local", "user").await;
-        assert_eq!(
-            refuse("s4", "local@company.com", Some(false), open.clone()).await,
-            Some("auth-sso-unverified-link")
-        );
         let linked = insert_user(&pool, "linked@company.com", "Linked", "user").await;
         sqlx::query("UPDATE users SET oidc_subject = 'other', auth_provider = 'oidc' WHERE id = ?")
             .bind(&linked)
             .execute(&pool)
             .await
             .unwrap();
-        // Another identity holds the address: reached through the address.
-        assert_eq!(
-            refuse("s5", "linked@company.com", Some(true), open.clone()).await,
-            Some("auth-sso-linked-elsewhere")
-        );
         let mfa = insert_user(&pool, "mfa@company.com", "Mfa", "user").await;
         sqlx::query(
             "INSERT INTO user_mfa (user_id, secret_enc, last_step) VALUES (?, 'enc:v1:x', 0)",
@@ -3692,10 +3680,40 @@ mod tests {
         .execute(&pool)
         .await
         .unwrap();
+
+        // An identity that proved it owns the address learns why.
         assert_eq!(
-            refuse("s6", "mfa@company.com", Some(true), open.clone()).await,
+            refuse("v1", "nobody@company.com", Some(true), closed.clone()).await,
+            Some("auth-sso-no-account")
+        );
+        assert_eq!(
+            refuse("v2", "linked@company.com", Some(true), open.clone()).await,
+            Some("auth-sso-linked-elsewhere")
+        );
+        assert_eq!(
+            refuse("v3", "mfa@company.com", Some(true), open.clone()).await,
             Some("auth-sso-local-mfa")
         );
+
+        // An unverified one reads the same refusal whether an account holds
+        // the address or not, so it cannot probe which addresses have one.
+        for email in [
+            "nobody@company.com",
+            "local@company.com",
+            "linked@company.com",
+            "mfa@company.com",
+        ] {
+            for verified in [Some(false), None] {
+                for cfg in [&closed, &open] {
+                    assert_eq!(
+                        refuse("u", email, verified, cfg.clone()).await,
+                        Some("auth-sso-unverified"),
+                        "{email} {verified:?} auto_register={}",
+                        cfg.oidc_auto_register
+                    );
+                }
+            }
+        }
     }
 
     /// The refusal is the sign-in page, in the reader's language, with the
@@ -3707,7 +3725,7 @@ mod tests {
         env.set_loader(minijinja::path_loader("templates"));
         crate::i18n::register(&mut env);
         for (lang, key) in [
-            ("en", "auth-sso-unverified-register"),
+            ("en", "auth-sso-unverified"),
             ("fr", "auth-sso-no-account"),
             ("de", "auth-error-email-domain"),
             ("ru", "auth-sso-no-email"),

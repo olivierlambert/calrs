@@ -848,10 +848,9 @@ auth-error-email-domain = See e-posti domeen ei ole lubatud
 auth-error-password-length = Parool peab olema vähemalt 12 tähemärki pikk
 auth-error-email-taken = See e-posti aadress on juba registreeritud
 auth-sso-linked-elsewhere = Selle e-posti aadressiga konto on juba seotud teise SSO identiteediga. Võta ühendust haldajaga.
-auth-sso-unverified-link = Selle e-posti aadressiga konto on juba olemas, kuid sinu identiteedipakkuja ei ole kinnitanud, et aadress kuulub sulle, seega ei saa neid automaatselt siduda. Võta ühendust haldajaga.
 auth-sso-local-mfa = Selle e-posti aadressiga konto on juba olemas ja kasutab kaheastmelist autentimist, seega ei saa seda automaatselt SSO-ga siduda. Võta ühendust haldajaga.
 auth-sso-no-account = Selle e-posti aadressiga kontot ei ole ja uusi kontosid automaatselt ei looda. Võta ühendust haldajaga.
-auth-sso-unverified-register = Sinu identiteedipakkuja ei ole sinu e-posti aadressi kinnitanud. Palu haldajal see pakkuja juures kinnitada ja proovi siis uuesti.
+auth-sso-unverified = Sinu identiteedipakkuja ei ole sinu e-posti aadressi kinnitanud. Palu haldajal see pakkuja juures kinnitada ja proovi siis uuesti.
 auth-sso-no-email = Sinu identiteedipakkuja ei saatnud e-posti aadressi. Palu haldajal see calrsiga jagada ja proovi siis uuesti.
 auth-error-create-failed = Konto loomine ebaõnnestus
 

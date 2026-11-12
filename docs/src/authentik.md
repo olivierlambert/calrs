@@ -190,7 +190,7 @@ this on one or two accounts before rolling out broadly.
 |---|---|---|
 | Authentik shows **"Redirect URI Error"** | The redirect URI in the provider doesn't match `{CALRS_BASE_URL}/auth/oidc/callback` | Set the provider redirect URI to exactly `https://<host>/auth/oidc/callback` and make sure `CALRS_BASE_URL` matches (host, scheme, and the `/auth/` segment) |
 | **"Your identity provider has not verified your email address"** on the sign-in page (a generic "Authentication failed" before 2.0.0-rc.1) | Authentik 2025.10+ returns `email_verified: false` by default | Apply [step 4](#4-fix-email_verified-authentik-202510) |
-| **"An account with this email address already exists, but your identity provider has not confirmed that the address is yours"** | A local account with that email exists, but `email_verified` is false so calrs won't auto-link it | Same as above: assert `email_verified: true` |
+| The same message, though a local account with that email exists | A local account with that email exists, but `email_verified` is false so calrs won't auto-link it | Same as above: assert `email_verified: true` |
 | Login works but no calendar appears | Global EWS auto-provision is off, or the impersonation target domain is wrong | Enable auto-provision and/or set the impersonation domain override in **Admin → Sign-in and security → Exchange** |
 | ID token signature / discovery errors | No signing key on the provider | Assign a certificate as the provider's **Signing Key** |
 

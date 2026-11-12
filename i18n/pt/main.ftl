@@ -848,10 +848,9 @@ auth-error-email-domain = Domínio de e-mail não permitido
 auth-error-password-length = A senha deve ter pelo menos 12 caracteres
 auth-error-email-taken = Este e-mail já está cadastrado
 auth-sso-linked-elsewhere = Já existe uma conta com este e-mail vinculada a outra identidade SSO. Fale com a administração.
-auth-sso-unverified-link = Já existe uma conta com este e-mail, mas seu provedor de identidade não confirmou que o endereço é seu, então não é possível vinculá-las automaticamente. Fale com a administração.
 auth-sso-local-mfa = Já existe uma conta com este e-mail que usa autenticação de dois fatores, então ela não pode ser vinculada ao SSO automaticamente. Fale com a administração.
 auth-sso-no-account = Não há nenhuma conta com este e-mail, e contas novas não são criadas automaticamente. Fale com a administração.
-auth-sso-unverified-register = Seu provedor de identidade não verificou seu e-mail. Peça à administração que o verifique no provedor e tente novamente.
+auth-sso-unverified = Seu provedor de identidade não verificou seu e-mail. Peça à administração que o verifique no provedor e tente novamente.
 auth-sso-no-email = Seu provedor de identidade não enviou nenhum e-mail. Peça à administração que o compartilhe com o calrs e tente novamente.
 auth-error-create-failed = Não foi possível criar a conta
 
