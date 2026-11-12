@@ -1,0 +1,366 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Microsoft Calendar - calrs v2 Documentation</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="favicon-de23e50b.svg">
+        <link rel="shortcut icon" href="favicon-8114d1fc.png">
+        <link rel="stylesheet" href="css/variables-8adf115d.css">
+        <link rel="stylesheet" href="css/general-2459343d.css">
+        <link rel="stylesheet" href="css/chrome-ae938929.css">
+        <link rel="stylesheet" href="css/print-9e4910d8.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="fonts/fonts-9644e21d.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="mdbook-highlight-css" href="highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="ayu-highlight-3fdfc3ac.css">
+
+        <!-- Custom theme stylesheets -->
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "";
+            const default_light_theme = "light";
+            const default_dark_theme = "navy";
+            window.path_to_searchindex_js = "searchindex-d5ebc317.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="toc-43543355.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="mdbook-body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="mdbook-sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("mdbook-sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="mdbook-sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="toc.html"></iframe>
+            </noscript>
+            <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="mdbook-page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="mdbook-menu-bar-hover-placeholder"></div>
+                <div id="mdbook-menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="mdbook-sidebar-toggle" class="icon-button" for="mdbook-sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="mdbook-sidebar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M0 96C0 78.3 14.3 64 32 64H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32C14.3 128 0 113.7 0 96zM0 256c0-17.7 14.3-32 32-32H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32c-17.7 0-32-14.3-32-32zM448 416c0 17.7-14.3 32-32 32H32c-17.7 0-32-14.3-32-32s14.3-32 32-32H416c17.7 0 32 14.3 32 32z"/></svg></span>
+                        </label>
+                        <button id="mdbook-theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="mdbook-theme-list">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M371.3 367.1c27.3-3.9 51.9-19.4 67.2-42.9L600.2 74.1c12.6-19.5 9.4-45.3-7.6-61.2S549.7-4.4 531.1 9.6L294.4 187.2c-24 18-38.2 46.1-38.4 76.1L371.3 367.1zm-19.6 25.4l-116-104.4C175.9 290.3 128 339.6 128 400c0 3.9 .2 7.8 .6 11.6c1.8 17.5-10.2 36.4-27.8 36.4H96c-17.7 0-32 14.3-32 32s14.3 32 32 32H240c61.9 0 112-50.1 112-112c0-2.5-.1-5-.2-7.5z"/></svg></span>
+                        </button>
+                        <ul id="mdbook-theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-ayu">Ayu</button></li>
+                        </ul>
+                        <button id="mdbook-search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="mdbook-searchbar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M416 208c0 45.9-14.9 88.3-40 122.7L502.6 457.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0S416 93.1 416 208zM208 352c79.5 0 144-64.5 144-144s-64.5-144-144-144S64 128.5 64 208s64.5 144 144 144z"/></svg></span>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">calrs v2 Documentation</h1>
+
+                    <div class="right-buttons">
+                        <a href="print.html" title="Print this book" aria-label="Print this book">
+                            <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
+                        </a>
+                        <a href="https://github.com/olivierlambert/calrs" title="Git repository" aria-label="Git repository">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 496 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M165.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6zm-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3zm44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9zM244.8 8C106.1 8 0 113.3 0 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C428.2 457.8 496 362.9 496 252 496 113.3 383.5 8 244.8 8zM97.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1zm-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7zm32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1zm-11.4-14.7c-1.6 1-1.6 3.6 0 5.9 1.6 2.3 4.3 3.3 5.6 2.3 1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2z"/></svg></span>
+                        </a>
+                        <a href="https://github.com/olivierlambert/calrs/edit/main/docs/src/src/microsoft-calendar.md" title="Suggest an edit" aria-label="Suggest an edit" rel="edit">
+                            <span class=fa-svg id="git-edit-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M421.7 220.3l-11.3 11.3-22.6 22.6-205 205c-6.6 6.6-14.8 11.5-23.8 14.1L30.8 511c-8.4 2.5-17.5 .2-23.7-6.1S-1.5 489.7 1 481.2L38.7 353.1c2.6-9 7.5-17.2 14.1-23.8l205-205 22.6-22.6 11.3-11.3 33.9 33.9 62.1 62.1 33.9 33.9zM96 353.9l-9.3 9.3c-.9 .9-1.6 2.1-2 3.4l-25.3 86 86-25.3c1.3-.4 2.5-1.1 3.4-2l9.3-9.3H112c-8.8 0-16-7.2-16-16V353.9zM453.3 19.3l39.4 39.4c25 25 25 65.5 0 90.5l-14.5 14.5-22.6 22.6-11.3 11.3-33.9-33.9-62.1-62.1L314.3 67.7l11.3-11.3 22.6-22.6 14.5-14.5c25-25 65.5-25 90.5 0z"/></svg></span>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="mdbook-search-wrapper" class="hidden">
+                    <form id="mdbook-searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="mdbook-searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="mdbook-searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <span class=fa-svg id="fa-spin"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M304 48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zm0 416c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM48 304c26.5 0 48-21.5 48-48s-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48zm464-48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM142.9 437c18.7-18.7 18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zm0-294.2c18.7-18.7 18.7-49.1 0-67.9S93.7 56.2 75 75s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zM369.1 437c18.7 18.7 49.1 18.7 67.9 0s18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9z"/></svg></span>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="mdbook-searchresults-outer" class="searchresults-outer hidden">
+                        <div id="mdbook-searchresults-header" class="searchresults-header"></div>
+                        <ul id="mdbook-searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('mdbook-sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('mdbook-sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#mdbook-sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="mdbook-content" class="content">
+                    <main>
+                        <h1 id="microsoft-calendar"><a class="header" href="#microsoft-calendar">Microsoft Calendar</a></h1>
+<p>calrs connects to Microsoft 365 (Exchange Online) and Outlook.com calendars through <strong>native Microsoft Graph</strong>, using delegated OAuth2 consent. The operator registers an application once; each user then connects their own Microsoft account and chooses a calendar for booking write-back.</p>
+<p>This is separate from <strong>Microsoft Exchange on-premises (EWS)</strong>, which uses the Exchange source configuration rather than Graph. It is also separate from logging into calrs: connecting a calendar neither enables Microsoft SSO nor changes your calrs login identity. Your Microsoft mailbox address does not have to match your calrs account email.</p>
+<h2 id="1-register-an-application-in-microsoft-entra"><a class="header" href="#1-register-an-application-in-microsoft-entra">1. Register an application in Microsoft Entra</a></h2>
+<p>Open the <a href="https://entra.microsoft.com/">Microsoft Entra admin center</a>, then <strong>App registrations → New registration</strong>. Give the application a recognizable name, such as <code>calrs</code>.</p>
+<p>Choose <strong>Supported account types</strong> for the users you intend to serve, and use the corresponding tenant value in calrs:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Intended audience</th><th>App registration audience</th><th>calrs tenant value</th></tr>
+</thead>
+<tbody>
+<tr><td>One organization</td><td>Accounts in this organizational directory only</td><td>That directory’s tenant UUID or verified domain, such as <code>example.onmicrosoft.com</code></td></tr>
+<tr><td>Multiple organizations</td><td>Accounts in any organizational directory</td><td><code>organizations</code></td></tr>
+<tr><td>Organizations and personal Outlook.com accounts</td><td>Accounts in any organizational directory and personal Microsoft accounts</td><td><code>common</code></td></tr>
+<tr><td>Personal Microsoft accounts only</td><td>Personal Microsoft accounts only</td><td><code>consumers</code></td></tr>
+</tbody>
+</table>
+</div>
+<p>The tenant value and app audience must agree. <code>common</code> does not make a single-tenant application multi-tenant. calrs accepts <code>common</code>, <code>organizations</code>, <code>consumers</code>, a tenant UUID, or a domain-shaped tenant value; use a domain verified for your intended tenant, not an arbitrary host or a login URL. The account must also have a calendar mailbox accessible through Graph; having an Entra identity alone is not sufficient.</p>
+<p>The integration uses the global-cloud endpoints <code>login.microsoftonline.com</code> and <code>graph.microsoft.com</code>. Sovereign/national clouds and custom Graph endpoints are not supported.</p>
+<h2 id="2-register-the-exact-web-callback"><a class="header" href="#2-register-the-exact-web-callback">2. Register the exact Web callback</a></h2>
+<p>Add a <strong>Web</strong> platform redirect URI (not a single-page application or mobile/desktop redirect):</p>
+<pre><code class="language-text">https://cal.example.com/dashboard/sources/microsoft/callback
+</code></pre>
+<p>Replace <code>https://cal.example.com</code> with your instance’s public base URL. The callback path is exactly <code>/dashboard/sources/microsoft/callback</code>, with no trailing slash.</p>
+<p>The public base URL configured for calrs must be an <strong>HTTPS origin</strong>: scheme and host, with an optional port, but no subpath, credentials, query, or fragment. HTTP is rejected by this integration, including for local development. If TLS terminates at a reverse proxy, configure calrs with the external HTTPS origin, not its internal HTTP listener address.</p>
+<p>Because the callback must be HTTPS, a local instance at <code>http://localhost:3000</code> cannot be connected. To test locally, put an HTTPS tunnel in front of it (for example <code>cloudflared tunnel --url http://localhost:3000</code> or <code>ngrok http 3000</code>), set <code>CALRS_BASE_URL</code> to the tunnel’s <code>https://</code> origin, and register that origin’s callback in Entra.</p>
+<p>The Entra redirect URI must match the callback generated from that origin. Register separate redirect URIs or applications for separate environments. No implicit-grant setting is needed: calrs uses the authorization-code flow with PKCE and a client secret.</p>
+<h2 id="3-configure-delegated-permissions"><a class="header" href="#3-configure-delegated-permissions">3. Configure delegated permissions</a></h2>
+<p>Under <strong>API permissions</strong>, add these Microsoft Graph <strong>delegated</strong> permissions:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Permission</th><th>Purpose</th></tr>
+</thead>
+<tbody>
+<tr><td><code>Calendars.ReadWrite</code></td><td>Discover/read calendars and create, update, and delete booking appointments on the user’s behalf.</td></tr>
+<tr><td><code>User.Read</code></td><td>Read <code>/me</code> to identify the connected Microsoft account.</td></tr>
+<tr><td><code>offline_access</code></td><td>Obtain a refresh token so synchronization can continue when the user is not actively connecting.</td></tr>
+</tbody>
+</table>
+</div>
+<p>calrs requests <code>https://graph.microsoft.com/Calendars.ReadWrite</code>, <code>https://graph.microsoft.com/User.Read</code>, and <code>offline_access</code>. It requires both calendar and profile consent and an initial refresh token. Do <strong>not</strong> substitute application permissions: this is not app-only mailbox access or a client-credentials integration.</p>
+<p>Users consent when they connect. An organization’s consent policy may require an administrator to approve the application even though the flow uses delegated permissions. Arrange that approval with the tenant administrator; logging into calrs, including through an OIDC provider, does not grant Microsoft calendar permissions.</p>
+<h2 id="4-create-a-secret-and-configure-calrs"><a class="header" href="#4-create-a-secret-and-configure-calrs">4. Create a secret and configure calrs</a></h2>
+<p>In Entra, open <strong>Certificates &amp; secrets → Client secrets → New client secret</strong>. Choose an expiry suitable for your rotation policy and copy the secret <strong>Value</strong> immediately. The <strong>Secret ID</strong> is not a credential and will not work.</p>
+<p>In the calrs <strong>Admin</strong> dashboard (<code>/dashboard/admin</code>), open the <strong>Sign-in and security</strong> tab, find the <strong>Microsoft 365 / Outlook.com calendar</strong> section and save:</p>
+<ul>
+<li><strong>Client ID:</strong> the app registration’s <strong>Application (client) ID</strong>, not its object ID.</li>
+<li><strong>Client secret:</strong> the secret <strong>Value</strong>.</li>
+<li><strong>Tenant:</strong> the value selected in step 1.</li>
+</ul>
+<p>The section displays the callback URL to register, or, while the public base URL is not an HTTPS origin, what to change first. The secret is stored encrypted and is not displayed again; leaving its input blank preserves the current secret.</p>
+<p>Track the secret’s expiry outside calrs. Before it expires, create a replacement secret for the same application, save its value in calrs, and verify calendar access and token refresh before retiring the old secret. An expired or revoked secret prevents new authorizations and token refreshes; an already-issued access token can temporarily conceal the problem. If authorization has been revoked or refreshing still fails after correcting the credentials, reconnect the affected source. Restart any in-progress connection after changing the client ID or tenant.</p>
+<h2 id="5-connect-a-users-calendar"><a class="header" href="#5-connect-a-users-calendar">5. Connect a user’s calendar</a></h2>
+<ol>
+<li>Log into calrs as yourself. Microsoft connection and reconnection are not available while an administrator is impersonating a user.</li>
+<li>Open <strong>Sources</strong>, choose <strong>Add source</strong>, and use <strong>Connect a Microsoft calendar</strong> at the top of the page.</li>
+<li>Select the intended Microsoft account and grant the requested permissions. Keep the same calrs login session throughout the flow.</li>
+<li>calrs discovers the calendars and starts the initial sync in the background, so a large mailbox does not hold up the redirect. On a new connection without a selected write-back calendar, it opens the write-back selection page; busy times appear once the sync finishes. Reconnecting a disabled source renews its credentials but leaves it disabled and unsynced.</li>
+<li>Select a calendar you can write to and save. You can skip write-back if you only need busy-time checks, or change the destination later using <strong>Write bookings to</strong> on the source. Discovery alone does not prove write permission; verify a booking as described below.</li>
+<li>In each event type’s conflict-calendar settings, select the Microsoft calendars that should contribute busy time. This selection is separate from the source’s write-back destination.</li>
+<li>Optionally, use <strong>Calendars</strong> on the source to stop syncing calendars you never want calrs to read, such as a large shared calendar. A calendar turned off there is never fetched and never blocks, even when an event type selects it, but it can still receive bookings through write-back. It keeps its setting across syncs and reconnects for as long as Microsoft lists it.</li>
+</ol>
+<p>Microsoft calendars are discovered through <code>/me/calendars</code>; the integration is not an organization-wide mailbox browser. The write-back destination receives booking appointments, while conflict-calendar selection controls which calendar events affect availability.</p>
+<p>Use <strong>Reconnect</strong> on the existing source if consent or refresh access is lost. Choose the <strong>same Microsoft identity</strong> that originally connected it: calrs checks the stable Microsoft user ID rather than matching email strings. A successful reconnect updates credentials while preserving the source and its write-back selection. Selecting a different identity is rejected; add a new source to connect a different account instead.</p>
+<h3 id="calendars-shared-by-colleagues"><a class="header" href="#calendars-shared-by-colleagues">Calendars shared by colleagues</a></h3>
+<p>calrs treats a listed calendar whose owner is not the connected account as someone else’s, and a calendar Graph reports as not editable as read-only. Graph reports both for every calendar it lists, whatever kind of share is behind it:</p>
+<ul>
+<li>A calendar owned by someone else does <strong>not</strong> make the user busy unless an event type selects it in its conflict-calendar settings. An event type with no selection checks only the user’s own calendars, so a colleague’s meetings do not block the user’s booking page by default.</li>
+<li>A read-only calendar is <strong>not</strong> offered as a write-back destination, since Graph refuses writes to it. This includes the user’s own read-only calendars, such as holidays and birthdays. A calendar already selected for write-back that later becomes read-only stays selected under <strong>Write bookings to</strong>, but its writes fail; switch the source to a writable calendar.</li>
+</ul>
+<p>Which shared calendars Graph lists, and whether it lets calrs read them, is up to Exchange and is not documented by Microsoft. On Exchange Online, in our testing, a colleague’s calendar shared and accepted in Outlook was listed among the user’s own calendars and readable with <code>Calendars.ReadWrite</code>, while one added with free/busy access only was not listed at all. If Graph refuses to read a calendar it lists (403 or 404), that calendar is skipped with a warning in the log and its cached events are kept, while the other calendars keep syncing. The source’s sync is reported as failing when the skipped calendar counts for availability (it is a busy calendar, or an event type selects it), since its new events are missed meanwhile, and when it is the write-back calendar or no calendar of the source can be read.</p>
+<p>When a calendar is no longer listed, because it was deleted or its share was removed, the next sync drops it and its events. An event type that had selected only that calendar checks the user’s own busy calendars again. The source’s write-back calendar is never dropped this way: the sync is reported as failing, asking you to choose another one under <strong>Write bookings to</strong>, and its writes fail until you do. A calendar you turned off under <strong>Calendars</strong> is still listed by Microsoft, so it is kept, with its setting. A listing with no calendar at all is not trusted: every mailbox has one, so the cached calendars and their events are kept until Microsoft lists calendars again. (Exchange on-premises sources drop a folder only once two syncs in a row no longer list it.)</p>
+<h2 id="synchronization-and-booking-behaviour"><a class="header" href="#synchronization-and-booking-behaviour">Synchronization and booking behaviour</a></h2>
+<ul>
+<li><strong>Window:</strong> synchronization reads a full snapshot from 90 days before the sync through 730 days after the sync. Events outside that window are not covered, so calrs treats time past 730 days after the last complete sync as busy for a host with a Microsoft calendar: booking pages never reach it (they stop at a year), and <code>calrs event-type slots</code> and <code>calrs booking create</code> leave it out, for every host a team event type needs.</li>
+<li><strong>First sync:</strong> until a newly connected Microsoft source has completed a sync in which the write-back calendar and every calendar that counts for availability (a busy calendar, or one an event type selects) were read, calrs has not read the host’s Outlook calendar, so the host shows no free time. Events calrs cannot interpret, and calendars that count for nothing, do not hold this back: such an event has no time calrs could block, so holding the source back would block the host for good over one item. The source is reported as failing instead, so the owner hears of it. It takes up to about a minute after connecting (the background sync runs every minute); meanwhile the source on <strong>Calendar sources</strong> and the <strong>Troubleshoot</strong> view say so, and approving a request is refused with the same reason. If it lasts, the source’s sync error says why.</li>
+<li><strong>Recurrence:</strong> Graph’s <code>calendarView</code> expands recurring events server-side, including exceptions. calrs explicitly requests <code>originalStart</code>, which Graph omits by default, to preserve each instance’s original identity when it moves. Full-snapshot reconciliation removes cached occurrences that Graph no longer returns, including cancelled occurrences. This provider does not use delta cursors.</li>
+<li><strong>Timed events:</strong> Graph is asked for UTC times, which calrs converts for scheduling in the host’s timezone.</li>
+<li><strong>All-day events:</strong> calendar dates are preserved, with an exclusive end date. A busy event starting on March 29 and ending on March 31 blocks March 29 and March 30 as whole host-local days, including across daylight-saving transitions; it is not treated as a fixed 48-hour UTC interval.</li>
+<li><strong>Deleted, or moved, in Outlook:</strong> a booking whose appointment disappears from the calendar it was written to is cancelled (and both sides emailed) only once Graph finds it in none of the calendars the account lists, shared ones included: an appointment moved to another of your calendars keeps the booking. An appointment moved out of every calendar the account lists (to a delegate’s mailbox, or a calendar of another Microsoft source of yours) counts as deleted. A calendar that refuses to be read (a free/busy-only share) or is read-only cannot hold the appointment and is not asked. Any other doubt (throttling, a page that fails, a listing that is empty or lacks the booking’s calendar, two copies) leaves the booking as it is until a later sync; if that lasts over a day, the source’s sync is reported as failing. The appointment vanishing from some other calendar changes nothing. A moved appointment calrs still finds is left where it is: cancelling the booking later deletes it only from the calendars calrs wrote it to. A booking whose appointment calrs never saw in a sync is not checked at all, as on CalDAV.</li>
+<li><strong>Cancellation with several write calendars:</strong> when a host writes bookings to more than one source (a CalDAV calendar and a Microsoft one, say), cancelling or rescheduling removes the booking from each of them.</li>
+<li><strong>Busy status:</strong> <code>free</code> and <code>tentative</code> do not block availability, matching Exchange on-premises (EWS). Busy, out-of-office and <code>workingElsewhere</code> events do, and so does an event whose <strong>Show as</strong> Graph leaves empty; cancelled events do not. A meeting invitation the user has not answered shows as tentative in Outlook, so it does not block either: accept it, or mark it busy, for calrs to keep that time free of bookings. A private event on a colleague’s calendar keeps its time and status, under the subject “Private Appointment”.</li>
+<li><strong>Unreadable events:</strong> an event calrs cannot interpret is skipped, and the rest of the calendar still syncs. Until a sync reads every event, no cached event is removed from that calendar. The source’s sync is reported as failing meanwhile, naming the calendar, and the owner is alerted as for any other sync failure.</li>
+<li><strong>Suspended users:</strong> while an administrator has suspended a user, their Microsoft sources are not synced and their access is not refreshed. Re-enabling the user resumes both, with no reconnect needed unless Microsoft revoked the authorization meanwhile.</li>
+<li><strong>Throttling:</strong> a request Graph throttles (429) or cannot serve (503, 504) is tried up to three times in all (two retries), honouring <code>Retry-After</code> up to 30 seconds. A sync that still fails is retried later and keeps the cached busy times meanwhile.</li>
+<li><strong>Write-back:</strong> confirmed bookings create appointments in the selected calendar. Rescheduling updates the existing Graph item, and cancellation deletes it. calrs tracks its booking identity in a private extended property, separately from Graph’s read-only <code>iCalUId</code>; event bodies are neither read during sync nor kept in the cache.</li>
+<li><strong>Invitations:</strong> calrs sends its own booking invitations. Graph write-back does not add attendees or an organizer and does not generate a second set of Outlook meeting invitations. Connecting Graph does not by itself generate a Teams meeting link.</li>
+</ul>
+<h2 id="verify-your-connection"><a class="header" href="#verify-your-connection">Verify your connection</a></h2>
+<p>These are manual checks to perform against your own account. Use a disposable appointment and booking, and avoid notifying unintended guests.</p>
+<ol>
+<li><strong>Discovery:</strong> after connecting, confirm that the expected calendar names appear and select a writable destination. Run the source’s sync action and check its last-sync status and any error message.</li>
+<li><strong>Busy blocking:</strong> create a short appointment marked <strong>Busy</strong> in a selected conflict calendar during otherwise available hours within the next week. Sync the source, then open your public booking page and confirm that the overlapping slot is unavailable. The event type’s <strong>Troubleshoot</strong> view helps distinguish calendar conflicts from buffers or availability rules.</li>
+<li><strong>Recurrence and all-day:</strong> optionally repeat with a recurring appointment, move one occurrence, and cancel another. After syncing, check the resulting slots. Test a busy all-day event in your host timezone and confirm that it blocks the intended date, not an adjacent day.</li>
+<li><strong>Create:</strong> make a test booking using an address you control. If the event type requires approval, confirm it. Check that exactly one appointment appears in the selected Microsoft write-back calendar with the expected time and details.</li>
+<li><strong>Reschedule:</strong> reschedule through calrs and confirm that the same Outlook appointment moves, rather than leaving an old copy or creating a duplicate.</li>
+<li><strong>Cancel:</strong> cancel through calrs and confirm that the appointment disappears from Outlook. Remove any manually created test appointments when finished.</li>
+</ol>
+<p>A successful Microsoft consent screen or source connection test is not a substitute for these busy-time and write-back checks.</p>
+<h2 id="troubleshooting"><a class="header" href="#troubleshooting">Troubleshooting</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Symptom</th><th>What to check</th></tr>
+</thead>
+<tbody>
+<tr><td>Microsoft connect is unavailable or cannot start</td><td>Save a client ID and secret under <strong>Admin &gt; Sign-in and security</strong>, check the tenant value and public HTTPS origin, and leave impersonation mode.</td></tr>
+<tr><td>Redirect mismatch (for example <code>AADSTS50011</code>)</td><td>Compare Entra’s <strong>Web</strong> redirect URI with the exact callback shown in calrs. Check scheme, host, port, path, and trailing slash; do not use the proxy’s internal address.</td></tr>
+<tr><td>Account is not permitted to use the application</td><td>Match the app registration audience to <code>common</code>, <code>organizations</code>, <code>consumers</code>, or the intended tenant. A personal account cannot use an organizational-only application.</td></tr>
+<tr><td>“Need admin approval,” consent denied, or access blocked by policy</td><td>Ask the Microsoft tenant administrator to review delegated permissions, user-consent restrictions, application assignment, and Conditional Access policy. Do not attempt to bypass tenant policy by granting application permissions.</td></tr>
+<tr><td>Authorization rejected or refresh stops working</td><td>“Reconnect the source” means Microsoft refused the refresh token (expired, revoked, or a sign-in the tenant now requires): calrs stops refreshing it, so use <strong>Reconnect</strong>. “An administrator must check the client ID, secret and tenant” points at the app registration: check the client ID, secret <strong>Value</strong> (not ID), secret expiry and tenant.</td></tr>
+<tr><td>Write-back fails with “delete the copy”</td><td>The booking’s appointment was copied in Outlook, and the copy carries the same calrs identity. Delete the copy; the next write-back retry succeeds.</td></tr>
+<tr><td>Invalid or expired authorization state</td><td>Start again from Sources while logged into the same calrs account. The callback is single-use and expires after ten minutes; do not reuse a callback URL from browser history.</td></tr>
+<tr><td>Consent succeeds but initial calendar sync fails</td><td>Confirm that the Microsoft identity has an accessible Exchange Online or Outlook.com mailbox and calendar consent. Inspect the source’s sync error, then retry sync after fixing access. The source may already have been saved; check Sources before adding another.</td></tr>
+<tr><td>Reconnect fails after account selection</td><td>Select the original Microsoft identity. Use a new source for a different account.</td></tr>
+<tr><td>Busy event does not remove a slot</td><td>Check the event type’s conflict-calendar selection, the sync status, the 730-day forward horizon, and Outlook’s <strong>Show as</strong> value. Free and tentative events are treated as free.</td></tr>
+<tr><td>A colleague’s shared calendar does not affect availability</td><td>Calendars shared by others are not checked by default. Select it in the event type’s conflict-calendar settings.</td></tr>
+<tr><td>A calendar is missing from <strong>Write bookings to</strong></td><td>Read-only calendars (shared by colleagues, holidays, birthdays) are not offered. Ask the owner for edit access, or write to one of your own calendars. A calendar selected before it became read-only stays listed and selected, but writes to it fail; choose a writable one.</td></tr>
+<tr><td>Booking exists in calrs but not in Outlook</td><td>Check the source’s <strong>Write bookings to</strong> selection and actual write access to that calendar, as well as current consent and credentials. Read-only discovery does not establish write access.</td></tr>
+</tbody>
+</table>
+</div>
+<p>Do not include client secrets, tokens, or OAuth callback query strings in support reports. Share the operation that failed, a sanitized error, and whether discovery, busy-time sync, or booking write-back was affected.</p>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="google-calendar.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                            </a>
+
+                            <a rel="next prefetch" href="exchange.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="google-calendar.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                    </a>
+
+                    <a rel="next prefetch" href="exchange.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                    </a>
+            </nav>
+
+        </div>
+
+        <template id=fa-eye><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M288 32c-80.8 0-145.5 36.8-192.6 80.6C48.6 156 17.3 208 2.5 243.7c-3.3 7.9-3.3 16.7 0 24.6C17.3 304 48.6 356 95.4 399.4C142.5 443.2 207.2 480 288 480s145.5-36.8 192.6-80.6c46.8-43.5 78.1-95.4 93-131.1c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C433.5 68.8 368.8 32 288 32zM432 256c0 79.5-64.5 144-144 144s-144-64.5-144-144s64.5-144 144-144s144 64.5 144 144zM288 192c0 35.3-28.7 64-64 64c-11.5 0-22.3-3-31.6-8.4c-.2 2.8-.4 5.5-.4 8.4c0 53 43 96 96 96s96-43 96-96s-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6z"/></svg></span></template>
+        <template id=fa-eye-slash><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M38.8 5.1C28.4-3.1 13.3-1.2 5.1 9.2S-1.2 34.7 9.2 42.9l592 464c10.4 8.2 25.5 6.3 33.7-4.1s6.3-25.5-4.1-33.7L525.6 386.7c39.6-40.6 66.4-86.1 79.9-118.4c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C465.5 68.8 400.8 32 320 32c-68.2 0-125 26.3-169.3 60.8L38.8 5.1zM223.1 149.5C248.6 126.2 282.7 112 320 112c79.5 0 144 64.5 144 144c0 24.9-6.3 48.3-17.4 68.7L408 294.5c5.2-11.8 8-24.8 8-38.5c0-53-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6c0 10.2-2.4 19.8-6.6 28.3l-90.3-70.8zm223.1 298L373 389.9c-16.4 6.5-34.3 10.1-53 10.1c-79.5 0-144-64.5-144-144c0-6.9 .5-13.6 1.4-20.2L83.1 161.5C60.3 191.2 44 220.8 34.5 243.7c-3.3 7.9-3.3 16.7 0 24.6c14.9 35.7 46.2 87.7 93 131.1C174.5 443.2 239.2 480 320 480c47.8 0 89.9-12.9 126.2-32.5z"/></svg></span></template>
+        <template id=fa-copy><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M502.6 70.63l-61.25-61.25C435.4 3.371 427.2 0 418.7 0H255.1c-35.35 0-64 28.66-64 64l.0195 256C192 355.4 220.7 384 256 384h192c35.2 0 64-28.8 64-64V93.25C512 84.77 508.6 76.63 502.6 70.63zM464 320c0 8.836-7.164 16-16 16H255.1c-8.838 0-16-7.164-16-16L239.1 64.13c0-8.836 7.164-16 16-16h128L384 96c0 17.67 14.33 32 32 32h47.1V320zM272 448c0 8.836-7.164 16-16 16H63.1c-8.838 0-16-7.164-16-16L47.98 192.1c0-8.836 7.164-16 16-16H160V128H63.99c-35.35 0-64 28.65-64 64l.0098 256C.002 483.3 28.66 512 64 512h192c35.2 0 64-28.8 64-64v-32h-47.1L272 448z"/></svg></span></template>
+        <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
+        <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="elasticlunr-ef4e11c1.min.js"></script>
+        <script src="mark-09e88c2c.min.js"></script>
+        <script src="searcher-c2a407aa.js"></script>
+
+        <script src="clipboard-1626706a.min.js"></script>
+        <script src="highlight-abc7f01d.js"></script>
+        <script src="book-a0b12cfe.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+
+    </div>
+    </body>
+</html>
