@@ -597,7 +597,7 @@ pub(super) async fn approval_hosts_free(
     }
     let host_tz = get_host_tz(pool, et_id).await;
     let (before, after): (i64, i64) =
-        sqlx::query_as("SELECT buffer_before, buffer_after FROM event_types WHERE id = ?")
+        sqlx::query_as("SELECT MAX(COALESCE(buffer_before, 0), 0), MAX(COALESCE(buffer_after, 0), 0) FROM event_types WHERE id = ?")
             .bind(et_id)
             .fetch_one(pool)
             .await?;
