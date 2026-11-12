@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-d06ae4eb.js";
+            window.path_to_searchindex_js = "searchindex-baafb756.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-47cd7d74.js"></script>
@@ -233,7 +233,7 @@
 <p>Additional team-specific options:</p>
 <ul>
 <li><strong>Scheduling mode</strong> — round-robin or collective (see below)</li>
-<li><strong>Member weights</strong> — admins can set priority per member via the Member Priority card, which appears during both creation and editing. Group member weights provide a default; the event type can override the member priority. Weight 0 excludes a member from round-robin assignment for that event type — excluded members also don’t appear on the public booking page’s avatar list.</li>
+<li><strong>Member weights</strong> — admins can set priority per member via the Member Priority card, which appears during both creation and editing. Weights belong to the event type: a member without one there counts as priority 1. The weights shown on a group in the admin panel do not affect assignment. Weight 0 excludes a member from round-robin assignment for that event type — excluded members also don’t appear on the public booking page’s avatar list.</li>
 </ul>
 <h2 id="public-team-pages"><a class="header" href="#public-team-pages">Public team pages</a></h2>
 <ul>
@@ -279,7 +279,7 @@
 <p><strong>Typical setup:</strong> a customer self-serves through a public event type, and a rotating support team watches it. Whoever has bandwidth grabs the booking — no round-robin assumptions, no manual dispatch.</p>
 <p>Configuration: in the event type editor, or on the create form once a team is picked, scroll to <strong>Booking watchers</strong> and pick one or more teams. Watchers can be set on any scheduling mode; they’re independent from the round-robin / collective assignment.</p>
 <h2 id="multi-timezone-teams"><a class="header" href="#multi-timezone-teams">Multi-timezone teams</a></h2>
-<p>A team event type’s weekly rules use its <strong>explicit event timezone</strong>, not the server’s timezone. Each member’s default working hours use that member’s profile timezone. calrs converts the member’s hours and calendar events into the event timezone before checking availability.</p>
+<p>A team event type’s weekly rules use its <strong>explicit event timezone</strong>, not the server’s timezone. Each member’s default working hours use that member’s profile timezone. A member who has set no personal hours is not limited by them: only the team schedule, their time off, busy calendars and bookings apply. calrs converts the member’s hours and calendar events into the event timezone before checking availability.</p>
 <p>For example, give a Paris/New York support team a broad event schedule in <code>Europe/Paris</code>, then have each member set their actual hours in <strong>Profile &amp; Settings</strong>. Round-robin offers a slot when an eligible member is within their own hours and free; collective requires every eligible member to be within their hours and free. Daylight-saving changes are applied using the named timezones.</p>
 <p>Each member’s <a href="./event-types.html#time-off">time off</a>, busy calendars and existing bookings also constrain their availability. A broad team schedule does not by itself make people available outside their personal hours. Guests view the resulting slots in their selected timezone.</p>
 <h2 id="oidc-group-sync"><a class="header" href="#oidc-group-sync">OIDC group sync</a></h2>

@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-d06ae4eb.js";
+            window.path_to_searchindex_js = "searchindex-baafb756.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-47cd7d74.js"></script>
@@ -1668,7 +1668,7 @@ was recorded on their behalf, never that they agreed.</p>
 <p>Additional team-specific options:</p>
 <ul>
 <li><strong>Scheduling mode</strong> — round-robin or collective (see below)</li>
-<li><strong>Member weights</strong> — admins can set priority per member via the Member Priority card, which appears during both creation and editing. Group member weights provide a default; the event type can override the member priority. Weight 0 excludes a member from round-robin assignment for that event type — excluded members also don’t appear on the public booking page’s avatar list.</li>
+<li><strong>Member weights</strong> — admins can set priority per member via the Member Priority card, which appears during both creation and editing. Weights belong to the event type: a member without one there counts as priority 1. The weights shown on a group in the admin panel do not affect assignment. Weight 0 excludes a member from round-robin assignment for that event type — excluded members also don’t appear on the public booking page’s avatar list.</li>
 </ul>
 <h2 id="public-team-pages"><a class="header" href="#public-team-pages">Public team pages</a></h2>
 <ul>
@@ -1714,7 +1714,7 @@ was recorded on their behalf, never that they agreed.</p>
 <p><strong>Typical setup:</strong> a customer self-serves through a public event type, and a rotating support team watches it. Whoever has bandwidth grabs the booking — no round-robin assumptions, no manual dispatch.</p>
 <p>Configuration: in the event type editor, or on the create form once a team is picked, scroll to <strong>Booking watchers</strong> and pick one or more teams. Watchers can be set on any scheduling mode; they’re independent from the round-robin / collective assignment.</p>
 <h2 id="multi-timezone-teams"><a class="header" href="#multi-timezone-teams">Multi-timezone teams</a></h2>
-<p>A team event type’s weekly rules use its <strong>explicit event timezone</strong>, not the server’s timezone. Each member’s default working hours use that member’s profile timezone. calrs converts the member’s hours and calendar events into the event timezone before checking availability.</p>
+<p>A team event type’s weekly rules use its <strong>explicit event timezone</strong>, not the server’s timezone. Each member’s default working hours use that member’s profile timezone. A member who has set no personal hours is not limited by them: only the team schedule, their time off, busy calendars and bookings apply. calrs converts the member’s hours and calendar events into the event timezone before checking availability.</p>
 <p>For example, give a Paris/New York support team a broad event schedule in <code>Europe/Paris</code>, then have each member set their actual hours in <strong>Profile &amp; Settings</strong>. Round-robin offers a slot when an eligible member is within their own hours and free; collective requires every eligible member to be within their hours and free. Daylight-saving changes are applied using the named timezones.</p>
 <p>Each member’s <a href="#time-off">time off</a>, busy calendars and existing bookings also constrain their availability. A broad team schedule does not by itself make people available outside their personal hours. Guests view the resulting slots in their selected timezone.</p>
 <h2 id="oidc-group-sync"><a class="header" href="#oidc-group-sync">OIDC group sync</a></h2>
@@ -3370,7 +3370,7 @@ instances never cache them.</p>
 </ol>
 <p>Impersonation uses a separate <code>calrs_impersonate</code> cookie (24-hour TTL). The real admin session is preserved.</p>
 <h2 id="availability-troubleshoot-1"><a class="header" href="#availability-troubleshoot-1">Availability troubleshoot</a></h2>
-<p>For each event type, the dashboard offers a <strong>Troubleshoot</strong> link that opens a visual timeline at <code>/dashboard/troubleshoot?event_type={event_type_id}</code>:</p>
+<p>For each event type, the dashboard offers a <strong>Troubleshoot</strong> link that opens a visual timeline at <code>/dashboard/troubleshoot?event_type={event_type_slug}&amp;date=YYYY-MM-DD</code> (both optional: your first event type and today otherwise):</p>
 <ul>
 <li>Shows availability and conflicts for the selected date</li>
 <li>Displays why each slot is blocked (calendar event name, existing booking, buffer overlap)</li>
@@ -3781,8 +3781,10 @@ cargo build --release
 sudo useradd -r -s /bin/false -m -d /var/lib/calrs calrs
 sudo install -d -o calrs -g calrs -m 750 /var/lib/calrs
 
-# Install the binary and matching templates
+# Install the binary and matching templates (replace the whole tree:
+# copying into an existing templates/ would nest the new one inside it)
 sudo install -m 755 target/release/calrs /usr/local/bin/calrs
+sudo rm -rf /var/lib/calrs/templates
 sudo cp -r templates /var/lib/calrs/templates
 
 # Install the service
@@ -3797,7 +3799,7 @@ sudo systemctl enable --now calrs
 Environment=CALRS_BASE_URL=https://cal.example.com
 Environment=CALRS_TRUSTED_PROXIES=127.0.0.1,::1
 </code></pre>
-<p>The included unit runs from <code>/var/lib/calrs</code>, where it finds <code>templates/</code>, and listens on <code>127.0.0.1:3000</code>. Put your TLS reverse proxy on that host, or deliberately change the bind address and proxy trust for a different topology. Install matching templates whenever you replace the binary.</p>
+<p>The included unit runs from <code>/var/lib/calrs</code>, where it finds <code>templates/</code>, and listens on <code>127.0.0.1:3000</code>. Put your TLS reverse proxy on that host, or deliberately change the bind address and proxy trust for a different topology. Install matching templates whenever you replace the binary: stop the service, replace the binary, remove <code>/var/lib/calrs/templates</code> and copy the new <code>templates/</code> in its place, then start the service.</p>
 <h3 id="systemd-service"><a class="header" href="#systemd-service">systemd service</a></h3>
 <p>The included <code>calrs.service</code> has security hardening:</p>
 <ul>

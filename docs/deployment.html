@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-d06ae4eb.js";
+            window.path_to_searchindex_js = "searchindex-baafb756.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-47cd7d74.js"></script>
@@ -241,8 +241,10 @@ cargo build --release
 sudo useradd -r -s /bin/false -m -d /var/lib/calrs calrs
 sudo install -d -o calrs -g calrs -m 750 /var/lib/calrs
 
-# Install the binary and matching templates
+# Install the binary and matching templates (replace the whole tree:
+# copying into an existing templates/ would nest the new one inside it)
 sudo install -m 755 target/release/calrs /usr/local/bin/calrs
+sudo rm -rf /var/lib/calrs/templates
 sudo cp -r templates /var/lib/calrs/templates
 
 # Install the service
@@ -257,7 +259,7 @@ sudo systemctl enable --now calrs
 Environment=CALRS_BASE_URL=https://cal.example.com
 Environment=CALRS_TRUSTED_PROXIES=127.0.0.1,::1
 </code></pre>
-<p>The included unit runs from <code>/var/lib/calrs</code>, where it finds <code>templates/</code>, and listens on <code>127.0.0.1:3000</code>. Put your TLS reverse proxy on that host, or deliberately change the bind address and proxy trust for a different topology. Install matching templates whenever you replace the binary.</p>
+<p>The included unit runs from <code>/var/lib/calrs</code>, where it finds <code>templates/</code>, and listens on <code>127.0.0.1:3000</code>. Put your TLS reverse proxy on that host, or deliberately change the bind address and proxy trust for a different topology. Install matching templates whenever you replace the binary: stop the service, replace the binary, remove <code>/var/lib/calrs/templates</code> and copy the new <code>templates/</code> in its place, then start the service.</p>
 <h3 id="systemd-service"><a class="header" href="#systemd-service">systemd service</a></h3>
 <p>The included <code>calrs.service</code> has security hardening:</p>
 <ul>
