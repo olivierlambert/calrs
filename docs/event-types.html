@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Event Types - calrs Documentation</title>
+        <title>Event Types - calrs v2 Documentation</title>
 
 
         <!-- Custom HTML head -->
@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-6d7ef8e0.js";
+            window.path_to_searchindex_js = "searchindex-d5ebc317.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-e4a0ca82.js"></script>
+        <script src="toc-43543355.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -137,7 +137,7 @@
                         </button>
                     </div>
 
-                    <h1 class="menu-title">calrs Documentation</h1>
+                    <h1 class="menu-title">calrs v2 Documentation</h1>
 
                     <div class="right-buttons">
                         <a href="print.html" title="Print this book" aria-label="Print this book">
@@ -193,16 +193,16 @@
 <tr><td><strong>Personal (public)</strong></td><td>Anyone</td><td>Listed on your profile</td><td>You</td><td>Freelancer’s “30min intro call”</td></tr>
 <tr><td><strong>Personal (internal)</strong></td><td>Invited guests</td><td>Any colleague generates a link</td><td>You</td><td>Senior engineer: teammates share a “Code Review” link with external contributors</td></tr>
 <tr><td><strong>Personal (private)</strong></td><td>Invited guests</td><td>You send an invite link</td><td>You</td><td>Executive coaching for selected clients</td></tr>
-<tr><td><strong>Team (public)</strong></td><td>Anyone</td><td>Listed on team page</td><td>Round-robin</td><td>Public support call page</td></tr>
-<tr><td><strong>Team (internal)</strong></td><td>Invited guests</td><td>Any employee generates a link</td><td>Round-robin</td><td>Cross-team: Sales shares Support links with customers</td></tr>
-<tr><td><strong>Team (private)</strong></td><td>Invited guests</td><td>Owner sends invite links</td><td>Round-robin</td><td>Demo team sends links to qualified leads</td></tr>
+<tr><td><strong>Team (public)</strong></td><td>Anyone</td><td>Listed on team page</td><td>Round-robin or collective</td><td>Public support call page</td></tr>
+<tr><td><strong>Team (internal)</strong></td><td>Invited guests</td><td>Any employee generates a link</td><td>Round-robin or collective</td><td>Cross-team: Sales shares Support links with customers</td></tr>
+<tr><td><strong>Team (private)</strong></td><td>Invited guests</td><td>Owner or team admin sends invite links</td><td>Round-robin or collective</td><td>Demo team sends links to qualified leads</td></tr>
 <tr><td><strong>Dynamic group</strong></td><td>Anyone with the URL</td><td>Ad-hoc link: <code>/u/alice+bob/slug</code></td><td>Event type owner</td><td>One-off sales call needing engineering support</td></tr>
 </tbody>
 </table>
 </div>
-<p><strong>Personal vs team:</strong> Personal event types book time on your calendar only. Team event types show combined availability (any member free) and assign the booking to the least-busy member via round-robin.</p>
+<p><strong>Personal vs team:</strong> Personal event types book time on your calendar only. Team event types can assign one available member by priority and workload (round-robin), or require all eligible members to attend (collective).</p>
 <p><strong>Dynamic group links:</strong> Ad-hoc collective meetings without creating a team — see <a href="#dynamic-group-links">Dynamic group links</a> below.</p>
-<p><strong>Multi-timezone teams:</strong> For teams spread across timezones, set a wide availability window (e.g., 06:00–23:00) and let each member’s synced CalDAV calendar handle the blocking. The slot picker naturally shows the union of all members’ real availability — see <a href="./teams.html#multi-timezone-teams">Teams &gt; Multi-timezone teams</a> for details.</p>
+<p><strong>Multi-timezone teams:</strong> Set the event’s timezone and working window, and each member’s personal hours in their own timezone. calrs combines those hours with calendar conflicts according to the scheduling mode — see <a href="./teams.html#multi-timezone-teams">Teams &gt; Multi-timezone teams</a> for details.</p>
 <h2 id="creating-an-event-type"><a class="header" href="#creating-an-event-type">Creating an event type</a></h2>
 <h3 id="from-the-dashboard"><a class="header" href="#from-the-dashboard">From the dashboard</a></h3>
 <p>Go to <strong>Dashboard &gt; Event types &gt; + New</strong> and fill in:</p>
@@ -229,13 +229,19 @@
   --buffer-after 5
 </code></pre>
 <h2 id="calendar-selection"><a class="header" href="#calendar-selection">Calendar selection</a></h2>
-<p>When you have multiple CalDAV calendars, you can choose <strong>which calendars block availability</strong> for each event type. For example, a “Work meeting” event type can check only the work calendar, while a “Personal chat” checks only the personal calendar.</p>
-<p>From the dashboard form, select the calendars under the <strong>Calendars</strong> section. Only calendars marked as “busy” (<code>is_busy=1</code>) appear.</p>
-<p><strong>Default behavior:</strong> If no calendars are selected, all busy calendars are checked — same as before. This is fully backward-compatible.</p>
+<p>When you have multiple connected calendars, you can choose <strong>which calendars block availability</strong> for each event type. For example, a “Work meeting” event type can check only the work calendar, while a “Personal chat” checks only the personal calendar.</p>
+<p>From the dashboard form, select the calendars under the <strong>Calendars</strong> section. Every synced calendar of your sources appears there: a calendar turned off under <strong>Calendars</strong> on its source is never read, so it cannot block an event type. If none of the calendars an event type selected is synced any more, the event type checks every busy calendar again.</p>
+<p><strong>Default behavior:</strong> If no calendars are selected, every busy calendar is checked, as before. That leaves out calendars colleagues shared with you, which start outside the busy calendars: to check one, select every calendar that should block, shared ones included.</p>
+<p>A Microsoft 365 calendar a colleague shared with you starts outside the busy calendars, and calrs has no setting that adds it: it counts only for the event types that select it (see <a href="./microsoft-calendar.html#calendars-shared-by-colleagues">Microsoft Calendar</a>).</p>
+<p>The other direction, <strong>which calendar receives the confirmed bookings</strong>, can also be chosen per event type: <strong>“Write confirmed bookings to”</strong> in the same section. See <a href="./caldav.html#per-event-type-write-confirmed-bookings-to">CalDAV write-back</a>; for a team event type, each member chooses on the Calendar sources page.</p>
 <h2 id="required-resources"><a class="header" href="#required-resources">Required resources</a></h2>
 <p>Event types can require <a href="./resources.html">shared resources</a> (a demo lab, a meeting room). A busy resource blocks booking slots, and confirmed bookings can reserve the resource in its own CalDAV calendar.</p>
 <p>Whether a busy resource blocks a slot depends on the resource scheduling mode: in <strong>all</strong> mode every attached resource must be free, while in <strong>round-robin</strong> mode the slot survives as long as at least one attached resource is free.</p>
 <p>The <strong>Required resources</strong> section of the event type form is visible to global admins, and to team admins on team event types when their team is allowlisted for a resource. See <a href="./resources.html">Shared Resources</a> for the full behavior, including the “all” vs “round-robin” scheduling modes.</p>
+<h2 id="booking-questions-and-notes"><a class="header" href="#booking-questions-and-notes">Booking questions and notes</a></h2>
+<p>The <strong>Booking form</strong> section configures short text, long text, single choice, multiple choice and checkbox questions, including consent boxes with policy links. Set required answers, reorder questions and decide which answers may be written to host calendars. The ordinary notes field can be optional, required or hidden. See <a href="./booking-questions.html">Booking Questions</a> for limits, answer snapshots and privacy behavior.</p>
+<h2 id="booking-reminders"><a class="header" href="#booking-reminders">Booking reminders</a></h2>
+<p>Under <strong>Access &amp; notifications</strong>, choose no reminder, 1 hour, 4 hours, 1 day or 2 days before the meeting. calrs emails the host and guest before confirmed bookings; <a href="./sms.html">SMS reminders</a> use the same lead time when enabled. Calendar invitations also include a reminder for calendar clients that support it.</p>
 <h2 id="sms-notifications"><a class="header" href="#sms-notifications">SMS notifications</a></h2>
 <p>Each event type decides whether the booking form asks the guest for a phone number, and whether it insists:</p>
 <div class="table-wrapper">
@@ -251,14 +257,20 @@
 </table>
 </div>
 <p>The setting only appears when an SMS gateway is configured for the instance and you are permitted to change it: by default that means global admins only. See <a href="./sms.html">SMS Notifications</a>.</p>
+<h2 id="guest-email-footer"><a class="header" href="#guest-email-footer">Guest email footer</a></h2>
+<p>An event type can add a short footer to every email its guests receive: confirmation, reminder, cancellation, a request awaiting approval, a decline, an expired request, “pick a new time”, a reschedule, and the copies sent to additional attendees. Invite emails for the event type carry it too. Emails to you, the host, never do, and neither do the copies sent to a team member who claimed the booking.</p>
+<p>Write it in <strong>Access &amp; notifications</strong>, in the <strong>Email footer</strong> field. It takes the same minimal editor as the description (bold, italic, links) and at most 500 characters. Anything else you type, including HTML, is shown as plain text, and a link must start with <code>http://</code>, <code>https://</code>, <code>mailto:</code> or <code>tel:</code>; any other link is shown as text. The same text is used whatever language the guest booked in. In the plain-text part of the email, bold and italic markers are dropped and a link is written as <code>label (url)</code>.</p>
+<p>An event type with no footer uses the instance default set by an admin in the <a href="./admin.html#guest-email-footer">admin panel</a>. A footer on the event type replaces that default rather than adding to it.</p>
+<p>By default only admins see the field. An admin can let every user write footers on their own event types. Until then a member’s save leaves an admin’s footer untouched, and a copy a member makes with <strong>Duplicate</strong> starts without one.</p>
 <h2 id="availability-schedule"><a class="header" href="#availability-schedule">Availability schedule</a></h2>
-<p>Each event type has its own availability rules. By default: Monday–Friday, 09:00–17:00.</p>
+<p>Each event type has its own availability rules and IANA timezone. A new event type in the dashboard starts from your default availability; with no personal defaults, the initial schedule is Monday–Friday, 09:00–17:00. Editing your defaults later does not rewrite existing event types.</p>
 <p>From the dashboard form, you can set:</p>
 <ul>
 <li>Which days of the week are available (checkboxes)</li>
-<li>Start and end time for available hours</li>
+<li>One or more start/end windows per day (for example, 09:00–12:00 and 14:00–17:00)</li>
+<li>The timezone in which those hours are interpreted</li>
 </ul>
-<p>The availability engine intersects these rules with your synced calendar events (filtered by selected calendars) and existing bookings to compute free slots.</p>
+<p>The availability engine intersects these rules with synced calendar events, bookings, time off and resources. Team and dynamic-group meetings also respect participant working hours. Changing the server timezone does not redefine these schedules. See <a href="#slot-computation">Slot computation</a>.</p>
 <h3 id="first-day-of-the-week"><a class="header" href="#first-day-of-the-week">First day of the week</a></h3>
 <p>Choose <strong>First day of the week</strong> in an event type’s Availability section to
 set the display order in its availability editor and booking calendars. Any
@@ -276,9 +288,9 @@ such as <code>mon</code> and <code>sun</code>.</p>
 <h2 id="booking-limits"><a class="header" href="#booking-limits">Booking limits</a></h2>
 <p>Control how slots are displayed and how often the event type can be booked.</p>
 <h3 id="one-slot-per-day"><a class="header" href="#one-slot-per-day">One slot per day</a></h3>
-<p>Enable <strong>“One slot per day”</strong> to show only the earliest available time each day. The guest sees one slot per day instead of all available windows — useful for daily standups, check-ins, or any event where you want at most one booking per day.</p>
+<p>Enable <strong>“One slot per day”</strong> to show only the earliest available time each day. The guest sees the earliest remaining slot instead of all available windows. This is a display setting: after that slot is booked, a later slot may become the earliest available. Set a daily frequency limit of 1 if you want at most one booking per day.</p>
 <h3 id="frequency-limits"><a class="header" href="#frequency-limits">Frequency limits</a></h3>
-<p>Enable <strong>“Limit booking frequency”</strong> to cap how many bookings can be made per time period. You can combine multiple limits — for example, max 2 per day AND 8 per week. Available periods: day, week, month, year. When a limit is reached, the booking form rejects new bookings for that period.</p>
+<p>Enable <strong>“Limit booking frequency”</strong> to cap how many bookings can be made per time period. You can combine multiple limits — for example, max 2 per day AND 8 per week. Available periods: day, week, month, year. When a limit is reached, matching slots disappear from the picker and submissions are checked again. On round-robin event types, <strong>Per team member</strong> applies a limit to each assigned member instead of pooling the whole team.</p>
 <p>Both settings are configured via toggle switches in the <strong>Booking limits</strong> card of the event type form.</p>
 <h2 id="booking-horizon"><a class="header" href="#booking-horizon">Booking horizon</a></h2>
 <p><strong>Booking horizon</strong> caps how far into the future a guest may book, as a rolling window of days. A “Sales intro” might stay bookable 14 days ahead while an “Annual review” stays open indefinitely.</p>
@@ -370,12 +382,12 @@ such as <code>mon</code> and <code>sun</code>.</p>
 <p>Available slots are computed by:</p>
 <ol>
 <li>Generating candidate slots from availability rules (day of week + time range)</li>
-<li>Filtering out slots that overlap with calendar events (from CalDAV sync)</li>
-<li>Filtering out slots that overlap with confirmed bookings</li>
+<li>Filtering out slots that overlap with busy events from connected calendars, including recurring occurrences</li>
+<li>Filtering out conflicts with confirmed bookings, slot-holding pending requests and time off, and checking participant hours</li>
 <li>Filtering out slots blocked by required <a href="./resources.html">shared resources</a> (all mode: any busy resource blocks; round-robin mode: blocked only when every resource is busy)</li>
 <li>Applying buffer times (before and after each slot)</li>
 <li>Removing slots that violate minimum notice (too close to now)</li>
-<li>Removing days past the booking horizon (too far ahead) and days outside the bookable date range</li>
+<li>Removing days past the booking horizon (too far ahead), days outside the bookable date range and slots at a frequency limit</li>
 <li>If “one slot per day” is enabled, keeping only the earliest slot per day</li>
 </ol>
 <pre><code class="language-bash"># View available slots for the next 7 days
@@ -405,6 +417,9 @@ calrs event-type slots intro --days 14
 <p>The location is displayed on the public booking page, in confirmation emails, and in <code>.ics</code> calendar invites.</p>
 <p>Auto providers (<code>jitsi_auto</code>, <code>webhook_auto</code>, <code>google_meet</code>) mint the URL only when the booking is <strong>confirmed</strong>. Pending bookings do not get a link (so a declined request never creates a Meet or hits the webhook). The same Meet URL is kept on reschedule.</p>
 <p>Saving an event type as <code>google_meet</code> is rejected unless every scheduling-relevant host already has Google Calendar connected with a write-back calendar selected (you, for a personal event type; every eligible team member for a team event type).</p>
+<h2 id="sections-and-order-on-your-page"><a class="header" href="#sections-and-order-on-your-page">Sections and order on your page</a></h2>
+<p><strong>Section</strong> (optional, in the form under the description) groups meetings on your public page: meetings with the same section sit in one card titled with it, exactly as you wrote it (the field suggests the sections you already use). Meetings without a section come last, under “Other meetings”; with no section at all, the page shows a single “Meetings” card. <strong>Change the order</strong>, next to the field, opens <code>/dashboard/event-types/order</code>, where up and down buttons move a section or a meeting within its section. A team event type’s section and order belong to the team’s admins, at <code>/dashboard/teams/{id}/order</code>, and show on the team page. Visitors see the public, enabled meetings; members of a team, signed in, also see its internal and private ones on the team page. The arrange page lists them all, so each keeps its place for when it shows.</p>
+<p>Your page also shows, beside your name (under it on a phone), your usual hours as a small timetable, one row per schedule, with a <strong>My time</strong> button that shows them in the visitor’s timezone when it differs, and, when set in <strong>Profile &amp; Settings</strong>, where you are based and the languages you speak, on one line. The hours are an approximation: for each day, from the earliest start to the latest end among the weekly hours of the meetings the page lists, so a lunch break or a meeting offered only in the morning does not show. They are left out when those meetings use different timezones. On a team page they come from the team’s meetings only, not from the members’ own working hours.</p>
 <h2 id="enablingdisabling"><a class="header" href="#enablingdisabling">Enabling/disabling</a></h2>
 <p>Event types can be toggled on/off from the dashboard without deleting them. Disabled event types don’t show up on your public profile and return 404 on their booking page.</p>
 <h2 id="duplicating"><a class="header" href="#duplicating">Duplicating</a></h2>
@@ -418,11 +433,15 @@ searching <code>Andy</code> also finds the round-robin demo Andy hosts; the resu
 says “With Andy”. Members set to weight 0 for a meeting, and suspended
 accounts, do not count. Members of a private team are only searchable by other
 members of that team. The directory includes enabled public and internal
-meeting types that have not expired.</p>
+meeting types that have not expired. Results are listed 50 to a page, by
+owner and then title, with <strong>Previous</strong> and <strong>Next</strong> links once there are
+more; the search and the <strong>Favorites only</strong> filter carry over between pages.</p>
 <p>Click the star beside a meeting to add it to your personal favorites. Each
 meeting type is saved separately, so you can favorite someone’s consulting
 meeting independently of their TAM meeting. Favorites appear on your dashboard
-and in the directory’s <strong>Favorites only</strong> view, across browsers and devices.</p>
+and in the directory’s <strong>Favorites only</strong> view, across browsers and devices.
+The dashboard shows the first 12; past that its card links to <strong>All
+favorites</strong> in the directory.</p>
 <ul>
 <li><strong>Copy link</strong> copies a public meeting’s reusable booking URL.</li>
 <li><strong>Generate invite link</strong> creates a fresh single-use invite for an internal
@@ -456,7 +475,7 @@ additional booking or management permissions.</p>
 <p>Internal visibility is designed for <strong>cross-team and cross-person booking within an organization</strong>. It is available for both personal and team event types.</p>
 <p><strong>Typical use case (team):</strong> A Support team creates an internal “Support Call” event type. When a Sales rep needs to put a customer in touch with Support, they go to the <strong>Invite Links</strong> page, click <strong>“Get link”</strong> next to “Support Call”, and paste the generated URL in a Slack message or email to the customer. The customer clicks the link, picks a slot, and books — the link expires after 7 days and can’t be reused.</p>
 <p><strong>Typical use case (personal):</strong> A senior engineer creates an internal “Code Review” event type. Any teammate can generate a one-time link from the Invite Links page and share it with an external contributor who needs a review session.</p>
-<p>The <strong>Invite Links</strong> page (<code>/dashboard/organization</code>) lists all internal event types across the organization — both personal and team. Each event type has:</p>
+<p>The <strong>Invite Links</strong> page (<code>/dashboard/invite-links</code>) lists all internal event types across the organization — both personal and team. Each event type has:</p>
 <ul>
 <li><strong>Get link</strong> — generates a single-use invite link (expires in 7 days) and copies it to clipboard</li>
 <li><strong>Invites</strong> — opens the full invite management page for custom expiry, multi-use links, and guest pre-fill</li>
@@ -470,12 +489,13 @@ additional booking or management permissions.</p>
 <h3 id="invite-links"><a class="header" href="#invite-links">Invite links</a></h3>
 <p>Both internal and private event types use <strong>booking invites</strong> to grant access:</p>
 <ol>
-<li>Go to <strong>Dashboard &gt; Event Types</strong> (or <strong>Organization</strong>) and click <strong>Invite</strong></li>
+<li>Go to <strong>Dashboard &gt; Event Types</strong> (or <strong>Invite Links</strong>) and click <strong>Invite</strong></li>
 <li>Fill in the guest’s name, email, and an optional personal message</li>
 <li>Choose an expiration (7, 14, or 30 days, or never) and whether to allow multiple bookings</li>
 <li>Click <strong>Send invite</strong> — the guest receives an email with a personalized booking link</li>
 </ol>
 <p>The invite link takes the guest directly to the slot picker with the invite token embedded. Their name and email are pre-filled on the booking form. The token is validated at every step (expired, used-up, or invalid tokens are rejected).</p>
+<p>To invite several people, use <strong>Bulk invites</strong> and enter one email address per line, up to 100 recipients. Each recipient gets a separate single-use link. The result reports sent, skipped and failed recipients so you can correct an address or retry a delivery.</p>
 <h3 id="invite-management"><a class="header" href="#invite-management">Invite management</a></h3>
 <p>The invite management page (<code>/dashboard/invites/{event_type_id}</code>) shows:</p>
 <ul>
@@ -488,6 +508,7 @@ additional booking or management permissions.</p>
 <li><strong>Used</strong> — all uses consumed (for single-use invites)</li>
 </ul>
 </li>
+<li>Copy button to reuse the URL of a sent invite</li>
 <li>Delete button to revoke an invite</li>
 </ul>
 <h2 id="availability-overrides"><a class="header" href="#availability-overrides">Availability overrides</a></h2>
@@ -498,6 +519,19 @@ additional booking or management permissions.</p>
 <li><strong>Custom hours</strong> — replace the weekly rules with specific time windows for that date (e.g., 08:00–12:00 only)</li>
 </ul>
 <p>Multiple custom hour windows can be added for the same date (e.g., morning + afternoon with a lunch break). Overrides are visible in the <strong>Troubleshoot</strong> view with a banner showing when they’re active.</p>
+<p>To block the same dates on every event type at once, use time off instead.</p>
+<h2 id="time-off"><a class="header" href="#time-off">Time off</a></h2>
+<p><strong>Dashboard &gt; Time off</strong> holds the periods when you take no bookings at all: holidays, a conference, an afternoon at the dentist. Every event type you host follows them, without touching each one’s overrides:</p>
+<ul>
+<li>your personal event types lose the slots in the period;</li>
+<li>on a <strong>round-robin</strong> team event type you are skipped and your teammates still take the bookings. Round robin ranks members by their bookings in the last 30 days, so when you are back you take more bookings than your teammates until you have caught up;</li>
+<li>on a <strong>collective</strong> team event type the slot is gone, since everyone has to be there;</li>
+<li>a guest’s reschedule onto the period and the approval of a request that falls in it are refused, as for a conflicting calendar event.</li>
+</ul>
+<p>A period is a start date and an end date, both included, with optional times to block part of a day (from 14:00, or until 12:00). Times are in your profile time zone; a period keeps the zone it was entered in, and the list says so if you change your profile zone later. An optional note is shown only to you, on the Time off page and in <strong>Troubleshoot</strong>, where the period appears as “Time off”. Guests only ever see that the times are not available. The admins of your teams see that you are away, the dates and times without the note, in a read-only Time off section of the team settings page; other teammates see nothing. The Time off page says so under the note field. An admin viewing your dashboard as you sees your periods read-only, without the notes.</p>
+<p>Bookings already made inside a new period are <strong>kept</strong>: adding time off cancels nothing. Cancel or reschedule them from <strong>Bookings</strong> if you need to. A request still waiting for your approval inside a period can no longer be approved (the host is busy at that time): decline it, or delete the time off first. Ended periods drop off the list and are deleted 30 days after they end. On the overview, time off closes the hours it covers in the week strip.</p>
+<p>If your calendar already has an “Out of office” event on a calendar marked busy, it blocks every event type too; time off is for when it does not, or when you would rather not put it in your calendar.</p>
+<p>From the CLI: <code>calrs user time-off add &lt;EMAIL&gt; --from 2026-12-21 --to 2026-12-24 --label "Ski"</code> (see the <a href="./cli-reference.html#calrs-user">CLI reference</a>).</p>
 <h2 id="public-urls"><a class="header" href="#public-urls">Public URLs</a></h2>
 <p><img src="images/profile.png" alt="Public profile page"></p>
 <ul>
@@ -535,12 +569,30 @@ additional booking or management permissions.</p>
 <li>Requires at least <strong>two usernames</strong> in the URL</li>
 <li>All users must have <code>allow_dynamic_group</code> enabled</li>
 </ul>
+<h2 id="embedding-a-booking-page"><a class="header" href="#embedding-a-booking-page">Embedding a booking page</a></h2>
+<p>See <a href="./embedding.html">Embedding Booking Pages</a> for complete inline, floating-button and click-trigger examples.</p>
+<p><strong>Embed</strong> on an event type (personal or team) opens a snippet generator for your own website: an inline calendar (<code>Calrs.inline</code>), a floating button (<code>Calrs.floatingButton</code>), or any element with a <code>data-calrs-link</code> attribute. The generator writes the <code>config</code> object for you:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Option</th><th>Values</th><th>Effect</th></tr>
+</thead>
+<tbody>
+<tr><td><code>layout</code></td><td><code>month</code>, <code>week</code>, <code>column</code></td><td>Calendar view the embed opens on</td></tr>
+<tr><td><code>theme</code></td><td><code>auto</code>, <code>light</code>, <code>dark</code></td><td>Color scheme</td></tr>
+<tr><td><code>brand</code></td><td>hex color</td><td>Accent color</td></tr>
+<tr><td><code>timeFormat</code></td><td><code>"24"</code>, <code>"12"</code></td><td>Fixes the time format and hides the 12h/24h switch</td></tr>
+<tr><td><code>fixedTimezone</code></td><td><code>true</code></td><td>Shows and books times in the event type’s timezone (else its owner’s), ignores the visitor’s browser zone, and replaces the timezone picker with a line naming the zone. Useful for in-person appointments</td></tr>
+</tbody>
+</table>
+</div>
+<p><code>timeFormat</code> and <code>fixedTimezone</code> are off by default, so existing snippets behave as before. They apply inside the embed only (the page must be loaded with <code>embed=1</code>). The timezone is resolved on the server at each visit, so an embed follows the event type if you change its timezone later. A guest who reschedules from their email link uses the regular reschedule page, with its timezone picker.</p>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="google-calendar.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="exchange.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
@@ -554,7 +606,7 @@ additional booking or management permissions.</p>
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="google-calendar.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="exchange.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 

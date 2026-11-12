@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Booking Flow - calrs Documentation</title>
+        <title>Booking Flow - calrs v2 Documentation</title>
 
 
         <!-- Custom HTML head -->
@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-6d7ef8e0.js";
+            window.path_to_searchindex_js = "searchindex-d5ebc317.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-e4a0ca82.js"></script>
+        <script src="toc-43543355.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -137,7 +137,7 @@
                         </button>
                     </div>
 
-                    <h1 class="menu-title">calrs Documentation</h1>
+                    <h1 class="menu-title">calrs v2 Documentation</h1>
 
                     <div class="right-buttons">
                         <a href="print.html" title="Print this book" aria-label="Print this book">
@@ -182,16 +182,17 @@
                     <main>
                         <h1 id="booking-flow"><a class="header" href="#booking-flow">Booking Flow</a></h1>
 <h2 id="guest-experience"><a class="header" href="#guest-experience">Guest experience</a></h2>
+<p>A host’s page (<code>/u/{username}</code>) and a team’s page (<code>/team/{slug}</code>) list their public meetings in cards. Beside the host’s name (under it on narrow screens), only what is set: the usual hours as a small timetable under a heading naming the timezone once (“Usually available, Paris time”, then rows such as “Mon to Thu 09:00 to 17:30”; for each day, the earliest start to the latest end among the weekly hours of the meetings listed, an approximation that hides breaks; more than four schedules say the hours vary by day; on a team page, from the team’s meetings only, not the members’ own hours), with a “My time” button that shows the rows in the visitor’s timezone when it differs, then where the host is based and the languages they speak on one line (Profile &amp; Settings). Without sections, one “Meetings” card lists every meeting; when meetings have a section (set in the event type form), each section is a card of its own, in the order the host sets at <strong>Event types &gt; Change the order</strong> (<code>/dashboard/event-types/order</code>; a team’s at <code>/dashboard/teams/{id}/order</code>, for team admins), and meetings without one come last under “Other meetings”. Each meeting shows its length (as small clock faces and in words), how the guest meets (video, phone or in person) and “Host confirms” when the host confirms each request. A line above the cards explains how booking works when there is more than one meeting.</p>
 <ol>
 <li><strong>Visit the booking page</strong> — <code>/u/host/meeting-slug</code> (or via an invite link for private event types, or <code>/u/host+other/slug</code> for <a href="./event-types.html#dynamic-group-links">dynamic group links</a>)</li>
 <li><strong>Pick a timezone</strong> — auto-detected from the browser, changeable via dropdown</li>
-<li><strong>Browse available slots</strong> — displayed as a week view, navigate with Previous/Next buttons</li>
+<li><strong>Browse available slots</strong> — use the month, week or column view and navigate within the bookable date range</li>
 <li><strong>Click a slot</strong> — opens the booking form</li>
-<li><strong>Fill in details</strong> — name, email, optional notes (pre-filled from invite if applicable)</li>
+<li><strong>Fill in details</strong> — name, email, any configured phone field, booking questions and notes (guest identity may be pre-filled from an invitation)</li>
 <li><strong>Add guests</strong> — optionally invite additional attendees (if the event type allows it)</li>
 <li><strong>Submit</strong> — booking is created</li>
-<li><strong>Confirmation page</strong> — shows booking summary (including any additional attendees)</li>
-<li><strong>Email</strong> — guest and any additional attendees receive a confirmation email with an <code>.ics</code> calendar invite attached</li>
+<li><strong>Confirmation page</strong> — shows the confirmed or pending state, booking summary and, for a confirmed booking, an <strong>Add to calendar</strong> download</li>
+<li><strong>Email</strong> — with SMTP configured, the guest receives the relevant confirmation or pending message; additional attendees receive their invitation when the booking is first confirmed</li>
 </ol>
 <p><img src="images/slots.png" alt="Available time slots"></p>
 <p><img src="images/booking-form.png" alt="Booking form"></p>
@@ -218,10 +219,10 @@ new bookings (legacy bookings retain the previous format).</p>
 <h3 id="clock-changes"><a class="header" href="#clock-changes">Clock changes</a></h3>
 <p>Durations and minimum notice use elapsed time. The slot picker omits nonexistent
 or ambiguous local starts, since booking forms do not carry a DST-fold marker.
-Conflict checks retain the existing wall-clock availability engine: a UTC booking
-that crosses a backward clock change blocks a conservative envelope covering both
-occurrences of the repeated hour. This can hide otherwise free slots around the
-transition, but prevents a reversed local interval from allowing double-booking.
+Conflict checks retain the existing wall-clock availability engine: a booking
+inside a repeated hour blocks both occurrences of that local time. A booking that
+merely spans the clock change does not also block the hour before and after its
+actual range.
 Host email text and calendar attachments use the exact UTC endpoints for new rows.</p>
 <h2 id="booking-statuses"><a class="header" href="#booking-statuses">Booking statuses</a></h2>
 <div class="table-wrapper">
@@ -246,7 +247,7 @@ Host email text and calendar attachments use the exact UTC endpoints for new row
 <li>Host can approve/decline in two ways:
 <ul>
 <li><strong>From the email</strong> — click the Approve or Decline button (no login required, token-based)</li>
-<li><strong>From the dashboard</strong> — go to <strong>Pending approval</strong> section and click Confirm or Decline</li>
+<li><strong>From the dashboard</strong>: in the <strong>Waiting for your decision</strong> section of the bookings page, click Confirm or Decline</li>
 </ul>
 </li>
 <li>On confirm: status becomes <code>confirmed</code>, guest receives confirmation email with <code>.ics</code>, booking is pushed to CalDAV. Auto meeting links (Jitsi, webhook, Google Meet) are generated at this moment, not while the booking is pending.</li>
@@ -285,24 +286,23 @@ Host email text and calendar attachments use the exact UTC endpoints for new row
 <h2 id="reschedule"><a class="header" href="#reschedule">Reschedule</a></h2>
 <p>Bookings can be rescheduled without cancelling and rebooking. Both guests and hosts can initiate a reschedule.</p>
 <h3 id="guest-reschedule"><a class="header" href="#guest-reschedule">Guest reschedule</a></h3>
-<p>Guests can reschedule their booking via the reschedule link in the confirmation or pending email:</p>
+<p>Guests use the reschedule link in their confirmation or pending email:</p>
 <ol>
-<li>Click the “Reschedule” button in the email</li>
-<li>Pick a new time slot from the slot picker (the current booking’s slot is freed so it remains available)</li>
-<li>Confirm the new time</li>
-<li>The booking moves to <code>pending</code> status — the host must approve via email or dashboard. The request expiry starts over from the reschedule.</li>
-<li>If the booking was previously pushed to CalDAV, the event is removed (re-pushed on approval)</li>
+<li>Choose an available new slot; the booking being moved is excluded from its own conflict check.</li>
+<li>Confirm the new time. Guest notice rules, date bounds and availability are checked again.</li>
+<li>If the event type requires confirmation, the booking becomes <code>pending</code> and the host must approve the new time. The request-expiry window starts again. Its old calendar reservation is removed while approval is pending.</li>
+<li>Otherwise the new time is confirmed immediately and calendar copies and notifications are updated.</li>
 </ol>
+<p>The old time is not retained as a second booking. Declining or expiring a reschedule that needs approval does not restore the original meeting.</p>
 <h3 id="host-reschedule"><a class="header" href="#host-reschedule">Host reschedule</a></h3>
-<p>Hosts can reschedule from the dashboard:</p>
+<p>The dashboard’s <strong>Reschedule</strong> action asks the <strong>guest to pick a new time</strong>:</p>
 <ol>
-<li>Go to <strong>Dashboard &gt; Bookings</strong> and click <strong>Reschedule</strong> on a booking</li>
-<li>Pick a new time slot</li>
-<li>Confirm the new time</li>
-<li>The booking stays <code>confirmed</code> — no approval needed</li>
-<li>The CalDAV event is updated in place (same UID). Google Meet bookings keep the existing Meet link; only the event times are patched.</li>
-<li>The guest receives a reschedule notification with the updated <code>.ics</code> invite</li>
+<li>Open the action from <strong>Bookings</strong> and confirm that the guest should receive a rescheduling request.</li>
+<li>calrs sends the guest a new link. The booking stays at its current time until the guest chooses another.</li>
+<li>The guest picks and confirms an available slot. Because the host requested the change, it is confirmed without another host-approval step, even on an event type that normally requires confirmation.</li>
+<li>Calendar copies are updated and the guest receives the changed invitation. Google Meet keeps its existing conference link.</li>
 </ol>
+<p>A second request while one is already waiting is refused. The existing request can be resent, at most once an hour. A request is refused when the event type has no bookable dates left; extend its range first. The REST API exposes the same request-to-reschedule operation, not an arbitrary new-time edit.</p>
 <h3 id="token-regeneration"><a class="header" href="#token-regeneration">Token regeneration</a></h3>
 <p>After each reschedule, the <code>reschedule_token</code>, <code>cancel_token</code>, and <code>confirm_token</code> are regenerated. This invalidates any previous email links, ensuring only the latest links work.</p>
 <h3 id="edge-cases"><a class="header" href="#edge-cases">Edge cases</a></h3>
@@ -322,16 +322,41 @@ Host email text and calendar attachments use the exact UTC endpoints for new row
 <p>Each is set from the event type form with a numeric value plus a unit selector (minutes / hours / days). Empty means no restriction (the previous behaviour).</p>
 <p>Within the configured window, the guest sees a friendly page showing the host’s contact email instead of a working form. The booking is unchanged. If the policy is set, it is also surfaced inline on the confirmation page and in the confirmation email so the guest is warned upfront.</p>
 <p>The check applies to <strong>guest-side actions only</strong>. Hosts and admins can still cancel or reschedule from the dashboard at any time, since real-world emergencies often require host action on behalf of the guest. The notice window is not enforced on host paths.</p>
+<h2 id="host-notes"><a class="header" href="#host-notes">Host notes</a></h2>
+<p>Each booking can carry <strong>host notes</strong>: free text for the people running the meeting (what was said on a call, what to prepare), kept apart from the notes the guest typed when booking. Open them from the booking’s title on the bookings page or the overview, at <code>/dashboard/bookings/{id}/notes</code>. Once a booking has notes, its row shows them with an <strong>Edit note</strong> button (the overview’s agenda shows a quiet “Host note” marker instead). For notes after the call, the bookings page lists in <strong>Last 30 days</strong> the meetings held over that time, and in <strong>Cancelled and declined</strong> the bookings that were cancelled or declined, from those due 30 days ago to those cancelled for a later date, for each of their hosts. Each title opens the notes, so a note on a meeting cancelled for next month stays reachable. Each section of the bookings page (waiting for a decision, available to claim, upcoming, last 30 days, cancelled and declined) shows 50 bookings a page with its own <strong>Previous</strong> and <strong>Next</strong>, and moving through one section leaves the others on their page. The search box searches every section and page on the server when you press Enter (guest name, email, meeting title, and the team for bookings you can claim), and an action taken on a page (cancel, approve, decline, ask to reschedule) brings you back to that page. Notes are counted in characters, an emoji being one. The page shows the booking, the guest’s own notes, and who last edited the host notes and when. Notes are at most 5000 characters; saving an empty field removes them.</p>
+<p>Who can read and edit them:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Person</th><th>Access</th><th>Why</th></tr>
+</thead>
+<tbody>
+<tr><td>Owner of the event type (its creator, for a team event type)</td><td>Yes</td><td>Sees the booking on their bookings page and approves, cancels or reschedules it</td></tr>
+<tr><td>Member a round-robin booking is assigned to</td><td>Yes</td><td>Runs the meeting</td></tr>
+<tr><td>Every member of a collective booking</td><td>Yes, except members excluded from the event type</td><td>They all attend</td></tr>
+<tr><td>Members of a round-robin team, when the booking has no assigned member (deleted account, old booking)</td><td>No, only the owner</td><td>It was never theirs</td></tr>
+<tr><td>Watcher who claimed the booking</td><td>Yes</td><td>Took the meeting over</td></tr>
+<tr><td>Other members of a round-robin team, team admins who are none of the above, watchers only offered the booking, instance admins</td><td>No</td><td>Nothing else in calrs shows them that booking</td></tr>
+</tbody>
+</table>
+</div>
+<p>Access follows the team as it is now: a member who leaves the team loses access to its collective bookings. Anyone else gets the dashboard’s “Not found” page, also when saving, whether or not the booking exists. When two hosts edit at the same time, the second save is refused with the first one’s text shown (or “(cleared)”), so nothing is overwritten silently. An admin impersonating a host is recorded as the author: “Last edited by Admin (admin, as Host)”.</p>
+<p>Host notes are shown on host surfaces only: the notes page, the bookings page, the overview, and the host emails sent once they exist (host reminder, approval reminder, “booking confirmed”, cancellation and reschedule request). Each host email checks its own recipient: a collective booking’s organizer who has since left the team still gets the email (the calendar event names them) but without the notes. They are <strong>never</strong> shown to the guest: not on the confirmation page or the cancel and reschedule pages, not in guest emails or SMS, not in an <code>.ics</code> file, a webhook or an embed. They are not written into the calendar event either, since calendar servers send that event to its attendees and it is often shared.</p>
+<p>Notes stay with the booking when it is rescheduled, and when it is cancelled or declined.</p>
 <h2 id="conflict-detection"><a class="header" href="#conflict-detection">Conflict detection</a></h2>
 <p>Before a booking is accepted, calrs checks for conflicts:</p>
 <ul>
-<li><strong>Calendar events</strong> — from synced CalDAV sources</li>
-<li><strong>Existing bookings</strong> — confirmed bookings on any event type</li>
+<li><strong>Calendar events</strong> — busy events from all selected connected calendars, including recurrence and supported out-of-office events</li>
+<li><strong>Existing bookings</strong> — confirmed bookings and pending requests configured to hold time, across event types the participant hosts</li>
+<li><strong>Time off and working hours</strong> — the event schedule and relevant participants</li>
+<li><strong>Shared resources</strong> — the required resources under their scheduling mode</li>
+<li><strong>Booking limits and date bounds</strong> — frequency caps, rolling horizon and fixed bookable dates</li>
 <li><strong>Buffer times</strong> — the buffer before/after is included in the conflict window</li>
 <li><strong>Minimum notice</strong> — slots too close to the current time are rejected</li>
 </ul>
 <p>Additionally, a database-level unique index prevents two bookings from occupying the same slot, even if two guests submit simultaneously. On round-robin team event types the uniqueness is per assigned member, so two guests can book the same time as long as different members take the bookings.</p>
 <h2 id="caldav-write-back"><a class="header" href="#caldav-write-back">CalDAV write-back</a></h2>
+<p>Write-back also uses the connected Exchange or Microsoft Graph provider where applicable; see the <a href="./features.html#calendars">calendar guides</a>.</p>
 <p>When a booking is confirmed (either directly or via approval), calrs can push the event to the host’s CalDAV calendar. For team event types the host is the assigned member (round-robin), or every eligible member (collective: enabled members with a non-zero per-event-type weight, the same set the slot grid checks). See <a href="./caldav.html#caldav-write-back">CalDAV Integration &gt; Write-back</a> for setup.</p>
 <p>The event’s <code>ORGANIZER</code> is the host: the assigned member, or for a collective booking the first eligible member by name, with every member’s name joined. A collective or dynamic group booking stores that organizer when it is created and keeps it for every later update (approval, reschedule, claim, retry), even if the team changes in the meantime: Google CalDAV refuses an update that changes an existing event’s organizer. Bookings made before calrs stored it (migration 070) still resolve it from the current roster.</p>
 <h2 id="email-notifications"><a class="header" href="#email-notifications">Email notifications</a></h2>
@@ -342,12 +367,12 @@ Host email text and calendar attachments use the exact UTC endpoints for new row
 <tr><th>Event</th><th>Guest receives</th><th>Host receives</th></tr>
 </thead>
 <tbody>
-<tr><td>Booking confirmed</td><td>Confirmation + <code>.ics</code> REQUEST</td><td>Notification + <code>.ics</code> REQUEST</td></tr>
+<tr><td>Booking confirmed</td><td>Confirmation + <code>.ics</code> invitation</td><td>Notification (calendar attachment depends on the notification path)</td></tr>
 <tr><td>Booking pending</td><td>“Awaiting confirmation” notice</td><td>Approval request with Approve/Decline buttons</td></tr>
 <tr><td>Booking declined</td><td>Decline notice (with optional reason)</td><td>—</td></tr>
 <tr><td>Booking cancelled</td><td>Cancellation + <code>.ics</code> CANCEL</td><td>Cancellation + <code>.ics</code> CANCEL</td></tr>
-<tr><td>Booking rescheduled (by host)</td><td>Reschedule notification + updated <code>.ics</code></td><td>—</td></tr>
-<tr><td>Reschedule request (by guest)</td><td>“Pending” notice with updated time</td><td>Reschedule approval request with Approve/Decline buttons</td></tr>
+<tr><td>New time chosen after a host request</td><td>Reschedule notification + updated <code>.ics</code></td><td>Confirmation notification</td></tr>
+<tr><td>Guest reschedule requiring approval</td><td>“Pending” notice with updated time</td><td>Reschedule approval request with Approve/Decline buttons</td></tr>
 <tr><td>Booking reminder</td><td>Reminder with cancel button</td><td>Reminder with details</td></tr>
 <tr><td>Invite sent</td><td>Invite email with booking link</td><td>—</td></tr>
 </tbody>
@@ -395,7 +420,7 @@ Host email text and calendar attachments use the exact UTC endpoints for new row
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
-                            <a rel="next prefetch" href="teams.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="booking-questions.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                             </a>
 
@@ -409,7 +434,7 @@ Host email text and calendar attachments use the exact UTC endpoints for new row
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
-                    <a rel="next prefetch" href="teams.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="booking-questions.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                     </a>
             </nav>

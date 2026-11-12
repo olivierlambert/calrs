@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Google Calendar - calrs Documentation</title>
+        <title>Google Calendar - calrs v2 Documentation</title>
 
 
         <!-- Custom HTML head -->
@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-6d7ef8e0.js";
+            window.path_to_searchindex_js = "searchindex-d5ebc317.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-e4a0ca82.js"></script>
+        <script src="toc-43543355.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -137,7 +137,7 @@
                         </button>
                     </div>
 
-                    <h1 class="menu-title">calrs Documentation</h1>
+                    <h1 class="menu-title">calrs v2 Documentation</h1>
 
                     <div class="right-buttons">
                         <a href="print.html" title="Print this book" aria-label="Print this book">
@@ -182,7 +182,7 @@
                     <main>
                         <h1 id="google-calendar"><a class="header" href="#google-calendar">Google Calendar</a></h1>
 <p>calrs can connect to Google Calendar as a CalDAV source using Google’s OAuth2 flow. Unlike a username/password source, Google requires you (the calrs operator) to register an OAuth2 application in Google Cloud and configure its client ID and secret in calrs once. After that, individual users connect their own Google accounts through the dashboard.</p>
-<p>This page walks through the Google Cloud setup. The values you collect at the end go into <strong>Admin → Auth → Google OAuth2</strong> in the calrs dashboard.</p>
+<p>This page walks through the Google Cloud setup. The values you collect at the end go into <strong>Admin → Sign-in and security → Google OAuth2</strong> in the calrs dashboard.</p>
 <hr>
 <h2 id="1-pick-or-create-a-google-cloud-project"><a class="header" href="#1-pick-or-create-a-google-cloud-project">1. Pick (or create) a Google Cloud project</a></h2>
 <p>Go to the <a href="https://console.cloud.google.com/">Google Cloud Console</a> and either select an existing project or create a new one (e.g. <code>calrs-prod</code>). Everything below is scoped to this project.</p>
@@ -192,10 +192,10 @@
 <p>In <strong>APIs &amp; Services → Library</strong>, enable:</p>
 <ul>
 <li><strong>CalDAV API</strong>: used for CalDAV access to the user’s calendars (reading busy times and writing bookings back). It is a separate entry in the Library from the Calendar API; search for “CalDAV API”.</li>
-<li><strong>Google Calendar API</strong>: used to attach Google Meet links to bookings (see <a href="#google-meet-auto-links">Google Meet auto-links</a>). Enable it even if you do not use Meet today, so the option works the day an event type switches to it.</li>
+<li><strong>Google Calendar API</strong>: used to add the guests to written events without Google mailing them (see <a href="#invitations-and-booking-email-aliases">Invitations</a>), to read out-of-office events, and to attach Google Meet links to bookings (see <a href="#google-meet-auto-links">Google Meet auto-links</a>).</li>
 <li><strong>OIDC userinfo</strong>: Google exposes this automatically when you request the <code>openid email</code> scopes; there is no separate “API” to toggle, but the OAuth consent screen must allow those scopes (see step 5).</li>
 </ul>
-<p>Without the CalDAV API enabled, every CalDAV request will fail with a 403 even though the OAuth2 handshake itself succeeds; enabling only the Google Calendar API is not enough. Without the Google Calendar API, bookings still sync and write back, but Google Meet links cannot be generated.</p>
+<p>Without the CalDAV API enabled, every CalDAV request will fail with a 403 even though the OAuth2 handshake itself succeeds; enabling only the Google Calendar API is not enough. Without the Google Calendar API, bookings still sync and write back, but without the guests as attendees, out-of-office events do not block, and Google Meet links cannot be generated.</p>
 <hr>
 <h2 id="3-create-the-oauth2-client"><a class="header" href="#3-create-the-oauth2-client">3. Create the OAuth2 client</a></h2>
 <p>In <strong>APIs &amp; Services → Credentials</strong>, click <strong>Create credentials → OAuth client ID</strong>.</p>
@@ -203,7 +203,7 @@
 <li><strong>Application type:</strong> <em>Web application</em></li>
 <li><strong>Name:</strong> anything (e.g. <code>calrs</code>)</li>
 </ul>
-<p>You will get a <strong>client ID</strong> and <strong>client secret</strong>. Both are stored encrypted in calrs (<code>auth_config.google_oauth2_client_id</code> / <code>google_oauth2_client_secret</code>) once you paste them into the admin panel.</p>
+<p>You will get a <strong>client ID</strong> and <strong>client secret</strong>. calrs stores the client ID and encrypts the client secret at rest once you save them in the admin panel.</p>
 <hr>
 <h2 id="4-authorized-redirect-uri"><a class="header" href="#4-authorized-redirect-uri">4. Authorized redirect URI</a></h2>
 <p>Under <strong>Authorized redirect URIs</strong>, add <strong>exactly</strong> one entry:</p>
@@ -238,13 +238,41 @@
 <p>The same Calendar scope is enough to attach a Google Meet conference to a write-back event. No extra Meet scope, and users who already connected Google Calendar do not need to reconnect.</p>
 <hr>
 <h2 id="6-test-users-vs-publishing-the-consent-screen"><a class="header" href="#6-test-users-vs-publishing-the-consent-screen">6. Test users vs. publishing the consent screen</a></h2>
-<p>While the OAuth consent screen is in <strong>Testing</strong> status, only accounts explicitly listed under <strong>Test users</strong> can complete the OAuth flow. Everyone else gets <code>Error 403: access_denied</code> at the Google consent page.</p>
-<p>You have two options:</p>
-<ul>
-<li><strong>Keep it in Testing</strong> if calrs is only used by a small, known group (say, a single team or family). Add each user’s Google email to the Test users list. Refresh tokens issued to test users expire after 7 days, so users will need to reconnect their source weekly.</li>
-<li><strong>Publish the app</strong> (button on the OAuth consent screen page) for any larger or longer-running deployment. Because the Calendar scope is marked <strong>sensitive/restricted</strong> by Google, publishing triggers Google’s app verification process. They will ask for a homepage, privacy policy, branding assets, and (for restricted scopes) a security assessment. This can take weeks. Until verification completes, users see an “unverified app” warning but can still proceed via <em>Advanced → Go to {app} (unsafe)</em>.</li>
-</ul>
-<p>For a self-hosted instance used by you and a handful of people, the Testing mode + Test users approach is usually fine; just remember the 7-day refresh token expiry.</p>
+<p>For an <strong>External</strong> application in <strong>Testing</strong>, add the intended accounts as test users. Because calrs requests Calendar access, refresh tokens issued in that mode expire after seven days; users then need to reconnect. See <a href="https://developers.google.com/identity/protocols/oauth2#expiration">Google’s refresh-token expiration rules</a>.</p>
+<p>For ongoing use, configure the application’s production audience and review Google’s verification requirements. Publishing and verification are separate steps: eligible personal-use and organization-internal apps can qualify for exceptions. An unverified external app can still show a warning and have a user cap; a Workspace administrator can also restrict consent. See <a href="https://support.google.com/cloud/answer/13464323">Google’s verification exceptions</a> and <a href="https://developers.google.com/identity/protocols/oauth2/production-readiness/sensitive-scope-verification">sensitive-scope verification</a>.</p>
+<p>After moving out of Testing, reconnect affected sources to obtain fresh authorization. Production tokens can still be revoked or expire for other reasons; check source errors rather than assuming a token lasts forever.</p>
+<h2 id="out-of-office-blocking"><a class="header" href="#out-of-office-blocking">Out-of-office blocking</a></h2>
+<p>calrs also reads Google Calendar’s <strong>Out of office</strong> events through the Calendar
+API using the existing OAuth connection. No additional scope or reconnect is
+required. These events block availability on their connected calendar, respecting
+the calendar’s busy toggle and per-event-type calendar selection.</p>
+<p>Google represents these as timed, busy intervals, including absences that cover
+whole days. Recurring absences are expanded by Google, including moved occurrences
+and daylight-saving changes. Cancelled occurrences are omitted from the returned
+snapshot and stop blocking after the next successful sync. Each sync refreshes a window
+from 90 days ago to 366 days ahead, covering the web booking flow’s 365-day limit.
+Deleted absences are removed on the next successful sync. If the API request
+fails, previously cached absences keep blocking, and the source’s sync is
+reported as failing on the Sources page (with the usual email to its owner
+when it keeps failing). After 7 days without a successful refresh the cached
+absences are dropped, so an absence deleted meanwhile does not block forever.
+A Calendar API that is not enabled at all is not reported, as long as nothing
+was cached from it. The absences are fetched at most every 5 minutes per
+calendar, and a fetch that takes over 10 seconds counts as a failure rather
+than holding up a booking page. An absence Google marks as a whole day (a <code>date</code> rather
+than a time) blocks those days in the calendar’s own timezone. Working-location
+events are not treated as absences.</p>
+<h2 id="invitations-and-booking-email-aliases"><a class="header" href="#invitations-and-booking-email-aliases">Invitations and booking email aliases</a></h2>
+<p>calrs sends the guest and any additional attendees its own confirmation email with an ICS invitation. Google Calendar must not send a second one, yet the guests belong on the event: Google Meet admits listed attendees directly instead of putting them in the “ask to join” lobby.</p>
+<p>Google’s CalDAV endpoint ignores <code>SCHEDULE-AGENT=CLIENT</code> (RFC 6638), the parameter other servers honour to leave invitations to the client, and mails attendees itself. So on a Google calendar calrs writes in two steps:</p>
+<ol>
+<li>The event goes over CalDAV without ATTENDEE or ORGANIZER lines, so there is nobody for Google to invite. Google makes the calendar’s own account the organizer, which is also what lets that account create the Meet.</li>
+<li>The guest and additional attendees are then added through the Google Calendar API with <code>sendUpdates=none</code>, which Google documents as “No notifications are sent.”</li>
+</ol>
+<p>Rewriting an existing event (a reschedule, a retry) first clears its attendees the same silent way, so the CalDAV write never reads as removing them, then adds them back; their RSVP on the Google event is reset in the process, without any notice. If adding them back fails, the event stays on the calendar and the write-back retries until they are there. Google Meet time changes and the conference itself are patched with <code>sendUpdates=none</code> too, and a cancelled booking whose Google event has attendees is deleted through the Calendar API with <code>sendUpdates=none</code>. If that call fails, calrs deletes the event over CalDAV instead, so the cancelled meeting never stays on the calendar; Google may then mail the attendees its own cancellation. A copy left behind when a booking moves to another calendar (a write calendar chosen per event type) is only ever deleted that quiet way: if the Calendar API cannot delete it, it stays, still listing the guests beside the new copy, and calrs tries again on the write-back schedule. A calendar several hosts write to (a shared team calendar) gets one copy of the booking, the one with the guests. A chosen Google calendar that was deleted counts as refusing the booking, so it goes to the source’s write calendar instead. Guests with a Google account may still see the event appear in their Google Calendar, which is how Google handles any event they are an attendee of; they get no email from Google.</p>
+<p>Only one Google copy of a booking carries the attendees. Google adds an event to the Google Calendar of each of its attendees, so a booking written to several Google calendars (every member of a collective event type, a second Google calendar of the host, the calendar of a watcher who claimed the booking) would otherwise show there once per copy. The copy with the attendees is the one holding the Google Meet when the booking has one, otherwise the host’s: the assigned member for round-robin, the organizer for collective (the member the invitation names as organizer), the owner for a personal event type, on the Google calendar a Meet would be created on. That copy leaves out the guest’s phone number, since Google shows the event’s description to everyone on it; the other copies keep it for their host. Every other Google copy is written without attendees, and one that has some from an earlier write loses them, silently, the next time it is written. When that host does not write to a Google calendar, no Google copy carries attendees. For a collective booking the organizer is fixed when it is booked: an organizer who later leaves the team keeps the copy with the attendees until the booking is over. A watcher who claimed the booking is left off that list when calrs writes a copy to their own calendar, so they do not see the meeting twice; without such a copy they stay on it and get the meeting through the invitation.</p>
+<p>This needs the <strong>Google Calendar API</strong> enabled (step 2 of the setup). Without it, calrs still writes a new event, without attendees, and the guests rely on calrs’s own invitation; cancellations then go over CalDAV. An event that already has attendees (the API was turned off after it was written) is left as it is rather than rewritten without them, which Google would announce. When the Calendar API is enabled but fails for a moment (a rate limit, a server error, no answer within 30 seconds), calrs writes nothing and the <a href="caldav.html#when-a-write-back-fails">write-back retries</a> pick the booking up again a few minutes later. Other CalDAV servers are unaffected: they keep receiving the attendees in the ICS with <code>SCHEDULE-AGENT=CLIENT</code>.</p>
+<p>The guest-facing ICS uses your <strong>Booking email</strong> (or account email if unset) as the organizer, which can differ from your connected Google address. The email’s From address is controlled separately by your SMTP configuration.</p>
 <h2 id="google-meet-auto-links"><a class="header" href="#google-meet-auto-links">Google Meet auto-links</a></h2>
 <p>When an event type’s location is <strong>Google Meet (auto-generated link)</strong>, confirmed bookings attempt to attach a unique Meet conference owned by the host, as long as that host still has Google Calendar connected with write-back:</p>
 <ol>
@@ -276,7 +304,7 @@
 </ul>
 <p>The form lists anyone still missing. If someone later disconnects Google, the booking still confirms; confirmation and email show a “Google Meet” label if minting failed (the Meet URL is omitted and a warning is logged, same as a failed meeting webhook).</p>
 <h3 id="reschedule-and-cancel"><a class="header" href="#reschedule-and-cancel">Reschedule and cancel</a></h3>
-<p>Reschedule keeps the same Meet URL and patches only the event times via Calendar API (a second CalDAV PUT would strip the conference). Cancel still deletes <code>{uid}.ics</code> over CalDAV, which removes the Google event and its Meet.</p>
+<p>Reschedule keeps the same Meet URL and patches only the event times via Calendar API (a second CalDAV PUT would strip the conference). Cancel deletes the Google event and its Meet, through the Calendar API with <code>sendUpdates=none</code> since the event lists the guests.</p>
 <p>That time patch is the host’s only copy of the booking, so it is retried three times a second apart. If it still fails, the host is emailed: the booking, the guest’s invite and the reminders hold the new time while their Google Calendar holds the old one, and they need to move the event by hand. Move it rather than recreating it, or the Meet link the guest already has stops admitting anyone.</p>
 
                     </main>
@@ -287,7 +315,7 @@
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
-                            <a rel="next prefetch" href="event-types.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="microsoft-calendar.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                             </a>
 
@@ -301,7 +329,7 @@
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
-                    <a rel="next prefetch" href="event-types.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="microsoft-calendar.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                     </a>
             </nav>

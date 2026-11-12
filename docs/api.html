@@ -1,0 +1,669 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>REST API - calrs v2 Documentation</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="favicon-de23e50b.svg">
+        <link rel="shortcut icon" href="favicon-8114d1fc.png">
+        <link rel="stylesheet" href="css/variables-8adf115d.css">
+        <link rel="stylesheet" href="css/general-2459343d.css">
+        <link rel="stylesheet" href="css/chrome-ae938929.css">
+        <link rel="stylesheet" href="css/print-9e4910d8.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="fonts/fonts-9644e21d.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="mdbook-highlight-css" href="highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="ayu-highlight-3fdfc3ac.css">
+
+        <!-- Custom theme stylesheets -->
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "";
+            const default_light_theme = "light";
+            const default_dark_theme = "navy";
+            window.path_to_searchindex_js = "searchindex-d5ebc317.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="toc-43543355.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="mdbook-body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="mdbook-sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("mdbook-sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="mdbook-sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="toc.html"></iframe>
+            </noscript>
+            <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="mdbook-page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="mdbook-menu-bar-hover-placeholder"></div>
+                <div id="mdbook-menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="mdbook-sidebar-toggle" class="icon-button" for="mdbook-sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="mdbook-sidebar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M0 96C0 78.3 14.3 64 32 64H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32C14.3 128 0 113.7 0 96zM0 256c0-17.7 14.3-32 32-32H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32c-17.7 0-32-14.3-32-32zM448 416c0 17.7-14.3 32-32 32H32c-17.7 0-32-14.3-32-32s14.3-32 32-32H416c17.7 0 32 14.3 32 32z"/></svg></span>
+                        </label>
+                        <button id="mdbook-theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="mdbook-theme-list">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M371.3 367.1c27.3-3.9 51.9-19.4 67.2-42.9L600.2 74.1c12.6-19.5 9.4-45.3-7.6-61.2S549.7-4.4 531.1 9.6L294.4 187.2c-24 18-38.2 46.1-38.4 76.1L371.3 367.1zm-19.6 25.4l-116-104.4C175.9 290.3 128 339.6 128 400c0 3.9 .2 7.8 .6 11.6c1.8 17.5-10.2 36.4-27.8 36.4H96c-17.7 0-32 14.3-32 32s14.3 32 32 32H240c61.9 0 112-50.1 112-112c0-2.5-.1-5-.2-7.5z"/></svg></span>
+                        </button>
+                        <ul id="mdbook-theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-ayu">Ayu</button></li>
+                        </ul>
+                        <button id="mdbook-search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="mdbook-searchbar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M416 208c0 45.9-14.9 88.3-40 122.7L502.6 457.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0S416 93.1 416 208zM208 352c79.5 0 144-64.5 144-144s-64.5-144-144-144S64 128.5 64 208s64.5 144 144 144z"/></svg></span>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">calrs v2 Documentation</h1>
+
+                    <div class="right-buttons">
+                        <a href="print.html" title="Print this book" aria-label="Print this book">
+                            <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
+                        </a>
+                        <a href="https://github.com/olivierlambert/calrs" title="Git repository" aria-label="Git repository">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 496 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M165.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6zm-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3zm44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9zM244.8 8C106.1 8 0 113.3 0 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C428.2 457.8 496 362.9 496 252 496 113.3 383.5 8 244.8 8zM97.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1zm-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7zm32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1zm-11.4-14.7c-1.6 1-1.6 3.6 0 5.9 1.6 2.3 4.3 3.3 5.6 2.3 1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2z"/></svg></span>
+                        </a>
+                        <a href="https://github.com/olivierlambert/calrs/edit/main/docs/src/src/api.md" title="Suggest an edit" aria-label="Suggest an edit" rel="edit">
+                            <span class=fa-svg id="git-edit-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M421.7 220.3l-11.3 11.3-22.6 22.6-205 205c-6.6 6.6-14.8 11.5-23.8 14.1L30.8 511c-8.4 2.5-17.5 .2-23.7-6.1S-1.5 489.7 1 481.2L38.7 353.1c2.6-9 7.5-17.2 14.1-23.8l205-205 22.6-22.6 11.3-11.3 33.9 33.9 62.1 62.1 33.9 33.9zM96 353.9l-9.3 9.3c-.9 .9-1.6 2.1-2 3.4l-25.3 86 86-25.3c1.3-.4 2.5-1.1 3.4-2l9.3-9.3H112c-8.8 0-16-7.2-16-16V353.9zM453.3 19.3l39.4 39.4c25 25 25 65.5 0 90.5l-14.5 14.5-22.6 22.6-11.3 11.3-33.9-33.9-62.1-62.1L314.3 67.7l11.3-11.3 22.6-22.6 14.5-14.5c25-25 65.5-25 90.5 0z"/></svg></span>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="mdbook-search-wrapper" class="hidden">
+                    <form id="mdbook-searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="mdbook-searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="mdbook-searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <span class=fa-svg id="fa-spin"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M304 48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zm0 416c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM48 304c26.5 0 48-21.5 48-48s-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48zm464-48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM142.9 437c18.7-18.7 18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zm0-294.2c18.7-18.7 18.7-49.1 0-67.9S93.7 56.2 75 75s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zM369.1 437c18.7 18.7 49.1 18.7 67.9 0s18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9z"/></svg></span>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="mdbook-searchresults-outer" class="searchresults-outer hidden">
+                        <div id="mdbook-searchresults-header" class="searchresults-header"></div>
+                        <ul id="mdbook-searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('mdbook-sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('mdbook-sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#mdbook-sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="mdbook-content" class="content">
+                    <main>
+                        <h1 id="rest-api"><a class="header" href="#rest-api">REST API</a></h1>
+<p>calrs has a small JSON API under <strong><code>/api/v1</code></strong> for integrations: list your
+event types, read their bookable times, read the bookings you host, and book,
+cancel or ask for a new time on a guest’s behalf. It runs inside
+<code>calrs serve</code>; there is nothing to install or enable.</p>
+<p>The API is deliberately small. Everything it does, the dashboard or the
+booking page already does, through the same code: a booking made through the
+API is checked, stored, emailed, written to calendars and texted exactly like
+one made on the booking page.</p>
+<h2 id="openapi-document-and-interactive-reference"><a class="header" href="#openapi-document-and-interactive-reference">OpenAPI document and interactive reference</a></h2>
+<ul>
+<li><strong><code>/api/v1/openapi.json</code></strong>: the OpenAPI 3.1 description of the API, generated
+by calrs from its own handlers, so it always matches the version you run.
+Every operation, its parameters and request body, the answer of each status
+with the error codes it can carry, the headers, and the two security schemes
+with the scope each operation needs. Its <code>servers</code> entry and OAuth URLs are
+your base URL (<code>CALRS_BASE_URL</code>). It is public (it describes the API and
+holds no data): point a client generator or an API tool at it.</li>
+<li><strong><code>/api/docs</code></strong>: an interactive reference built from that document, for
+signed-in users (also linked from <strong>Profile &amp; Settings → API tokens</strong>). It
+is Swagger UI, shipped inside the calrs binary: the page loads nothing from
+another site. To try a request, choose <strong>Authorize</strong>, paste a personal access
+token into <code>personalAccessToken</code>, then <strong>Try it out</strong> on an operation. The
+page never sends your session cookie (the API would ignore it anyway), and
+the token stays in the page’s memory until you leave it. The requests are
+real: <code>POST /bookings</code> books, and emails the guest. <strong>Authorize</strong> offers the
+personal token only: the page cannot complete the OAuth flow, so it hides
+the <code>oauth2</code> scheme, which the JSON document still describes for
+applications.</li>
+</ul>
+<h2 id="authentication"><a class="header" href="#authentication">Authentication</a></h2>
+<p>Every request carries a Bearer token:</p>
+<pre><code>Authorization: Bearer &lt;token&gt;
+</code></pre>
+<p>Cookies never authenticate the API, so a page you visit cannot use your
+signed-in session to call it (there is no CSRF to defend against). Requests
+from a browser page of another origin (an <code>Origin</code> header that is not the
+calrs origin) are refused, and the API sends no CORS headers.</p>
+<p>There are two kinds of token.</p>
+<h3 id="personal-access-tokens"><a class="header" href="#personal-access-tokens">Personal access tokens</a></h3>
+<p>For your own scripts. Create one at <strong>Profile &amp; Settings → API tokens</strong>
+(<code>/dashboard/settings/api-tokens</code>): give it a name, choose its permissions and
+when it expires (7, 30, 90 or 365 days, or never). The token is shown <strong>once</strong>,
+when it is created; calrs stores only its SHA-256 hash. It looks like
+<code>calrs_pat_</code> followed by 43 characters. The page lists your tokens (name,
+the first characters, permissions, creation, expiry, last use) with a
+<strong>Revoke</strong> button. A user holds at most 20.</p>
+<p>By default only administrators can use the REST API, with a personal token
+or an OAuth application: both read guest names, addresses and notes, so
+letting every user pull them programmatically is the operator’s call.
+<strong>Admin panel → Sign-in and security → API tokens → Let all users use the REST API</strong> opens it
+to everyone. Turning it off again stops the personal tokens and the API grants
+of users who are not administrators at once (they work again if it is turned
+back on), and they cannot approve a new API application meanwhile (the
+consent answers <code>access_denied</code>); an administrator who is demoted loses the
+use of theirs the same way. MCP clients are not affected by the switch.</p>
+<h3 id="oauth-applications"><a class="header" href="#oauth-applications">OAuth applications</a></h3>
+<p>For third-party applications acting for many users, calrs’s OAuth server (the
+one MCP clients use, see <a href="./mcp.html">MCP integration</a>) issues tokens for the
+API as a second resource:</p>
+<ul>
+<li><strong>resource</strong>: <code>&lt;base-url&gt;/api/v1</code> (metadata at
+<code>/.well-known/oauth-protected-resource/api/v1</code>; the 401 challenge names it).</li>
+<li><strong>scopes</strong>: the four below. Omitting <code>scope</code> requests all four.</li>
+</ul>
+<p>Registration, consent, PKCE, token lifetimes (one-hour access tokens, rotating
+refresh tokens, 30-day grants) and revocation work as described for MCP. A
+grant is bound to its resource: an MCP token does not open the API, an API
+token does not open <code>/mcp</code>, and the scopes of one resource cannot be requested
+for the other. When the API is closed to a user, the consent page says so and
+offers no Allow button. API grants appear under <strong>Profile &amp; Settings → Connected apps</strong>
+with their permissions, and are revoked there.</p>
+<h3 id="the-rules-both-follow"><a class="header" href="#the-rules-both-follow">The rules both follow</a></h3>
+<ul>
+<li>A token acts as its user, and the user is checked again on every request:
+a disabled account is refused at once.</li>
+<li><strong>Two-factor authentication</strong>: a token is worth what the session that made
+it was worth. When the admin requires MFA, a token created (or a grant
+approved) by a local account from a session that had not passed it stops
+working, as that session does.</li>
+<li>Whatever signs a user out everywhere also deletes their tokens: suspending
+the account, <code>calrs user set-password</code>, <code>calrs user reset-mfa</code>, enrolling,
+disabling or regenerating two-factor authentication, linking to SSO.
+Re-enabling a suspended account brings no token back.</li>
+<li>The admin panel’s per-user <strong>Revoke connected apps</strong> also deletes the
+user’s API tokens, and its count includes them.</li>
+<li>An admin impersonating a user cannot create or revoke that user’s tokens.</li>
+</ul>
+<h3 id="scopes"><a class="header" href="#scopes">Scopes</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Scope</th><th>Allows</th></tr>
+</thead>
+<tbody>
+<tr><td><code>event-types:read</code></td><td><code>GET /event-types</code>, <code>GET /event-types/{id}</code></td></tr>
+<tr><td><code>slots:read</code></td><td><code>GET /event-types/{id}/slots</code></td></tr>
+<tr><td><code>bookings:read</code></td><td><code>GET /bookings</code>, <code>GET /bookings/{id}</code></td></tr>
+<tr><td><code>bookings:write</code></td><td><code>POST /bookings</code>, <code>POST /bookings/{id}/cancel</code>, <code>POST /bookings/{id}/request-reschedule</code></td></tr>
+</tbody>
+</table>
+</div>
+<p>A missing scope answers 403 with <code>insufficient_scope</code>, and a
+<code>WWW-Authenticate</code> header naming the scope needed.</p>
+<h2 id="who-can-see-and-do-what"><a class="header" href="#who-can-see-and-do-what">Who can see and do what</a></h2>
+<p>The API gives a user no more than the dashboard does, and an administrator no
+more than any other user: like MCP, there is no global admin bypass.</p>
+<ul>
+<li><strong>Event types</strong> you <em>manage</em>: the personal ones you own, and the team ones of
+teams you administer. Internal event types the booking directory offers you
+are listed too, read-only (<code>"manageable": false</code>): no slots, no bookings.</li>
+<li><strong>Slots</strong> and <strong>booking for a guest</strong>: event types you manage.</li>
+<li><strong>Bookings</strong> you <em>host</em>: the bookings of event types you own, the bookings a
+round-robin team assigned to you, collective bookings of your team (unless
+you are excluded from that event type), and bookings you claimed as a
+watcher. That is the rule of host notes, which these readers may see.</li>
+<li><strong>Cancel</strong> and <strong>request a reschedule</strong>: as on the dashboard, the owner of
+the event type. Another host gets 403 when the token can read bookings; a
+token with <code>bookings:write</code> alone gets the same 404 as for a booking that
+does not exist.</li>
+</ul>
+<p>Anything else answers 404, whether it exists or not.</p>
+<p>Never returned: credentials, the booking’s cancel, reschedule or approval
+tokens, other users’ data, and anything from your calendars beyond what the
+slot computation makes of it (no event titles, no calendar names).</p>
+<h2 id="conventions"><a class="header" href="#conventions">Conventions</a></h2>
+<ul>
+<li>JSON only. Request bodies need <code>Content-Type: application/json</code> (415
+otherwise) and are limited to 16 KiB, 1.5 MiB for <code>POST /bookings</code>, which
+can carry long answers (413). Unknown fields and unknown query parameters
+are refused (400).</li>
+<li>Times are RFC 3339. calrs answers in UTC (<code>2026-11-10T08:00:00Z</code>).</li>
+<li>Every answer carries <code>Cache-Control: no-store</code>.</li>
+<li>Lists are paged with an opaque cursor: pass <code>next_cursor</code> back as <code>cursor</code>
+until it is <code>null</code>. A page can be short, even empty, and still have a next
+cursor (permission and time filters run after the page is read).</li>
+<li>Errors always have this shape:</li>
+</ul>
+<pre><code class="language-json">{"error": {"code": "slot_unavailable", "message": "This slot is no longer available."}}
+</code></pre>
+<p><code>code</code> is stable; <code>message</code> is English text for people and may change.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Status</th><th>Codes</th></tr>
+</thead>
+<tbody>
+<tr><td>400</td><td><code>invalid_request</code>, <code>invalid_json</code>, <code>invalid_start</code>, <code>invalid_timezone</code>, <code>invalid_phone</code>, <code>invalid_attendees</code>, <code>invalid_range</code>, <code>invalid_cursor</code>, <code>invalid_idempotency_key</code></td></tr>
+<tr><td>401</td><td><code>unauthorized</code></td></tr>
+<tr><td>403</td><td><code>insufficient_scope</code>, <code>forbidden</code>, <code>origin_not_allowed</code></td></tr>
+<tr><td>404</td><td><code>not_found</code></td></tr>
+<tr><td>405</td><td><code>method_not_allowed</code></td></tr>
+<tr><td>409</td><td><code>slot_unavailable</code>, <code>limit_reached</code>, <code>booking_not_active</code>, <code>no_bookable_dates</code>, <code>reschedule_already_requested</code>, <code>resend_too_soon</code>, <code>no_reschedule_pending</code>, <code>idempotency_in_progress</code></td></tr>
+<tr><td>413</td><td><code>payload_too_large</code></td></tr>
+<tr><td>415</td><td><code>unsupported_media_type</code></td></tr>
+<tr><td>422</td><td><code>too_soon</code>, <code>outside_booking_window</code>, <code>booking_refused</code>, <code>too_many_attendees</code>, <code>idempotency_key_reused</code></td></tr>
+<tr><td>429</td><td><code>rate_limited</code> (with <code>Retry-After</code>), <code>daily_limit_reached</code></td></tr>
+<tr><td>500</td><td><code>internal_error</code></td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="rate-limits"><a class="header" href="#rate-limits">Rate limits</a></h3>
+<ul>
+<li>300 requests per minute per token (per OAuth grant, or per personal token).</li>
+<li>On top of that, slot reads and every <code>POST</code>: 60 per 5 minutes per user,
+shared by all of the user’s tokens.</li>
+<li>Bookings created through the API: 50 per user per 24 hours (429
+<code>daily_limit_reached</code>; a place is taken before the booking is made, so
+concurrent requests cannot pass the cap, and given back when the booking is
+refused), each with at most 10 additional attendees whatever
+the event type allows on its booking page (422 <code>too_many_attendees</code>). Every
+booking emails the guest, the attendees and the hosts from the instance, so
+the API cannot be used to send mail without bound.</li>
+</ul>
+<p>A request without a token gets <code>401</code> with <code>WWW-Authenticate: Bearer resource_metadata="...", scope="..."</code> and no error code (RFC 6750 section
+3.1); an invalid or expired token adds <code>error="invalid_token"</code>.</p>
+<h2 id="endpoints"><a class="header" href="#endpoints">Endpoints</a></h2>
+<h3 id="get-apiv1event-types"><a class="header" href="#get-apiv1event-types"><code>GET /api/v1/event-types</code></a></h3>
+<p>Query: <code>cursor</code> (optional).</p>
+<pre><code class="language-json">{
+  "event_types": [
+    {"id": "6c1e4f0a-...", "slug": "intro", "title": "Intro call",
+     "duration_min": 30, "visibility": "public", "team_id": null,
+     "manageable": true}
+  ],
+  "next_cursor": null
+}
+</code></pre>
+<h3 id="get-apiv1event-typesid"><a class="header" href="#get-apiv1event-typesid"><code>GET /api/v1/event-types/{id}</code></a></h3>
+<pre><code class="language-json">{
+  "event_type": {
+    "id": "6c1e4f0a-...", "slug": "intro", "title": "Intro call",
+    "description": "A first call.", "duration_min": 30,
+    "visibility": "public", "team_id": null, "manageable": true,
+    "requires_confirmation": false, "location_type": "link",
+    "timezone": "Europe/Paris", "scheduling_mode": null,
+    "max_additional_guests": 2, "phone": "off",
+    "questions": [
+      {"key": "company", "kind": "short_text", "label": "Company",
+       "help": null, "required": true, "options": [], "consent": false,
+       "link_url": null, "in_calendar": true},
+      {"key": "topics", "kind": "multiple_choice", "label": "Topics",
+       "help": null, "required": false,
+       "options": [{"id": "o1", "label": "Tax"}, {"id": "o2", "label": "Accounting"}],
+       "consent": false, "link_url": null, "in_calendar": true},
+      {"key": "privacy", "kind": "checkbox",
+       "label": "I agree to the privacy policy", "help": null,
+       "required": true, "options": [], "consent": true,
+       "link_url": "https://example.com/privacy", "in_calendar": false}
+    ]
+  }
+}
+</code></pre>
+<p><code>scheduling_mode</code> is <code>round_robin</code> or <code>collective</code> for a team event type.
+<code>phone</code> says whether a booking asks for the guest’s phone number (<code>off</code>,
+<code>optional</code>, <code>required</code>). The location’s value (a meeting link, an address)
+is not returned here. <code>questions</code> are the event type’s
+<a href="booking-questions.html">booking questions</a>, in form order, with the <code>key</code>
+and option <code>id</code>s that <code>POST /bookings</code> takes in <code>answers</code>; null when you do
+not manage the event type (only a manager can book it).</p>
+<h3 id="get-apiv1event-typesidslots"><a class="header" href="#get-apiv1event-typesidslots"><code>GET /api/v1/event-types/{id}/slots</code></a></h3>
+<p>Query: <code>from</code> and <code>to</code> (dates, <code>YYYY-MM-DD</code>, inclusive, at most 31 days),
+<code>timezone</code> (IANA name, default the event type’s). The days are the guest’s
+days in that timezone.</p>
+<p>The slots are computed by the booking page’s own engine, after the same
+on-demand calendar sync: weekly hours and date overrides, minimum notice,
+buffers, the booking horizon and bookable dates, frequency limits, time off,
+synced calendar events and bookings (pending requests that hold their slot
+included), shared resources, and for a team event type its members by
+scheduling mode (any member free for round robin, all for collective).</p>
+<pre><code>GET /api/v1/event-types/6c1e4f0a-.../slots?from=2026-11-10&amp;to=2026-11-10&amp;timezone=Europe/Paris
+</code></pre>
+<pre><code class="language-json">{
+  "event_type_id": "6c1e4f0a-...",
+  "timezone": "Europe/Paris",
+  "from": "2026-11-10",
+  "to": "2026-11-10",
+  "slots": [
+    {"start": "2026-11-10T08:00:00Z", "end": "2026-11-10T08:30:00Z",
+     "date": "2026-11-10", "time": "09:00"}
+  ]
+}
+</code></pre>
+<p><code>date</code> and <code>time</code> are the slot in the requested timezone; pass <code>start</code> back
+to book it. Like the booking page, the list leaves out wall times that do not
+name a single instant (the hour repeated when clocks go back), which the
+booking check would refuse.</p>
+<h3 id="get-apiv1bookings"><a class="header" href="#get-apiv1bookings"><code>GET /api/v1/bookings</code></a></h3>
+<p>Query: <code>cursor</code>, <code>status</code> (<code>pending</code>, <code>confirmed</code>, <code>cancelled</code>, <code>declined</code>),
+<code>from</code> and <code>to</code> (RFC 3339; bookings starting at or after <code>from</code>, before <code>to</code>).
+Ordered by start time, in UTC. Bookings made before calrs 1.20 store their
+time as a wall clock in the event type’s timezone; they are filtered exactly
+but sort among the others by that wall clock, so on an instance that has
+them the order near those rows can be off by the timezone’s offset.</p>
+<pre><code class="language-json">{
+  "bookings": [
+    {
+      "id": "1f6a...", "uid": "0b7d2e0e-...@calrs", "status": "confirmed",
+      "start": "2026-11-10T08:00:00Z", "end": "2026-11-10T08:30:00Z",
+      "created_at": "2026-11-07T09:12:44Z",
+      "event_type": {"id": "6c1e4f0a-...", "slug": "intro", "title": "Intro call", "team_id": null},
+      "guest": {"name": "Jeanne Martin", "email": "jeanne@example.com",
+                "phone": null, "timezone": "Europe/Paris", "language": "fr",
+                "notes": "About the renewal"},
+      "answers": [{"key": "company", "label": "Company", "kind": "short_text",
+                   "value": "Martin SARL", "option_ids": [], "consent": false,
+                   "link_url": null, "answered_at": "2026-11-07T09:12:44Z",
+                   "attested_by": null}],
+      "attendees": ["paul@example.com"],
+      "location": {"type": "link", "value": "https://meet.example.com/abc"},
+      "host_notes": "Prefers mornings."
+    }
+  ],
+  "next_cursor": null
+}
+</code></pre>
+<p><code>uid</code> is the iCalendar UID of the invitation (the one webhooks carry).
+<code>guest.phone</code> is null when the event type no longer asks for a phone number
+(its <code>phone</code> setting is <code>off</code>), even if the guest gave one before, as in
+emails, webhooks and calendar events.
+<code>host_notes</code> are the hosts’ own notes on the booking. <code>answers</code> are the
+guest’s answers to the event type’s <a href="booking-questions.html">booking questions</a>,
+in the shape webhooks use; match choices on <code>option_ids</code>, <code>value</code> is for
+display.</p>
+<h3 id="get-apiv1bookingsid"><a class="header" href="#get-apiv1bookingsid"><code>GET /api/v1/bookings/{id}</code></a></h3>
+<p><code>{"booking": {...}}</code>, the same object.</p>
+<h3 id="post-apiv1bookings"><a class="header" href="#post-apiv1bookings"><code>POST /api/v1/bookings</code></a></h3>
+<p>Books an event type you manage for a guest.</p>
+<pre><code class="language-json">{
+  "event_type_id": "6c1e4f0a-...",
+  "start": "2026-11-10T08:00:00Z",
+  "timezone": "Europe/Paris",
+  "name": "Jeanne Martin",
+  "email": "jeanne@example.com",
+  "notes": "About the renewal",
+  "phone": "+33 6 12 34 56 78",
+  "attendees": ["paul@example.com"],
+  "language": "fr",
+  "answers": {
+    "company": "Martin SARL",
+    "topics": ["o1", "o2"],
+    "privacy": true
+  }
+}
+</code></pre>
+<ul>
+<li><code>start</code> must be one of the event type’s slots (as <code>GET .../slots</code> lists
+them); <code>timezone</code> is the guest’s (default the event type’s), stored with the
+booking and used in the guest’s emails.</li>
+<li><code>notes</code>, <code>phone</code>, <code>attendees</code> and <code>language</code> are optional. <code>phone</code> follows
+the event type’s phone setting (required, optional, or ignored) and is
+stored in E.164. <code>attendees</code> is limited by the event type’s additional
+guests setting. <code>language</code> is the language of the guest’s emails and SMS;
+by default the language you set in calrs, else English. When the instance
+addresses German speakers formally (Admin panel, German form of address),
+<code>de</code> becomes <code>de-formal</code>, as on the booking page.</li>
+<li>No invite is needed for internal or private event types: you manage them.
+None is used up either.</li>
+<li><code>answers</code> carries the guest’s answers to the event type’s
+<a href="booking-questions.html">booking questions</a>, keyed by question <code>key</code>: a
+string for <code>short_text</code> (at most 500 characters) and <code>long_text</code> (at most
+5000), the option <code>id</code> for <code>single_choice</code>, an array of option <code>id</code>s for
+<code>multiple_choice</code>, <code>true</code> or <code>false</code> for <code>checkbox</code>. They are read by the
+booking page’s own rules and stored the same way, as the guest would have
+read the questions, so the hosts’ emails and calendar event (where the
+question allows it), the guest’s confirmation email and the webhooks show
+them as for a booking from the page. When <code>answers</code> is sent, every
+required question must be answered and a required checkbox (a consent)
+must be <code>true</code>. A question left out stores nothing, since the guest was
+never asked it (on the booking page an unticked box is stored as “no”).
+An unknown key, a key given twice, an option the question does not offer,
+an answer of the wrong type or over its length answers 400
+<code>invalid_request</code>, naming the key.</li>
+<li><strong>A consent sent as <code>true</code> is your attestation, not the guest’s tick.</strong>
+The answer row, which is the consent record, stores who recorded it: your
+user id and name, and the credential (<code>via</code> <code>api_token</code> with the personal
+access token’s id, or <code>oauth</code> with the OAuth application’s client id).
+Reads and webhooks return it as <code>attested_by</code>
+(<code>{"user_id", "name", "via", "credential_id"}</code>, <code>null</code> on every answer the
+guest gave). Hosts see such a consent as “Agreed, recorded by” you on the
+bookings and notes pages and in their emails; the guest’s emails say it
+was recorded on their behalf by you, never “You agreed”. Only send <code>true</code>
+when the guest did agree, to you. The record stays with the booking for as
+long as its answers do, and is not affected by the 24-hour purge of the
+API’s own logs.</li>
+<li>Without <code>answers</code>, no question is asked, even required ones: you are
+booking for the guest, as with <code>calrs booking create</code>, and the booking has
+no answers. This is how integrations written before answers keep working.</li>
+<li><code>notes</code> is stored as given either way, whatever the event type’s notes
+field setting.</li>
+</ul>
+<p>The booking goes through the booking page’s own code: the same validation, a
+re-check of the time against the slot engine and of the shared resources
+under the booking lock, the same pending-or-confirmed decision (an event type
+that requires approval creates a pending request, and the host is asked to
+approve it), the same emails to the guest, the attendees and the hosts, the
+same calendar write-back, meeting link, watcher notifications, SMS and
+<a href="./webhooks.html">webhooks</a> (<code>booking.created</code> or <code>booking.requested</code>). Cancel
+queues <code>booking.cancelled</code> (by the host) or <code>booking.declined</code>, as the
+dashboard does; a reschedule request queues nothing until the guest picks
+a new time.</p>
+<p><code>201 Created</code>. The answers of the three writes carry the whole booking only
+when the token also has <code>bookings:read</code>; a token with <code>bookings:write</code> alone
+gets <code>{"booking": {"id", "status"}}</code>.</p>
+<pre><code class="language-json">{"booking": {"id": "1f6a...", "status": "confirmed", "...": "..."}}
+</code></pre>
+<p>The booking object is the one <code>GET /bookings/{id}</code> returns, without
+<code>host_notes</code>; keep its <code>id</code> to follow the booking. Reads follow the host
+rule: a team admin who books a round-robin event type assigned to another
+member, and is neither its owner nor that member, is not one of the booking’s
+hosts, so <code>GET /bookings/{id}</code> and the list answer 404 and leave it out for
+them afterwards (the webhooks of the event type still report it).</p>
+<p><strong><code>Idempotency-Key</code></strong>: send a key (1 to 255 visible ASCII characters) to make
+retries safe. The first answer with that key is kept 24 hours, per user, and
+replayed for a retry with the same body, <code>answers</code> included (with
+<code>Idempotency-Replayed: true</code>);
+the same key with another body answers 422 <code>idempotency_key_reused</code>, and a
+retry while the first request still runs 409 <code>idempotency_in_progress</code>.
+Server errors are not kept, so the request can be retried with the key.
+While the first request runs its key is leased and the lease renewed, so a
+slow booking is never run twice; a lease left two minutes without renewal
+(the server stopped) is released. A replay checks again that you may still
+book the event type (else 404) and is shaped by the token’s scopes like any
+answer. The kept answers contain the guest’s details; they are deleted after
+24 hours, and with the user.</p>
+<p>Refusals: 409 <code>slot_unavailable</code> (the time is not, or no longer, offered),
+409 <code>limit_reached</code> (a booking frequency limit), 422 <code>too_soon</code> (inside the
+minimum notice), 422 <code>outside_booking_window</code>, 400 for invalid input.</p>
+<h3 id="post-apiv1bookingsidcancel"><a class="header" href="#post-apiv1bookingsidcancel"><code>POST /api/v1/bookings/{id}/cancel</code></a></h3>
+<p>Body (optional): <code>{"reason": "Double booked"}</code>.</p>
+<p>What the dashboard’s cancel button does: a confirmed booking is cancelled, a
+pending request declined; the calendar copies and resource reservations are
+deleted, the guest, the attendees and the host are emailed (with the reason),
+the guest texted. Answers <code>{"booking": {...}}</code> with its new status. A booking
+already ended answers 409 <code>booking_not_active</code>.</p>
+<h3 id="post-apiv1bookingsidrequest-reschedule"><a class="header" href="#post-apiv1bookingsidrequest-reschedule"><code>POST /api/v1/bookings/{id}/request-reschedule</code></a></h3>
+<p>Body: none, or <code>{}</code>.</p>
+<p>What the dashboard’s reschedule button does: the guest gets a new link and the
+“pick a new time” email, and the booking keeps its time until they choose
+one. 409 <code>no_bookable_dates</code> when the event type has no bookable day left.
+This is the only reschedule v1 offers, as on the dashboard: moving a booking
+to a time you choose is not in v1. While the guest has not answered an
+earlier request, another one is refused (409 <code>reschedule_already_requested</code>),
+so no second link is made. To remind the guest, send <code>{"resend": true}</code>: the
+same request is emailed again, with the same link, at most once an hour (409
+<code>resend_too_soon</code>; 409 <code>no_reschedule_pending</code> when none is waiting). The
+dashboard has the same <strong>Resend request</strong> button.</p>
+<h2 id="example"><a class="header" href="#example">Example</a></h2>
+<pre><code class="language-bash">TOKEN=calrs_pat_...
+BASE=https://cal.example.com/api/v1
+
+curl -s -H "Authorization: Bearer $TOKEN" "$BASE/event-types"
+
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE/event-types/$ET/slots?from=2026-11-10&amp;to=2026-11-14&amp;timezone=Europe/Paris"
+
+curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" -H "Idempotency-Key: crm-4711" \
+  -d '{"event_type_id":"'$ET'","start":"2026-11-10T08:00:00Z","timezone":"Europe/Paris","name":"Jeanne Martin","email":"jeanne@example.com"}' \
+  "$BASE/bookings"
+</code></pre>
+<h2 id="versioning"><a class="header" href="#versioning">Versioning</a></h2>
+<p>The version is in the path. Within v1, fields may be added to answers and new
+endpoints may appear; nothing is removed or changes meaning. A change that
+would break a client gets <code>/api/v2</code>.</p>
+<h2 id="tests"><a class="header" href="#tests">Tests</a></h2>
+<pre><code class="language-bash">cargo test web::tests::api
+cargo test web::tests::api_doc
+</code></pre>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="mcp.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                            </a>
+
+                            <a rel="next prefetch" href="authentik.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="mcp.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                    </a>
+
+                    <a rel="next prefetch" href="authentik.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                    </a>
+            </nav>
+
+        </div>
+
+        <template id=fa-eye><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M288 32c-80.8 0-145.5 36.8-192.6 80.6C48.6 156 17.3 208 2.5 243.7c-3.3 7.9-3.3 16.7 0 24.6C17.3 304 48.6 356 95.4 399.4C142.5 443.2 207.2 480 288 480s145.5-36.8 192.6-80.6c46.8-43.5 78.1-95.4 93-131.1c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C433.5 68.8 368.8 32 288 32zM432 256c0 79.5-64.5 144-144 144s-144-64.5-144-144s64.5-144 144-144s144 64.5 144 144zM288 192c0 35.3-28.7 64-64 64c-11.5 0-22.3-3-31.6-8.4c-.2 2.8-.4 5.5-.4 8.4c0 53 43 96 96 96s96-43 96-96s-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6z"/></svg></span></template>
+        <template id=fa-eye-slash><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M38.8 5.1C28.4-3.1 13.3-1.2 5.1 9.2S-1.2 34.7 9.2 42.9l592 464c10.4 8.2 25.5 6.3 33.7-4.1s6.3-25.5-4.1-33.7L525.6 386.7c39.6-40.6 66.4-86.1 79.9-118.4c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C465.5 68.8 400.8 32 320 32c-68.2 0-125 26.3-169.3 60.8L38.8 5.1zM223.1 149.5C248.6 126.2 282.7 112 320 112c79.5 0 144 64.5 144 144c0 24.9-6.3 48.3-17.4 68.7L408 294.5c5.2-11.8 8-24.8 8-38.5c0-53-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6c0 10.2-2.4 19.8-6.6 28.3l-90.3-70.8zm223.1 298L373 389.9c-16.4 6.5-34.3 10.1-53 10.1c-79.5 0-144-64.5-144-144c0-6.9 .5-13.6 1.4-20.2L83.1 161.5C60.3 191.2 44 220.8 34.5 243.7c-3.3 7.9-3.3 16.7 0 24.6c14.9 35.7 46.2 87.7 93 131.1C174.5 443.2 239.2 480 320 480c47.8 0 89.9-12.9 126.2-32.5z"/></svg></span></template>
+        <template id=fa-copy><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M502.6 70.63l-61.25-61.25C435.4 3.371 427.2 0 418.7 0H255.1c-35.35 0-64 28.66-64 64l.0195 256C192 355.4 220.7 384 256 384h192c35.2 0 64-28.8 64-64V93.25C512 84.77 508.6 76.63 502.6 70.63zM464 320c0 8.836-7.164 16-16 16H255.1c-8.838 0-16-7.164-16-16L239.1 64.13c0-8.836 7.164-16 16-16h128L384 96c0 17.67 14.33 32 32 32h47.1V320zM272 448c0 8.836-7.164 16-16 16H63.1c-8.838 0-16-7.164-16-16L47.98 192.1c0-8.836 7.164-16 16-16H160V128H63.99c-35.35 0-64 28.65-64 64l.0098 256C.002 483.3 28.66 512 64 512h192c35.2 0 64-28.8 64-64v-32h-47.1L272 448z"/></svg></span></template>
+        <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
+        <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="elasticlunr-ef4e11c1.min.js"></script>
+        <script src="mark-09e88c2c.min.js"></script>
+        <script src="searcher-c2a407aa.js"></script>
+
+        <script src="clipboard-1626706a.min.js"></script>
+        <script src="highlight-abc7f01d.js"></script>
+        <script src="book-a0b12cfe.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+
+    </div>
+    </body>
+</html>

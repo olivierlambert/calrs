@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Teams - calrs Documentation</title>
+        <title>Teams - calrs v2 Documentation</title>
 
 
         <!-- Custom HTML head -->
@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-6d7ef8e0.js";
+            window.path_to_searchindex_js = "searchindex-d5ebc317.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-e4a0ca82.js"></script>
+        <script src="toc-43543355.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -137,7 +137,7 @@
                         </button>
                     </div>
 
-                    <h1 class="menu-title">calrs Documentation</h1>
+                    <h1 class="menu-title">calrs v2 Documentation</h1>
 
                     <div class="right-buttons">
                         <a href="print.html" title="Print this book" aria-label="Print this book">
@@ -215,6 +215,7 @@
 <li><strong>Members</strong> — view members and their roles</li>
 <li><strong>OIDC group linking</strong> — from team settings, use the unified search bar to find and link OIDC groups. When a group is linked, all its members are automatically added to the team with source=‘group’. Members stay in sync on each OIDC login — new group members are added, removed members are cleaned up</li>
 <li><strong>Private teams</strong> — the invite link is shown with a copy button for sharing</li>
+<li><strong>Time off</strong> (read-only): the members’ upcoming <a href="./event-types.html#time-off">time off</a>, each period with the member’s name and its dates and times in your own time zone, so you can see who is away before planning a team event. The note a member gave a period is never shown. Only the team’s admins see it, and the section is absent when no member has time off planned</li>
 </ul>
 <h2 id="team-event-types"><a class="header" href="#team-event-types">Team event types</a></h2>
 <p>Team event types are created from <strong>Dashboard &gt; Event Types &gt; + New</strong> (select the team from the dropdown) or from <strong>Dashboard &gt; Teams &gt; team settings</strong>.</p>
@@ -228,27 +229,28 @@
 <li>Calendar selection, location, confirmation mode</li>
 <li>Invite links (for private event types)</li>
 </ul>
+<p>Where a team booking is written is each member’s own choice: the booking lands in the assigned member’s calendar (every member’s for collective), so every member picks, under <strong>Calendar sources &gt; Bookings by event type</strong>, which of their calendars receives the bookings of each team event type they belong to. Without a choice, the write calendar of their sources is used. See <a href="./caldav.html#per-event-type-write-confirmed-bookings-to">CalDAV write-back</a>.</p>
 <p>Additional team-specific options:</p>
 <ul>
 <li><strong>Scheduling mode</strong> — round-robin or collective (see below)</li>
-<li><strong>Member weights</strong> — admins can set priority per member via the Member Priority card, which appears during both creation and editing. Weights can be set globally on the team or overridden per event type. Weight 0 excludes a member from round-robin assignment for that event type — excluded members also don’t appear on the public booking page’s avatar list.</li>
+<li><strong>Member weights</strong> — admins can set priority per member via the Member Priority card, which appears during both creation and editing. Group member weights provide a default; the event type can override the member priority. Weight 0 excludes a member from round-robin assignment for that event type — excluded members also don’t appear on the public booking page’s avatar list.</li>
 </ul>
 <h2 id="public-team-pages"><a class="header" href="#public-team-pages">Public team pages</a></h2>
 <ul>
-<li><strong>Public teams:</strong> <code>/team/{slug}</code> — shows team profile with avatar, description, members, and event types</li>
+<li><strong>Public teams:</strong> <code>/team/{slug}</code> shows the team profile with avatar, description, members (faces with their first names), and event types. Each meeting says who the guest meets: “with one of” and the members’ faces for round robin, “with everyone” for collective (members excluded with weight 0 are left out). Team admins group the team’s meetings into sections and set their order at <code>/dashboard/teams/{id}/order</code>; the team’s usual hours show only when its meetings share one timezone</li>
 <li><strong>Private teams:</strong> <code>/team/{slug}?invite={token}</code> — same page, but requires a valid invite token</li>
 <li><strong>Slot picker:</strong> <code>/team/{slug}/{event-slug}</code> — shows available slots based on the scheduling mode. The sidebar displays the team avatar and stacked member avatars (members excluded via weight 0 are hidden)</li>
 <li><strong>Legacy redirects:</strong> <code>/g/{slug}</code> redirects to <code>/team/{slug}</code>, <code>/t/{token}</code> redirects to <code>/team/{slug}?invite={token}</code></li>
 </ul>
 <h2 id="scheduling-modes"><a class="header" href="#scheduling-modes">Scheduling modes</a></h2>
 <h3 id="round-robin"><a class="header" href="#round-robin">Round-robin</a></h3>
-<p>A slot is available if <strong>any</strong> team member is free. The booking is assigned to the <strong>least-busy available member</strong> (fewest confirmed bookings).</p>
+<p>A slot is available if <strong>any</strong> team member is free. The booking is assigned by member priority, then workload (fewest confirmed bookings among equally prioritized available members).</p>
 <p>When a booking is submitted:</p>
 <ol>
 <li>calrs finds all team members (with weight &gt; 0)</li>
 <li>For each member, checks if the slot is free (no calendar events or bookings in the buffer window)</li>
-<li>Among available members, picks the one with the fewest confirmed bookings</li>
-<li>The booking is assigned to that member and pushed to their CalDAV calendar</li>
+<li>Among available members, prefers the highest configured priority, then the fewest confirmed bookings</li>
+<li>The booking is assigned to that member and written to their configured calendar destination</li>
 <li>If no member is available, the booking is rejected</li>
 </ol>
 <p><strong>Best for:</strong> support queues, sales demos, intake calls — any scenario where the guest doesn’t care who they meet.</p>
@@ -257,13 +259,13 @@
 <p>When a booking is submitted:</p>
 <ol>
 <li>calrs verifies all members are free for the slot</li>
-<li>The booking is created and pushed to <strong>every</strong> member’s CalDAV calendar</li>
+<li>The booking is created and written to <strong>each eligible</strong> member’s configured calendar destination</li>
 <li>Email notifications are sent to all members</li>
 <li>If any member has a conflict, the slot is not shown</li>
 </ol>
 <p><strong>Best for:</strong> panel interviews, group demos, team syncs with external guests.</p>
 <h3 id="excluding-members"><a class="header" href="#excluding-members">Excluding members</a></h3>
-<p>On a <strong>collective</strong> event type, per-member exclusions can be set from the event type editor — useful when a team member is joining the team but shouldn’t (yet) be required for a specific event. Excluded members don’t gate the availability window, don’t receive notifications, and don’t appear on the public booking page’s avatar list.</p>
+<p>On a <strong>collective</strong> event type, per-member exclusions can be set from the event type editor — useful when a team member is joining the team but shouldn’t (yet) be required for a specific event. Excluded members don’t gate the availability window, don’t receive notifications, and don’t appear on the public booking page’s avatar list. The event type’s bookings don’t make them busy either, so their own event types stay bookable at those times.</p>
 <h2 id="booking-watchers"><a class="header" href="#booking-watchers">Booking watchers</a></h2>
 <p>Designate a team as <strong>watchers</strong> on an event type to separate the “who gets booked” decision from the “who can pick up this booking” decision.</p>
 <p>When a booking lands on a watched event type:</p>
@@ -272,18 +274,14 @@
 <li>The first watcher to click the button claims the booking — a short-lived token backs each button</li>
 <li>Subsequent clicks land on an “already claimed” page; no double-assignment</li>
 <li>Claimed bookings show up on the watcher’s dashboard with a “Claimed by you” badge</li>
+<li>A confirmed claimed booking makes the watcher busy: their own event types stop offering that time, and the availability troubleshooter lists it as a claimed booking</li>
 </ol>
 <p><strong>Typical setup:</strong> a customer self-serves through a public event type, and a rotating support team watches it. Whoever has bandwidth grabs the booking — no round-robin assumptions, no manual dispatch.</p>
-<p>Configuration: in the event type editor, scroll to <strong>Booking watchers</strong> and pick one or more teams. Watchers can be set on any scheduling mode; they’re independent from the round-robin / collective assignment.</p>
+<p>Configuration: in the event type editor, or on the create form once a team is picked, scroll to <strong>Booking watchers</strong> and pick one or more teams. Watchers can be set on any scheduling mode; they’re independent from the round-robin / collective assignment.</p>
 <h2 id="multi-timezone-teams"><a class="header" href="#multi-timezone-teams">Multi-timezone teams</a></h2>
-<p>The availability window on a team event type (e.g., Mon-Fri 09:00-17:00) is defined once for the whole team and interpreted in the server’s timezone. For teams spread across timezones, this window may not cover everyone’s working hours.</p>
-<p><strong>Recommended setup:</strong> Set a wide availability window (e.g., 06:00-23:00 or even 00:00-23:59) and let each member’s CalDAV calendar handle the actual blocking. Because calrs syncs each member’s calendar independently and converts events from their original timezone, the slot picker naturally shows the correct availability:</p>
-<ul>
-<li>Alice (Paris, 09:00-17:00 CET) — her calendar blocks evenings and weekends</li>
-<li>Bob (New York, 09:00-17:00 EST) — his calendar blocks his mornings (CET afternoon/evening)</li>
-<li>A guest sees slots from 09:00-23:00 CET, with Alice covering the morning and Bob covering the evening</li>
-</ul>
-<p>This approach requires no per-member configuration — just sync your calendars and set a wide window.</p>
+<p>A team event type’s weekly rules use its <strong>explicit event timezone</strong>, not the server’s timezone. Each member’s default working hours use that member’s profile timezone. calrs converts the member’s hours and calendar events into the event timezone before checking availability.</p>
+<p>For example, give a Paris/New York support team a broad event schedule in <code>Europe/Paris</code>, then have each member set their actual hours in <strong>Profile &amp; Settings</strong>. Round-robin offers a slot when an eligible member is within their own hours and free; collective requires every eligible member to be within their hours and free. Daylight-saving changes are applied using the named timezones.</p>
+<p>Each member’s <a href="./event-types.html#time-off">time off</a>, busy calendars and existing bookings also constrain their availability. A broad team schedule does not by itself make people available outside their personal hours. Guests view the resulting slots in their selected timezone.</p>
 <h2 id="oidc-group-sync"><a class="header" href="#oidc-group-sync">OIDC group sync</a></h2>
 <p>Groups synced from your OIDC provider can be linked to teams, automatically adding group members as team members.</p>
 <h3 id="how-it-works"><a class="header" href="#how-it-works">How it works</a></h3>
@@ -347,7 +345,7 @@
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="booking-flow.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="embedding.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
@@ -361,7 +359,7 @@
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="booking-flow.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="embedding.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
