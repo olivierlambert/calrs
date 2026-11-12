@@ -2808,11 +2808,10 @@ pub(super) async fn troubleshoot(
         .filter_map(|(s, e, summary, cal_name, event_tz)| {
             let start = convert_event_to_tz(parse_ical_datetime(s)?, event_tz.as_deref(), host_tz);
             let end = convert_event_to_tz(parse_ical_datetime(e)?, event_tz.as_deref(), host_tz);
-            if start.date() > target_date || end.date() < target_date {
-                return None;
-            }
-            // An event that only touches the day at a midnight (an absence
-            // ending at 00:00) takes none of it, buffers included.
+            // Keep an event of the day before or after when this type's
+            // buffers reach into the day, as the slot grid does. An event
+            // that only touches the day at a midnight (an absence ending at
+            // 00:00) takes none of it, buffers included.
             let day_start = target_date.and_time(NaiveTime::MIN);
             // Around an event, the slot grid blocks this type's buffer_after
             // before it and its buffer_before after it.
@@ -2862,12 +2861,14 @@ pub(super) async fn troubleshoot(
     .await
     .unwrap_or_default();
 
-    let ts_window_start = target_date
-        .and_hms_opt(0, 0, 0)
-        .unwrap_or(target_date.and_time(NaiveTime::MIN));
+    // Widened by this type's buffers, so an occurrence just outside the day
+    // whose buffer reaches into it is kept, as for single events.
+    let ts_window_start =
+        target_date.and_time(NaiveTime::MIN) - Duration::minutes(buf_before as i64);
     let ts_window_end = target_date
         .and_hms_opt(23, 59, 59)
-        .unwrap_or(target_date.and_time(NaiveTime::MIN));
+        .unwrap_or(target_date.and_time(NaiveTime::MIN))
+        + Duration::minutes(buf_after as i64);
     for (s, e, rrule_str, raw_ical, summary, cal_name, event_tz) in &recurring_events {
         // A rule calrs cannot expand is blocked as busy from its start: say
         // so, or the host has no way to tell why the day is closed.
@@ -2975,8 +2976,11 @@ pub(super) async fn troubleshoot(
         + 1;
 
     let display_start = NaiveTime::from_hms_opt(display_start_hour, 0, 0).unwrap_or(NaiveTime::MIN);
-    let display_end = NaiveTime::from_hms_opt(display_end_hour, 0, 0).unwrap_or(NaiveTime::MIN);
-    let total_minutes = (display_end - display_start).num_minutes() as f64;
+    // The end can be 24:00 (hours running past 23:00), which no NaiveTime
+    // holds: count in minutes, and scan a fixed number of ticks, since the
+    // cursor wraps to 00:00 after the last one.
+    let total_minutes = (f64::from(display_end_hour) - f64::from(display_start_hour)) * 60.0;
+    let tick_count = display_end_hour.saturating_sub(display_start_hour) * 4;
 
     let min_start = now_host + Duration::minutes(min_notice as i64);
 
@@ -3159,7 +3163,7 @@ pub(super) async fn troubleshoot(
     let mut cursor = display_start;
     let tick_size = Duration::minutes(15);
 
-    while cursor < display_end {
+    for _ in 0..tick_count {
         let tick_dt = target_date.and_time(cursor);
         let tick_end = tick_dt + tick_size;
 
@@ -3396,6 +3400,15 @@ pub(super) async fn troubleshoot(
         width_pct: f64,
     }
 
+    // Minutes from a block's start to its end; an end at 24:00 reads 00:00.
+    let span_minutes = |start: NaiveTime, end: NaiveTime| {
+        let minutes = (end - start).num_minutes();
+        (if minutes <= 0 {
+            minutes + 1440
+        } else {
+            minutes
+        }) as f64
+    };
     let mut blocks: Vec<Block> = Vec::new();
     for tick in &ticks {
         let tick_end_time = (target_date.and_time(tick.time) + tick_size).time();
@@ -3406,7 +3419,7 @@ pub(super) async fn troubleshoot(
             {
                 last.end = tick_end_time;
                 let start_min = (last.start - display_start).num_minutes() as f64;
-                let dur_min = (last.end - last.start).num_minutes() as f64;
+                let dur_min = span_minutes(last.start, last.end);
                 last.left_pct = start_min / total_minutes * 100.0;
                 last.width_pct = dur_min / total_minutes * 100.0;
                 continue;

@@ -839,18 +839,29 @@ function showTab(id) {
     });
   });
 
+  // Keyboard and screen reader focus stay in the dialog while it is open.
+  function setBackgroundInert(on) {
+    Array.prototype.forEach.call(document.body.children, function (el) {
+      if (el === lightbox || el.tagName === 'SCRIPT') return;
+      if (on) el.setAttribute('inert', ''); else el.removeAttribute('inert');
+    });
+  }
+
   function openLightbox(img, caption) {
     previousFocus = document.activeElement;
     lbImg.src = img.src;
     lbImg.alt = img.alt;
     lbCap.textContent = caption;
     lightbox.classList.add('open');
+    setBackgroundInert(true);
     document.body.style.overflow = 'hidden';
     document.getElementById('lightbox-close').focus();
   }
 
   function closeLightbox() {
+    if (!lightbox.classList.contains('open')) return;
     lightbox.classList.remove('open');
+    setBackgroundInert(false);
     document.body.style.overflow = '';
     if (previousFocus) previousFocus.focus();
   }

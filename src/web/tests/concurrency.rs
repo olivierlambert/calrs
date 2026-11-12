@@ -588,6 +588,9 @@ where
             panic!("the reschedule never reached the booking lock")
         }
     }
+    // Unregister while the lock is still held: once it is released another
+    // test may arm the same name, and dropping ours later would remove theirs.
+    drop(reached);
     meanwhile(app.clone(), pool.clone()).await;
     drop(guard);
     request.await.unwrap()
