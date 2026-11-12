@@ -142,6 +142,60 @@ cal.example.com {
 }
 ```
 
+### Which paths to expose
+
+Exposing every path, as the examples above do, is the default and is safe:
+everything beyond the guest pages asks for a session, a token or an
+OAuth grant. Some operators still prefer a public site that serves guest
+pages only, and keep the rest on an office network or a VPN. These are the
+groups of paths calrs serves:
+
+| Paths | What they serve | Who needs them |
+|---|---|---|
+| `/u/`, `/team/`, `/t/`, `/g/` | Booking pages, invite links, old team links (redirects) | Guests |
+| `/booking/` | Cancel, reschedule and calendar file links in guest emails; approve, decline and claim links in host and watcher emails | Guests and hosts, from their mailbox |
+| `/avatar/`, `/team-avatar/`, `/fonts/`, `/static/intl-tel-input/`, `/logo`, `/logo/dark`, `/brand-logo`, `/favicon`, `/favicon.ico`, `/accent.css`, `/embed.js` | Files the booking pages and embeds load | Guests |
+| `/`, `/auth/`, `/dashboard/` | Sign-in (`/` redirects there) and the dashboard. With SSO, `/auth/oidc/callback` must be reachable from the users' browsers | Hosts and admins |
+| `/api/v1/`, `/api/docs`, `/static/swagger-ui/` | REST API, its OpenAPI document and its reference | API clients, signed-in users |
+| `/mcp`, `/oauth/`, `/.well-known/oauth-authorization-server`, `/.well-known/oauth-protected-resource/` | MCP server and the OAuth endpoints MCP and API clients sign in through | AI assistants, OAuth API clients |
+| `/{slug}`, `/{slug}/book` | Single-user links from before `/u/` | Only if such links are still shared |
+
+Keep `/booking/` public even when hosts work from the office: the approve
+and decline buttons in their emails point there. An MCP or API client needs
+its paths reachable from wherever it runs.
+
+An nginx version that serves guest pages to everyone and the rest to one
+network only:
+
+```nginx
+server {
+    listen 443 ssl http2;
+    server_name cal.example.com;
+    # ssl_certificate lines as above
+    client_max_body_size 3m;
+
+    # Set here, inherited by every location below.
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+
+    # Guest pages, email links and the files they load: public.
+    location ~ ^/(u|team|t|g|booking|avatar|team-avatar|fonts|static/intl-tel-input)/ {
+        proxy_pass http://127.0.0.1:3000;
+    }
+    location ~ ^/(logo|logo/dark|brand-logo|favicon|favicon\.ico|accent\.css|embed\.js)$ {
+        proxy_pass http://127.0.0.1:3000;
+    }
+
+    # Sign-in, dashboard, API, MCP, OAuth: office network only.
+    location / {
+        allow 192.0.2.0/24;
+        deny all;
+        proxy_pass http://127.0.0.1:3000;
+    }
+}
+```
+
 ## Environment variables
 
 | Variable | Description | Default |
