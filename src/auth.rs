@@ -2295,7 +2295,11 @@ fn extra_claims_from_payload(payload: &serde_json::Value) -> OidcClaims {
                     .map(|s| s.strip_prefix('/').unwrap_or(s).to_string())
             })
             .collect();
-        if group_strings.is_empty() {
+        // An empty list says "in no group": the sync clears the old OIDC
+        // memberships (a user removed from every group keeps none). A list
+        // with entries none of which is a name reads as no claim, so an
+        // unexpected shape never wipes memberships.
+        if group_strings.is_empty() && !arr.is_empty() {
             None
         } else {
             Some(group_strings)
@@ -3024,6 +3028,18 @@ mod tests {
         let header = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(r#"{"alg":"RS256"}"#);
         let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD
             .encode(r#"{"sub":"user1","groups":[]}"#);
+        let token = format!("{}.{}.fake-sig", header, payload);
+
+        // Present and empty: the user is in no group, and the login sync
+        // clears their old OIDC memberships.
+        assert_eq!(extract_groups_from_id_token(&token), Some(vec![]));
+    }
+
+    #[test]
+    fn extract_groups_of_an_unreadable_shape_is_no_claim() {
+        let header = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(r#"{"alg":"RS256"}"#);
+        let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .encode(r#"{"sub":"user1","groups":[{"id":1},{"id":2}]}"#);
         let token = format!("{}.{}.fake-sig", header, payload);
 
         assert_eq!(extract_groups_from_id_token(&token), None);

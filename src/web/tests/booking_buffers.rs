@@ -70,19 +70,54 @@ async fn approval_checks_the_pending_requests_own_buffers() {
     }
 }
 
-// Keep the HTTP tests within the booking horizon whenever they run.
-fn next_paris_spring_change() -> NaiveDate {
-    let today = Utc::now().date_naive();
-    (today.year()..=today.year() + 1)
-        .map(|year| {
-            let mut day = NaiveDate::from_ymd_opt(year, 3, 31).unwrap();
-            while day.weekday() != chrono::Weekday::Sun {
-                day -= Duration::days(1);
-            }
-            day
+/// A spring clock change that skips 02:00 to 03:00 local time, for the
+/// HTTP tests: its midnight still at least an hour ahead, and its day within
+/// the booking date cap (366 days), whenever the tests run. Paris (last
+/// Sunday of March) and Sydney (first Sunday of October) skip the same local
+/// hour about half a year apart, so one of them always fits; Paris alone can
+/// be 371 days away.
+fn next_spring_change() -> (NaiveDate, &'static str) {
+    let now = Utc::now();
+    let today = now.date_naive();
+    let mut candidates = Vec::new();
+    for year in today.year()..=today.year() + 1 {
+        let mut paris = NaiveDate::from_ymd_opt(year, 3, 31).unwrap();
+        while paris.weekday() != chrono::Weekday::Sun {
+            paris -= Duration::days(1);
+        }
+        candidates.push((paris, "Europe/Paris"));
+        let mut sydney = NaiveDate::from_ymd_opt(year, 10, 1).unwrap();
+        while sydney.weekday() != chrono::Weekday::Sun {
+            sydney += Duration::days(1);
+        }
+        candidates.push((sydney, "Australia/Sydney"));
+    }
+    candidates.sort();
+    candidates
+        .into_iter()
+        .find(|(day, zone)| {
+            let tz: chrono_tz::Tz = zone.parse().unwrap();
+            let midnight = tz
+                .from_local_datetime(&day.and_hms_opt(0, 0, 0).unwrap())
+                .single()
+                .unwrap();
+            midnight > now + Duration::hours(1) && *day <= today + Duration::days(365)
         })
-        .find(|day| *day > today)
-        .unwrap()
+        .expect("a spring change every half year")
+}
+
+#[test]
+fn the_chosen_spring_change_skips_two_to_three() {
+    let (day, zone) = next_spring_change();
+    let tz: chrono_tz::Tz = zone.parse().unwrap();
+    for (time, exists) in [("01:59", true), ("02:30", false), ("03:00", true)] {
+        let t = day.and_time(chrono::NaiveTime::parse_from_str(time, "%H:%M").unwrap());
+        assert_eq!(
+            tz.from_local_datetime(&t).single().is_some(),
+            exists,
+            "{zone} {day} {time}"
+        );
+    }
 }
 
 #[tokio::test]
@@ -90,17 +125,18 @@ async fn booking_buffers_keep_elapsed_minutes_in_both_booking_orders() {
     for before in [false, true] {
         for reversed in [false, true] {
             let (app, pool, _, et) = setup_test_app().await;
-            sqlx::query("UPDATE event_types SET timezone = 'Europe/Paris', buffer_before = ?, buffer_after = ? WHERE id = ?")
-                .bind(if before { 120 } else { 0 }).bind(if before { 0 } else { 120 }).bind(&et).execute(&pool).await.unwrap();
+            let (day, zone) = next_spring_change();
+            let day = day.to_string();
+            sqlx::query("UPDATE event_types SET timezone = ?, buffer_before = ?, buffer_after = ? WHERE id = ?")
+                .bind(zone).bind(if before { 120 } else { 0 }).bind(if before { 0 } else { 120 }).bind(&et).execute(&pool).await.unwrap();
             sqlx::query("INSERT INTO availability_rules (id, event_type_id, day_of_week, start_time, end_time) VALUES ('dst-sunday', ?, 0, '00:00', '08:00')").bind(&et).execute(&pool).await.unwrap();
-            let day = next_paris_spring_change().to_string();
             let (first, refused, allowed) = if reversed {
                 ("03:30", "01:00", "00:00")
             } else {
                 ("01:00", "03:30", "04:30")
             };
             for (time, expected_count) in [(first, 1), (refused, 1), (allowed, 2)] {
-                let response = app.clone().oneshot(post_form_unauthed("/u/testuser/test-meeting/book", "buf", &format!("_csrf=buf&date={day}&time={time}&tz=Europe%2FParis&name=Guest&email=guest%40example.com"))).await.unwrap();
+                let response = app.clone().oneshot(post_form_unauthed("/u/testuser/test-meeting/book", "buf", &format!("_csrf=buf&date={day}&time={time}&tz={}&name=Guest&email=guest%40example.com", zone.replace('/', "%2F")))).await.unwrap();
                 assert!(!response.status().is_server_error());
                 let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM bookings")
                     .fetch_one(&pool)

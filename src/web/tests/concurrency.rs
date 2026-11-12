@@ -567,17 +567,27 @@ where
     Fut: std::future::Future<Output = ()>,
 {
     let guard = crate::resources::booking_lock().await;
+    // Only the tests that go through this helper use this token, and they
+    // hold the lock while armed, so the checkpoint is this request's.
+    let reached = crate::test_support::arm("reschedule:stale-reschedule");
     let mut request = Box::pin(app.clone().oneshot(post_form_unauthed(
         "/booking/reschedule/stale-reschedule",
         "stale",
         &format!("_csrf=stale&date={day}&time=11:00&tz=UTC"),
     )));
-    // Let the handler do its reads and wait at the held lock.
-    assert!(
-        tokio::time::timeout(std::time::Duration::from_millis(250), &mut request)
-            .await
-            .is_err()
-    );
+    // Wait until the handler has done its first read and is about to wait
+    // for the held lock: the competing change then lands between the two,
+    // which is the case the guard under the lock exists for.
+    tokio::select! {
+        _ = reached.notify.notified() => {}
+        response = &mut request => panic!(
+            "the reschedule answered before reaching the booking lock: {:?}",
+            response.map(|r| r.status())
+        ),
+        _ = tokio::time::sleep(std::time::Duration::from_secs(30)) => {
+            panic!("the reschedule never reached the booking lock")
+        }
+    }
     meanwhile(app.clone(), pool.clone()).await;
     drop(guard);
     request.await.unwrap()
@@ -728,12 +738,15 @@ async fn an_undisturbed_reschedule_moves_the_booking_and_rotates_the_token() {
         nine_utc(&day),
         30,
         "confirmed",
-        &stale_tokens(),
+        &[
+            ("reschedule_token", Some("undisturbed-reschedule".into())),
+            ("cancel_token", Some("undisturbed-cancel".into())),
+        ],
     )
     .await;
     let response = app
         .oneshot(post_form_unauthed(
-            "/booking/reschedule/stale-reschedule",
+            "/booking/reschedule/undisturbed-reschedule",
             "stale",
             &format!("_csrf=stale&date={day}&time=11:00&tz=UTC"),
         ))
@@ -752,5 +765,5 @@ async fn an_undisturbed_reschedule_moves_the_booking_and_rotates_the_token() {
         utc_stamp(nine_utc(&day) + Duration::hours(2)),
         "the booking moved to 11:00"
     );
-    assert_ne!(token, "stale-reschedule");
+    assert_ne!(token, "undisturbed-reschedule");
 }

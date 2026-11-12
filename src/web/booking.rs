@@ -740,14 +740,18 @@ pub(super) async fn book_team(
     // the whole team — every eligible member must be free, assigned_user_id
     // stays NULL (whole-slot exclusive under idx_bookings_no_overlap), and
     // write-back + host emails fan out to every member.
-    let (buf_start, buf_end) = crate::booking_time::buffered_busy_range(
+    let Some((buf_start, buf_end)) = crate::booking_time::buffered_busy_range(
         &start_at,
         &end_at,
         host_tz,
         buffer_before.into(),
         buffer_after.into(),
-    )
-    .unwrap();
+    ) else {
+        return Err(BookingRefusal::Internal(
+            "buffered slot range",
+            "slot bounds do not read as times".to_string(),
+        ));
+    };
     let (assigned_user_id, host_name, host_email, member_contacts) = if is_collective {
         let members: Vec<(String, String, String, Option<String>)> = sqlx::query_as(
             "SELECT u.id, u.name, COALESCE(u.booking_email, u.email), u.language FROM users u
@@ -1375,14 +1379,15 @@ async fn handle_dynamic_group_booking(
         return Html(refusal).into_response();
     }
 
-    let (buf_start, buf_end) = crate::booking_time::buffered_busy_range(
+    let Some((buf_start, buf_end)) = crate::booking_time::buffered_busy_range(
         &encoded_start,
         &encoded_end,
         host_tz,
         buffer_before.into(),
         buffer_after.into(),
-    )
-    .unwrap();
+    ) else {
+        return internal_error_response("buffered slot range", "slot bounds do not read as times");
+    };
 
     // Required shared resources' feeds are refreshed first, outside the
     // lock (network; failed fetches back off via last_synced_at).
@@ -2092,14 +2097,18 @@ pub(super) async fn book_personal(
         return Err(BookingRefusal::Html(refusal));
     }
 
-    let (buf_start, buf_end) = crate::booking_time::buffered_busy_range(
+    let Some((buf_start, buf_end)) = crate::booking_time::buffered_busy_range(
         &encoded_start,
         &encoded_end,
         host_tz,
         buffer_before.into(),
         buffer_after.into(),
-    )
-    .unwrap();
+    ) else {
+        return Err(BookingRefusal::Internal(
+            "buffered slot range",
+            "slot bounds do not read as times".to_string(),
+        ));
+    };
 
     let id = uuid::Uuid::new_v4().to_string();
     let uid = format!("{}@calrs", uuid::Uuid::new_v4());
@@ -2938,14 +2947,15 @@ pub(super) async fn handle_booking(
     }
 
     // Validate conflicts
-    let (buf_start, buf_end) = crate::booking_time::buffered_busy_range(
+    let Some((buf_start, buf_end)) = crate::booking_time::buffered_busy_range(
         &encoded_start,
         &encoded_end,
         host_tz,
         buffer_before.into(),
         buffer_after.into(),
-    )
-    .unwrap();
+    ) else {
+        return internal_error_response("buffered slot range", "slot bounds do not read as times");
+    };
 
     // Create booking
     let id = uuid::Uuid::new_v4().to_string();
