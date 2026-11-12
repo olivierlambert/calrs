@@ -13,6 +13,7 @@ mod auth_pages;
 mod availability;
 mod booking;
 mod booking_actions;
+mod booking_buffers;
 mod booking_notes;
 mod booking_time;
 mod branding;

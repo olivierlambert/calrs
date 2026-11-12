@@ -143,8 +143,7 @@ pub(crate) async fn host_busy_bookings(
     Ok(rows
         .iter()
         .filter_map(|(s, e, before, after)| {
-            let range = crate::booking_time::busy_range(s, e, host_tz)?;
-            Some(crate::booking_time::with_buffers(range, *before, *after))
+            crate::booking_time::buffered_busy_range(s, e, host_tz, *before, *after)
         })
         .collect())
 }
@@ -704,8 +703,14 @@ pub async fn run(pool: &SqlitePool, cmd: EventTypeCommands) -> Result<()> {
                         }
 
                         // Check conflicts with busy events
-                        let buf_start = slot_start - Duration::minutes(buffer_before as i64);
-                        let buf_end = slot_end + Duration::minutes(buffer_after as i64);
+                        let (buf_start, buf_end) = crate::booking_time::buffered_busy_range(
+                            &start.to_rfc3339(),
+                            &end.to_rfc3339(),
+                            host_tz,
+                            buffer_before.into(),
+                            buffer_after.into(),
+                        )
+                        .unwrap();
 
                         let has_conflict =
                             busy_events.iter().any(

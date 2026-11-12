@@ -225,6 +225,8 @@ Each side's buffer belongs to that side, so honouring both never counts one twic
 
 Pending requests that hold their slot keep their buffers the same way. Shared resources have no buffers of their own.
 
+Approval rechecks the pending booking's buffers too, including requests configured not to hold their slot. Buffers are elapsed minutes: a two-hour buffer still reserves two real hours when the clocks change for daylight saving.
+
 ## Slot computation
 
 Available slots are computed by:
