@@ -15,8 +15,8 @@
         <link rel="icon" href="favicon-de23e50b.svg">
         <link rel="shortcut icon" href="favicon-8114d1fc.png">
         <link rel="stylesheet" href="css/variables-8adf115d.css">
-        <link rel="stylesheet" href="css/general-2459343d.css">
-        <link rel="stylesheet" href="css/chrome-ae938929.css">
+        <link rel="stylesheet" href="css/general-e96d0476.css">
+        <link rel="stylesheet" href="css/chrome-d279d366.css">
         <link rel="stylesheet" href="css/print-9e4910d8.css" media="print">
 
         <!-- Fonts -->
@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-d5ebc317.js";
+            window.path_to_searchindex_js = "searchindex-d06ae4eb.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-43543355.js"></script>
+        <script src="toc-47cd7d74.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -183,9 +183,8 @@
                         <h1 id="authentik-oidc-sso"><a class="header" href="#authentik-oidc-sso">Authentik (OIDC SSO)</a></h1>
 <p>calrs speaks standard OpenID Connect (Authorization Code flow with PKCE), so it
 integrates with <a href="https://goauthentik.io/">Authentik</a> out of the box. This page
-walks through the full setup and — importantly — the one Authentik-specific
-gotcha that will otherwise block every login with a generic
-<em>“Authentication failed”</em> error: the <strong><code>email_verified</code> claim</strong>.</p>
+walks through the full setup and, importantly, the one Authentik-specific
+gotcha that will otherwise block every login: the <strong><code>email_verified</code> claim</strong>.</p>
 <p>A common deployment pairs OIDC login with calrs’s
 <a href="#tying-it-together-ews-impersonation">global EWS impersonation</a>: users sign in
 through Authentik, and calrs uses their email to impersonate the matching
@@ -278,7 +277,9 @@ Before 2025.10 the claim was always <code>true</code>.</p>
 WARN  calrs::auth: OIDC callback failed: account error
        error=The identity provider has not verified your email address.
 </code></pre>
-<p>and the browser lands on a generic <em>“Authentication failed”</em> page.</p>
+<p>and the browser lands back on the sign-in page with <em>“Your identity provider
+has not verified your email address”</em> (before 2.0.0-rc.1, a generic
+<em>“Authentication failed”</em> page).</p>
 <h3 id="option-a--assert-email_verified-for-a-trusted-directory-recommended-for-ews-setups"><a class="header" href="#option-a--assert-email_verified-for-a-trusted-directory-recommended-for-ews-setups">Option A — assert <code>email_verified</code> for a trusted directory (recommended for EWS setups)</a></h3>
 <p>If your Authentik users are synced from a trusted source (Active Directory,
 LDAP, your Exchange directory) the addresses are real by construction, so it’s
@@ -357,8 +358,8 @@ this on one or two accounts before rolling out broadly.</p>
 </thead>
 <tbody>
 <tr><td>Authentik shows <strong>“Redirect URI Error”</strong></td><td>The redirect URI in the provider doesn’t match <code>{CALRS_BASE_URL}/auth/oidc/callback</code></td><td>Set the provider redirect URI to exactly <code>https://&lt;host&gt;/auth/oidc/callback</code> and make sure <code>CALRS_BASE_URL</code> matches (host, scheme, and the <code>/auth/</code> segment)</td></tr>
-<tr><td><strong>“Authentication failed”</strong> after returning from Authentik; logs show <code>email_verified=true</code> not asserted</td><td>Authentik 2025.10+ returns <code>email_verified: false</code> by default</td><td>Apply <a href="#4-fix-email_verified-authentik-202510">step 4</a></td></tr>
-<tr><td><strong>“An account with this email already exists … not verified”</strong></td><td>A local account with that email exists, but <code>email_verified</code> is false so calrs won’t auto-link it</td><td>Same as above — assert <code>email_verified: true</code></td></tr>
+<tr><td><strong>“Your identity provider has not verified your email address”</strong> on the sign-in page (a generic “Authentication failed” before 2.0.0-rc.1)</td><td>Authentik 2025.10+ returns <code>email_verified: false</code> by default</td><td>Apply <a href="#4-fix-email_verified-authentik-202510">step 4</a></td></tr>
+<tr><td>The same message, though a local account with that email exists</td><td>A local account with that email exists, but <code>email_verified</code> is false so calrs won’t auto-link it</td><td>Same as above: assert <code>email_verified: true</code></td></tr>
 <tr><td>Login works but no calendar appears</td><td>Global EWS auto-provision is off, or the impersonation target domain is wrong</td><td>Enable auto-provision and/or set the impersonation domain override in <strong>Admin → Sign-in and security → Exchange</strong></td></tr>
 <tr><td>ID token signature / discovery errors</td><td>No signing key on the provider</td><td>Assign a certificate as the provider’s <strong>Signing Key</strong></td></tr>
 </tbody>
@@ -411,11 +412,11 @@ and local-account options.</p>
 
         <script src="elasticlunr-ef4e11c1.min.js"></script>
         <script src="mark-09e88c2c.min.js"></script>
-        <script src="searcher-c2a407aa.js"></script>
+        <script src="searcher-09f2665d.js"></script>
 
         <script src="clipboard-1626706a.min.js"></script>
         <script src="highlight-abc7f01d.js"></script>
-        <script src="book-a0b12cfe.js"></script>
+        <script src="book-609e4cb8.js"></script>
 
         <!-- Custom JS scripts -->
 

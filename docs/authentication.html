@@ -15,8 +15,8 @@
         <link rel="icon" href="favicon-de23e50b.svg">
         <link rel="shortcut icon" href="favicon-8114d1fc.png">
         <link rel="stylesheet" href="css/variables-8adf115d.css">
-        <link rel="stylesheet" href="css/general-2459343d.css">
-        <link rel="stylesheet" href="css/chrome-ae938929.css">
+        <link rel="stylesheet" href="css/general-e96d0476.css">
+        <link rel="stylesheet" href="css/chrome-d279d366.css">
         <link rel="stylesheet" href="css/print-9e4910d8.css" media="print">
 
         <!-- Fonts -->
@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-d5ebc317.js";
+            window.path_to_searchindex_js = "searchindex-d06ae4eb.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-43543355.js"></script>
+        <script src="toc-47cd7d74.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -182,7 +182,7 @@
                     <main>
                         <h1 id="authentication"><a class="header" href="#authentication">Authentication</a></h1>
 <p>calrs supports two authentication methods: local accounts and OIDC (OpenID Connect) SSO.</p>
-<p><img src="images/login.png" alt="Login page"></p>
+<p><label class="checkbox-label"><input class="checkbox-img" type="checkbox"><img src="images/login.png" alt="Login page"><span class="img-wrapper"><img src="images/login.png" alt="Login page"></span></label></p>
 <h2 id="local-accounts"><a class="header" href="#local-accounts">Local accounts</a></h2>
 <h3 id="registration"><a class="header" href="#registration">Registration</a></h3>
 <ul>
@@ -280,6 +280,7 @@ calrs user enable alice@example.com
 <ul>
 <li><strong>Authorization code flow with PKCE</strong> — no client secret stored in the browser</li>
 <li><strong>Auto-discovery</strong> — reads <code>.well-known/openid-configuration</code> from the issuer URL</li>
+<li><strong>Claims from the ID token or UserInfo</strong> — the email, name and <code>email_verified</code> claims are read from the ID token; a provider that keeps its ID token minimal is asked at its UserInfo endpoint instead</li>
 <li><strong>User linking by email</strong> — first-time linking requires the provider to assert a verified email. An account already linked to another OIDC subject cannot be claimed through that email, and an account with local MFA is not automatically linked</li>
 <li><strong>Auto-registration</strong> — new users with a verified email are created on first OIDC login when enabled; returning users are identified by their stored OIDC subject</li>
 <li><strong>Group sync</strong> — groups from the <code>groups</code> JWT claim are synced on each login and can be linked to teams</li>
@@ -384,11 +385,11 @@ calrs config show
 
         <script src="elasticlunr-ef4e11c1.min.js"></script>
         <script src="mark-09e88c2c.min.js"></script>
-        <script src="searcher-c2a407aa.js"></script>
+        <script src="searcher-09f2665d.js"></script>
 
         <script src="clipboard-1626706a.min.js"></script>
         <script src="highlight-abc7f01d.js"></script>
-        <script src="book-a0b12cfe.js"></script>
+        <script src="book-609e4cb8.js"></script>
 
         <!-- Custom JS scripts -->
 

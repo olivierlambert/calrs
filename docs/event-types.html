@@ -15,8 +15,8 @@
         <link rel="icon" href="favicon-de23e50b.svg">
         <link rel="shortcut icon" href="favicon-8114d1fc.png">
         <link rel="stylesheet" href="css/variables-8adf115d.css">
-        <link rel="stylesheet" href="css/general-2459343d.css">
-        <link rel="stylesheet" href="css/chrome-ae938929.css">
+        <link rel="stylesheet" href="css/general-e96d0476.css">
+        <link rel="stylesheet" href="css/chrome-d279d366.css">
         <link rel="stylesheet" href="css/print-9e4910d8.css" media="print">
 
         <!-- Fonts -->
@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-d5ebc317.js";
+            window.path_to_searchindex_js = "searchindex-d06ae4eb.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-43543355.js"></script>
+        <script src="toc-47cd7d74.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -202,7 +202,7 @@
 </div>
 <p><strong>Personal vs team:</strong> Personal event types book time on your calendar only. Team event types can assign one available member by priority and workload (round-robin), or require all eligible members to attend (collective).</p>
 <p><strong>Dynamic group links:</strong> Ad-hoc collective meetings without creating a team — see <a href="#dynamic-group-links">Dynamic group links</a> below.</p>
-<p><strong>Multi-timezone teams:</strong> Set the event’s timezone and working window, and each member’s personal hours in their own timezone. calrs combines those hours with calendar conflicts according to the scheduling mode — see <a href="./teams.html#multi-timezone-teams">Teams &gt; Multi-timezone teams</a> for details.</p>
+<p><strong>Multi-timezone teams:</strong> Set the event’s timezone and working window, and each member’s personal hours in their own timezone. calrs combines those hours with calendar conflicts according to the scheduling mode; see <a href="./teams.html#multi-timezone-teams">Teams &gt; Multi-timezone teams</a> for details.</p>
 <h2 id="creating-an-event-type"><a class="header" href="#creating-an-event-type">Creating an event type</a></h2>
 <h3 id="from-the-dashboard"><a class="header" href="#from-the-dashboard">From the dashboard</a></h3>
 <p>Go to <strong>Dashboard &gt; Event types &gt; + New</strong> and fill in:</p>
@@ -219,7 +219,7 @@
 <li><strong>Availability schedule</strong> — which days and hours you’re available</li>
 </ul>
 <p>Description fields support Markdown formatting (bold, italic, links) with a toolbar and live preview.</p>
-<p><img src="images/event-type-form.png" alt="Event type edit form"></p>
+<p><label class="checkbox-label"><input class="checkbox-img" type="checkbox"><img src="images/event-type-form.png" alt="Event type edit form"><span class="img-wrapper"><img src="images/event-type-form.png" alt="Event type edit form"></span></label></p>
 <h3 id="from-the-cli"><a class="header" href="#from-the-cli">From the CLI</a></h3>
 <pre><code class="language-bash">calrs event-type create \
   --title "30min intro call" \
@@ -290,7 +290,7 @@ such as <code>mon</code> and <code>sun</code>.</p>
 <h3 id="one-slot-per-day"><a class="header" href="#one-slot-per-day">One slot per day</a></h3>
 <p>Enable <strong>“One slot per day”</strong> to show only the earliest available time each day. The guest sees the earliest remaining slot instead of all available windows. This is a display setting: after that slot is booked, a later slot may become the earliest available. Set a daily frequency limit of 1 if you want at most one booking per day.</p>
 <h3 id="frequency-limits"><a class="header" href="#frequency-limits">Frequency limits</a></h3>
-<p>Enable <strong>“Limit booking frequency”</strong> to cap how many bookings can be made per time period. You can combine multiple limits — for example, max 2 per day AND 8 per week. Available periods: day, week, month, year. When a limit is reached, matching slots disappear from the picker and submissions are checked again. On round-robin event types, <strong>Per team member</strong> applies a limit to each assigned member instead of pooling the whole team.</p>
+<p>Enable <strong>“Limit booking frequency”</strong> to cap how many bookings can be made per time period. You can combine multiple limits, for example at most 2 per day and 8 per week. Available periods: day, week, month, year. When a limit is reached, matching slots disappear from the picker and submissions are checked again. On round-robin event types, <strong>Per team member</strong> applies a limit to each assigned member instead of pooling the whole team.</p>
 <p>Both settings are configured via toggle switches in the <strong>Booking limits</strong> card of the event type form.</p>
 <h2 id="booking-horizon"><a class="header" href="#booking-horizon">Booking horizon</a></h2>
 <p><strong>Booking horizon</strong> caps how far into the future a guest may book, as a rolling window of days. A “Sales intro” might stay bookable 14 days ahead while an “Annual review” stays open indefinitely.</p>
@@ -378,6 +378,11 @@ such as <code>mon</code> and <code>sun</code>.</p>
 </table>
 </div>
 <p>Set this when you want “every half hour on the dot” or similar rounded start times regardless of meeting length. Leave blank to preserve the legacy back-to-back behaviour. Buffers and minimum notice still apply on top.</p>
+<h2 id="buffers"><a class="header" href="#buffers">Buffers</a></h2>
+<p>A booking reserves its own event type’s <strong>buffer before</strong> ahead of its start and its <strong>buffer after</strong> past its end. A new booking is refused, and its slot is not offered, when its own buffered time overlaps a calendar event or another booking’s buffered time. This holds across all your event types: a meeting on a type with a 30-minute buffer after keeps the next 30 minutes free, even for a type that has no buffer of its own.</p>
+<p>Each side’s buffer belongs to that side, so honouring both never counts one twice. With a 30-minute buffer before on every type, a 10:00 to 10:30 meeting and an 11:00 one fit together; a 10:30 one does not, since its buffer would start at 10:00.</p>
+<p>Pending requests that hold their slot keep their buffers the same way. Shared resources have no buffers of their own.</p>
+<p>Approval rechecks the pending booking’s buffers too, including requests configured not to hold their slot. Buffers are elapsed minutes: a two-hour buffer still reserves two real hours when the clocks change for daylight saving.</p>
 <h2 id="slot-computation"><a class="header" href="#slot-computation">Slot computation</a></h2>
 <p>Available slots are computed by:</p>
 <ol>
@@ -385,7 +390,7 @@ such as <code>mon</code> and <code>sun</code>.</p>
 <li>Filtering out slots that overlap with busy events from connected calendars, including recurring occurrences</li>
 <li>Filtering out conflicts with confirmed bookings, slot-holding pending requests and time off, and checking participant hours</li>
 <li>Filtering out slots blocked by required <a href="./resources.html">shared resources</a> (all mode: any busy resource blocks; round-robin mode: blocked only when every resource is busy)</li>
-<li>Applying buffer times (before and after each slot)</li>
+<li>Applying buffer times (before and after each slot, and each existing booking’s own, see <a href="#buffers">Buffers</a>)</li>
 <li>Removing slots that violate minimum notice (too close to now)</li>
 <li>Removing days past the booking horizon (too far ahead), days outside the bookable date range and slots at a frequency limit</li>
 <li>If “one slot per day” is enabled, keeping only the earliest slot per day</li>
@@ -475,7 +480,7 @@ additional booking or management permissions.</p>
 <p>Internal visibility is designed for <strong>cross-team and cross-person booking within an organization</strong>. It is available for both personal and team event types.</p>
 <p><strong>Typical use case (team):</strong> A Support team creates an internal “Support Call” event type. When a Sales rep needs to put a customer in touch with Support, they go to the <strong>Invite Links</strong> page, click <strong>“Get link”</strong> next to “Support Call”, and paste the generated URL in a Slack message or email to the customer. The customer clicks the link, picks a slot, and books — the link expires after 7 days and can’t be reused.</p>
 <p><strong>Typical use case (personal):</strong> A senior engineer creates an internal “Code Review” event type. Any teammate can generate a one-time link from the Invite Links page and share it with an external contributor who needs a review session.</p>
-<p>The <strong>Invite Links</strong> page (<code>/dashboard/invite-links</code>) lists all internal event types across the organization — both personal and team. Each event type has:</p>
+<p>The <strong>Invite Links</strong> page (<code>/dashboard/invite-links</code>) lists all internal event types across the organization, both personal and team. Each event type has:</p>
 <ul>
 <li><strong>Get link</strong> — generates a single-use invite link (expires in 7 days) and copies it to clipboard</li>
 <li><strong>Invites</strong> — opens the full invite management page for custom expiry, multi-use links, and guest pre-fill</li>
@@ -533,7 +538,7 @@ additional booking or management permissions.</p>
 <p>If your calendar already has an “Out of office” event on a calendar marked busy, it blocks every event type too; time off is for when it does not, or when you would rather not put it in your calendar.</p>
 <p>From the CLI: <code>calrs user time-off add &lt;EMAIL&gt; --from 2026-12-21 --to 2026-12-24 --label "Ski"</code> (see the <a href="./cli-reference.html#calrs-user">CLI reference</a>).</p>
 <h2 id="public-urls"><a class="header" href="#public-urls">Public URLs</a></h2>
-<p><img src="images/profile.png" alt="Public profile page"></p>
+<p><label class="checkbox-label"><input class="checkbox-img" type="checkbox"><img src="images/profile.png" alt="Public profile page"><span class="img-wrapper"><img src="images/profile.png" alt="Public profile page"></span></label></p>
 <ul>
 <li><strong>Profile:</strong> <code>/u/yourname</code> — lists all enabled, non-private event types</li>
 <li><strong>Slot picker:</strong> <code>/u/yourname/slug</code> — shows available time slots</li>
@@ -550,10 +555,10 @@ additional booking or management permissions.</p>
 /u/alice+bob+carol/intro      → collective booking (Alice, Bob &amp; Carol)
 </code></pre>
 <p>The first username owns the event type. Their event type settings (duration, buffer, availability rules) define the meeting. All participants’ calendars are checked — only slots where <strong>everyone</strong> is free are shown.</p>
-<p><img src="images/dynamic-group-slots.png" alt="Dynamic group slot picker"></p>
+<p><label class="checkbox-label"><input class="checkbox-img" type="checkbox"><img src="images/dynamic-group-slots.png" alt="Dynamic group slot picker"><span class="img-wrapper"><img src="images/dynamic-group-slots.png" alt="Dynamic group slot picker"></span></label></p>
 <h3 id="building-a-dynamic-group-link"><a class="header" href="#building-a-dynamic-group-link">Building a dynamic group link</a></h3>
 <p>From the event type edit page, public personal event types show a <strong>Dynamic Group Link</strong> card at the bottom. Type a username to search — only users who have opted in are shown. Click to add them, and the URL is built live with a copy button.</p>
-<p><img src="images/dynamic-group-card.png" alt="Dynamic group link builder"></p>
+<p><label class="checkbox-label"><input class="checkbox-img" type="checkbox"><img src="images/dynamic-group-card.png" alt="Dynamic group link builder"><span class="img-wrapper"><img src="images/dynamic-group-card.png" alt="Dynamic group link builder"></span></label></p>
 <h3 id="opt-out"><a class="header" href="#opt-out">Opt-out</a></h3>
 <p>Users can disable being included in dynamic group links from <strong>Profile &amp; Settings</strong>. The checkbox “Allow others to include me in dynamic group links” is enabled by default. When disabled, the user won’t appear in the search dropdown and any URL containing their username will show an error.</p>
 <h3 id="caldav-write-back"><a class="header" href="#caldav-write-back">CalDAV write-back</a></h3>
@@ -632,11 +637,11 @@ additional booking or management permissions.</p>
 
         <script src="elasticlunr-ef4e11c1.min.js"></script>
         <script src="mark-09e88c2c.min.js"></script>
-        <script src="searcher-c2a407aa.js"></script>
+        <script src="searcher-09f2665d.js"></script>
 
         <script src="clipboard-1626706a.min.js"></script>
         <script src="highlight-abc7f01d.js"></script>
-        <script src="book-a0b12cfe.js"></script>
+        <script src="book-609e4cb8.js"></script>
 
         <!-- Custom JS scripts -->
 

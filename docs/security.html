@@ -15,8 +15,8 @@
         <link rel="icon" href="favicon-de23e50b.svg">
         <link rel="shortcut icon" href="favicon-8114d1fc.png">
         <link rel="stylesheet" href="css/variables-8adf115d.css">
-        <link rel="stylesheet" href="css/general-2459343d.css">
-        <link rel="stylesheet" href="css/chrome-ae938929.css">
+        <link rel="stylesheet" href="css/general-e96d0476.css">
+        <link rel="stylesheet" href="css/chrome-d279d366.css">
         <link rel="stylesheet" href="css/print-9e4910d8.css" media="print">
 
         <!-- Fonts -->
@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-d5ebc317.js";
+            window.path_to_searchindex_js = "searchindex-d06ae4eb.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-43543355.js"></script>
+        <script src="toc-47cd7d74.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -281,7 +281,7 @@ WHERE status IN ('confirmed', 'pending');
 <li><strong>Cancel token</strong> — allows guests to cancel their booking via a link in the confirmation email</li>
 <li><strong>Confirm token</strong> — allows hosts to approve or decline pending bookings via links in the approval request email</li>
 </ul>
-<p>Tokens are UUID v4 (122 random bits), stored with unique indexes in the database. They are not invalidated after use (the booking status check prevents replay — a token for an already-confirmed booking shows “already approved”). These links should be treated as sensitive — anyone with the link can perform the action.</p>
+<p>Tokens are UUID v4 (122 random bits), stored with unique indexes in the database. They are not invalidated after use (the booking status check prevents replay: a token for an already-confirmed booking shows “already approved”). Treat these links as sensitive: anyone with the link can perform the action.</p>
 <h2 id="known-limitations"><a class="header" href="#known-limitations">Known limitations</a></h2>
 <h3 id="caldav-credential-storage"><a class="header" href="#caldav-credential-storage">CalDAV credential storage</a></h3>
 <p>CalDAV and SMTP passwords are encrypted at rest using <strong>AES-256-GCM</strong>. The encryption key is auto-generated at <code>$DATA_DIR/secret.key</code> on first run, or can be provided via the <code>CALRS_SECRET_KEY</code> environment variable. Legacy hex-encoded passwords (from pre-v0.10.0) are auto-migrated to encrypted format on startup. Protect your <code>secret.key</code> file with filesystem permissions.</p>
@@ -358,11 +358,11 @@ WHERE status IN ('confirmed', 'pending');
 
         <script src="elasticlunr-ef4e11c1.min.js"></script>
         <script src="mark-09e88c2c.min.js"></script>
-        <script src="searcher-c2a407aa.js"></script>
+        <script src="searcher-09f2665d.js"></script>
 
         <script src="clipboard-1626706a.min.js"></script>
         <script src="highlight-abc7f01d.js"></script>
-        <script src="book-a0b12cfe.js"></script>
+        <script src="book-609e4cb8.js"></script>
 
         <!-- Custom JS scripts -->
 

@@ -16,8 +16,8 @@
         <link rel="icon" href="favicon-de23e50b.svg">
         <link rel="shortcut icon" href="favicon-8114d1fc.png">
         <link rel="stylesheet" href="css/variables-8adf115d.css">
-        <link rel="stylesheet" href="css/general-2459343d.css">
-        <link rel="stylesheet" href="css/chrome-ae938929.css">
+        <link rel="stylesheet" href="css/general-e96d0476.css">
+        <link rel="stylesheet" href="css/chrome-d279d366.css">
         <link rel="stylesheet" href="css/print-9e4910d8.css" media="print">
 
         <!-- Fonts -->
@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-d5ebc317.js";
+            window.path_to_searchindex_js = "searchindex-d06ae4eb.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-43543355.js"></script>
+        <script src="toc-47cd7d74.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -199,10 +199,10 @@
 <li>calrs blocks the time, writes to the configured calendars and sends notifications through your configured email or SMS service.</li>
 </ol>
 <p>Calendars and notifications are optional: calrs can schedule against its own bookings and provide an <code>.ics</code> download without SMTP. Connecting your calendars is how it also avoids conflicts with meetings made elsewhere.</p>
-<p><img src="images/dashboard.png" alt="calrs v2 dashboard"></p>
+<p><label class="checkbox-label"><input class="checkbox-img" type="checkbox"><img src="images/dashboard.png" alt="calrs v2 dashboard"><span class="img-wrapper"><img src="images/dashboard.png" alt="calrs v2 dashboard"></span></label></p>
 <h2 id="built-for-individuals-and-teams"><a class="header" href="#built-for-individuals-and-teams">Built for individuals and teams</a></h2>
 <p>Personal meetings, round-robin teams, collective meetings and ad-hoc groups use the same booking flow. Public, internal and private visibility control how meetings are found and shared. Shared resources can reserve a room or lab alongside the people attending.</p>
-<p>The interface and notifications support English, French, Spanish, Polish, German, Italian, Estonian, Brazilian Portuguese and Dutch, with a formal German option. Hosts set their own language and timezone; guests can view times in theirs.</p>
+<p>The interface and notifications support English, French, Spanish, Polish, German, Italian, Estonian, Brazilian Portuguese, Dutch and Russian, with a formal German option. Hosts set their own language and timezone; guests can view times in theirs.</p>
 <p>Integrations include outgoing booking webhooks, a scoped REST API with an interactive OpenAPI reference, and an OAuth-protected MCP endpoint. See <a href="#features-in-v2">Features in v2</a> for the scope of each integration.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="features-in-v2"><a class="header" href="#features-in-v2">Features in v2</a></h1>
@@ -274,7 +274,7 @@
 <tr><td>Email</td><td>Send translated HTML/plain-text messages, reminders and calendar invitations; use the host’s display name and Reply-To, plus an optional guest footer. <a href="#email-notifications">Email notifications</a>, <a href="#smtp-configuration">SMTP</a></td></tr>
 <tr><td>SMS</td><td>Send guest confirmations, cancellations, reschedules and reminders through Twilio, GatewayAPI, seven.io or a webhook gateway, with a daily segment limit. <a href="#sms-notifications-1">SMS</a></td></tr>
 <tr><td>Meeting locations</td><td>Use static video links, phone, in-person or custom locations, generated Jitsi rooms, Google Meet or a meeting-provider webhook. <a href="#location">Locations</a></td></tr>
-<tr><td>Localization and appearance</td><td>Use nine languages plus formal German, light/dark modes, preset/custom themes, company logos for each mode and a favicon. <a href="#profile-and-settings">Profile settings</a>, <a href="#branding">branding</a></td></tr>
+<tr><td>Localization and appearance</td><td>Use ten languages plus formal German, light/dark modes, preset/custom themes, company logos for each mode and a favicon. <a href="#profile-and-settings">Profile settings</a>, <a href="#branding">branding</a></td></tr>
 </tbody>
 </table>
 </div>
@@ -350,7 +350,7 @@ calrs serve --port 3000
 <h2 id="overview"><a class="header" href="#overview">Overview</a></h2>
 <p>The v2 overview brings together requests waiting for your decision, coming meetings and your week. The week view includes your calrs bookings and anonymous busy periods from connected calendars. Calendar event details remain in the availability troubleshooter. A dashed busy band means calrs could not expand a recurrence rule precisely; its tooltip links to the explanation.</p>
 <p>Your booking links and favorite meetings sit beside recent activity and your event types. A new account sees setup guidance for connecting a calendar and creating a meeting.</p>
-<p><img src="images/dashboard.png" alt="Dashboard overview"></p>
+<p><label class="checkbox-label"><input class="checkbox-img" type="checkbox"><img src="images/dashboard.png" alt="Dashboard overview"><span class="img-wrapper"><img src="images/dashboard.png" alt="Dashboard overview"></span></label></p>
 <h2 id="bookings"><a class="header" href="#bookings">Bookings</a></h2>
 <p>Open <strong>Bookings</strong> for these sections:</p>
 <ul>
@@ -362,7 +362,7 @@ calrs serve --port 3000
 </ul>
 <p>Each section has its own pagination. Searching and pressing Enter searches across pages; typing also narrows the rows currently shown. A day selected in the overview’s week opens the corresponding page of upcoming bookings.</p>
 <p>Open a booking’s title to read its details, question answers and <a href="#host-notes">host-only notes</a>. Actions offered depend on its status and your role. A <strong>not in your calendar</strong> badge means the booking exists but a calendar write failed; see <a href="#when-a-write-back-fails">write-back recovery</a>.</p>
-<p><img src="images/bookings.png" alt="Bookings"></p>
+<p><label class="checkbox-label"><input class="checkbox-img" type="checkbox"><img src="images/bookings.png" alt="Bookings"><span class="img-wrapper"><img src="images/bookings.png" alt="Bookings"></span></label></p>
 <h2 id="booking-directory-and-favorites"><a class="header" href="#booking-directory-and-favorites">Booking directory and favorites</a></h2>
 <p>The <strong>Booking directory</strong> helps colleagues find public and internal meetings they can share. Search by person, team or meeting title, and filter the list. Copy a public meeting’s URL or generate a fresh, single-use invitation for an internal meeting.</p>
 <p>Star meetings you use often to put them on your overview. Favorites do not grant permission: a meeting that becomes inaccessible disappears from your usable favorites. Private event types remain subject to their own invitation permissions.</p>
@@ -378,14 +378,14 @@ calrs serve --port 3000
 <li>Whether colleagues may include you in dynamic group links.</li>
 <li><a href="#two-factor-authentication-totp">Two-factor authentication</a>, <a href="#rest-api">API tokens</a> and <a href="#mcp-integration">connected apps</a>.</li>
 </ul>
-<p>Public pages normally follow the visitor’s browser language, even if the visitor is signed in. <strong>Always my language</strong> makes your own booking pages use your saved language instead. Host emails follow each host’s saved language; guest emails retain the language used to book. The nine languages are English, French, Spanish, Polish, German, Italian, Estonian, Brazilian Portuguese and Dutch. <strong>Deutsch (Sie)</strong> is also available for formal German.</p>
+<p>Public pages normally follow the visitor’s browser language, even if the visitor is signed in. <strong>Always my language</strong> makes your own booking pages use your saved language instead. Host emails follow each host’s saved language; guest emails retain the language used to book. The ten languages are English, French, Spanish, Polish, German, Italian, Estonian, Brazilian Portuguese, Dutch and Russian. <strong>Deutsch (Sie)</strong> is also available for formal German.</p>
 <p>Default availability supplies the initial schedule for a new event type and constrains your participation in team and dynamic-group scheduling. Changing it does not rewrite the weekly rules of existing event types. Use <a href="#time-off">Time off</a> to block an absence across meetings you host.</p>
 <h2 id="organize-your-public-page"><a class="header" href="#organize-your-public-page">Organize your public page</a></h2>
 <p>In the event type editor, give meetings a <strong>Section</strong> to group them on your profile. <strong>Change the order</strong> opens the ordering page. Team admins can arrange their team’s page separately. See <a href="#sections-and-order-on-your-page">Sections and order</a>.</p>
 <p>The usual-hours timetable on a public profile summarizes weekly rules; it is not a promise that every time in that span is available. Guests open a meeting to see actual slots after conflicts, exceptions and limits are applied.</p>
 <h2 id="availability-troubleshoot"><a class="header" href="#availability-troubleshoot">Availability troubleshoot</a></h2>
 <p>Open an event type’s <strong>Troubleshoot</strong> action, select the date and inspect the timeline. It explains working hours, calendar conflicts, bookings, time off and other reasons a candidate slot is blocked. Check calendar selections, the event type’s timezone, team members’ hours and source sync errors when the result differs from what you expect.</p>
-<p><img src="images/troubleshoot.png" alt="Availability troubleshoot"></p>
+<p><label class="checkbox-label"><input class="checkbox-img" type="checkbox"><img src="images/troubleshoot.png" alt="Availability troubleshoot"><span class="img-wrapper"><img src="images/troubleshoot.png" alt="Availability troubleshoot"></span></label></p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="caldav-integration"><a class="header" href="#caldav-integration">CalDAV Integration</a></h1>
 <p>calrs connects to any CalDAV server to read your calendar for free/busy computation and optionally write confirmed bookings back.</p>
@@ -398,7 +398,7 @@ calrs serve --port 3000
 <li>Click <strong>Add source</strong></li>
 </ol>
 <p>The connection is tested automatically before saving. Use “Skip connection test” if your server doesn’t respond to OPTIONS requests (e.g., BlueMind).</p>
-<p><img src="images/source-form.png" alt="Add calendar source"></p>
+<p><label class="checkbox-label"><input class="checkbox-img" type="checkbox"><img src="images/source-form.png" alt="Add calendar source"><span class="img-wrapper"><img src="images/source-form.png" alt="Add calendar source"></span></label></p>
 <h3 id="from-the-cli"><a class="header" href="#from-the-cli">From the CLI</a></h3>
 <pre><code class="language-bash">calrs source add --url https://nextcloud.example.com/remote.php/dav \
                  --username alice --name "Work Calendar"
@@ -841,7 +841,7 @@ calrs source list
 </div>
 <p><strong>Personal vs team:</strong> Personal event types book time on your calendar only. Team event types can assign one available member by priority and workload (round-robin), or require all eligible members to attend (collective).</p>
 <p><strong>Dynamic group links:</strong> Ad-hoc collective meetings without creating a team — see <a href="#dynamic-group-links">Dynamic group links</a> below.</p>
-<p><strong>Multi-timezone teams:</strong> Set the event’s timezone and working window, and each member’s personal hours in their own timezone. calrs combines those hours with calendar conflicts according to the scheduling mode — see <a href="#multi-timezone-teams">Teams &gt; Multi-timezone teams</a> for details.</p>
+<p><strong>Multi-timezone teams:</strong> Set the event’s timezone and working window, and each member’s personal hours in their own timezone. calrs combines those hours with calendar conflicts according to the scheduling mode; see <a href="#multi-timezone-teams">Teams &gt; Multi-timezone teams</a> for details.</p>
 <h2 id="creating-an-event-type"><a class="header" href="#creating-an-event-type">Creating an event type</a></h2>
 <h3 id="from-the-dashboard"><a class="header" href="#from-the-dashboard">From the dashboard</a></h3>
 <p>Go to <strong>Dashboard &gt; Event types &gt; + New</strong> and fill in:</p>
@@ -858,7 +858,7 @@ calrs source list
 <li><strong>Availability schedule</strong> — which days and hours you’re available</li>
 </ul>
 <p>Description fields support Markdown formatting (bold, italic, links) with a toolbar and live preview.</p>
-<p><img src="images/event-type-form.png" alt="Event type edit form"></p>
+<p><label class="checkbox-label"><input class="checkbox-img" type="checkbox"><img src="images/event-type-form.png" alt="Event type edit form"><span class="img-wrapper"><img src="images/event-type-form.png" alt="Event type edit form"></span></label></p>
 <h3 id="from-the-cli-1"><a class="header" href="#from-the-cli-1">From the CLI</a></h3>
 <pre><code class="language-bash">calrs event-type create \
   --title "30min intro call" \
@@ -929,7 +929,7 @@ such as <code>mon</code> and <code>sun</code>.</p>
 <h3 id="one-slot-per-day"><a class="header" href="#one-slot-per-day">One slot per day</a></h3>
 <p>Enable <strong>“One slot per day”</strong> to show only the earliest available time each day. The guest sees the earliest remaining slot instead of all available windows. This is a display setting: after that slot is booked, a later slot may become the earliest available. Set a daily frequency limit of 1 if you want at most one booking per day.</p>
 <h3 id="frequency-limits"><a class="header" href="#frequency-limits">Frequency limits</a></h3>
-<p>Enable <strong>“Limit booking frequency”</strong> to cap how many bookings can be made per time period. You can combine multiple limits — for example, max 2 per day AND 8 per week. Available periods: day, week, month, year. When a limit is reached, matching slots disappear from the picker and submissions are checked again. On round-robin event types, <strong>Per team member</strong> applies a limit to each assigned member instead of pooling the whole team.</p>
+<p>Enable <strong>“Limit booking frequency”</strong> to cap how many bookings can be made per time period. You can combine multiple limits, for example at most 2 per day and 8 per week. Available periods: day, week, month, year. When a limit is reached, matching slots disappear from the picker and submissions are checked again. On round-robin event types, <strong>Per team member</strong> applies a limit to each assigned member instead of pooling the whole team.</p>
 <p>Both settings are configured via toggle switches in the <strong>Booking limits</strong> card of the event type form.</p>
 <h2 id="booking-horizon"><a class="header" href="#booking-horizon">Booking horizon</a></h2>
 <p><strong>Booking horizon</strong> caps how far into the future a guest may book, as a rolling window of days. A “Sales intro” might stay bookable 14 days ahead while an “Annual review” stays open indefinitely.</p>
@@ -1017,6 +1017,11 @@ such as <code>mon</code> and <code>sun</code>.</p>
 </table>
 </div>
 <p>Set this when you want “every half hour on the dot” or similar rounded start times regardless of meeting length. Leave blank to preserve the legacy back-to-back behaviour. Buffers and minimum notice still apply on top.</p>
+<h2 id="buffers"><a class="header" href="#buffers">Buffers</a></h2>
+<p>A booking reserves its own event type’s <strong>buffer before</strong> ahead of its start and its <strong>buffer after</strong> past its end. A new booking is refused, and its slot is not offered, when its own buffered time overlaps a calendar event or another booking’s buffered time. This holds across all your event types: a meeting on a type with a 30-minute buffer after keeps the next 30 minutes free, even for a type that has no buffer of its own.</p>
+<p>Each side’s buffer belongs to that side, so honouring both never counts one twice. With a 30-minute buffer before on every type, a 10:00 to 10:30 meeting and an 11:00 one fit together; a 10:30 one does not, since its buffer would start at 10:00.</p>
+<p>Pending requests that hold their slot keep their buffers the same way. Shared resources have no buffers of their own.</p>
+<p>Approval rechecks the pending booking’s buffers too, including requests configured not to hold their slot. Buffers are elapsed minutes: a two-hour buffer still reserves two real hours when the clocks change for daylight saving.</p>
 <h2 id="slot-computation"><a class="header" href="#slot-computation">Slot computation</a></h2>
 <p>Available slots are computed by:</p>
 <ol>
@@ -1024,7 +1029,7 @@ such as <code>mon</code> and <code>sun</code>.</p>
 <li>Filtering out slots that overlap with busy events from connected calendars, including recurring occurrences</li>
 <li>Filtering out conflicts with confirmed bookings, slot-holding pending requests and time off, and checking participant hours</li>
 <li>Filtering out slots blocked by required <a href="#shared-resources">shared resources</a> (all mode: any busy resource blocks; round-robin mode: blocked only when every resource is busy)</li>
-<li>Applying buffer times (before and after each slot)</li>
+<li>Applying buffer times (before and after each slot, and each existing booking’s own, see <a href="#buffers">Buffers</a>)</li>
 <li>Removing slots that violate minimum notice (too close to now)</li>
 <li>Removing days past the booking horizon (too far ahead), days outside the bookable date range and slots at a frequency limit</li>
 <li>If “one slot per day” is enabled, keeping only the earliest slot per day</li>
@@ -1114,7 +1119,7 @@ additional booking or management permissions.</p>
 <p>Internal visibility is designed for <strong>cross-team and cross-person booking within an organization</strong>. It is available for both personal and team event types.</p>
 <p><strong>Typical use case (team):</strong> A Support team creates an internal “Support Call” event type. When a Sales rep needs to put a customer in touch with Support, they go to the <strong>Invite Links</strong> page, click <strong>“Get link”</strong> next to “Support Call”, and paste the generated URL in a Slack message or email to the customer. The customer clicks the link, picks a slot, and books — the link expires after 7 days and can’t be reused.</p>
 <p><strong>Typical use case (personal):</strong> A senior engineer creates an internal “Code Review” event type. Any teammate can generate a one-time link from the Invite Links page and share it with an external contributor who needs a review session.</p>
-<p>The <strong>Invite Links</strong> page (<code>/dashboard/invite-links</code>) lists all internal event types across the organization — both personal and team. Each event type has:</p>
+<p>The <strong>Invite Links</strong> page (<code>/dashboard/invite-links</code>) lists all internal event types across the organization, both personal and team. Each event type has:</p>
 <ul>
 <li><strong>Get link</strong> — generates a single-use invite link (expires in 7 days) and copies it to clipboard</li>
 <li><strong>Invites</strong> — opens the full invite management page for custom expiry, multi-use links, and guest pre-fill</li>
@@ -1172,7 +1177,7 @@ additional booking or management permissions.</p>
 <p>If your calendar already has an “Out of office” event on a calendar marked busy, it blocks every event type too; time off is for when it does not, or when you would rather not put it in your calendar.</p>
 <p>From the CLI: <code>calrs user time-off add &lt;EMAIL&gt; --from 2026-12-21 --to 2026-12-24 --label "Ski"</code> (see the <a href="#calrs-user">CLI reference</a>).</p>
 <h2 id="public-urls"><a class="header" href="#public-urls">Public URLs</a></h2>
-<p><img src="images/profile.png" alt="Public profile page"></p>
+<p><label class="checkbox-label"><input class="checkbox-img" type="checkbox"><img src="images/profile.png" alt="Public profile page"><span class="img-wrapper"><img src="images/profile.png" alt="Public profile page"></span></label></p>
 <ul>
 <li><strong>Profile:</strong> <code>/u/yourname</code> — lists all enabled, non-private event types</li>
 <li><strong>Slot picker:</strong> <code>/u/yourname/slug</code> — shows available time slots</li>
@@ -1189,10 +1194,10 @@ additional booking or management permissions.</p>
 /u/alice+bob+carol/intro      → collective booking (Alice, Bob &amp; Carol)
 </code></pre>
 <p>The first username owns the event type. Their event type settings (duration, buffer, availability rules) define the meeting. All participants’ calendars are checked — only slots where <strong>everyone</strong> is free are shown.</p>
-<p><img src="images/dynamic-group-slots.png" alt="Dynamic group slot picker"></p>
+<p><label class="checkbox-label"><input class="checkbox-img" type="checkbox"><img src="images/dynamic-group-slots.png" alt="Dynamic group slot picker"><span class="img-wrapper"><img src="images/dynamic-group-slots.png" alt="Dynamic group slot picker"></span></label></p>
 <h3 id="building-a-dynamic-group-link"><a class="header" href="#building-a-dynamic-group-link">Building a dynamic group link</a></h3>
 <p>From the event type edit page, public personal event types show a <strong>Dynamic Group Link</strong> card at the bottom. Type a username to search — only users who have opted in are shown. Click to add them, and the URL is built live with a copy button.</p>
-<p><img src="images/dynamic-group-card.png" alt="Dynamic group link builder"></p>
+<p><label class="checkbox-label"><input class="checkbox-img" type="checkbox"><img src="images/dynamic-group-card.png" alt="Dynamic group link builder"><span class="img-wrapper"><img src="images/dynamic-group-card.png" alt="Dynamic group link builder"></span></label></p>
 <h3 id="opt-out"><a class="header" href="#opt-out">Opt-out</a></h3>
 <p>Users can disable being included in dynamic group links from <strong>Profile &amp; Settings</strong>. The checkbox “Allow others to include me in dynamic group links” is enabled by default. When disabled, the user won’t appear in the search dropdown and any URL containing their username will show an error.</p>
 <h3 id="caldav-write-back-1"><a class="header" href="#caldav-write-back-1">CalDAV write-back</a></h3>
@@ -1241,8 +1246,8 @@ additional booking or management permissions.</p>
 <li><strong>Confirmation page</strong> — shows the confirmed or pending state, booking summary and, for a confirmed booking, an <strong>Add to calendar</strong> download</li>
 <li><strong>Email</strong> — with SMTP configured, the guest receives the relevant confirmation or pending message; additional attendees receive their invitation when the booking is first confirmed</li>
 </ol>
-<p><img src="images/slots.png" alt="Available time slots"></p>
-<p><img src="images/booking-form.png" alt="Booking form"></p>
+<p><label class="checkbox-label"><input class="checkbox-img" type="checkbox"><img src="images/slots.png" alt="Available time slots"><span class="img-wrapper"><img src="images/slots.png" alt="Available time slots"></span></label></p>
+<p><label class="checkbox-label"><input class="checkbox-img" type="checkbox"><img src="images/booking-form.png" alt="Booking form"><span class="img-wrapper"><img src="images/booking-form.png" alt="Booking form"></span></label></p>
 <h2 id="timezones-and-existing-installations"><a class="header" href="#timezones-and-existing-installations">Timezones and existing installations</a></h2>
 <p>New bookings store UTC timestamps. Availability rules remain in the event type’s
 IANA timezone, and guests see times in their selected timezone. The dashboard
@@ -1674,12 +1679,12 @@ was recorded on their behalf, never that they agreed.</p>
 </ul>
 <h2 id="scheduling-modes"><a class="header" href="#scheduling-modes">Scheduling modes</a></h2>
 <h3 id="round-robin"><a class="header" href="#round-robin">Round-robin</a></h3>
-<p>A slot is available if <strong>any</strong> team member is free. The booking is assigned by member priority, then workload (fewest confirmed bookings among equally prioritized available members).</p>
+<p>A slot is available if <strong>any</strong> team member is free. The booking is assigned by member priority, then workload (among equally prioritized available members, the one assigned the fewest bookings over the last 30 days).</p>
 <p>When a booking is submitted:</p>
 <ol>
 <li>calrs finds all team members (with weight &gt; 0)</li>
 <li>For each member, checks if the slot is free (no calendar events or bookings in the buffer window)</li>
-<li>Among available members, prefers the highest configured priority, then the fewest confirmed bookings</li>
+<li>Among available members, prefers the highest configured priority, then the fewest bookings assigned over the last 30 days</li>
 <li>The booking is assigned to that member and written to their configured calendar destination</li>
 <li>If no member is available, the booking is rejected</li>
 </ol>
@@ -2299,7 +2304,7 @@ never include the URL, since it often carries a token.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="authentication"><a class="header" href="#authentication">Authentication</a></h1>
 <p>calrs supports two authentication methods: local accounts and OIDC (OpenID Connect) SSO.</p>
-<p><img src="images/login.png" alt="Login page"></p>
+<p><label class="checkbox-label"><input class="checkbox-img" type="checkbox"><img src="images/login.png" alt="Login page"><span class="img-wrapper"><img src="images/login.png" alt="Login page"></span></label></p>
 <h2 id="local-accounts"><a class="header" href="#local-accounts">Local accounts</a></h2>
 <h3 id="registration"><a class="header" href="#registration">Registration</a></h3>
 <ul>
@@ -2397,6 +2402,7 @@ calrs user enable alice@example.com
 <ul>
 <li><strong>Authorization code flow with PKCE</strong> — no client secret stored in the browser</li>
 <li><strong>Auto-discovery</strong> — reads <code>.well-known/openid-configuration</code> from the issuer URL</li>
+<li><strong>Claims from the ID token or UserInfo</strong> — the email, name and <code>email_verified</code> claims are read from the ID token; a provider that keeps its ID token minimal is asked at its UserInfo endpoint instead</li>
 <li><strong>User linking by email</strong> — first-time linking requires the provider to assert a verified email. An account already linked to another OIDC subject cannot be claimed through that email, and an account with local MFA is not automatically linked</li>
 <li><strong>Auto-registration</strong> — new users with a verified email are created on first OIDC login when enabled; returning users are identified by their stored OIDC subject</li>
 <li><strong>Group sync</strong> — groups from the <code>groups</code> JWT claim are synced on each login and can be linked to teams</li>
@@ -3136,9 +3142,8 @@ cargo test web::tests::api_doc
 <h1 id="authentik-oidc-sso"><a class="header" href="#authentik-oidc-sso">Authentik (OIDC SSO)</a></h1>
 <p>calrs speaks standard OpenID Connect (Authorization Code flow with PKCE), so it
 integrates with <a href="https://goauthentik.io/">Authentik</a> out of the box. This page
-walks through the full setup and — importantly — the one Authentik-specific
-gotcha that will otherwise block every login with a generic
-<em>“Authentication failed”</em> error: the <strong><code>email_verified</code> claim</strong>.</p>
+walks through the full setup and, importantly, the one Authentik-specific
+gotcha that will otherwise block every login: the <strong><code>email_verified</code> claim</strong>.</p>
 <p>A common deployment pairs OIDC login with calrs’s
 <a href="#tying-it-together-ews-impersonation">global EWS impersonation</a>: users sign in
 through Authentik, and calrs uses their email to impersonate the matching
@@ -3231,7 +3236,9 @@ Before 2025.10 the claim was always <code>true</code>.</p>
 WARN  calrs::auth: OIDC callback failed: account error
        error=The identity provider has not verified your email address.
 </code></pre>
-<p>and the browser lands on a generic <em>“Authentication failed”</em> page.</p>
+<p>and the browser lands back on the sign-in page with <em>“Your identity provider
+has not verified your email address”</em> (before 2.0.0-rc.1, a generic
+<em>“Authentication failed”</em> page).</p>
 <h3 id="option-a--assert-email_verified-for-a-trusted-directory-recommended-for-ews-setups"><a class="header" href="#option-a--assert-email_verified-for-a-trusted-directory-recommended-for-ews-setups">Option A — assert <code>email_verified</code> for a trusted directory (recommended for EWS setups)</a></h3>
 <p>If your Authentik users are synced from a trusted source (Active Directory,
 LDAP, your Exchange directory) the addresses are real by construction, so it’s
@@ -3310,8 +3317,8 @@ this on one or two accounts before rolling out broadly.</p>
 </thead>
 <tbody>
 <tr><td>Authentik shows <strong>“Redirect URI Error”</strong></td><td>The redirect URI in the provider doesn’t match <code>{CALRS_BASE_URL}/auth/oidc/callback</code></td><td>Set the provider redirect URI to exactly <code>https://&lt;host&gt;/auth/oidc/callback</code> and make sure <code>CALRS_BASE_URL</code> matches (host, scheme, and the <code>/auth/</code> segment)</td></tr>
-<tr><td><strong>“Authentication failed”</strong> after returning from Authentik; logs show <code>email_verified=true</code> not asserted</td><td>Authentik 2025.10+ returns <code>email_verified: false</code> by default</td><td>Apply <a href="#4-fix-email_verified-authentik-202510">step 4</a></td></tr>
-<tr><td><strong>“An account with this email already exists … not verified”</strong></td><td>A local account with that email exists, but <code>email_verified</code> is false so calrs won’t auto-link it</td><td>Same as above — assert <code>email_verified: true</code></td></tr>
+<tr><td><strong>“Your identity provider has not verified your email address”</strong> on the sign-in page (a generic “Authentication failed” before 2.0.0-rc.1)</td><td>Authentik 2025.10+ returns <code>email_verified: false</code> by default</td><td>Apply <a href="#4-fix-email_verified-authentik-202510">step 4</a></td></tr>
+<tr><td>The same message, though a local account with that email exists</td><td>A local account with that email exists, but <code>email_verified</code> is false so calrs won’t auto-link it</td><td>Same as above: assert <code>email_verified: true</code></td></tr>
 <tr><td>Login works but no calendar appears</td><td>Global EWS auto-provision is off, or the impersonation target domain is wrong</td><td>Enable auto-provision and/or set the impersonation domain override in <strong>Admin → Sign-in and security → Exchange</strong></td></tr>
 <tr><td>ID token signature / discovery errors</td><td>No signing key on the provider</td><td>Assign a certificate as the provider’s <strong>Signing Key</strong></td></tr>
 </tbody>
@@ -3322,7 +3329,7 @@ and local-account options.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="admin-dashboard"><a class="header" href="#admin-dashboard">Admin Dashboard</a></h1>
 <p>The admin dashboard is available at <code>/dashboard/admin</code> for users with the <code>admin</code> role.</p>
-<p><img src="images/admin.png" alt="Admin dashboard"></p>
+<p><label class="checkbox-label"><input class="checkbox-img" type="checkbox"><img src="images/admin.png" alt="Admin dashboard"><span class="img-wrapper"><img src="images/admin.png" alt="Admin dashboard"></span></label></p>
 <p>The panel is organized into <strong>Overview</strong>, <strong>Users</strong>, <strong>Sign-in and security</strong>, <strong>Email and SMS</strong>, <strong>Meeting links</strong>, <strong>Resources</strong>, <strong>Branding</strong> and <strong>System</strong> tabs. The overview summarizes booking activity, users, calendar health and items needing attention. The remaining tabs group the configuration described below.</p>
 <h2 id="user-management"><a class="header" href="#user-management">User management</a></h2>
 <p>Lists all registered users with:</p>
@@ -3369,7 +3376,7 @@ instances never cache them.</p>
 <li>Displays why each slot is blocked (calendar event name, existing booking, buffer overlap)</li>
 <li>Helps debug availability issues when users report incorrect free/busy status</li>
 </ul>
-<p><img src="images/troubleshoot.png" alt="Availability troubleshoot"></p>
+<p><label class="checkbox-label"><input class="checkbox-img" type="checkbox"><img src="images/troubleshoot.png" alt="Availability troubleshoot"><span class="img-wrapper"><img src="images/troubleshoot.png" alt="Availability troubleshoot"></span></label></p>
 <h2 id="authentication-settings"><a class="header" href="#authentication-settings">Authentication settings</a></h2>
 <ul>
 <li><strong>Registration</strong> — toggle open registration on/off</li>
@@ -3400,7 +3407,7 @@ instances never cache them.</p>
 <h2 id="branding"><a class="header" href="#branding">Branding</a></h2>
 <p>The <strong>Branding</strong> tab holds the company logo, the link it points to, the favicon and the theme.</p>
 <p>Choose <strong>Default</strong>, <strong>Nord</strong>, <strong>Dracula</strong>, <strong>Gruvbox</strong>, <strong>Solarized</strong>, <strong>Tokyo Night</strong> or <strong>Vates</strong>. Every preset has a light and dark palette; visitors can switch modes or follow their system preference. <strong>Custom</strong> lets you set the accent, hover, background, surface and text colors for your organization.</p>
-<p><img src="images/branding.png" alt="Branding and color themes"></p>
+<p><label class="checkbox-label"><input class="checkbox-img" type="checkbox"><img src="images/branding.png" alt="Branding and color themes"><span class="img-wrapper"><img src="images/branding.png" alt="Branding and color themes"></span></label></p>
 <p>The company logo is shown at the top of the public booking pages. Upload a PNG, JPEG, GIF or WebP image of at most 2 MB; SVG is refused. A second, optional logo is used when the visitor’s page is in the dark theme, for a wordmark that would not read on a dark background. A light logo alone is shown in both themes; a dark logo alone is shown in the dark theme only, since a mark made for a dark background may not read on a light page. Each preview sits on the page background the instance theme gives public pages, light and dark, whatever theme your dashboard is in. A new logo shows to visitors on their next page view. Emails never carry the company logo.</p>
 <h2 id="smtp-configuration"><a class="header" href="#smtp-configuration">SMTP configuration</a></h2>
 <p>Open <strong>Email and SMS &gt; SMTP</strong> to configure the server, port, TLS mode, optional credentials and sender identity, then send a test email. Settings take effect without a restart. Passwords are encrypted; leaving the password blank keeps the existing value. The same configuration is available through <code>calrs config smtp</code>.</p>
@@ -3833,6 +3840,74 @@ Environment=CALRS_TRUSTED_PROXIES=127.0.0.1,::1
 <h3 id="caddy-example"><a class="header" href="#caddy-example">Caddy example</a></h3>
 <pre><code>cal.example.com {
     reverse_proxy localhost:3000
+}
+</code></pre>
+<h3 id="which-paths-to-expose"><a class="header" href="#which-paths-to-expose">Which paths to expose</a></h3>
+<p>Exposing every path, as the examples above do, is the default and is safe
+once the instance is set up: everything beyond the guest pages asks for a
+session, a token or an OAuth grant. Two things come first. The first account
+registered becomes the admin, so register it before the instance is
+reachable from the internet. And anyone may create an account at
+<code>/auth/register</code> while registration is open, so turn it off in the admin
+panel, or limit it to your email domains, if strangers should not sign up. Some operators still prefer a public site that serves guest
+pages only, and keep the rest on an office network or a VPN. These are the
+groups of paths calrs serves:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Paths</th><th>What they serve</th><th>Who needs them</th></tr>
+</thead>
+<tbody>
+<tr><td><code>/u/</code>, <code>/team/</code>, <code>/t/</code>, <code>/g/</code></td><td>Booking pages, invite links, old team links (redirects)</td><td>Guests</td></tr>
+<tr><td><code>/booking/</code></td><td>Cancel, reschedule and calendar file links in guest emails; approve, decline and claim links in host and watcher emails</td><td>Guests and hosts, from their mailbox</td></tr>
+<tr><td><code>/avatar/</code>, <code>/team-avatar/</code>, <code>/fonts/</code>, <code>/static/intl-tel-input/</code>, <code>/logo</code>, <code>/logo/dark</code>, <code>/brand-logo</code>, <code>/favicon</code>, <code>/favicon.ico</code>, <code>/accent.css</code>, <code>/embed.js</code></td><td>Files the booking pages and embeds load</td><td>Guests</td></tr>
+<tr><td><code>/</code>, <code>/auth/</code>, <code>/dashboard/</code></td><td>Sign-in (<code>/</code> redirects there) and the dashboard. With SSO, <code>/auth/oidc/callback</code> must be reachable from the users’ browsers</td><td>Hosts and admins</td></tr>
+<tr><td><code>/api/v1/</code>, <code>/api/docs</code>, <code>/static/swagger-ui/</code></td><td>REST API, its OpenAPI document and its reference</td><td>API clients, signed-in users</td></tr>
+<tr><td><code>/mcp</code>, <code>/oauth/</code>, <code>/.well-known/oauth-authorization-server</code>, <code>/.well-known/oauth-protected-resource/</code></td><td>MCP server and the OAuth endpoints MCP and API clients sign in through</td><td>AI assistants, OAuth API clients</td></tr>
+<tr><td><code>/{slug}</code>, <code>/{slug}/book</code></td><td>Single-user links from before <code>/u/</code></td><td>Only if such links are still shared</td></tr>
+</tbody>
+</table>
+</div>
+<p>Keep <code>/booking/</code> public even when hosts work from the office: the approve
+and decline buttons in their emails point there. An MCP or API client needs
+its paths reachable from wherever it runs.</p>
+<p>A restriction in the proxy only holds if calrs cannot be reached around it.
+Publish its port on the loopback address only (<code>-p 127.0.0.1:3000:3000</code>
+with Docker, <code>127.0.0.1:3000:3000</code> under <code>ports:</code> in Compose), or keep it
+off the published ports and reach it over the proxy’s own network. With
+Docker Engine older than 28.0.0, a port published on <code>127.0.0.1</code> can still be
+reached by hosts on the same local network segment, so upgrade Docker, or
+filter that port in the host’s firewall, or use the proxy’s network instead.</p>
+<p>An nginx version that serves guest pages to everyone and the rest to one
+network only:</p>
+<pre><code class="language-nginx">server {
+    listen 443 ssl http2;
+    server_name cal.example.com;
+    # ssl_certificate lines as above
+    client_max_body_size 3m;
+
+    # Set here, inherited by every location below.
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+
+    # Guest pages, email links and the files they load: public.
+    # Old single-user links (/{slug}, /{slug}/book) are not listed, so guests
+    # outside the network get 403 for them: add a location if you still
+    # share such links.
+    location ~ ^/(u|team|t|g|booking|avatar|team-avatar|fonts|static/intl-tel-input)/ {
+        proxy_pass http://127.0.0.1:3000;
+    }
+    location ~ ^/(logo|logo/dark|brand-logo|favicon|favicon\.ico|accent\.css|embed\.js)$ {
+        proxy_pass http://127.0.0.1:3000;
+    }
+
+    # Sign-in, dashboard, API, MCP, OAuth: office network only.
+    location / {
+        allow 192.0.2.0/24;
+        deny all;
+        proxy_pass http://127.0.0.1:3000;
+    }
 }
 </code></pre>
 <h2 id="environment-variables-1"><a class="header" href="#environment-variables-1">Environment variables</a></h2>
@@ -4270,7 +4345,7 @@ calrs user time-off remove &lt;EMAIL&gt; &lt;ID&gt;
 </tbody>
 </table>
 </div>
-<p>OIDC sign-in identifies returning users by their stored subject. New account registration or linking requires the verified-email rules described in <a href="#authentication">Authentication</a>. Calendar OAuth consent and API/MCP grants are separate from OIDC login.</p>
+<p>OIDC sign-in reads the email, name and groups from the ID token, or from the provider’s UserInfo endpoint when the ID token carries no email, and identifies returning users by their stored subject. New account registration or linking requires the verified-email rules described in <a href="#authentication">Authentication</a>. Calendar OAuth consent and API/MCP grants are separate from OIDC login.</p>
 <h2 id="rendering-and-notifications"><a class="header" href="#rendering-and-notifications">Rendering and notifications</a></h2>
 <p>Minijinja templates use shared layouts and card/list components. Browser interaction uses vanilla JavaScript; there is no Node.js production runtime. Fluent translations and locale-aware formatting cover the dashboard, public flow and notifications. Browser assets are bundled; optional integrations such as an externally hosted captcha can introduce additional requests.</p>
 <p>SMTP supports STARTTLS, implicit TLS and a trusted local relay. Notifications contain HTML and plain text; calendar attachments and provider copies use the booking UID and sequence to track updates. Guest-facing and host-facing content are separate: host notes never enter guest messages, calendar invitations or webhook payloads. Question answers follow their documented <a href="#where-the-answers-appear">visibility rules</a>.</p>
@@ -4384,7 +4459,7 @@ WHERE status IN ('confirmed', 'pending');
 <li><strong>Cancel token</strong> — allows guests to cancel their booking via a link in the confirmation email</li>
 <li><strong>Confirm token</strong> — allows hosts to approve or decline pending bookings via links in the approval request email</li>
 </ul>
-<p>Tokens are UUID v4 (122 random bits), stored with unique indexes in the database. They are not invalidated after use (the booking status check prevents replay — a token for an already-confirmed booking shows “already approved”). These links should be treated as sensitive — anyone with the link can perform the action.</p>
+<p>Tokens are UUID v4 (122 random bits), stored with unique indexes in the database. They are not invalidated after use (the booking status check prevents replay: a token for an already-confirmed booking shows “already approved”). Treat these links as sensitive: anyone with the link can perform the action.</p>
 <h2 id="known-limitations"><a class="header" href="#known-limitations">Known limitations</a></h2>
 <h3 id="caldav-credential-storage"><a class="header" href="#caldav-credential-storage">CalDAV credential storage</a></h3>
 <p>CalDAV and SMTP passwords are encrypted at rest using <strong>AES-256-GCM</strong>. The encryption key is auto-generated at <code>$DATA_DIR/secret.key</code> on first run, or can be provided via the <code>CALRS_SECRET_KEY</code> environment variable. Legacy hex-encoded passwords (from pre-v0.10.0) are auto-migrated to encrypted format on startup. Protect your <code>secret.key</code> file with filesystem permissions.</p>
@@ -4455,11 +4530,11 @@ WHERE status IN ('confirmed', 'pending');
 
         <script src="elasticlunr-ef4e11c1.min.js"></script>
         <script src="mark-09e88c2c.min.js"></script>
-        <script src="searcher-c2a407aa.js"></script>
+        <script src="searcher-09f2665d.js"></script>
 
         <script src="clipboard-1626706a.min.js"></script>
         <script src="highlight-abc7f01d.js"></script>
-        <script src="book-a0b12cfe.js"></script>
+        <script src="book-609e4cb8.js"></script>
 
         <!-- Custom JS scripts -->
 

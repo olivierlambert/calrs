@@ -15,8 +15,8 @@
         <link rel="icon" href="favicon-de23e50b.svg">
         <link rel="shortcut icon" href="favicon-8114d1fc.png">
         <link rel="stylesheet" href="css/variables-8adf115d.css">
-        <link rel="stylesheet" href="css/general-2459343d.css">
-        <link rel="stylesheet" href="css/chrome-ae938929.css">
+        <link rel="stylesheet" href="css/general-e96d0476.css">
+        <link rel="stylesheet" href="css/chrome-d279d366.css">
         <link rel="stylesheet" href="css/print-9e4910d8.css" media="print">
 
         <!-- Fonts -->
@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-d5ebc317.js";
+            window.path_to_searchindex_js = "searchindex-d06ae4eb.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-43543355.js"></script>
+        <script src="toc-47cd7d74.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -244,12 +244,12 @@
 </ul>
 <h2 id="scheduling-modes"><a class="header" href="#scheduling-modes">Scheduling modes</a></h2>
 <h3 id="round-robin"><a class="header" href="#round-robin">Round-robin</a></h3>
-<p>A slot is available if <strong>any</strong> team member is free. The booking is assigned by member priority, then workload (fewest confirmed bookings among equally prioritized available members).</p>
+<p>A slot is available if <strong>any</strong> team member is free. The booking is assigned by member priority, then workload (among equally prioritized available members, the one assigned the fewest bookings over the last 30 days).</p>
 <p>When a booking is submitted:</p>
 <ol>
 <li>calrs finds all team members (with weight &gt; 0)</li>
 <li>For each member, checks if the slot is free (no calendar events or bookings in the buffer window)</li>
-<li>Among available members, prefers the highest configured priority, then the fewest confirmed bookings</li>
+<li>Among available members, prefers the highest configured priority, then the fewest bookings assigned over the last 30 days</li>
 <li>The booking is assigned to that member and written to their configured calendar destination</li>
 <li>If no member is available, the booking is rejected</li>
 </ol>
@@ -385,11 +385,11 @@
 
         <script src="elasticlunr-ef4e11c1.min.js"></script>
         <script src="mark-09e88c2c.min.js"></script>
-        <script src="searcher-c2a407aa.js"></script>
+        <script src="searcher-09f2665d.js"></script>
 
         <script src="clipboard-1626706a.min.js"></script>
         <script src="highlight-abc7f01d.js"></script>
-        <script src="book-a0b12cfe.js"></script>
+        <script src="book-609e4cb8.js"></script>
 
         <!-- Custom JS scripts -->
 
