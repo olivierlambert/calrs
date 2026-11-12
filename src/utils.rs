@@ -855,6 +855,42 @@ END:VCALENDAR";
         assert_eq!(la(11), -8);
     }
 
+    /// tzdata 2026c to 2026f: zones that stopped changing clocks in 2026,
+    /// all in effect by 2026-11-01. tzdata 2026b gave each of them its old
+    /// winter offset, an hour off.
+    #[test]
+    fn tzdata_2026f_permanent_offsets() {
+        use chrono::{NaiveDate, Offset, TimeZone};
+        fn hours(zone: chrono_tz::Tz, y: i32, m: u32, d: u32) -> i32 {
+            let utc = NaiveDate::from_ymd_opt(y, m, d)
+                .unwrap()
+                .and_hms_opt(12, 0, 0)
+                .unwrap();
+            zone.offset_from_utc_datetime(&utc).fix().local_minus_utc() / 3600
+        }
+        use chrono_tz::{Africa, America};
+        // 2026c: Alberta permanent -06 (Yellowknife links to Edmonton).
+        assert_eq!(hours(America::Edmonton, 2026, 1, 15), -7);
+        assert_eq!(hours(America::Edmonton, 2026, 12, 15), -6);
+        assert_eq!(hours(America::Yellowknife, 2027, 1, 15), -6);
+        // 2026c: Morocco permanent +00 from 2026-09-20, Ramadan included.
+        assert_eq!(hours(Africa::Casablanca, 2026, 12, 15), 0);
+        assert_eq!(hours(Africa::Casablanca, 2027, 2, 15), 0);
+        assert_eq!(hours(Africa::Casablanca, 2027, 7, 15), 0);
+        // 2026d: Northwest Territories permanent -06.
+        assert_eq!(hours(America::Inuvik, 2026, 12, 15), -6);
+        // 2026e: Manitoba permanent -05.
+        assert_eq!(hours(America::Winnipeg, 2026, 1, 15), -6);
+        assert_eq!(hours(America::Winnipeg, 2026, 12, 15), -5);
+        // 2026f: Cuba stays on -04 through 2027-11-07.
+        assert_eq!(hours(America::Havana, 2026, 12, 15), -4);
+        assert_eq!(hours(America::Havana, 2027, 2, 15), -4);
+        // Neighbours keep their DST.
+        assert_eq!(hours(America::Denver, 2026, 12, 15), -7);
+        assert_eq!(hours(America::Chicago, 2026, 12, 15), -6);
+        assert_eq!(hours(America::Regina, 2026, 12, 15), -6);
+    }
+
     /// The vendored data is in rearguard form: numeric abbreviations are
     /// spelled out, not the main form's literal `%z`.
     #[test]

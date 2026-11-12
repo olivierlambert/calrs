@@ -1,6 +1,6 @@
 [package]
 name = "calrs"
-version = "1.23.3"
+version = "1.23.4"
 edition = "2021"
 description = "A fast, self-hostable scheduling platform. Like Cal.com, but written in Rust."
 license = "AGPL-3.0"
@@ -99,8 +99,9 @@ http-body-util = "0.1"
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tarpaulin)'] }
 
-# chrono-tz 0.8.6 with its tz data replaced by IANA tzdata 2026b, for British
-# Columbia's move to permanent -07. No chrono-tz release carries 2026 data yet.
+# chrono-tz 0.8.6 with its tz data replaced by IANA tzdata 2026f, for the zones
+# that moved to permanent offsets in 2026. No chrono-tz release carries 2026
+# data yet; scripts/check-tzdata.sh (CI) fails when IANA has a newer release.
 # See vendor/chrono-tz/CALRS.md for how to refresh it, and drop this patch once
 # a chrono-tz release has the data.
 [patch.crates-io]

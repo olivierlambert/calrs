@@ -184,6 +184,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [1.23.4] - 2026-11-12
+
+Timezone data release for the 1.23 line. **Upgrade now** if you, your guests or your calendar events use Alberta, the Northwest Territories, Manitoba, Morocco or Cuba time: the bundled data dated from 2026b, and those zones changed their rules since, most of them already in effect. No migrations, nothing else changes.
+
+### Fixed
+
+- **Timezone data updated to IANA 2026f** (#285, #441) - Four tz releases since 2026b move zones to permanent offsets: Morocco +00 from 2026-09-20, Manitoba (`America/Winnipeg`) -05 from 2026-10-31, Alberta (`America/Edmonton`) and the Northwest Territories -06 from 2026-11-01, and Cuba staying on -04 until 2027-11-07. calrs put every time in those zones an hour off (slots, busy times, emails, invites). Synced calendar events are read correctly again as soon as you upgrade, since they keep their own timezone. Bookings and time off saved while the data was stale keep the instant they were saved with: if hosts or guests in these zones booked since the change, check those bookings' times.
+
+### Internal
+
+- **CI fails when the bundled tz data is stale** (#285) - `scripts/check-tzdata.sh` compares `vendor/chrono-tz/tz` with IANA's latest release on every push and pull request.
+
 ## [1.23.3] - 2026-11-09
 
 Security release for the 1.23 line. It backports three fixes from the 2.0 work; please upgrade. No migrations. Read the two upgrade notes below before upgrading.

@@ -67,3 +67,9 @@ month grid alignment, and week navigation across month boundaries. It also
 checks the column view and browser exceptions. No npm
 packages or real calendars are required. The server and browser stop afterward;
 the printed temporary directory contains the logs and a screenshot.
+
+# Bundled tz database
+
+`scripts/check-tzdata.sh` fails when IANA has published a tz database newer
+than the copy in `vendor/chrono-tz/tz` (#285). CI runs it on every pull
+request and push. `vendor/chrono-tz/CALRS.md` has the refresh steps.
