@@ -52,7 +52,7 @@ Impersonation uses a separate `calrs_impersonate` cookie (24-hour TTL). The real
 
 ## Availability troubleshoot
 
-For each event type, the dashboard offers a **Troubleshoot** link that opens a visual timeline at `/dashboard/troubleshoot?event_type={event_type_id}`:
+For each event type, the dashboard offers a **Troubleshoot** link that opens a visual timeline at `/dashboard/troubleshoot?event_type={event_type_slug}&date=YYYY-MM-DD` (both optional: your first event type and today otherwise):
 
 - Shows availability and conflicts for the selected date
 - Displays why each slot is blocked (calendar event name, existing booking, buffer overlap)
