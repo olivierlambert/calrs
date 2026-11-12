@@ -3650,6 +3650,81 @@ async fn troubleshoot_shows_a_bookings_own_buffers() {
     }
 }
 
+/// Around a calendar event and a time off period, the troubleshoot view
+/// shades the buffers the slot grid applies: the viewed type's buffer_after
+/// before them, its buffer_before after them. They were mirrored, so the
+/// view showed a buffer after the event where the grid offers a slot.
+#[tokio::test]
+async fn troubleshoot_shades_event_and_time_off_buffers_on_the_grids_sides() {
+    let (app, pool, session, et_id) = setup_test_app().await;
+    let (me, account_id): (String, String) = sqlx::query_as(
+        "SELECT u.id, a.id FROM users u JOIN accounts a ON a.user_id = u.id WHERE u.username = 'testuser'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE event_types SET buffer_before = 0, buffer_after = 30 WHERE id = ?")
+        .bind(&et_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let day = far_future_monday();
+    let compact = day.replace('-', "");
+    seed_synced_event(
+        &pool,
+        &account_id,
+        &format!("{compact}T100000"),
+        &format!("{compact}T110000"),
+        "UTC",
+        "OPAQUE",
+    )
+    .await;
+    sqlx::query(
+        "INSERT INTO user_time_off (id, user_id, start_at, end_at, timezone, label) VALUES ('off-rt', ?, ?, ?, 'UTC', NULL)",
+    )
+    .bind(&me)
+    .bind(format!("{day}T14:00:00Z"))
+    .bind(format!("{day}T15:00:00Z"))
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let body = body_string(
+        app.clone()
+            .oneshot(get_authed(
+                &format!("/dashboard/troubleshoot?date={day}&event_type=test-meeting"),
+                &session,
+            ))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(body.contains("09:30&ndash;10:00: Buffer ("), "{body}");
+    assert!(!body.contains("11:00&ndash;11:30: Buffer ("), "{body}");
+    assert!(body.contains("13:30&ndash;14:00: Buffer ("), "{body}");
+    assert!(!body.contains("15:00&ndash;15:30: Buffer ("), "{body}");
+
+    let page = body_string(
+        app.oneshot(get(&format!(
+            "/u/testuser/test-meeting?month={}&tz=UTC",
+            &day[..7]
+        )))
+        .await
+        .unwrap(),
+    )
+    .await;
+    let offered = slot_times_on(&page, &day);
+    for free in ["09:00", "11:00", "15:00"] {
+        assert!(offered.contains(&free.to_string()), "{free}: {offered:?}");
+    }
+    for blocked in ["09:30", "10:00", "13:30", "14:00"] {
+        assert!(
+            !offered.contains(&blocked.to_string()),
+            "{blocked}: {offered:?}"
+        );
+    }
+}
+
 /// A member excluded from a collective event type (weight 0) is not made
 /// busy by its unassigned bookings, the owner included, while the other
 /// members are; and the excluded member's own busy time does not block the

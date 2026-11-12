@@ -106,11 +106,10 @@ pub fn local(value: &str, legacy_tz: Tz, target: Tz) -> Option<NaiveDateTime> {
     if legacy_tz == target {
         return Some(wall);
     }
+    // A wall clock in a skipped hour moves to the first minute after the
+    // gap, as time off does; it was read as UTC, hours away.
     Some(
-        legacy_tz
-            .from_local_datetime(&wall)
-            .earliest()
-            .unwrap_or_else(|| legacy_tz.from_utc_datetime(&wall))
+        crate::time_off::to_utc(legacy_tz, wall, false)?
             .with_timezone(&target)
             .naive_local(),
     )
@@ -159,17 +158,7 @@ pub fn buffered_busy_range(
         if let Ok(t) = DateTime::parse_from_rfc3339(value) {
             return Some(t.with_timezone(&Utc));
         }
-        let wall = naive(value)?;
-        let local = tz.from_local_datetime(&wall);
-        let t = if latest {
-            local.latest()
-        } else {
-            local.earliest()
-        };
-        Some(
-            t.unwrap_or_else(|| tz.from_utc_datetime(&wall))
-                .with_timezone(&Utc),
-        )
+        crate::time_off::to_utc(tz, naive(value)?, latest)
     };
     Some(buffered_local_range(
         instant(start, false)?,
@@ -196,21 +185,9 @@ pub fn stored_buffered_busy_range(
     }
     let start_wall = naive(start)?;
     let end_wall = naive(end)?;
-    let start = legacy_tz
-        .from_local_datetime(&start_wall)
-        .earliest()
-        .unwrap_or_else(|| legacy_tz.from_utc_datetime(&start_wall));
-    let end = legacy_tz
-        .from_local_datetime(&end_wall)
-        .latest()
-        .unwrap_or_else(|| legacy_tz.from_utc_datetime(&end_wall));
-    Some(buffered_local_range(
-        start.with_timezone(&Utc),
-        end.with_timezone(&Utc),
-        target,
-        before,
-        after,
-    ))
+    let start = crate::time_off::to_utc(legacy_tz, start_wall, false)?;
+    let end = crate::time_off::to_utc(legacy_tz, end_wall, true)?;
+    Some(buffered_local_range(start, end, target, before, after))
 }
 
 /// A new booking must identify one instant. Reject nonexistent/ambiguous local
@@ -589,6 +566,39 @@ mod tests {
                 "{zone}, {start}, before={before}, after={after}",
             );
         }
+    }
+
+    /// A legacy wall clock that does not exist (inside the spring gap) is
+    /// read as the first minute after the gap, as time off reads it, not as
+    /// UTC, which moved it by the zone's offset once buffers were applied.
+    #[test]
+    fn a_legacy_time_in_the_spring_gap_moves_past_the_gap() {
+        let paris: Tz = "Europe/Paris".parse().unwrap();
+        assert_eq!(
+            buffered_busy_range("2027-03-28T02:30:00", "2027-03-28T03:30:00", paris, 15, 0),
+            Some((
+                naive("2027-03-28T01:45:00").unwrap(),
+                naive("2027-03-28T03:30:00").unwrap()
+            )),
+        );
+        assert_eq!(
+            stored_buffered_busy_range(
+                "2027-03-28T02:30:00",
+                "2027-03-28T03:30:00",
+                0,
+                paris,
+                Tz::UTC,
+                (0, 0),
+            ),
+            Some((
+                naive("2027-03-28T01:00:00").unwrap(),
+                naive("2027-03-28T01:30:00").unwrap()
+            )),
+        );
+        assert_eq!(
+            local("2027-03-28T02:30:00", paris, Tz::UTC),
+            naive("2027-03-28T01:00:00")
+        );
     }
 
     #[test]
