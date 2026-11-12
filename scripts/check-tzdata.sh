@@ -10,14 +10,27 @@ set -eu
 
 root=$(cd "$(dirname "$0")/.." && pwd)
 ours=$(tr -d '[:space:]' < "$root/vendor/chrono-tz/tz/version")
-latest=$(curl -fsS --retry 3 --max-time 30 https://data.iana.org/time-zones/tzdb/version | tr -d '[:space:]') || {
+# Fetched on its own: in a pipeline the status would be the filter's, and a
+# failed download would read as an empty, "current" version.
+if ! raw=$(curl -fsS --retry 3 --max-time 30 https://data.iana.org/time-zones/tzdb/version); then
     echo "cannot read the latest tz version from data.iana.org" >&2
     exit 2
-}
+fi
+latest=$(printf '%s' "$raw" | tr -d '[:space:]')
 
-case "$ours$latest" in
-    *[!0-9a-z]*) echo "unexpected version strings: '$ours' '$latest'" >&2; exit 2 ;;
-esac
+# A version is a year and one or more letters (2026f). Anything else, empty
+# included, means the check did not run.
+valid() {
+    case "$1" in
+        [0-9][0-9][0-9][0-9][a-z]) return 0 ;;
+        [0-9][0-9][0-9][0-9][a-z][a-z]) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+if ! valid "$ours" || ! valid "$latest"; then
+    echo "unexpected version strings: ours '$ours', latest '$latest'" >&2
+    exit 2
+fi
 
 echo "ours=$ours"
 echo "latest=$latest"
