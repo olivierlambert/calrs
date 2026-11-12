@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>CLI Reference - calrs v2 Documentation</title>
+        <title>CLI Reference - calrs Documentation</title>
 
 
         <!-- Custom HTML head -->
@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-d5ebc317.js";
+            window.path_to_searchindex_js = "searchindex-6d7ef8e0.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-43543355.js"></script>
+        <script src="toc-e4a0ca82.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -137,7 +137,7 @@
                         </button>
                     </div>
 
-                    <h1 class="menu-title">calrs v2 Documentation</h1>
+                    <h1 class="menu-title">calrs Documentation</h1>
 
                     <div class="right-buttons">
                         <a href="print.html" title="Print this book" aria-label="Print this book">
@@ -181,30 +181,17 @@
                 <div id="mdbook-content" class="content">
                     <main>
                         <h1 id="cli-reference"><a class="header" href="#cli-reference">CLI Reference</a></h1>
-<p>Run <code>calrs --help</code> or <code>calrs &lt;command&gt; --help</code> for the options of your installed version. There is no <code>init</code> command; create a user through registration or <code>calrs user create</code>.</p>
 <h2 id="global-options"><a class="header" href="#global-options">Global options</a></h2>
 <pre><code>--data-dir &lt;PATH&gt;    Custom data directory (env: CALRS_DATA_DIR)
 </code></pre>
 <h2 id="commands"><a class="header" href="#commands">Commands</a></h2>
 <h3 id="calrs-source"><a class="header" href="#calrs-source"><code>calrs source</code></a></h3>
-<p>Manage calendar sources. Run these operator commands with the same data directory and key as the server. Source creation and event-type creation select the first scheduling account; use the dashboard for user-specific setup on multi-user instances.</p>
+<p>Manage CalDAV calendar sources.</p>
 <pre><code>calrs source add [OPTIONS]
-    --url &lt;URL&gt;           CalDAV discovery root or EWS endpoint
-    --provider &lt;TYPE&gt;     caldav (default) or ews
-    --email &lt;EMAIL&gt;       EWS Autodiscover address when --url is omitted
+    --url &lt;URL&gt;           CalDAV server URL
     --username &lt;USERNAME&gt; CalDAV username
     --name &lt;NAME&gt;         Display name for this source
     --no-test             Skip the connection test
-    --password-stdin      Read the password from stdin (needs --username, --name and
-                          --url, or --email with --provider ews)
-
-calrs source update &lt;ID&gt; [--name &lt;NAME&gt;] [--url &lt;URL&gt;] [--username &lt;USERNAME&gt;]
-                         [--password | --password-stdin]
-
-calrs source add-google [--name &lt;NAME&gt;]  Google OAuth browser flow
-
-calrs source calendars &lt;ID&gt; [--enable &lt;CALENDAR&gt;] [--disable &lt;CALENDAR&gt;]
-    # Repeat enable/disable as needed; match ID prefix, href or display name
 
 calrs source list
 
@@ -212,13 +199,8 @@ calrs source test &lt;ID&gt;    Test a connection (ID prefix match)
 
 calrs source remove &lt;ID&gt;  Remove a source and all its data (ID prefix match)
 </code></pre>
-<p>An ID prefix that matches several sources is refused: give more of the ID.</p>
-<p>Passwords are read from the terminal with echo off. Scripts (Ansible, CI) pipe them on stdin with <code>--password-stdin</code> instead, the same flag <code>docker login</code> uses; one trailing newline is dropped. Without a terminal and without the flag the command fails rather than store an empty password.</p>
-<pre><code>printf '%s' "$CALDAV_PASSWORD" | calrs source add --url https://cal.example.com/dav/ \
-  --username alice --name Work --password-stdin
-</code></pre>
 <h3 id="calrs-sync"><a class="header" href="#calrs-sync"><code>calrs sync</code></a></h3>
-<p>Pull the latest events from connected calendar sources using their provider.</p>
+<p>Pull latest events from all CalDAV sources.</p>
 <pre><code>calrs sync [OPTIONS]
     --full    Full re-sync (ignore sync tokens)
 </code></pre>
@@ -269,7 +251,7 @@ calrs booking cancel &lt;ID&gt;    Cancel a booking (ID prefix match)
 <p><code>booking create</code> checks the event type’s minimum notice, weekly rules, booking horizon and <a href="./event-types.html#bookable-date-range">bookable date range</a>, like the booking page. It does not apply the page’s 366-day limit, since it books on the host’s behalf.</p>
 <p><code>cancel</code> marks the booking cancelled, sends the cancellation emails, deletes the event from the host’s CalDAV write-back calendar, and releases any <a href="./resources.html">shared resource</a> reservation from the resource’s CalDAV calendar(s).</p>
 <h3 id="calrs-config"><a class="header" href="#calrs-config"><code>calrs config</code></a></h3>
-<p>Configure SMTP, authentication, OIDC, and calendar OAuth clients.</p>
+<p>Configure SMTP, authentication, and OIDC.</p>
 <pre><code>calrs config smtp [OPTIONS]
     --host &lt;HOST&gt;           SMTP server hostname
     --port &lt;PORT&gt;           SMTP port (default: 587)
@@ -279,10 +261,6 @@ calrs booking cancel &lt;ID&gt;    Cancel a booking (ID prefix match)
     --tls-mode &lt;MODE&gt;       starttls (default), tls, or none
 
 calrs config show           Display current configuration
-calrs config dump [--pretty] Export non-secret configuration as JSON
-
-calrs config general [--base-url &lt;URL&gt;] [--allow-private-hosts &lt;HOSTS&gt;]
-    # Empty values clear the stored setting; environment overrides are read-only
 
 calrs config smtp-test &lt;EMAIL&gt;   Send a test email
 
@@ -296,41 +274,7 @@ calrs config oidc [OPTIONS]
     --client-secret &lt;SECRET&gt;  Client secret
     --enabled &lt;BOOL&gt;          Enable/disable OIDC
     --auto-register &lt;BOOL&gt;    Auto-create users on first login
-
-calrs config calendar-oauth --provider &lt;google|microsoft&gt;
-    # Read the client credentials as JSON from standard input
 </code></pre>
-<h4 id="how-to-provision-calendar-oauth-credentials"><a class="header" href="#how-to-provision-calendar-oauth-credentials">How to provision calendar OAuth credentials</a></h4>
-<p>Register a <a href="./google-calendar.html">Google Web client</a> or a
-<a href="./microsoft-calendar.html">Microsoft application</a> first. Import its credentials
-from a protected file or pipe them directly from your secret store:</p>
-<pre><code class="language-bash">calrs config calendar-oauth --provider microsoft &lt; /secure/microsoft-oauth.json
-</code></pre>
-<p>The input is one JSON object, at most 64 KiB:</p>
-<pre><code class="language-json">{
-  "client_id": "YOUR_CLIENT_ID",
-  "client_secret": "YOUR_CLIENT_SECRET",
-  "tenant": "common"
-}
-</code></pre>
-<p>Both client fields are required and must be non-empty. Unknown fields are
-rejected. For Microsoft, <code>tenant</code> is optional: an import without it, or with an empty
-value, keeps the tenant already stored (<code>common</code> on a fresh instance). A
-replacement import therefore keeps authorizing against the previous tenant;
-to change it, including back to <code>common</code>, give it explicitly. The supported
-values are described in the Microsoft guide. For Google, omit <code>tenant</code> entirely.
-This is the normalized object above, not the nested JSON downloaded from
-Google Cloud Console.</p>
-<p>The command encrypts the client secret with the instance’s credential key.
-Neither the command output nor <code>calrs config dump</code> includes the secret.
-Keep that key when moving or restoring the database. Do not put secrets in
-command-line arguments or shell history. This configures the application
-client; each user must still connect their calendar and grant consent.</p>
-<p>The command prints <code>Calendar OAuth credentials configured for microsoft.</code>
-on success. Check the corresponding admin configuration card, then connect
-a calendar from <strong>Calendar sources</strong>. A replacement client ID requires
-users to authorize the new application; rotating a secret for the same
-client ID does not replace their saved calendar selections.</p>
 <h4 id="relaying-through-a-local-mta"><a class="header" href="#relaying-through-a-local-mta">Relaying through a local MTA</a></h4>
 <p>Leaving the username empty configures an unauthenticated relay, which is how you
 send through a local MTA (Postfix, OpenSMTPD, Stalwart, Mailpit). calrs then
@@ -383,7 +327,6 @@ password never reached the process.</p>
 <pre><code>calrs resource probe [OPTIONS]
     --url &lt;URL&gt;           Resource calendar URL (ICS publish feed or CalDAV collection)
     --username &lt;USERNAME&gt; Username for authenticated CalDAV access (password prompted)
-    --password-stdin      Read the password from stdin (needs --username)
     --write-test          Write test: PUT a temporary event, verify it exists, then delete it
 </code></pre>
 <p>For CalDAV URLs the probe runs the full RFC 4791 discovery fallback. The write test confirms that reservation write-back will work with the given credentials.</p>
@@ -393,11 +336,10 @@ password never reached the process.</p>
     --email &lt;EMAIL&gt;    User email
     --name &lt;NAME&gt;      User display name
     --admin            Grant admin role
-    --password-stdin   Read the password from stdin (needs --email and --name)
 
 calrs user list
 
-calrs user set-password &lt;EMAIL&gt; [--password-stdin]   # Also signs out all of its sessions
+calrs user set-password &lt;EMAIL&gt;        # Also signs out all of its sessions
 calrs user reset-mfa &lt;EMAIL&gt;           # Reset local MFA and revoke all sessions
 
 calrs user promote &lt;EMAIL&gt;     Promote to admin
@@ -407,24 +349,18 @@ calrs user demote &lt;EMAIL&gt;      Demote to regular user
 calrs user disable &lt;EMAIL&gt;     Disable user account
 
 calrs user enable &lt;EMAIL&gt;      Enable user account
-
-calrs user time-off add &lt;EMAIL&gt; --from &lt;WHEN&gt; [--to &lt;WHEN&gt;] [--label &lt;NOTE&gt;] [--timezone &lt;TZ&gt;]
-calrs user time-off list &lt;EMAIL&gt;
-calrs user time-off remove &lt;EMAIL&gt; &lt;ID&gt;
 </code></pre>
-<p><code>time-off</code> manages a user’s <a href="./event-types.html#time-off">time off</a>, the periods they take no bookings on any event type they host. <code>&lt;WHEN&gt;</code> is a date (<code>2026-12-21</code>) or a date and time (<code>2026-12-21T14:00</code>). <code>--to</code> is the last day, included, and defaults to <code>--from</code>; with a time it is the end time. Dates are read in the user’s profile time zone unless <code>--timezone</code> says otherwise. <code>list</code> prints the ids <code>remove</code> takes; its end times are exclusive. Bookings already in a period are kept.</p>
 <h3 id="calrs-serve"><a class="header" href="#calrs-serve"><code>calrs serve</code></a></h3>
 <p>Start the web server.</p>
 <pre><code>calrs serve [OPTIONS]
     --port &lt;PORT&gt;    Port to listen on (default: 3000)
-    --host &lt;IP&gt;      Bind address (default: 127.0.0.1; use 0.0.0.0 for all IPv4 interfaces)
 </code></pre>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="upgrading.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="deployment.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
@@ -438,7 +374,7 @@ calrs user time-off remove &lt;EMAIL&gt; &lt;ID&gt;
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="upgrading.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="deployment.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 

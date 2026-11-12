@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Authentik (OIDC SSO) - calrs v2 Documentation</title>
+        <title>Authentik (OIDC SSO) - calrs Documentation</title>
 
 
         <!-- Custom HTML head -->
@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-d5ebc317.js";
+            window.path_to_searchindex_js = "searchindex-6d7ef8e0.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-43543355.js"></script>
+        <script src="toc-e4a0ca82.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -137,7 +137,7 @@
                         </button>
                     </div>
 
-                    <h1 class="menu-title">calrs v2 Documentation</h1>
+                    <h1 class="menu-title">calrs Documentation</h1>
 
                     <div class="right-buttons">
                         <a href="print.html" title="Print this book" aria-label="Print this book">
@@ -259,7 +259,7 @@ calrs config oidc \
   --enabled true \
   --auto-register true
 </code></pre>
-<p>You can also do this from <strong>Admin → Sign-in and security → OIDC</strong>. Once enabled, the login page shows a
+<p>You can also do this from <strong>Admin → OIDC</strong>. Once enabled, the login page shows a
 <strong>“Sign in with SSO”</strong> button.</p>
 <hr>
 <h2 id="4-fix-email_verified-authentik-202510"><a class="header" href="#4-fix-email_verified-authentik-202510">4. Fix <code>email_verified</code> (Authentik 2025.10+)</a></h2>
@@ -337,7 +337,7 @@ impersonation</strong>, this gives a zero-touch onboarding flow:</p>
 <li>calrs auto-registers them with the email from the (now verified) <code>email</code>
 claim.</li>
 <li>If global EWS impersonation has <strong>auto-provision</strong> enabled
-(<strong>Admin → Sign-in and security → Exchange</strong>), calrs immediately provisions a managed Exchange source
+(<strong>Admin → EWS</strong>), calrs immediately provisions a managed Exchange source
 for that user, impersonating their email — their calendar starts syncing with
 no manual source setup.</li>
 </ol>
@@ -345,7 +345,7 @@ no manual source setup.</li>
 <p>Impersonation targets the user’s email as their Exchange SMTP address. If the
 address Authentik sends differs from the mailbox domain (e.g. Authentik issues
 <code>alice@example.com</code> but the mailbox is <code>alice@example.local</code>), set the
-<strong>Impersonation domain</strong> override in <strong>Admin → Sign-in and security → Exchange</strong>. calrs keeps the local part
+<strong>Impersonation domain</strong> override in <strong>Admin → EWS</strong>. calrs keeps the local part
 and swaps the domain, so impersonation resolves to the real mailbox. Validate
 this on one or two accounts before rolling out broadly.</p>
 <hr>
@@ -359,7 +359,7 @@ this on one or two accounts before rolling out broadly.</p>
 <tr><td>Authentik shows <strong>“Redirect URI Error”</strong></td><td>The redirect URI in the provider doesn’t match <code>{CALRS_BASE_URL}/auth/oidc/callback</code></td><td>Set the provider redirect URI to exactly <code>https://&lt;host&gt;/auth/oidc/callback</code> and make sure <code>CALRS_BASE_URL</code> matches (host, scheme, and the <code>/auth/</code> segment)</td></tr>
 <tr><td><strong>“Authentication failed”</strong> after returning from Authentik; logs show <code>email_verified=true</code> not asserted</td><td>Authentik 2025.10+ returns <code>email_verified: false</code> by default</td><td>Apply <a href="#4-fix-email_verified-authentik-202510">step 4</a></td></tr>
 <tr><td><strong>“An account with this email already exists … not verified”</strong></td><td>A local account with that email exists, but <code>email_verified</code> is false so calrs won’t auto-link it</td><td>Same as above — assert <code>email_verified: true</code></td></tr>
-<tr><td>Login works but no calendar appears</td><td>Global EWS auto-provision is off, or the impersonation target domain is wrong</td><td>Enable auto-provision and/or set the impersonation domain override in <strong>Admin → Sign-in and security → Exchange</strong></td></tr>
+<tr><td>Login works but no calendar appears</td><td>Global EWS auto-provision is off, or the impersonation target domain is wrong</td><td>Enable auto-provision and/or set the impersonation domain override in <strong>Admin → EWS</strong></td></tr>
 <tr><td>ID token signature / discovery errors</td><td>No signing key on the provider</td><td>Assign a certificate as the provider’s <strong>Signing Key</strong></td></tr>
 </tbody>
 </table>
@@ -371,7 +371,7 @@ and local-account options.</p>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="api.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="authentication.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
@@ -385,7 +385,7 @@ and local-account options.</p>
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="api.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="authentication.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 

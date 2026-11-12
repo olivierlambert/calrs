@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Security - calrs v2 Documentation</title>
+        <title>Security - calrs Documentation</title>
 
 
         <!-- Custom HTML head -->
@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-d5ebc317.js";
+            window.path_to_searchindex_js = "searchindex-6d7ef8e0.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-43543355.js"></script>
+        <script src="toc-e4a0ca82.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -137,7 +137,7 @@
                         </button>
                     </div>
 
-                    <h1 class="menu-title">calrs v2 Documentation</h1>
+                    <h1 class="menu-title">calrs Documentation</h1>
 
                     <div class="right-buttons">
                         <a href="print.html" title="Print this book" aria-label="Print this book">
@@ -200,27 +200,11 @@ phishing-resistant. See <a href="authentication.html#two-factor-authentication-t
 <ul>
 <li><strong>10 attempts</strong> per <strong>15-minute window</strong></li>
 <li>After the limit, further attempts return an error without checking credentials</li>
-<li>The client address is the TCP peer, or, when the peer is a trusted proxy, the address that proxy reports in <code>X-Forwarded-For</code> (see below)</li>
+<li>The client IP is read from the <code>X-Forwarded-For</code> header (set by your reverse proxy)</li>
 </ul>
-<p>The same rule identifies the client for every per-address limit (sign-in, two-factor codes, bookings, OAuth). An IPv6 client counts by its /64, so rotating addresses inside it does not buy a new budget.</p>
-<h3 id="trusted-proxies"><a class="header" href="#trusted-proxies">Trusted proxies</a></h3>
-<p>calrs believes <code>X-Forwarded-For</code> only from a <strong>trusted proxy</strong>. It joins every <code>X-Forwarded-For</code> line in the order they arrived (HAProxy adds a line of its own rather than extending the client’s) and reads the list right to left, skipping the hops that are themselves trusted proxies; the first address that is not one is the client. A port on a hop (<code>198.51.100.7:5678</code>, <code>[2001:db8::1]:443</code>) is dropped. A hop that is not an address at all stops the walk, and every such request shares one bucket of its own, never the proxy’s. A peer that is not trusted is the client itself, and whatever <code>X-Forwarded-For</code> it sends is ignored, so a client cannot claim a fresh address on every attempt. <code>X-Real-IP</code> and <code>Forwarded</code> (RFC 7239) are ignored: configure your proxy to set <code>X-Forwarded-For</code>.</p>
-<p>The trusted list is, in order of precedence:</p>
-<ol>
-<li><code>CALRS_TRUSTED_PROXIES</code>: a comma or space separated list of addresses and CIDR ranges (<code>127.0.0.1, 10.0.0.0/8, fd00::/8</code>), or <code>none</code> to trust no peer. A <code>/0</code> range (<code>0.0.0.0/0</code>, <code>::/0</code>) is refused, since it would trust every peer. An unusable or refused value trusts no peer and logs an error.</li>
-<li><strong>Trusted proxies</strong> in the admin panel (System settings), same format. Empty means the default.</li>
-<li>The default: loopback (<code>127.0.0.0/8</code>, <code>::1</code>), private (<code>10.0.0.0/8</code>, <code>172.16.0.0/12</code>, <code>192.168.0.0/16</code>), unique local (<code>fc00::/7</code>) and link-local (<code>169.254.0.0/16</code>, <code>fe80::/10</code>).</li>
-</ol>
-<p>What this means for common setups:</p>
-<ul>
-<li><strong>Caddy or Nginx on the same host, or on the same Docker network</strong>: works out of the box, the proxy’s address is in the default list. Make sure it sets <code>X-Forwarded-For</code> (Caddy does; Nginx needs the line below).</li>
-<li><strong>Docker’s userland proxy</strong> (ports published over IPv6, or hairpin connections from the host): every client arrives from the bridge gateway, a trusted address that sends no header, so all clients share one rate-limit bucket and one person mistyping a password can lock everyone out for 15 minutes. Put the reverse proxy in front, or publish the port with the userland proxy disabled so calrs sees real client addresses.</li>
-<li><strong>calrs exposed directly on a LAN, no proxy</strong>: by default LAN peers are trusted, so a LAN client could forge <code>X-Forwarded-For</code>. Set <code>CALRS_TRUSTED_PROXIES=none</code>.</li>
-<li><strong>Behind a proxy, with LAN users</strong>: the default trusts every private address, so a LAN user whose request goes through the proxy can still add a forged private hop that calrs skips. List only the proxy’s own address (<code>CALRS_TRUSTED_PROXIES=127.0.0.1</code>, or its Docker address) rather than relying on the default ranges.</li>
-<li><strong><code>none</code> behind a proxy</strong> turns every client into the proxy’s address: one bucket for everyone, and the OAuth per-address client cap (see the MCP docs) then counts every registration as coming from one address. Use <code>none</code> only when nothing sits in front of calrs.</li>
-<li><strong>calrs exposed directly on the internet</strong>: public peers are never trusted by default, so each client is counted by its own address.</li>
-<li><strong>A proxy on a public address</strong> (a load balancer, a CDN): list its addresses or ranges, otherwise every client is counted as the proxy.</li>
-</ul>
+<blockquote>
+<p><strong>Important:</strong> Make sure your reverse proxy sets <code>X-Forwarded-For</code> correctly. Without it, rate limiting falls back to a single “unknown” bucket and won’t be effective.</p>
+</blockquote>
 <h3 id="nginx"><a class="header" href="#nginx">Nginx</a></h3>
 <pre><code class="language-nginx">proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
 </code></pre>
@@ -231,10 +215,7 @@ phishing-resistant. See <a href="authentication.html#two-factor-authentication-t
 <ul>
 <li><strong>10 attempts</strong> per <strong>5-minute window</strong></li>
 <li>Applies to all booking handlers (user, team, and legacy)</li>
-<li>The client is identified as for sign-in (see <a href="#trusted-proxies">Trusted proxies</a>)</li>
-<li>The counts are also stored in the database (<code>rate_limit_counters</code>) and read back at startup, so restarting calrs does not reset them; closed windows are pruned every 5 minutes</li>
 </ul>
-<p>Login and the other limits are kept in memory and start over when calrs restarts.</p>
 <h2 id="csrf-protection"><a class="header" href="#csrf-protection">CSRF protection</a></h2>
 <p>All POST forms are protected against cross-site request forgery using the <strong>double-submit cookie</strong> pattern:</p>
 <ul>
@@ -243,12 +224,12 @@ phishing-resistant. See <a href="authentication.html#two-factor-authentication-t
 <li>On submission, the server verifies that the cookie value matches the form field</li>
 <li>Mismatches return a <code>403 Forbidden</code> response</li>
 </ul>
-<p>This protects browser form submissions, including bookings, settings, admin actions and authentication. Bearer-authenticated REST API and MCP requests use their own token and origin policies rather than the browser form token. Multipart forms (avatar/logo/favicon upload) pass the token via query parameter.</p>
+<p>This protects all 31 POST endpoints including booking submissions, settings changes, admin actions, and authentication forms. Multipart forms (avatar/logo/favicon upload) pass the token via query parameter.</p>
 <p>The cookie uses <code>SameSite=Lax</code> and is intentionally NOT <code>HttpOnly</code> so the client-side script can read it.</p>
 <h2 id="input-validation"><a class="header" href="#input-validation">Input validation</a></h2>
 <p>All user-submitted data is validated server-side:</p>
 <ul>
-<li><strong>Booking forms</strong> — name (1–255 chars), email (format + length), notes (max 5,000 chars), date and booking-window constraints</li>
+<li><strong>Booking forms</strong> — name (1–255 chars), email (format + length), notes (max 5,000 chars), date (max 365 days in the future)</li>
 <li><strong>Registration</strong> — name (1–255 chars), email format and length validation</li>
 <li><strong>Settings</strong> — name length, booking email format validation</li>
 <li><strong>Avatar upload</strong> — strict content-type whitelist (JPEG, PNG, GIF, WebP only)</li>
@@ -262,17 +243,16 @@ phishing-resistant. See <a href="authentication.html#two-factor-authentication-t
 </ul>
 <p>This prevents attackers from injecting arbitrary iCalendar properties (e.g., extra attendees, recurrence rules) through booking form fields.</p>
 <h2 id="sql-injection"><a class="header" href="#sql-injection">SQL injection</a></h2>
-<p>User-supplied values are passed through parameterized <code>sqlx</code> bindings. Dynamically selected ordering and query fragments come from controlled code paths rather than raw user input.</p>
+<p>All database queries use parameterized bindings via <code>sqlx</code>. No SQL is constructed through string concatenation.</p>
 <h2 id="xss-cross-site-scripting"><a class="header" href="#xss-cross-site-scripting">XSS (cross-site scripting)</a></h2>
-<p>Minijinja auto-escapes ordinary template values. Rich descriptions use a restricted Markdown renderer before their HTML is marked safe; links are limited to supported schemes. Uploaded images are restricted by type and size, and pages have a Content Security Policy.</p>
+<p>All HTML output is rendered through Minijinja, which <strong>auto-escapes</strong> all template variables by default. No <code>|safe</code> or <code>|raw</code> filters are used.</p>
 <h2 id="double-booking-prevention"><a class="header" href="#double-booking-prevention">Double-booking prevention</a></h2>
-<p>A SQLite partial unique index prevents duplicate starts for the same event type and assigned member. A round-robin slot can therefore serve different members:</p>
+<p>A SQLite partial unique index prevents two bookings for the same event type and time slot:</p>
 <pre><code class="language-sql">CREATE UNIQUE INDEX idx_bookings_no_overlap
-ON bookings(event_type_id, start_at, COALESCE(assigned_user_id, ''))
+ON bookings(event_type_id, start_at)
 WHERE status IN ('confirmed', 'pending');
 </code></pre>
-<p>Every new booking, guest reschedule and approval also runs its availability checks and the write that claims the time under one process-wide lock (<code>resources::booking_lock()</code>), so concurrent requests are checked one after the other and each sees the bookings committed before it, including bookings of the host’s other event types, which the index does not cover. The database transaction only wraps the writes and is opened after the checks, so no request waits for a pool connection while holding one. Nothing under the lock touches the network: resource feeds and calendars are refreshed before it is taken, and the checks under it read cached data. The lock lives in the server process: <code>calrs booking create</code>, run from another process, relies on the unique index and the database checks only.</p>
-<p>At booking time an availability read that fails (calendar events, bookings, time off, working hours, shared resources) refuses the request with an internal error instead of treating the host as free. Slot pages degrade softly: they log the error and show what they could read.</p>
+<p>Additionally, all booking handlers wrap the availability check and INSERT in a database transaction (<code>BEGIN IMMEDIATE</code>), preventing race conditions between concurrent requests.</p>
 <h2 id="error-handling"><a class="header" href="#error-handling">Error handling</a></h2>
 <p>Web handlers use explicit error handling instead of panics. Template rendering failures, date parsing errors, and database errors return user-friendly HTTP error responses rather than crashing the server process.</p>
 <h2 id="token-based-actions"><a class="header" href="#token-based-actions">Token-based actions</a></h2>
@@ -281,19 +261,15 @@ WHERE status IN ('confirmed', 'pending');
 <li><strong>Cancel token</strong> — allows guests to cancel their booking via a link in the confirmation email</li>
 <li><strong>Confirm token</strong> — allows hosts to approve or decline pending bookings via links in the approval request email</li>
 </ul>
-<p>Tokens are UUID v4 (122 random bits), stored with unique indexes in the database. They are not invalidated after use (the booking status check prevents replay — a token for an already-confirmed booking shows “already approved”). These links should be treated as sensitive — anyone with the link can perform the action.</p>
+<p>Tokens are UUID v4 (128-bit random), stored with unique indexes in the database. They are not invalidated after use (the booking status check prevents replay — a token for an already-confirmed booking shows “already approved”). These links should be treated as sensitive — anyone with the link can perform the action.</p>
 <h2 id="known-limitations"><a class="header" href="#known-limitations">Known limitations</a></h2>
 <h3 id="caldav-credential-storage"><a class="header" href="#caldav-credential-storage">CalDAV credential storage</a></h3>
 <p>CalDAV and SMTP passwords are encrypted at rest using <strong>AES-256-GCM</strong>. The encryption key is auto-generated at <code>$DATA_DIR/secret.key</code> on first run, or can be provided via the <code>CALRS_SECRET_KEY</code> environment variable. Legacy hex-encoded passwords (from pre-v0.10.0) are auto-migrated to encrypted format on startup. Protect your <code>secret.key</code> file with filesystem permissions.</p>
-<p>In memory, the key and the decrypted credentials calrs holds are kept in buffers that are wiped when released (<code>zeroize</code>): the key and its long-lived copies, the plaintext returned by every decryption, the CalDAV, EWS and SMTP passwords and SMS gateway secrets in calrs’s own configuration and client structures, OAuth access tokens, and the captcha, meeting webhook and EWS service-account secrets the server keeps for its whole life; the AES key schedule is wiped too. This narrows what a core dump or a later memory disclosure could reveal. It does not reach the copies that libraries make while using a credential (the HTTP client’s request headers, the SMTP client’s credentials, the OpenID Connect client secret) or the <code>CALRS_SECRET_KEY</code> value in the process environment, which the operating system keeps for the life of the process.</p>
-<h3 id="password-login-limits"><a class="header" href="#password-login-limits">Password login limits</a></h3>
-<p>Password login rate limiting is per-IP rather than a permanent account lockout. A distributed password attack can evade a single IP bucket. Local TOTP additionally has a per-account escalating delay; see <a href="./authentication.html#two-factor-authentication-totp">MFA</a>. Consider using fail2ban or your reverse proxy’s rate limiting for additional protection.</p>
+<h3 id="no-brute-force-account-lockout"><a class="header" href="#no-brute-force-account-lockout">No brute-force account lockout</a></h3>
+<p>Rate limiting is per-IP, not per-account. A distributed attack from many IPs would not be rate-limited. Consider using fail2ban or your reverse proxy’s rate limiting for additional protection.</p>
 <h3 id="ssrf-server-side-request-forgery"><a class="header" href="#ssrf-server-side-request-forgery">SSRF (server-side request forgery)</a></h3>
-<p>CalDAV and EWS source URLs are user-supplied, and resource feeds, the organization-wide Exchange endpoint and booking webhooks are supplied by admins or users. When one is saved, <code>validate_caldav_url()</code> (or the webhook check) refuses a URL whose hostname resolves to a private or reserved IP range (loopback, RFC1918, link-local, CGNAT, ULA, IPv6 forms that carry such an IPv4 address, etc.).</p>
-<p>The requests themselves do not rely on that first lookup. Every client that fetches one of these URLs (CalDAV, EWS and Autodiscover, resource feeds and their CalDAV collections, booking webhooks, the <code>calrs resource probe</code> command) resolves the host itself at each connection, refuses the connection when any address is private or reserved, and connects only to the addresses it checked, so a DNS answer that changes between the check and the request cannot send it to an internal host. This also covers hosts a server names on its own (CalDAV hrefs on another host, redirects): a host name goes through the same check. An IP literal never needs a lookup, so it is checked against the allowlist at every request instead, the saved URL’s own literal included: a source on a private IP literal stops working when its entry is removed from the allowlist. A refused request records a generic error on the sources page and in the owner’s alert email; the address itself is only logged, at warn level, for the administrator. List an IP literal in the allowlist the way it appears in the URL, without brackets for IPv6 (<code>10.0.0.5</code>, <code>fd00::1</code>); any spelling of the same address matches.</p>
-<h4 id="behind-an-outbound-proxy"><a class="header" href="#behind-an-outbound-proxy">Behind an outbound proxy</a></h4>
-<p>Calendar requests honour <code>HTTP_PROXY</code>, <code>HTTPS_PROXY</code>, <code>ALL_PROXY</code> and <code>NO_PROXY</code> (lowercase forms too), since many deployments, on-prem Exchange ones especially, reach the outside only through one. A request that goes through the proxy cannot be pinned by calrs: the proxy resolves the host name, not calrs. For those requests the URL is still checked when it is saved, server-supplied IP literals and redirects are still checked, and calrs only resolves the proxy’s own host (exempt from the check, since you configured it); <strong>filtering private addresses is then the proxy’s job</strong>, so configure it to refuse internal destinations. calrs logs this when it starts, for every command. Hosts that <code>NO_PROXY</code> sends direct get the full check and pinning. A URL, server-supplied href or redirect that names a proxy’s own host (on any port) is refused unless that host is on the private-host allowlist, since calendar URLs never need to target the proxy itself. Only <code>http://</code> and <code>https://</code> proxies are used (a setting without a scheme counts as <code>http://</code>). This build has no SOCKS support: a <code>socks5://</code> proxy setting is ignored, logged at startup, and the requests it would have carried go direct, checked and pinned. Booking webhooks never use a proxy.</p>
-<p>Left out on purpose: the fixed Google and Microsoft endpoints (constants, not configuration), and the admin-configured captcha server, meeting webhook, SMS gateway and OIDC issuer, which were never under the private-host policy because pointing them at a service on the local network is their usual setup. They take the same proxy settings as calendar requests (only <code>http://</code> and <code>https://</code> proxies, <code>NO_PROXY</code> honoured). An egress firewall that keeps calrs away from internal ranges remains good practice.</p>
+<p>CalDAV source URLs are user-supplied. <code>validate_caldav_url()</code> blocks URLs whose hostname resolves to a private or reserved IP range (loopback, RFC1918, link-local, ULA, etc.) before any HTTP request is issued.</p>
+<p>This check resolves the hostname once at validation time, so a DNS-rebinding attacker who answers the initial lookup with a public IP and a subsequent lookup (during the actual HTTP fetch) with a private IP can bypass the guard. Mitigating this purely at the application layer would require inspecting the connected socket’s peer address after every TCP handshake, which is outside the scope of the current implementation. The recommended deployment posture is therefore an <strong>egress firewall</strong> that prevents calrs from reaching RFC1918 / link-local ranges regardless of what DNS returns.</p>
 <h4 id="allowing-private-caldav-hosts-self-hosting"><a class="header" href="#allowing-private-caldav-hosts-self-hosting">Allowing private CalDAV hosts (self-hosting)</a></h4>
 <p>Self-hosted deployments often run calrs and the CalDAV server on the same private network (e.g. a docker-compose stack where <code>http://radicale:5232</code> resolves to an RFC1918 address). To permit specific hostnames to resolve to private/reserved IPs, configure a comma-separated allowlist of hostnames (or literal IPs). Two ways, in order of precedence:</p>
 <ol>

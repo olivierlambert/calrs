@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>SMS Notifications - calrs v2 Documentation</title>
+        <title>SMS Notifications - calrs Documentation</title>
 
 
         <!-- Custom HTML head -->
@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-d5ebc317.js";
+            window.path_to_searchindex_js = "searchindex-6d7ef8e0.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-43543355.js"></script>
+        <script src="toc-e4a0ca82.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -137,7 +137,7 @@
                         </button>
                     </div>
 
-                    <h1 class="menu-title">calrs v2 Documentation</h1>
+                    <h1 class="menu-title">calrs Documentation</h1>
 
                     <div class="right-buttons">
                         <a href="print.html" title="Print this book" aria-label="Print this book">
@@ -214,7 +214,7 @@
 <p>Hosts are not texted; there is no phone number on a user account. Messages are short by design and are translated into the language the guest booked in.</p>
 <p>Sending is best-effort: a gateway outage, an unconfigured gateway, or a number the gateway refuses are all logged and never block a booking or fail a page.</p>
 <h2 id="configuring-the-gateway"><a class="header" href="#configuring-the-gateway">Configuring the gateway</a></h2>
-<p>Go to <strong>Dashboard &gt; Admin &gt; Email and SMS &gt; SMS settings</strong>. Pick a gateway and the form relabels itself for it, because the fields are named differently by each vendor.</p>
+<p>Go to <strong>Dashboard &gt; Admin &gt; SMS settings</strong>. Pick a gateway and the form relabels itself for it, because the fields are named differently by each vendor.</p>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -231,13 +231,13 @@
 <p>Two settings apply whichever gateway you pick:</p>
 <ul>
 <li><strong>Default country code</strong> normalises phone numbers guests type in local form. A French guest typing <code>06 12 34 56 78</code> on an instance set to <code>+33</code> is stored as <code>+33612345678</code>. Numbers starting with <code>+</code> or <code>00</code> are taken as written, whatever this is set to.</li>
-<li><strong>Daily limit</strong> caps billed segments per day (the UTC day) across the whole instance, test messages included. <code>0</code> means no limit. See <a href="#keeping-the-bill-bounded">Keeping the bill bounded</a> and <a href="#message-content-and-cost">Message content and cost</a>.</li>
+<li><strong>Daily limit</strong> caps messages per day across the whole instance. <code>0</code> means no limit. See <a href="#keeping-the-bill-bounded">Keeping the bill bounded</a>.</li>
 </ul>
 <p>The secret is encrypted at rest (AES-256-GCM), like every other stored credential. It is never displayed again: leaving the field empty when saving keeps the current value. Switching to a different gateway does require entering that gateway’s own credential, since the stored one belongs to the previous vendor.</p>
 <h3 id="testing-it"><a class="header" href="#testing-it">Testing it</a></h3>
 <p><strong>Test gateway</strong> does one of two things:</p>
 <ul>
-<li>With a phone number, it sends a real message to it, which costs what a message costs. It is counted in today’s figures and against the daily limit like any other message, and refused once the limit is reached.</li>
+<li>With a phone number, it sends a real message to it, which costs what a message costs.</li>
 <li>With the field left empty, it verifies your credentials without sending anything, for gateways that offer a way to do that (Twilio and seven.io do; GatewayAPI and the webhook do not, and will tell you to send a real test instead).</li>
 </ul>
 <p>Failures report what the gateway actually said, normalised across vendors: rejected credentials, a refused recipient, a refused sender, insufficient credit, or rate limiting.</p>
@@ -255,7 +255,7 @@
 <tr><td><code>CALRS_SMS_SENDER</code></td><td>From-number or sender ID</td></tr>
 <tr><td><code>CALRS_SMS_BASE_URL</code></td><td>Region or self-hosted endpoint; the target URL for the webhook provider</td></tr>
 <tr><td><code>CALRS_SMS_DEFAULT_COUNTRY_CODE</code></td><td>e.g. <code>+33</code></td></tr>
-<tr><td><code>CALRS_SMS_DAILY_CAP</code></td><td>Billed segments per day, <code>0</code> for no limit</td></tr>
+<tr><td><code>CALRS_SMS_DAILY_CAP</code></td><td>Messages per day, <code>0</code> for no limit</td></tr>
 </tbody>
 </table>
 </div>
@@ -268,7 +268,7 @@
 <li>It is read from the environment only. There is no database column and no admin field, so it cannot be switched on from the panel and left on by accident.</li>
 <li>It sits outside the all-or-nothing <code>CALRS_SMS_*</code> block and is read on its own, so it works with a database-stored configuration too.</li>
 <li>The admin SMS card shows a warning while it is active, and every send logs one. All four events look identical on the handset once the template is substituted, so the log is the only place to tell them apart.</li>
-<li>calrs refuses to send the template to a full account. That is the one way this can cost money rather than save it: on a paid account the template name is just text, so a flag left set after an upgrade would text every guest the literal string <code>sms_appointment_reminders</code> at full price. Before its first send, and again every hour or when the configuration changes, calrs reads the account type (a free request) and, on a full account, sends nothing and logs an error; bookings and their emails go on. The same check runs at startup, so the error is in the log at once, and <strong>Test gateway</strong> with the recipient left empty reports it too. If the account cannot be read, nothing is sent either.</li>
+<li><strong>Test gateway</strong> with the recipient left empty refuses outright if the variable is set on a full account. That is the one way this can cost money rather than save it: on a paid account the template name is just text, so a flag left set after an upgrade would text every guest the literal string <code>sms_appointment_reminders</code> at full price.</li>
 <li>Trial accounts only reach numbers verified in the Twilio console, up to five of them.</li>
 </ul>
 <p>Unset the variable, or set it to anything other than <code>1</code>/<code>true</code>/<code>yes</code>/<code>on</code>, to go back to real message bodies.</p>
@@ -324,13 +324,13 @@
 <ol>
 <li><strong>Restrict destination countries at your gateway.</strong> Twilio calls this Messaging Geo Permissions; disable every country you do not serve. GatewayAPI and seven.io have equivalent destination controls. This is free, it happens before calrs is involved, and it removes the expensive-route incentive entirely.</li>
 <li><strong>Keep the gateway account prepaid, without auto-recharge.</strong> Whatever goes wrong then costs at most the float on the account.</li>
-<li><strong>Set a daily limit</strong> in the admin SMS card, in billed segments. Past it, calrs stops texting and keeps sending email, so bookings keep working while the spend stops. Each message reserves its estimated segments before it is sent, so a burst of bookings cannot overshoot the limit, and the reservation is corrected to what the gateway reports, or given back if the gateway refuses the message. When the request may have reached the gateway without a usable answer (a timeout once it was sent, a dropped connection, a server error at the gateway, an answer that cannot be read), the message may have been sent and billed anyway, so calrs keeps counting it and shows it in the card as having no answer from the gateway. A request that never left (connection refused, a DNS or TLS failure) is not counted. “Today” is the UTC day. Today’s messages, segments and cost are shown in the same card, test messages included.</li>
+<li><strong>Set a daily limit</strong> in the admin SMS card. Past it, calrs stops texting and keeps sending email, so bookings keep working while the spend stops. Today’s count and cost are shown in the same card.</li>
 <li><strong>Leave the captcha on.</strong> An SMS-enabled booking form without a captcha is an open relay someone else pays for. The admin panel warns you when SMS is configured and the captcha is not.</li>
 </ol>
 <p>Booking endpoints are also rate limited per IP (10 requests per 5 minutes), which bounds the rate but not a distributed attempt, so it is not a substitute for the four above.</p>
 <h2 id="message-content-and-cost"><a class="header" href="#message-content-and-cost">Message content and cost</a></h2>
-<p>Messages are billed per segment: a message of up to 160 characters in the GSM-7 alphabet is one segment, but only up to 70 if the text contains a single character outside it, which includes most accented letters. A longer message is split into parts of 153 characters (67 outside GSM-7), each billed as a segment. Outside GSM-7 the count is in UTF-16 code units, so an emoji counts as two characters. calrs keeps its messages inside two segments in every shipped language, and shortens long event titles so the date and time always survive.</p>
-<p>The daily limit counts segments, not messages, because segments are what you pay for: a limit of 100 allows 100 short messages but only 50 that run to two segments. The gateway reports segments and cost where it can, and calrs records them so the admin panel can show today’s spend; when the gateway reports no segment count (GatewayAPI and the webhook; Twilio and seven.io do report it), calrs records its own estimate. That usage ledger stores no phone numbers.</p>
+<p>Messages are billed per segment: 160 characters for the GSM-7 alphabet, but only 70 if the text contains a single character outside it, which includes most accented letters. calrs keeps its messages inside two segments in every shipped language, and shortens long event titles so the date and time always survive.</p>
+<p>The gateway reports segments and cost where it can, and calrs records them so the admin panel can show today’s spend. That usage ledger stores no phone numbers.</p>
 <h2 id="using-the-generic-webhook"><a class="header" href="#using-the-generic-webhook">Using the generic webhook</a></h2>
 <p>Pick <strong>Generic webhook</strong> and give it a URL. On each message calrs sends:</p>
 <pre><code class="language-http">POST https://your-endpoint.example.com/sms
@@ -343,7 +343,7 @@ X-Calrs-Signature: sha256=&lt;hex&gt;
 <p>The signature header is only sent when an HMAC secret is configured, and is the hex-encoded HMAC-SHA256 of the raw request body. Verify it to prove the call came from your calrs instance.</p>
 <p>The webhook URL is deliberately not subject to the private-host protection used for CalDAV, because pointing it at a bridge on localhost is the main reason to use it.</p>
 <h2 id="troubleshooting"><a class="header" href="#troubleshooting">Troubleshooting</a></h2>
-<p><strong>Nothing is sent.</strong> Check, in order: the gateway is configured and enabled, the event type is not in <strong>Off</strong> mode, the guest actually left a number, and today’s billed segments leave room for the message under the daily limit. Each of these is logged when it stops a message.</p>
+<p><strong>Nothing is sent.</strong> Check, in order: the gateway is configured and enabled, the event type is not in <strong>Off</strong> mode, the guest actually left a number, and today’s count is below the daily limit. Each of these is logged when it stops a message.</p>
 <p><strong>“Switching SMS gateway requires entering that gateway’s credential.”</strong> You changed the gateway in the dropdown but left the secret field empty. The stored secret belongs to the previous vendor, so it cannot be carried over.</p>
 <p><strong>Messages arrive from a strange sender.</strong> Alphanumeric sender IDs are not permitted in every country, and some networks rewrite them. Check your gateway’s rules for the destinations you send to.</p>
 <p><strong>A guest cannot submit the booking form.</strong> In <strong>Required</strong> mode a number is mandatory. If they insist their number is valid and calrs disagrees, check the instance default country code: a national-format number is interpreted against it.</p>
@@ -356,7 +356,7 @@ X-Calrs-Signature: sha256=&lt;hex&gt;
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
-                            <a rel="next prefetch" href="webhooks.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="authentication.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                             </a>
 
@@ -370,7 +370,7 @@ X-Calrs-Signature: sha256=&lt;hex&gt;
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
-                    <a rel="next prefetch" href="webhooks.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="authentication.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                     </a>
             </nav>

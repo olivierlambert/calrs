@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Authentication - calrs v2 Documentation</title>
+        <title>Authentication - calrs Documentation</title>
 
 
         <!-- Custom HTML head -->
@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-d5ebc317.js";
+            window.path_to_searchindex_js = "searchindex-6d7ef8e0.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-43543355.js"></script>
+        <script src="toc-e4a0ca82.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -137,7 +137,7 @@
                         </button>
                     </div>
 
-                    <h1 class="menu-title">calrs v2 Documentation</h1>
+                    <h1 class="menu-title">calrs Documentation</h1>
 
                     <div class="right-buttons">
                         <a href="print.html" title="Print this book" aria-label="Print this book">
@@ -280,8 +280,8 @@ calrs user enable alice@example.com
 <ul>
 <li><strong>Authorization code flow with PKCE</strong> — no client secret stored in the browser</li>
 <li><strong>Auto-discovery</strong> — reads <code>.well-known/openid-configuration</code> from the issuer URL</li>
-<li><strong>User linking by email</strong> — first-time linking requires the provider to assert a verified email. An account already linked to another OIDC subject cannot be claimed through that email, and an account with local MFA is not automatically linked</li>
-<li><strong>Auto-registration</strong> — new users with a verified email are created on first OIDC login when enabled; returning users are identified by their stored OIDC subject</li>
+<li><strong>User linking by email</strong> — if a local user exists with the same email, the OIDC identity is linked</li>
+<li><strong>Auto-registration</strong> — new users are created on first OIDC login (if enabled)</li>
 <li><strong>Group sync</strong> — groups from the <code>groups</code> JWT claim are synced on each login and can be linked to teams</li>
 </ul>
 <h3 id="configuration"><a class="header" href="#configuration">Configuration</a></h3>
@@ -321,8 +321,6 @@ calrs user enable alice@example.com
 </table>
 </div>
 <p>The first registered user is automatically promoted to admin.</p>
-<h2 id="connected-applications"><a class="header" href="#connected-applications">Connected applications</a></h2>
-<p>Calendar OAuth credentials connect <a href="./google-calendar.html">Google</a> and <a href="./microsoft-calendar.html">Microsoft</a> calendars; they are separate from OIDC sign-in. calrs also acts as an OAuth authorization server for <a href="./mcp.html">MCP</a> and the <a href="./api.html">REST API</a>. Review and revoke those grants under <strong>Connected apps</strong>. Personal API tokens have their own settings page and scopes.</p>
 <h2 id="email-notifications-smtp"><a class="header" href="#email-notifications-smtp">Email notifications (SMTP)</a></h2>
 <p>SMTP configuration is required for booking confirmation emails. Without it, bookings still work but no emails are sent.</p>
 <pre><code class="language-bash">calrs config smtp \
@@ -338,17 +336,17 @@ calrs config smtp-test you@example.com
 # View current config
 calrs config show
 </code></pre>
-<p>Or configure from <strong>Admin &gt; Email and SMS &gt; SMTP</strong>. Environment variables override stored SMTP settings; see <a href="./admin.html#smtp-configuration">SMTP configuration</a>.</p>
+<p>Or configure from the <strong>Admin dashboard &gt; SMTP</strong> section.</p>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="webhooks.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="sms.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
-                            <a rel="next prefetch" href="mcp.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="authentik.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                             </a>
 
@@ -358,11 +356,11 @@ calrs config show
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="webhooks.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="sms.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
-                    <a rel="next prefetch" href="mcp.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="authentik.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                     </a>
             </nav>

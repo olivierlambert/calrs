@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Admin Dashboard - calrs v2 Documentation</title>
+        <title>Admin Dashboard - calrs Documentation</title>
 
 
         <!-- Custom HTML head -->
@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-d5ebc317.js";
+            window.path_to_searchindex_js = "searchindex-6d7ef8e0.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-43543355.js"></script>
+        <script src="toc-e4a0ca82.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -137,7 +137,7 @@
                         </button>
                     </div>
 
-                    <h1 class="menu-title">calrs v2 Documentation</h1>
+                    <h1 class="menu-title">calrs Documentation</h1>
 
                     <div class="right-buttons">
                         <a href="print.html" title="Print this book" aria-label="Print this book">
@@ -183,7 +183,6 @@
                         <h1 id="admin-dashboard"><a class="header" href="#admin-dashboard">Admin Dashboard</a></h1>
 <p>The admin dashboard is available at <code>/dashboard/admin</code> for users with the <code>admin</code> role.</p>
 <p><img src="images/admin.png" alt="Admin dashboard"></p>
-<p>The panel is organized into <strong>Overview</strong>, <strong>Users</strong>, <strong>Sign-in and security</strong>, <strong>Email and SMS</strong>, <strong>Meeting links</strong>, <strong>Resources</strong>, <strong>Branding</strong> and <strong>System</strong> tabs. The overview summarizes booking activity, users, calendar health and items needing attention. The remaining tabs group the configuration described below.</p>
 <h2 id="user-management"><a class="header" href="#user-management">User management</a></h2>
 <p>Lists all registered users with:</p>
 <ul>
@@ -195,24 +194,9 @@
 <p>Actions per user:</p>
 <ul>
 <li><strong>Promote/Demote</strong> — toggle admin role</li>
-<li><strong>Enable/Disable</strong> — control whether a user can log in or receive bookings</li>
-<li><strong>Delete</strong> — permanently remove a user after confirmation; review the consequences shown before submitting</li>
+<li><strong>Enable/Disable</strong> — disabled users cannot log in or receive bookings</li>
 <li><strong>Impersonate</strong> — view the dashboard as that user (for troubleshooting)</li>
 </ul>
-<p>The server does the searching, filtering, sorting and paging, so the page
-only ever carries 25 rows: press Enter to search, and use <strong>Previous</strong> and
-<strong>Next</strong> under the table. Promoting, disabling or deleting a user brings you
-back to the same page of the list.</p>
-<p>The <strong>Groups</strong> list below it works the same way: search by name (press
-Enter), 25 groups a page, and each group shows ten of its members, by
-weight then name, with its own <strong>Previous</strong> and <strong>Next</strong> for the rest. The
-two lists keep each other’s page as you move through either.</p>
-<p>On an instance with more than 20,000 bookings, the booking figures of the
-overview (totals, the weekly chart and the 90-day rankings) are kept for a
-minute rather than recomputed on every visit; the chart’s note then says how
-many seconds old they are. User
-counts, calendar health and the attention list are always live. Smaller
-instances never cache them.</p>
 <h2 id="impersonation"><a class="header" href="#impersonation">Impersonation</a></h2>
 <p>Admins can impersonate any user to troubleshoot their view:</p>
 <ol>
@@ -223,9 +207,9 @@ instances never cache them.</p>
 </ol>
 <p>Impersonation uses a separate <code>calrs_impersonate</code> cookie (24-hour TTL). The real admin session is preserved.</p>
 <h2 id="availability-troubleshoot"><a class="header" href="#availability-troubleshoot">Availability troubleshoot</a></h2>
-<p>For each event type, the dashboard offers a <strong>Troubleshoot</strong> link that opens a visual timeline at <code>/dashboard/troubleshoot?event_type={event_type_id}</code>:</p>
+<p>For each event type, the dashboard offers a <strong>Troubleshoot</strong> link that opens a visual timeline at <code>/dashboard/troubleshoot/{event_type_id}</code>:</p>
 <ul>
-<li>Shows availability and conflicts for the selected date</li>
+<li>Shows candidate slots for the next 7 days</li>
 <li>Displays why each slot is blocked (calendar event name, existing booking, buffer overlap)</li>
 <li>Helps debug availability issues when users report incorrect free/busy status</li>
 </ul>
@@ -244,47 +228,15 @@ instances never cache them.</p>
 <li><strong>Auto-register</strong> — automatically create users on first OIDC login</li>
 </ul>
 <h2 id="google-oauth2"><a class="header" href="#google-oauth2">Google OAuth2</a></h2>
-<p>Admin → Sign-in and security → Google OAuth2 holds the instance-wide Google client ID and secret used when users connect Google Calendar. The same credentials are used to attach a Google Meet conference to a confirmed booking when an event type uses the Google Meet location. There is no extra Meet admin form. See <a href="./google-calendar.html">Google Calendar</a>.</p>
-<h2 id="microsoft-calendar"><a class="header" href="#microsoft-calendar">Microsoft Calendar</a></h2>
-<p>The <strong>Microsoft 365 / Outlook.com calendar</strong> section of the <strong>Sign-in and security</strong> tab holds the instance-wide Microsoft Entra application client ID, client secret, and tenant used for delegated Microsoft Graph calendar access. Register the displayed callback as a <strong>Web</strong> redirect URI, paste the secret <strong>Value</strong> (not its ID), and track its expiry for rotation. Leaving the secret blank preserves its current encrypted value.</p>
-<p>This connects Microsoft 365 and Outlook.com calendars; it does not configure calrs sign-in or <strong>Microsoft Exchange on-premises (EWS)</strong>. Users connect and consent from Sources outside impersonation mode. See <a href="./microsoft-calendar.html">Microsoft Calendar</a> for app registration, permissions, tenant choices, calendar selection, and verification.</p>
+<p>Admin → Auth → Google OAuth2 holds the instance-wide Google client ID and secret used when users connect Google Calendar. The same credentials are used to attach a Google Meet conference to a confirmed booking when an event type uses the Google Meet location. There is no extra Meet admin form. See <a href="./google-calendar.html">Google Calendar</a>.</p>
 <h2 id="resources"><a class="header" href="#resources">Resources</a></h2>
 <p>The <strong>Resources</strong> card manages <a href="./resources.html">shared bookable resources</a> (demo lab, meeting rooms): add a resource from its ICS feed URL, edit its optional CalDAV write-back settings and team allowlist, force a sync with <strong>Sync now</strong>, and verify write access with <strong>Test write</strong>. A failed feed sync is flagged here with the last error. See <a href="./resources.html">Shared Resources</a> for details.</p>
 <h2 id="sms-settings"><a class="header" href="#sms-settings">SMS settings</a></h2>
-<p>The <strong>SMS settings</strong> card configures the instance’s <a href="./sms.html">SMS gateway</a>: pick Twilio, GatewayAPI, seven.io, or a generic webhook, and the form relabels its fields for that vendor. The same card holds the daily limit (in billed segments, test messages included), today’s messages, segments and cost, and the policy controlling whether non-admins may enable SMS on their own event types.</p>
+<p>The <strong>SMS settings</strong> card configures the instance’s <a href="./sms.html">SMS gateway</a>: pick Twilio, GatewayAPI, seven.io, or a generic webhook, and the form relabels its fields for that vendor. The same card holds the daily message limit, today’s usage and cost, and the policy controlling whether non-admins may enable SMS on their own event types.</p>
 <p><strong>Test gateway</strong> sends a real message to a number you give it, or verifies the credentials for free when you leave the field empty and the gateway supports it.</p>
 <p>SMS spends real money on a public form, so the card also warns when SMS is configured without a captcha. See <a href="./sms.html">SMS Notifications</a> for the setup steps and for keeping the bill bounded.</p>
-<h2 id="guest-email-footer"><a class="header" href="#guest-email-footer">Guest email footer</a></h2>
-<p>The <strong>Guest email footer</strong> card sets the default footer added to every email guests and additional attendees receive (never to hosts, nor to a team member who claimed the booking). It takes bold, italic and links, at most 500 characters, in one text for all languages. An event type with a footer of its own uses that instead; see <a href="./event-types.html#guest-email-footer">Guest email footer</a>.</p>
-<p>The checkbox on the card lets every user write footers on their own event types. It is off by default: the footer goes out under this instance’s name, so only admins may write one until you turn it on.</p>
-<h2 id="branding"><a class="header" href="#branding">Branding</a></h2>
-<p>The <strong>Branding</strong> tab holds the company logo, the link it points to, the favicon and the theme.</p>
-<p>Choose <strong>Default</strong>, <strong>Nord</strong>, <strong>Dracula</strong>, <strong>Gruvbox</strong>, <strong>Solarized</strong>, <strong>Tokyo Night</strong> or <strong>Vates</strong>. Every preset has a light and dark palette; visitors can switch modes or follow their system preference. <strong>Custom</strong> lets you set the accent, hover, background, surface and text colors for your organization.</p>
-<p><img src="./images/branding.png" alt="Branding and color themes"></p>
-<p>The company logo is shown at the top of the public booking pages. Upload a PNG, JPEG, GIF or WebP image of at most 2 MB; SVG is refused. A second, optional logo is used when the visitor’s page is in the dark theme, for a wordmark that would not read on a dark background. A light logo alone is shown in both themes; a dark logo alone is shown in the dark theme only, since a mark made for a dark background may not read on a light page. Each preview sits on the page background the instance theme gives public pages, light and dark, whatever theme your dashboard is in. A new logo shows to visitors on their next page view. Emails never carry the company logo.</p>
-<h2 id="smtp-configuration"><a class="header" href="#smtp-configuration">SMTP configuration</a></h2>
-<p>Open <strong>Email and SMS &gt; SMTP</strong> to configure the server, port, TLS mode, optional credentials and sender identity, then send a test email. Settings take effect without a restart. Passwords are encrypted; leaving the password blank keeps the existing value. The same configuration is available through <code>calrs config smtp</code>.</p>
-<p>For containers and managed deployments, use environment variables:</p>
-<pre><code class="language-text">CALRS_SMTP_HOST=smtp.example.com
-CALRS_SMTP_PORT=587
-CALRS_SMTP_TLS_MODE=starttls
-CALRS_SMTP_USERNAME=calrs@example.com
-CALRS_SMTP_PASSWORD=your-secret
-CALRS_SMTP_FROM_EMAIL=calrs@example.com
-CALRS_SMTP_FROM_NAME=Example Scheduling
-</code></pre>
-<p>Supply secrets through your deployment’s secret mechanism. <code>CALRS_SMTP_HOST</code> and <code>CALRS_SMTP_FROM_EMAIL</code> are required when using environment configuration. The environment block overrides the stored settings as a whole, and the form indicates that it is managed by the environment. <code>starttls</code>, implicit <code>tls</code> (typically port 465) and <code>none</code> for a trusted local relay are supported. See <a href="./cli-reference.html#relaying-through-a-local-mta">CLI Reference</a> for unauthenticated relays and certificate limitations.</p>
-<p>Without SMTP, bookings still work, but approval messages, reminders, invitations and failure alerts cannot be delivered by email. Confirmed bookings still offer an <code>.ics</code> download.</p>
-<h2 id="integration-policies"><a class="header" href="#integration-policies">Integration policies</a></h2>
-<p>The admin panel controls whether ordinary users may use the REST API through personal tokens or OAuth, manage outgoing webhooks, enable SMS on their event types, or write guest email footers. These are separate policies, restricted to administrators by default. Enabling one does not grant another, or grant access to other users’ bookings.</p>
-<p>Use <a href="./api.html">REST API</a>, <a href="./mcp.html">MCP</a>, <a href="./webhooks.html">Webhooks</a> and <a href="./sms.html">SMS</a> for their scopes, credentials and revocation behavior. The <strong>Sign-in and security</strong> tab also configures <a href="./ews-impersonation.html">organization-wide Exchange calendars</a>.</p>
-<h2 id="meeting-links"><a class="header" href="#meeting-links">Meeting links</a></h2>
-<p>Configure the default Jitsi URL pattern or a meeting-provider webhook under the meeting settings. Event types choose a static link, generated Jitsi room, webhook-generated URL or Google Meet as their location. Google Meet uses the connected host’s Google Calendar credentials; it has no separate client configuration. See <a href="./event-types.html#location">Locations</a>.</p>
-<h2 id="booking-captcha"><a class="header" href="#booking-captcha">Booking captcha</a></h2>
-<p>The optional Cap proof-of-work captcha protects booking submissions. Configure the Cap instance URL, site key and secret, then optionally provide the widget script and WASM URLs. Those asset URLs default to an external CDN when left unset: configure self-hosted URLs when you want the whole guest flow served from infrastructure you control. Changes apply without restarting calrs. This is separate from login and booking rate limits.</p>
-<h2 id="system-settings"><a class="header" href="#system-settings">System settings</a></h2>
-<p>Set the public base URL, private-host allowlist and trusted proxies for your deployment. Environment variables take precedence and make the corresponding controls read-only. See <a href="./deployment.html#environment-variables">Deployment</a> and <a href="./security.html#trusted-proxies">Security</a>.</p>
-<p>The site default first weekday affects calendar presentation, while each user and event type can override it. The German form-of-address policy selects informal or formal German for visitors whose browsers request German.</p>
+<h2 id="smtp-status"><a class="header" href="#smtp-status">SMTP status</a></h2>
+<p>Shows whether SMTP is configured and the current sender address. SMTP is configured via CLI (<code>calrs config smtp</code>) or by editing the database directly.</p>
 
                     </main>
 
@@ -294,7 +246,7 @@ CALRS_SMTP_FROM_NAME=Example Scheduling
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
-                            <a rel="next prefetch" href="ews-impersonation.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="deployment.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                             </a>
 
@@ -308,7 +260,7 @@ CALRS_SMTP_FROM_NAME=Example Scheduling
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
-                    <a rel="next prefetch" href="ews-impersonation.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="deployment.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                     </a>
             </nav>

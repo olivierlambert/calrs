@@ -4,9 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Cal.rs — Fast, self-hostable scheduling</title>
-  <meta name="description" content="Self-hosted scheduling in Rust. Explore v2: CalDAV, Google, Microsoft 365 and Exchange calendars, team scheduling, booking questions, REST API and MCP.">
+  <meta name="description" content="Open-source scheduling platform written in Rust. Like Cal.com, but self-hosted. Connect CalDAV calendars, define bookable meetings, share a link.">
   <meta property="og:title" content="Cal.rs — Self-hostable scheduling in Rust">
-  <meta property="og:description" content="Connect your calendars, schedule with your team, and share a booking link. Explore the calrs v2 prerelease.">
+  <meta property="og:description" content="Connect your CalDAV calendar, define bookable meetings, share a link. No Node.js, no PostgreSQL, no subscription.">
   <meta property="og:image" content="https://cal.rs/assets/screenshot.png">
   <meta property="og:url" content="https://cal.rs">
   <meta name="twitter:card" content="summary_large_image">
@@ -151,22 +151,25 @@
     .github-stars svg { opacity: 0.6; }
 
     /* --- SCREENSHOT --- */
-    .hero-screenshot { margin: 3rem auto 0; max-width: 900px; }
-    .theme-preview {
-      position: relative; overflow: hidden; aspect-ratio: 1440 / 1050;
-      border-radius: var(--radius-lg); border: 1px solid var(--border);
+    .hero-screenshot {
+      margin-top: 3rem;
+      position: relative;
+    }
+    .hero-screenshot img {
+      width: 100%; max-width: 900px;
+      border-radius: var(--radius-lg);
+      border: 1px solid var(--border);
       box-shadow: 0 40px 80px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.03);
     }
-    .theme-preview img { display: block; width: 100%; height: 100%; }
-    .theme-preview .theme-light { position: absolute; inset: 0; clip-path: polygon(0 0, 58% 0, 32% 100%, 0 100%); }
-    .theme-label { position: absolute; bottom: 12px; padding: 5px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; }
-    .theme-label-light { left: 12px; background: #fcfbf8; color: #1c1917; border: 1px solid #d6d0c8; }
-    .theme-label-dark { right: 12px; background: #1b1917; color: #faf8f5; border: 1px solid #57514a; }
-    .theme-picker { display: flex; flex-wrap: wrap; justify-content: center; gap: 0.45rem; margin: 1.25rem 0 0.8rem; }
-    .theme-choice { font: inherit; font-size: 0.8rem; color: var(--text-secondary); background: var(--bg-card); border: 1px solid var(--border); border-radius: 999px; padding: 0.45rem 0.75rem; cursor: pointer; }
-    .theme-choice:hover, .theme-choice[aria-pressed="true"] { color: var(--text); border-color: var(--accent-bright); background: var(--accent-glow); }
-    .theme-choice:focus-visible { outline: 2px solid var(--accent-bright); outline-offset: 3px; }
-    .theme-caption { color: var(--text-secondary); font-size: 0.85rem; line-height: 1.7; }
+    .hero-screenshot::after {
+      content: '';
+      position: absolute;
+      bottom: -40px; left: 50%; transform: translateX(-50%);
+      width: 80%; height: 80px;
+      background: radial-gradient(ellipse, var(--accent-glow) 0%, transparent 70%);
+      filter: blur(30px);
+      pointer-events: none;
+    }
 
     /* --- FEATURES --- */
     .section { padding: 3.5rem 0; }
@@ -309,10 +312,8 @@
     @media (max-width: 640px) {
       .container { padding: 0 1rem; }
 
-      /* Keep every navigation link reachable on narrow screens. */
-      nav .container { height: auto; min-height: 64px; flex-direction: column; gap: 0.6rem; padding-top: 0.6rem; padding-bottom: 0.6rem; }
-      .nav-brand { flex-shrink: 0; }
-      .nav-links { gap: 0.75rem; flex-wrap: wrap; justify-content: center; }
+      /* Nav: hide Star button, tighten gaps */
+      .nav-links { gap: 0.75rem; }
       .nav-links .btn-ghost { display: none; }
 
       /* Hero lockup */
@@ -480,43 +481,25 @@
       <img src="assets/calrs.png" alt="Cal.rs" class="hero-logo">
       <div class="brand-name"><span class="brand-cal">Cal</span><span class="brand-dot">.</span><span class="brand-rs">rs</span></div>
     </div>
-    <div class="hero-badge"><span class="dot"></span>v2 preview &middot; Rust + SQLite &middot; Self-hosted &middot; Open source</div>
+    <div class="hero-badge"><span class="dot"></span>v1.23.0 &middot; One Rust binary &middot; Fully self-hostable &middot; No external requests &middot; Open source</div>
     <h1>
       Scheduling that<br><span class="gradient">respects your stack</span>
     </h1>
     <p class="hero-sub">
-      Connect CalDAV, Google Calendar, Microsoft 365 or Exchange.
-      Give guests a time that works for everyone.
-      Personal meetings, teams and shared resources, on your infrastructure.
+      Connect your CalDAV, Google, or Exchange calendar, define bookable meetings, share a link.
+      No Node.js, no PostgreSQL, no SaaS subscription. Just a single Rust binary.
     </p>
     <div class="hero-actions">
-      <a href="#install" class="btn btn-primary btn-lg">Try the v2 preview</a>
+      <a href="#install" class="btn btn-primary btn-lg">Get started</a>
       <a href="https://github.com/olivierlambert/calrs" target="_blank" class="btn btn-ghost btn-lg">
         <svg class="icon-svg" viewBox="0 0 16 16"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
         View on GitHub
       </a>
     </div>
 
-    <p style="margin: 1.5rem auto 0; max-width: 680px; color: var(--text-secondary); line-height: 1.7;">v2 is in prerelease. <a href="https://github.com/olivierlambert/calrs/releases">Choose a release</a> or read the <a href="docs/upgrading.html">upgrade guide</a>. The <code>latest</code> image stays on stable releases; <code>next</code> follows previews.</p>
-
-    <figure class="hero-screenshot">
-      <div class="theme-preview" role="img" aria-label="The calrs dashboard in the Default palette, with light mode on the left and dark mode on the right">
-        <img id="theme-dark" src="assets/screenshots/theme-default-dark.png" alt="" width="1440" height="1050" fetchpriority="high">
-        <img id="theme-light" class="theme-light" src="assets/screenshots/theme-default-light.png" alt="" width="1440" height="1050">
-        <span class="theme-label theme-label-light" aria-hidden="true">Light</span>
-        <span class="theme-label theme-label-dark" aria-hidden="true">Dark</span>
-      </div>
-      <div class="theme-picker" role="group" aria-label="Preview a color palette">
-        <button type="button" class="theme-choice" data-palette="default" aria-pressed="true">Default</button>
-        <button type="button" class="theme-choice" data-palette="nord" aria-pressed="false">Nord</button>
-        <button type="button" class="theme-choice" data-palette="dracula" aria-pressed="false">Dracula</button>
-        <button type="button" class="theme-choice" data-palette="gruvbox" aria-pressed="false">Gruvbox</button>
-        <button type="button" class="theme-choice" data-palette="solarized" aria-pressed="false">Solarized</button>
-        <button type="button" class="theme-choice" data-palette="tokyo-night" aria-pressed="false">Tokyo Night</button>
-        <button type="button" class="theme-choice" data-palette="vates" aria-pressed="false">Vates</button>
-      </div>
-      <figcaption class="theme-caption">Your calendar, your colors. Seven palettes, light and dark modes, or your own custom theme.<br><span id="theme-status" role="status">Previewing Default.</span> <a href="docs/admin.html#branding">Explore branding</a>.</figcaption>
-    </figure>
+    <div class="hero-screenshot">
+      <img src="assets/screenshot.png" alt="calrs dashboard">
+    </div>
   </div>
 </section>
 
@@ -529,97 +512,137 @@
 
     <div class="features-grid">
       <div class="feature-card">
-        <div class="feature-icon" aria-hidden="true">&#128197;</div>
-        <h3>Your calendars, connected</h3>
-        <p>Read busy time and write confirmed bookings through <strong>CalDAV, Google Calendar, Microsoft Graph or on-premises Exchange EWS</strong>. Choose which calendars to sync, which block each meeting, and where bookings land. <a href="docs/features.html#calendars">Calendar integrations</a>.</p>
+        <div class="feature-icon">&#128197;</div>
+        <h3>CalDAV, Google &amp; Exchange sync</h3>
+        <p>Pull events from Nextcloud, BlueMind, Fastmail, iCloud, and more via CalDAV with RFC 4791 auto-discovery. <strong>Google Calendar</strong> connects over OAuth2 with encrypted token storage, and <strong>Microsoft Exchange</strong> (2013/2016/2019) over EWS. Write confirmed bookings back to your calendar. <strong>Delta sync via RFC 6578 sync-token</strong> — only fetches changes, not your entire calendar. Scales to hundreds of users. Background sync catches deletions even when nobody's booking.</p>
       </div>
       <div class="feature-card">
-        <div class="feature-icon" aria-hidden="true">&#9889;</div>
-        <h3>Availability that fits your day</h3>
-        <p>Set working hours, split shifts, buffers and notice. Add <strong>time off</strong> across all your meetings or override one event on a date. Recurring calendar events, out-of-office time and existing bookings keep busy slots out of the picker. <a href="docs/event-types.html#availability-schedule">Availability rules</a>.</p>
+        <div class="feature-icon">&#9889;</div>
+        <h3>Availability engine</h3>
+        <p>Free/busy computed from availability rules, synced calendar events, existing bookings, buffer times, and minimum notice. <strong>Configurable slot interval</strong> decouples start-time spacing from meeting duration — put 20-minute meetings on the half-hour. Date overrides let you block days off or set custom hours. RRULE expansion for recurring events.</p>
       </div>
       <div class="feature-card">
-        <div class="feature-icon" aria-hidden="true">&#127760;</div>
-        <h3>Teams across timezones</h3>
-        <p>Round-robin finds an available member by priority and workload; collective meetings need everyone. Each person’s working hours and calendar are checked in their own timezone. Create ad-hoc groups with a link like <code>/u/alice+bob/intro</code>. <a href="docs/teams.html">Team scheduling</a>.</p>
+        <div class="feature-icon">&#127760;</div>
+        <h3>Timezone aware</h3>
+        <p>Guest timezone auto-detected from the browser. Calendar events are converted from their original timezone to yours: a 10:00 New York meeting correctly blocks 16:00 in Paris. Every IANA timezone in every picker, common ones first, and the slot page says when the clocks change before the day shown.</p>
       </div>
       <div class="feature-card">
-        <div class="feature-icon" aria-hidden="true">&#128221;</div>
-        <h3>Ask the right questions</h3>
-        <p>Add text, choice and checkbox questions to each booking form. Require the answers you need, include consent and policy links, and keep the wording the guest actually answered. Decide which answers reach host calendars. <a href="docs/booking-questions.html">Booking questions</a>.</p>
+        <div class="feature-icon">&#128231;</div>
+        <h3>Email notifications</h3>
+        <p>HTML emails with .ics calendar invites, and an <strong>Add to calendar</strong> download on the confirmation page itself, so a guest can save the meeting even on an instance with no SMTP configured. Guest emails come <strong>from the host&rsquo;s name</strong> with Reply-To set to them, on your own domain so SPF, DKIM and DMARC keep passing. Additional attendees get updates when a booking moves and cancellations when it ends. Approve or decline pending bookings straight from the email, no login required; requests hold their slot and can expire on their own. Sending happens in the background, so a slow mail server never holds up a booking.</p>
       </div>
       <div class="feature-card">
-        <div class="feature-icon" aria-hidden="true">&#9989;</div>
-        <h3>Keep control of requests</h3>
-        <p>Confirm automatically or approve each request. Pending requests can hold their slot, expire and remind you to answer. Guests can cancel or request a new time within your notice rules; hosts can reschedule or ask guests to choose again. <a href="docs/booking-flow.html">Booking lifecycle</a>.</p>
+        <div class="feature-icon">&#128232;</div>
+        <h3>SMS notifications</h3>
+        <p>Text the guest when a booking is confirmed, cancelled, rescheduled, or about to start — opt-in per event type, off everywhere by default. <strong>Twilio</strong>, <strong>GatewayAPI</strong> and <strong>seven.io</strong> ship as adapters, and any other gateway plugs in through a signed webhook. The phone field has a flag picker with libphonenumber validation, served from your own host. A <strong>daily spend cap</strong> keeps a public booking form from ever running up a bill, and email carries on regardless when the cap is hit.</p>
       </div>
       <div class="feature-card">
-        <div class="feature-icon" aria-hidden="true">&#128198;</div>
-        <h3>Bound your calendar</h3>
-        <p>Set daily, weekly, monthly or yearly caps, including per-member team limits. Offer a rolling booking horizon or fixed dates for a conference. Guests choose month, week or column views, their timezone and their clock format. <a href="docs/event-types.html#booking-limits">Limits and booking windows</a>.</p>
+        <div class="feature-icon">&#127909;</div>
+        <h3>Video meeting links</h3>
+        <p>Every confirmed booking gets its own video room. <strong>Jitsi</strong> rooms are generated locally from a configurable pattern (<code>{event}-{random}</code>) — no external dependency, override per event type. Or plug in <strong>any provider via webhook</strong>: calrs POSTs the booking details, your endpoint returns the URL. The link lands in confirmation emails, the ICS invite, and the dashboard.</p>
       </div>
       <div class="feature-card">
-        <div class="feature-icon" aria-hidden="true">&#128279;</div>
-        <h3>Share the right meeting</h3>
-        <p>Publish a profile with meeting sections and ordering, keep meetings internal for colleagues to share, or send private invitations. Search the booking directory, star favorites and generate single-use links. <a href="docs/dashboard.html">Dashboard and sharing</a>.</p>
+        <div class="feature-icon">&#128172;</div>
+        <h3>Multi-language UI</h3>
+        <p><strong>The whole app</strong>, from the booking flow to the host dashboard, forms and admin panel, in <strong>English, French, Spanish, Polish, German, Italian, Estonian, Brazilian Portuguese and Dutch</strong>, all nine complete. Public pages follow the visitor&rsquo;s browser language; hosts pick their own in Profile &amp; Settings. <strong>Every email is written in its reader&rsquo;s language</strong>: guests get the language they booked in, each host and team member their own. Per-locale date formatting and plural rules (no hardcoded English month names). Translations are contributed by pull request, no separate platform to sign up for. See <a href="https://github.com/olivierlambert/calrs#contributing-a-translation" target="_blank" rel="noopener">the contributor guide</a>; native speakers especially welcome.</p>
       </div>
       <div class="feature-card">
-        <div class="feature-icon" aria-hidden="true">&#128101;</div>
-        <h3>Rooms, resources and watchers</h3>
-        <p>Reserve a demo lab or meeting room alongside your hosts. Restrict resource setup by team, require all resources or any one available resource, and let watcher teams claim bookings when someone is ready to help. <a href="docs/resources.html">Shared resources</a>.</p>
+        <div class="feature-icon">&#128101;</div>
+        <h3>Unified teams</h3>
+        <p>Create teams from OIDC groups, hand-picked users, or both. <strong>Round-robin</strong> assigns to the least-busy available member with configurable priority weights. <strong>Collective</strong> requires all members to be free. Team avatars and stacked member photos on booking pages. Global admins can set up teams without being bookable.</p>
       </div>
       <div class="feature-card">
-        <div class="feature-icon" aria-hidden="true">&#128231;</div>
-        <h3>Email that follows the booking</h3>
-        <p>Translated confirmations, reminders, approvals and calendar invitations. Guest messages use the host’s name and Reply-To, with an optional footer. Additional attendees receive updates; confirmed bookings offer an .ics download even without SMTP. <a href="docs/booking-flow.html#email-notifications">Email notifications</a>.</p>
+        <div class="feature-icon">&#128279;</div>
+        <h3>Dynamic group links</h3>
+        <p>Combine usernames in a URL (<code>/u/alice+bob/intro</code>) for instant collective meetings — no team setup needed. All participants' calendars are intersected. Autocomplete user picker in the event type editor, opt-out toggle in settings. Co-participants added as CalDAV attendees.</p>
       </div>
       <div class="feature-card">
-        <div class="feature-icon" aria-hidden="true">&#128232;</div>
-        <h3>Optional SMS</h3>
-        <p>Send guest confirmations, cancellations, reschedules and reminders through Twilio, GatewayAPI, seven.io or your own gateway. Set a daily limit in <strong>billed segments</strong>, including test sends, and inspect usage from the admin panel. <a href="docs/sms.html">SMS setup</a>.</p>
+        <div class="feature-icon">&#128064;</div>
+        <h3>Booking watchers</h3>
+        <p>Designate a team as watchers on an event type. When a booking lands, watchers are emailed with a tokenized link to <strong>claim</strong> it — first-come wins, no double-assignment. Claimed bookings show up on the watcher's dashboard. Perfect for support rotations and account-management teams.</p>
       </div>
       <div class="feature-card">
-        <div class="feature-icon" aria-hidden="true">&#127909;</div>
-        <h3>A place to meet</h3>
-        <p>Use a static video link, phone number or in-person address. Generate a Jitsi room, create a host-owned Google Meet, or have a meeting-provider webhook return a URL when a booking is confirmed. <a href="docs/event-types.html#location">Meeting locations</a>.</p>
+        <div class="feature-icon">&#127970;</div>
+        <h3>Shared bookable resources</h3>
+        <p>Attach instance-wide resources like a demo lab or meeting room to your event types, backed by a read-only ICS feed (BlueMind, Nextcloud). A busy resource blocks the slot. <strong>All</strong> mode requires every resource to be free; <strong>round-robin</strong> picks the least-loaded one and shows the assignment on the booking. Confirmed bookings are reserved in the resource's own CalDAV calendar, so two event types sharing a room can never double-book it.</p>
       </div>
       <div class="feature-card">
-        <div class="feature-icon" aria-hidden="true">&#129513;</div>
-        <h3>Booking on your own website</h3>
-        <p>Embed an inline calendar, add a floating booking button or connect an existing button to a modal. Choose the layout, theme and accent; optionally fix the clock format or show in-person meetings in the event’s timezone. <a href="docs/embedding.html">Embed examples</a>.</p>
+        <div class="feature-icon">&#128275;</div>
+        <h3>Three-level visibility</h3>
+        <p><strong>Public</strong> — listed on your profile, anyone can book. <strong>Internal</strong> — any authenticated colleague generates single-use invite links from the Invite Links page. <strong>Private</strong> — only you send invite links. Works for both personal and team event types. One-click link generation with clipboard copy.</p>
       </div>
       <div class="feature-card">
-        <div class="feature-icon" aria-hidden="true">&#128268;</div>
-        <h3>REST API and OpenAPI</h3>
-        <p>Use scoped personal tokens or OAuth to list event types, read slots and manage supported booking operations, including question answers. Explore the generated OpenAPI 3.1 document and interactive reference on your instance. <a href="docs/api.html">REST API reference</a>.</p>
+        <div class="feature-icon">&#128269;</div>
+        <h3>Booking directory</h3>
+        <p>Colleagues find every meeting they can share, personal or team, and search by person, team or title. Copy a public link or get a fresh single-use invite for an internal one, and star the meetings you share often to keep them on your dashboard.</p>
       </div>
       <div class="feature-card">
-        <div class="feature-icon" aria-hidden="true">&#129302;</div>
-        <h3>MCP with OAuth</h3>
-        <p>Connect an OAuth-capable MCP client over Streamable HTTP. Let it list your event types, create invitation links and read cached busy intervals after you approve access. Review and revoke clients from Connected apps. <a href="docs/mcp.html">MCP integration</a>.</p>
+        <div class="feature-icon">&#128260;</div>
+        <h3>Reschedule</h3>
+        <p>Guests and hosts can reschedule bookings without cancelling. Guests pick a new slot and the host approves; hosts reschedule instantly. CalDAV events updated in place, tokens regenerated, both parties notified.</p>
       </div>
       <div class="feature-card">
-        <div class="feature-icon" aria-hidden="true">&#128260;</div>
-        <h3>Booking webhooks</h3>
-        <p>Send signed booking lifecycle events to your integrations. A delivery queue handles retries and stable IDs help receivers deduplicate. Host-only notes stay out of webhook payloads. <a href="docs/webhooks.html">Webhook events and signatures</a>.</p>
+        <div class="feature-icon">&#9202;</div>
+        <h3>Cancellation policy</h3>
+        <p>Per event type, require a minimum lead time before guests can self-cancel or self-reschedule via their email link. Inside the window guests see a friendly page with your contact email instead of a working form. Hosts and admins can still act from the dashboard at any time, since real-world emergencies need a human.</p>
       </div>
       <div class="feature-card">
-        <div class="feature-icon" aria-hidden="true">&#128274;</div>
-        <h3>Identity and access</h3>
-        <p>Local accounts with optional or required TOTP and recovery codes, or OIDC SSO with group sync. Control registration, users and integration permissions. Configure trusted proxies, encrypted credentials and optional Cap captcha. <a href="docs/authentication.html">Sign-in and security</a>.</p>
+        <div class="feature-icon">&#128198;</div>
+        <h3>Date overrides</h3>
+        <p>Block specific dates or set custom hours per event type. Perfect for holidays, conferences, or one-off schedule changes. Overrides replace your weekly rules for that day — the troubleshoot view shows when they're active.</p>
       </div>
       <div class="feature-card">
-        <div class="feature-icon" aria-hidden="true">&#127912;</div>
-        <h3>Make it yours</h3>
-        <p>A redesigned dashboard, profile pages and searchable lists. Nine languages plus formal German, translated notifications, light/dark themes, custom colors, separate company logos for each mode and a favicon. <a href="docs/admin.html#branding">Branding and administration</a>.</p>
+        <div class="feature-icon">&#128202;</div>
+        <h3>Calendar views</h3>
+        <p>Guests switch between month grid, week columns, and column list views on the slot picker. Preference is remembered. Hosts set the default view per event type.</p>
       </div>
       <div class="feature-card">
-        <div class="feature-icon" aria-hidden="true">&#128230;</div>
-        <h3>Run it yourself</h3>
-        <p>A Rust executable, matching templates and SQLite. Multi-architecture container images, systemd deployment and an operator CLI. Built-in browser assets stay local; connect external services only as your deployment needs them. <a href="docs/deployment.html">Deployment guide</a>.</p>
+        <div class="feature-icon">&#128683;</div>
+        <h3>Booking limits</h3>
+        <p>Cap bookings per day, week, month, or year — combine multiple limits, pooled across a team or applied <strong>per member</strong>, so "one demo a day each" is a setting rather than a convention. A <strong>rolling horizon</strong> caps how far ahead guests can book. Capped slots are hidden from the picker instead of failing at submit. Enable "one slot per day" to show only the earliest available time each day, perfect for daily standups or check-ins.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">&#128274;</div>
+        <h3>Security</h3>
+        <p>Argon2 password hashing, OIDC SSO with PKCE, AES-256-GCM encrypted credentials at rest. Booking endpoints protected by rate limiting plus an optional <strong>self-hosted proof-of-work captcha</strong> (<a href="https://trycap.dev" target="_blank" rel="noopener">Cap</a>) — no Google reCAPTCHA, no tracking. Auto-generated secret key or bring your own via environment variable.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">&#127912;</div>
+        <h3>Theme engine</h3>
+        <p>7 built-in themes (Default, Nord, Dracula, Gruvbox, Solarized, Tokyo Night, Vates) plus custom colors — all configurable from the admin dashboard. Every theme adapts to both dark and light modes. Cal.com-style slot picker with switchable month/week/column views.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">&#129513;</div>
+        <h3>Embed on any website</h3>
+        <p>Put your booking page on your own site with one script tag: <strong>inline</strong> auto-sizing iframe, <strong>floating button</strong> with modal, or bind to your existing buttons via data attributes. Embeds inherit your theme, accept per-embed layout and branding params, and the full booking flow works inside cross-origin iframes.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">&#128230;</div>
+        <h3>Single binary, zero external requests</h3>
+        <p>No runtime dependencies. SQLite storage in a single WAL-mode file. Ships as one binary — deploy with Docker, systemd, or just run it. Fonts are bundled — no Google Fonts CDN, no third-party requests. Fully GDPR-compliant out of the box.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">&#128295;</div>
+        <h3>Configure from the admin panel</h3>
+        <p>SMTP settings, the public base URL, and the private-host allowlist are all editable from the admin UI and stored in the database. No restart, no config file edits. Environment variables still take priority when set, and the effective source is shown explicitly, so containerized deployments keep working unchanged.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">&#128736;</div>
+        <h3>Full CLI</h3>
+        <p>Manage everything headless: sources, sync, event types, bookings, users, SMTP config. <code>config dump</code> exports your whole configuration as JSON (secrets excluded) for audit and backup. Perfect for automation and scripting.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">&#9989;</div>
+        <h3>Tested &amp; verified</h3>
+        <p>1450 automated tests covering web handlers, CLI commands, auth lifecycle, availability engine, slot computation, database migrations, RRULE expansion, iCal parsing, timezone conversion, and email rendering. Every commit is checked by CI with code coverage tracking.</p>
+        <p style="margin-top: 0.75rem; display: flex; gap: 0.5rem; flex-wrap: wrap;"><a href="https://github.com/olivierlambert/calrs/actions/workflows/ci.yml"><img src="https://github.com/olivierlambert/calrs/actions/workflows/ci.yml/badge.svg" alt="CI" style="height: 20px;"></a> <a href="https://codecov.io/gh/olivierlambert/calrs"><img src="https://codecov.io/gh/olivierlambert/calrs/graph/badge.svg" alt="codecov" style="height: 20px;"></a></p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">&#128051;</div>
+        <h3>Pre-built Docker images</h3>
+        <p>Multi-arch images for <code>amd64</code> and <code>arm64</code> published to <a href="https://github.com/olivierlambert/calrs/pkgs/container/calrs">GitHub Container Registry</a> on every release. No build step — just <code>docker pull</code> and run. Works on Raspberry Pi, Apple Silicon, and ARM cloud instances.</p>
       </div>
     </div>
-    <p style="margin-top: 2rem;"><a href="docs/features.html">Explore the full v2 feature guide &rarr;</a></p>
   </div>
 </section>
 
@@ -632,28 +655,96 @@
 
     <div class="showcase-grid">
       <div class="showcase-item">
-        <img src="assets/screenshots/bookings.png" alt="Bookings and requests in calrs v2" loading="lazy">
-        <div class="caption">Bookings and requests</div>
+        <img src="assets/screenshots/bookings.png" alt="Bookings with human-friendly dates" loading="lazy">
+        <div class="caption">Bookings — human-friendly dates</div>
       </div>
       <div class="showcase-item">
-        <img src="assets/screenshots/profile.png" alt="Public profile and meeting sections in calrs v2" loading="lazy">
-        <div class="caption">Public profile and meeting sections</div>
+        <img src="assets/screenshots/slots.png" alt="Time slot picker" loading="lazy">
+        <div class="caption">Slot picker with timezone support</div>
       </div>
       <div class="showcase-item">
-        <img src="assets/screenshots/slots.png" alt="Timezone-aware slot picker in calrs v2" loading="lazy">
-        <div class="caption">Timezone-aware slot picker</div>
+        <img src="assets/screenshots/event-types.png" alt="Event types" loading="lazy">
+        <div class="caption">Event types</div>
       </div>
       <div class="showcase-item">
-        <img src="assets/screenshots/booking-form.png" alt="Custom booking questions in calrs v2" loading="lazy">
-        <div class="caption">Custom booking questions</div>
+        <img src="assets/screenshots/booking-form.png" alt="Booking form" loading="lazy">
+        <div class="caption">Booking form</div>
       </div>
       <div class="showcase-item">
-        <img src="assets/screenshots/event-types.png" alt="Personal and team event types in calrs v2" loading="lazy">
-        <div class="caption">Personal and team event types</div>
+        <img src="assets/screenshots/sources.png" alt="Calendar sources" loading="lazy">
+        <div class="caption">Calendar sources</div>
       </div>
       <div class="showcase-item">
-        <img src="assets/screenshots/admin.png" alt="Administration and calendar health in calrs v2" loading="lazy">
-        <div class="caption">Administration and calendar health</div>
+        <img src="assets/screenshots/source-form.png" alt="Add CalDAV source" loading="lazy">
+        <div class="caption">Connect a CalDAV calendar</div>
+      </div>
+      <div class="showcase-item">
+        <img src="assets/screenshots/teams.png" alt="Teams" loading="lazy">
+        <div class="caption">Teams</div>
+      </div>
+      <div class="showcase-item">
+        <img src="assets/screenshots/event-type-form.png" alt="Event type editor" loading="lazy">
+        <div class="caption">Event type editor</div>
+      </div>
+      <div class="showcase-item">
+        <img src="assets/screenshots/team-settings.png" alt="Team settings" loading="lazy">
+        <div class="caption">Team settings</div>
+      </div>
+      <div class="showcase-item">
+        <img src="assets/screenshots/invite-links.png" alt="Invite links" loading="lazy">
+        <div class="caption">Invite links</div>
+      </div>
+      <div class="showcase-item">
+        <img src="assets/screenshots/admin.png" alt="Admin dashboard" loading="lazy">
+        <div class="caption">Admin panel</div>
+      </div>
+      <div class="showcase-item">
+        <img src="assets/screenshots/troubleshoot.png" alt="Availability troubleshoot" loading="lazy">
+        <div class="caption">Availability troubleshoot</div>
+      </div>
+      <div class="showcase-item">
+        <img src="assets/screenshots/settings.png" alt="Profile and settings" loading="lazy">
+        <div class="caption">Profile &amp; settings</div>
+      </div>
+      <div class="showcase-item">
+        <img src="assets/screenshots/profile.png" alt="Public profile" loading="lazy">
+        <div class="caption">Public booking profile</div>
+      </div>
+      <div class="showcase-item">
+        <img src="assets/screenshots/reschedule.png" alt="Reschedule slot picker" loading="lazy">
+        <div class="caption">Reschedule slot picker</div>
+      </div>
+      <div class="showcase-item">
+        <img src="assets/screenshots/reschedule-confirm.png" alt="Reschedule confirmation" loading="lazy">
+        <div class="caption">Reschedule confirmation</div>
+      </div>
+    </div>
+
+    <div style="margin-top: 2rem;">
+      <span class="section-label">Light &amp; mobile</span>
+      <div class="showcase-grid" style="margin-top: 1rem;">
+        <div class="showcase-item">
+          <img src="assets/screenshots/slots-light.png" alt="Light mode" loading="lazy">
+          <div class="caption">Light mode</div>
+        </div>
+        <div class="showcase-item">
+          <img src="assets/screenshots/bookings-light.png" alt="Light mode bookings" loading="lazy">
+          <div class="caption">Light mode — bookings</div>
+        </div>
+      </div>
+      <div style="display: flex; gap: 1.5rem; margin-top: 1.5rem; justify-content: center;">
+        <div class="showcase-item" style="max-width: 220px;">
+          <img src="assets/screenshots/mobile-dashboard.png" alt="Mobile dashboard" loading="lazy">
+          <div class="caption">Mobile dashboard</div>
+        </div>
+        <div class="showcase-item" style="max-width: 220px;">
+          <img src="assets/screenshots/mobile-bookings.png" alt="Mobile bookings" loading="lazy">
+          <div class="caption">Mobile bookings</div>
+        </div>
+        <div class="showcase-item" style="max-width: 220px;">
+          <img src="assets/screenshots/mobile-slots.png" alt="Mobile slots" loading="lazy">
+          <div class="caption">Mobile slots</div>
+        </div>
       </div>
     </div>
   </div>
@@ -664,7 +755,7 @@
   <div class="container">
     <span class="section-label">Get started</span>
     <h2 class="section-title">Up and running in minutes</h2>
-    <p class="section-desc">Try v2 with a separate data volume. The first user to register becomes admin. Use an exact release tag for repeatable deployments; read the <a href="docs/upgrading.html">upgrade guide</a> before migrating existing data.</p>
+    <p class="section-desc">Pick your preferred method. The first user to register becomes admin.</p>
 
     <div class="install-block">
       <div class="install-tabs">
@@ -674,29 +765,29 @@
         <button class="install-tab" onclick="showTab('binary')">Binary</button>
         <button class="install-tab" onclick="showTab('source')">Source</button>
       </div>
-      <pre class="install-code active" id="tab-docker"><span class="comment"># v2 prerelease image (amd64 + arm64)</span>
-<span class="cmd">docker run -d --name calrs-v2 \</span>
-<span class="cmd">  -p 127.0.0.1:3000:3000 \</span>
-<span class="cmd">  -v calrs-v2-data:/var/lib/calrs \</span>
-<span class="cmd">  -e CALRS_BASE_URL=http://localhost:3000 \</span>
-<span class="cmd">  ghcr.io/olivierlambert/calrs:next</span>
+      <pre class="install-code active" id="tab-docker"><span class="comment"># Pre-built image from GHCR (amd64 + arm64)</span>
+<span class="cmd">docker run -d --name calrs \</span>
+<span class="cmd">  -p 3000:3000 \</span>
+<span class="cmd">  -v calrs-data:/var/lib/calrs \</span>
+<span class="cmd">  -e CALRS_BASE_URL=https://cal.example.com \</span>
+<span class="cmd">  ghcr.io/olivierlambert/calrs:latest</span>
 
 <span class="comment"># Open http://localhost:3000 and register</span></pre>
       <pre class="install-code" id="tab-compose"><span class="comment"># docker-compose.yml</span>
 <span class="cmd">services:</span>
 <span class="cmd">  calrs:</span>
-<span class="cmd">    image: ghcr.io/olivierlambert/calrs:next</span>
+<span class="cmd">    image: ghcr.io/olivierlambert/calrs:latest</span>
 <span class="cmd">    ports:</span>
-<span class="cmd">      - "127.0.0.1:3000:3000"</span>
+<span class="cmd">      - "3000:3000"</span>
 <span class="cmd">    volumes:</span>
-<span class="cmd">      - calrs-v2-data:/var/lib/calrs</span>
+<span class="cmd">      - calrs-data:/var/lib/calrs</span>
 <span class="cmd">    environment:</span>
-<span class="cmd">      - CALRS_BASE_URL=http://localhost:3000</span>
+<span class="cmd">      - CALRS_BASE_URL=https://cal.example.com</span>
 <span class="cmd">    restart: unless-stopped</span>
 <span class="cmd"></span>
 <span class="cmd">volumes:</span>
-<span class="cmd">  calrs-v2-data:</span></pre>
-      <pre class="install-code" id="tab-rpm"><span class="comment"># Community package; check its version for v2 availability</span>
+<span class="cmd">  calrs-data:</span></pre>
+      <pre class="install-code" id="tab-rpm"><span class="comment"># RHEL/Fedora — community-maintained Copr repo</span>
 <span class="cmd">sudo dnf copr enable missd/calrs</span>
 <span class="cmd">sudo dnf install calrs</span>
 
@@ -704,32 +795,27 @@
 <span class="cmd">sudo systemctl enable --now calrs</span>
 
 <span class="comment"># Open http://localhost:3000 and register</span></pre>
-      <pre class="install-code" id="tab-binary"><span class="comment"># Build from the selected source checkout</span>
-<span class="cmd">cargo build --release --locked</span>
-<span class="cmd"></span>
-<span class="comment"># Create the account and directory before copying templates</span>
-<span class="cmd">sudo useradd -r -s /bin/false -m -d /var/lib/calrs calrs</span>
-<span class="cmd">sudo install -d -o calrs -g calrs -m 750 /var/lib/calrs</span>
-<span class="cmd">sudo install -m 755 target/release/calrs /usr/local/bin/calrs</span>
+      <pre class="install-code" id="tab-binary"><span class="comment"># Build from source</span>
+<span class="cmd">cargo build --release</span>
+
+<span class="comment"># Install binary + templates</span>
+<span class="cmd">sudo cp target/release/calrs /usr/local/bin/</span>
 <span class="cmd">sudo cp -r templates /var/lib/calrs/templates</span>
+
+<span class="comment"># Create system user and start</span>
+<span class="cmd">sudo useradd -r -s /bin/false -m -d /var/lib/calrs calrs</span>
 <span class="cmd">sudo cp calrs.service /etc/systemd/system/</span>
-<span class="cmd">sudo systemctl daemon-reload</span>
-<span class="cmd"></span>
-<span class="comment"># Configure the public URL in an override before starting</span>
-<span class="cmd">sudo systemctl edit calrs</span>
 <span class="cmd">sudo systemctl enable --now calrs</span></pre>
       <pre class="install-code" id="tab-source"><span class="comment"># Clone and run from source</span>
 <span class="cmd">git clone https://github.com/olivierlambert/calrs.git</span>
 <span class="cmd">cd calrs</span>
-<span class="cmd">cargo build --release --locked</span>
+<span class="cmd">cargo build --release</span>
 <span class="cmd">./target/release/calrs serve --port 3000</span>
 
 <span class="comment"># Register at http://localhost:3000</span></pre>
     </div>
   </div>
 </section>
-
-<div class="container"><p style="margin: 0 0 3rem; color: var(--text-secondary); line-height: 1.7;">For a public installation, configure HTTPS and the public base URL. Deploy matching templates with a standalone binary, and back up the database, credential key and uploaded files together. See <a href="docs/deployment.html">deployment and backup instructions</a>.</p></div>
 
 <!-- Tech stack -->
 <section class="section" style="padding-top: 0;">
@@ -814,30 +900,6 @@ function showTab(id) {
   const lbImg    = document.getElementById('lightbox-img');
   const lbCap    = document.getElementById('lightbox-caption');
   let previousFocus = null;
-
-  // Load both screenshots before swapping, keeping the two halves in sync.
-  let paletteRequest = 0;
-  document.querySelectorAll('.theme-choice').forEach(button => {
-    button.addEventListener('click', async () => {
-      const request = ++paletteRequest;
-      const palette = button.dataset.palette;
-      const label = button.textContent;
-      const urls = ['dark', 'light'].map(mode => `assets/screenshots/theme-${palette}-${mode}.png`);
-      try {
-        await Promise.all(urls.map(src => new Promise((resolve, reject) => {
-          const img = new Image(); img.onload = resolve; img.onerror = reject; img.src = src;
-        })));
-        if (request !== paletteRequest) return;
-        document.getElementById('theme-dark').src = urls[0];
-        document.getElementById('theme-light').src = urls[1];
-        document.querySelector('.theme-preview').setAttribute('aria-label', `The calrs dashboard in the ${label} palette, with light mode on the left and dark mode on the right`);
-        document.querySelectorAll('.theme-choice').forEach(choice => choice.setAttribute('aria-pressed', String(choice === button)));
-        document.getElementById('theme-status').textContent = `Previewing ${label}.`;
-      } catch {
-        if (request === paletteRequest) document.getElementById('theme-status').textContent = 'This preview could not load. Please try again.';
-      }
-    });
-  });
 
   function openLightbox(img, caption) {
     previousFocus = document.activeElement;

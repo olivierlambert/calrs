@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>CalDAV Integration - calrs v2 Documentation</title>
+        <title>CalDAV Integration - calrs Documentation</title>
 
 
         <!-- Custom HTML head -->
@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-d5ebc317.js";
+            window.path_to_searchindex_js = "searchindex-6d7ef8e0.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-43543355.js"></script>
+        <script src="toc-e4a0ca82.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -137,7 +137,7 @@
                         </button>
                     </div>
 
-                    <h1 class="menu-title">calrs v2 Documentation</h1>
+                    <h1 class="menu-title">calrs Documentation</h1>
 
                     <div class="right-buttons">
                         <a href="print.html" title="Print this book" aria-label="Print this book">
@@ -223,8 +223,6 @@ calrs source add --url https://mail.company.com/dav/ \
 </blockquote>
 <h3 id="google-calendar"><a class="header" href="#google-calendar">Google Calendar</a></h3>
 <p>Google Calendar connects via OAuth2, not a username/password. See <a href="./google-calendar.html">Google Calendar</a> for Cloud project setup, scopes, and <a href="./google-calendar.html#google-meet-auto-links">Google Meet auto-links</a>.</p>
-<h3 id="microsoft-calendars"><a class="header" href="#microsoft-calendars">Microsoft calendars</a></h3>
-<p><a href="./microsoft-calendar.html">Microsoft 365 / Outlook</a> uses native Microsoft Graph with OAuth2, not CalDAV. It is separate from <strong>Microsoft Exchange on-premises (EWS)</strong>.</p>
 <h2 id="auto-discovery"><a class="header" href="#auto-discovery">Auto-discovery</a></h2>
 <p>calrs follows the CalDAV standard (RFC 4791) for discovery:</p>
 <ol>
@@ -250,15 +248,14 @@ calrs source calendars &lt;id-prefix&gt;
 # Stop syncing one, sync another (calendar ID prefix, href or display name)
 calrs source calendars &lt;id-prefix&gt; --disable "Colleague" --enable "Personal"
 </code></pre>
-<p>The <strong>Conflict calendars</strong> section of an event type then picks, among the synced calendars, the ones that count for that event type. If none of the calendars it picked is synced any more, it falls back to every synced busy calendar, as when it picks none, so turning calendars off never leaves an event type with no conflicts at all.</p>
+<p>The <strong>Conflict calendars</strong> section of an event type then picks, among the synced calendars, the ones that count for that event type. If none of the calendars it picked is synced any more, it falls back to every synced calendar, as when it picks none, so turning calendars off never leaves an event type with no conflicts at all.</p>
 <h3 id="multi-vevent-resources"><a class="header" href="#multi-vevent-resources">Multi-VEVENT resources</a></h3>
 <p>Some CalDAV servers (notably BlueMind) bundle recurring events and their modified instances into a single CalDAV resource containing multiple VEVENTs. calrs splits these and stores each VEVENT as a separate row:</p>
 <ul>
 <li>The <strong>parent event</strong> has the RRULE and is stored with its UID</li>
-<li><strong>Modified instances</strong> have a RECURRENCE-ID and are stored alongside the parent with a composite unique key scoped to the calendar: <code>(uid, calendar_id, recurrence_id)</code></li>
+<li><strong>Modified instances</strong> have a RECURRENCE-ID and are stored alongside the parent with a composite unique key <code>(uid, recurrence_id)</code></li>
 <li>This ensures modified occurrences correctly block (or free) availability</li>
 </ul>
-<p>Recurring events are expanded over the window asked for, however long ago the series started: a daily stand-up created years ago still blocks today. Supported rules are <code>DAILY</code>, <code>WEEKLY</code>, <code>MONTHLY</code> and <code>YEARLY</code>, with <code>INTERVAL</code>, <code>UNTIL</code>, <code>COUNT</code>, <code>BYDAY</code>, <code>BYMONTH</code>, <code>BYMONTHDAY</code>, <code>BYSETPOS</code>, <code>WKST</code>, <code>RDATE</code> (extra dates, with or without a rule) and <code>EXDATE</code>; cancelled occurrences count toward <code>COUNT</code>, as RFC 5545 says. A rule calrs cannot expand is never read as free: an hourly one or one with <code>BYHOUR</code> blocks every slot from its start, any other (<code>BYYEARDAY</code>, <code>BYWEEKNO</code>, <code>RSCALE</code>) the event’s own time every day from its start, up to its <code>UNTIL</code>; the troubleshoot view shows it as a repeat rule calrs cannot read, and each sync logs a warning.</p>
 <h2 id="caldav-write-back"><a class="header" href="#caldav-write-back">CalDAV write-back</a></h2>
 <p>When a booking is confirmed, calrs can automatically push it to your CalDAV calendar as a VEVENT. When a booking is cancelled, the event is deleted.</p>
 <h3 id="setup"><a class="header" href="#setup">Setup</a></h3>
@@ -273,24 +270,8 @@ calrs source calendars &lt;id-prefix&gt; --disable "Colleague" --enable "Persona
 <li>On <strong>confirmation</strong>: calrs generates an ICS event and PUTs it to <code>{calendar-href}/{booking-uid}.ics</code></li>
 <li>On <strong>cancellation</strong>: calrs DELETEs the event from the same path</li>
 <li>The booking tracks which calendar it was pushed to, so cancellation always targets the right calendar</li>
-<li>Each event type can send its bookings to a calendar of its own (see below)</li>
 <li>If no write calendar is configured, write-back is skipped and a warning is logged (emails still work)</li>
 <li>Write-back works for individual bookings, team bookings (the assigned member’s calendar for round-robin, every eligible member’s for collective), and pending-then-confirmed bookings</li>
-</ul>
-<h3 id="per-event-type-write-confirmed-bookings-to"><a class="header" href="#per-event-type-write-confirmed-bookings-to">Per event type: “Write confirmed bookings to”</a></h3>
-<p>The source setting above applies to every booking. To send one event type’s bookings somewhere else (coaching into a personal calendar, team calls into a shared work calendar), choose a calendar for it:</p>
-<ul>
-<li><strong>Personal event types</strong>: in the event type form, under <strong>Booking options</strong>, pick a calendar in <strong>“Write confirmed bookings to”</strong>.</li>
-<li><strong>Any event type you host, team ones included</strong>: on the <strong>Calendar sources</strong> page, the <strong>“Bookings by event type”</strong> section lists your event types with one dropdown each. On a team event type each member chooses their own calendar, since it is the assigned member’s (or, for collective, each member’s) own calendar that receives the booking. The team event type form points there.</li>
-</ul>
-<p>The list offers every calendar of your own enabled sources, synced or not, like the source setting. <strong>“Default (source setting)”</strong> keeps the behaviour above. A chosen calendar receives that event type’s bookings instead of the write calendar of each source, not in addition to it.</p>
-<p>What happens when things change:</p>
-<ul>
-<li><strong>The choice changes</strong> while a booking is upcoming: the booking moves at its next write (a reschedule, an approval, a retry, a claim). The new copy is written first; the copy left in the earlier calendar is deleted only once that write has landed, so a failed write never leaves the booking without a calendar. Cancelling a booking deletes it from the calendar it was actually written to, and a delete that fails is tried again in the background.</li>
-<li><strong>The calendar refuses the booking for good</strong> (deleted on the server, or read-only: HTTP 403, 404 or 405): the booking is written to the source setting instead, without a failure or retries, and the Calendar sources page shows the refusal next to the event type. The next booking tries the chosen calendar again.</li>
-<li><strong>The calendar’s source is disabled</strong>: bookings go back to the source setting until it is enabled again. The choice stays, shown as “(unavailable)”, and saving the form unchanged keeps it. <strong>The source is removed</strong>: the choice is removed with it.</li>
-<li><strong>Google Meet</strong>: the Meet event is created on the chosen calendar when it is a calendar of your Google account, otherwise on your Google source’s write calendar, as before. Once created it never moves, since that event holds the meeting.</li>
-<li>The orphan check (a booking cancelled because its event was deleted from your calendar) also covers a chosen calendar, when it is synced.</li>
 </ul>
 <h3 id="when-a-write-back-fails"><a class="header" href="#when-a-write-back-fails">When a write-back fails</a></h3>
 <p>After each PUT, calrs reads the event back by UID (HEAD, or PROPFIND on servers that refuse HEAD; FindItem on EWS). A write the server refused, or accepted without the event becoming readable, counts as failed.</p>
@@ -306,15 +287,9 @@ calrs source calendars &lt;id-prefix&gt; --disable "Colleague" --enable "Persona
 <li>the calendar sources page shows the error and since when the source has been failing</li>
 <li>once a source has failed at least 3 times in a row over more than an hour, its owner is emailed once, in their language. They hear about it again only if it recovers and later fails again</li>
 <li>a calendar that fails to fetch fails the sync of its source, so “Sync complete.” means every calendar synced</li>
-<li>an answer calrs cannot read counts as a failure too: an error status (a 500 or 503, even with an empty body), malformed XML, or a page that is not a WebDAV answer at all (a proxy’s HTML error page). The error says which (“returned 503”, “malformed XML at byte …”, “expected a WebDAV multistatus”). The calendar keeps its cached events and is fetched again on the next sync, instead of being read as an empty calendar that has not changed</li>
-<li>a single answer from the server is read up to 64 MB, which covers calendars with tens of thousands of events; a bigger one, or one with more than a million XML elements, fails the sync of that calendar, to keep memory use bounded on small servers (at the limits, reading an answer takes a few hundred MB at most)</li>
-<li>error messages name the HTTP status only, never the text of the server’s answer, since on a shared calendar it can quote other people’s events</li>
 <li>slot pages retry a failing source at most every five minutes, so a dead server does not slow down every page load</li>
 <li><code>calrs sync</code> lists the sources that failed and exits with status 1</li>
 </ul>
-<h2 id="recurring-events"><a class="header" href="#recurring-events">Recurring events</a></h2>
-<p>calrs expands daily, weekly, monthly and yearly recurrence rules within the requested window, including intervals, counts, end dates, weekday/month-day selections and positional rules. <code>RDATE</code> adds occurrences, <code>EXDATE</code> removes them, and <code>RECURRENCE-ID</code> replaces moved or cancelled instances. Long-running series are expanded near the requested dates rather than stopping after a fixed number of occurrences from their original start.</p>
-<p>An unsupported rule does not make a calendar look free. calrs blocks conservatively within the rule’s known bounds: usually the event’s time each day, or all time for sub-daily rules and unsupported time selectors. <strong>Troubleshoot</strong> explains the fallback, and the dashboard week marks it with a dashed busy band. Inspect these entries if fewer slots appear after upgrading.</p>
 <h2 id="managing-sources"><a class="header" href="#managing-sources">Managing sources</a></h2>
 <pre><code class="language-bash"># List all sources
 calrs source list
@@ -325,15 +300,15 @@ calrs source test &lt;id-prefix&gt;
 # Remove a source (cascade-deletes calendars and events)
 calrs source remove &lt;id-prefix&gt;
 </code></pre>
-<p>From the dashboard, use <strong>Edit</strong> to update connection details, <strong>Calendars</strong> to select synced calendars, and the sync, connection-test and remove actions. An empty password on edit preserves the existing password. OAuth and centrally managed Exchange sources have their own connection controls; see the corresponding provider guide.</p>
+<p>From the dashboard: <strong>Sync</strong>, <strong>Test</strong>, and <strong>Remove</strong> buttons are available for each source.</p>
 <h2 id="credentials"><a class="header" href="#credentials">Credentials</a></h2>
-<p>Passwords and OAuth tokens are encrypted at rest with AES-256-GCM. The key is stored in <code>secret.key</code> in the data directory, unless supplied through <code>CALRS_SECRET_KEY</code>. Back up the key with the database; a database backup alone cannot restore the encrypted credentials. Legacy hex-encoded passwords are migrated on startup. See <a href="./security.html#caldav-credential-storage">Security</a>.</p>
+<p>Passwords are hex-encoded and stored in the SQLite database. This is not encryption — it prevents accidental display in logs but does not protect against database access. Secure your data directory appropriately.</p>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="dashboard.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="getting-started.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
@@ -347,7 +322,7 @@ calrs source remove &lt;id-prefix&gt;
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="dashboard.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="getting-started.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
