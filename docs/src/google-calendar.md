@@ -2,7 +2,7 @@
 
 calrs can connect to Google Calendar as a CalDAV source using Google's OAuth2 flow. Unlike a username/password source, Google requires you (the calrs operator) to register an OAuth2 application in Google Cloud and configure its client ID and secret in calrs once. After that, individual users connect their own Google accounts through the dashboard.
 
-This page walks through the Google Cloud setup. The values you collect at the end go into **Admin → Auth → Google OAuth2** in the calrs dashboard.
+This page walks through the Google Cloud setup. The values you collect at the end go into **Admin → Sign-in and security → Google OAuth2** in the calrs dashboard.
 
 ---
 
@@ -33,7 +33,7 @@ In **APIs & Services → Credentials**, click **Create credentials → OAuth cli
 - **Application type:** *Web application*
 - **Name:** anything (e.g. `calrs`)
 
-You will get a **client ID** and **client secret**. Both are stored encrypted in calrs (`auth_config.google_oauth2_client_id` / `google_oauth2_client_secret`) once you paste them into the admin panel.
+You will get a **client ID** and **client secret**. calrs stores the client ID and encrypts the client secret at rest once you save them in the admin panel.
 
 ---
 
@@ -80,14 +80,11 @@ The same Calendar scope is enough to attach a Google Meet conference to a write-
 
 ## 6. Test users vs. publishing the consent screen
 
-While the OAuth consent screen is in **Testing** status, only accounts explicitly listed under **Test users** can complete the OAuth flow. Everyone else gets `Error 403: access_denied` at the Google consent page.
+For an **External** application in **Testing**, add the intended accounts as test users. Because calrs requests Calendar access, refresh tokens issued in that mode expire after seven days; users then need to reconnect. See [Google's refresh-token expiration rules](https://developers.google.com/identity/protocols/oauth2#expiration).
 
-You have two options:
+For ongoing use, configure the application's production audience and review Google's verification requirements. Publishing and verification are separate steps: eligible personal-use and organization-internal apps can qualify for exceptions. An unverified external app can still show a warning and have a user cap; a Workspace administrator can also restrict consent. See [Google's verification exceptions](https://support.google.com/cloud/answer/13464323) and [sensitive-scope verification](https://developers.google.com/identity/protocols/oauth2/production-readiness/sensitive-scope-verification).
 
-- **Keep it in Testing** if calrs is only used by a small, known group (say, a single team or family). Add each user's Google email to the Test users list. Refresh tokens issued to test users expire after 7 days, so users will need to reconnect their source weekly.
-- **Publish the app** (button on the OAuth consent screen page) for any larger or longer-running deployment. Because the Calendar scope is marked **sensitive/restricted** by Google, publishing triggers Google's app verification process. They will ask for a homepage, privacy policy, branding assets, and (for restricted scopes) a security assessment. This can take weeks. Until verification completes, users see an "unverified app" warning but can still proceed via *Advanced → Go to {app} (unsafe)*.
-
-For a self-hosted instance used by you and a handful of people, the Testing mode + Test users approach is usually fine; just remember the 7-day refresh token expiry.
+After moving out of Testing, reconnect affected sources to obtain fresh authorization. Production tokens can still be revoked or expire for other reasons; check source errors rather than assuming a token lasts forever.
 
 ## Out-of-office blocking
 

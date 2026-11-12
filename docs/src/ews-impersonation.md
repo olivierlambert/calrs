@@ -26,7 +26,7 @@ anyone's mailbox content through calrs, impersonating the user included.
 > before: users add their own per-user EWS or CalDAV sources.
 
 > **On-premises Exchange only.** Exchange Online (Microsoft 365) is not
-> covered: its calendars go through Microsoft Graph (#229).
+> covered: use [Microsoft Calendar](./microsoft-calendar.md) for its Graph integration.
 
 ---
 

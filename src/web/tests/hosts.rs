@@ -824,3 +824,46 @@ async fn reschedule_and_approval_checks_include_the_claimant() {
     assert_eq!(hosts.user_ids, vec![owner.clone()]);
     assert_eq!(hosts.claimant, None);
 }
+
+/// An approval sees a calendar event stored in UTC at the booking's time,
+/// though its wall clock differs from the Paris host's (#420).
+#[tokio::test]
+async fn approval_refuses_a_host_busy_in_another_timezone() {
+    let pool = setup_test_db().await;
+    let (owner, account, et) = seed_test_data(&pool).await;
+    sqlx::query("UPDATE event_types SET timezone = 'Europe/Paris' WHERE id = ?")
+        .bind(&et)
+        .execute(&pool)
+        .await
+        .unwrap();
+    // 09:00 UTC is 10:00 in Paris in December.
+    seed_synced_event(
+        &pool,
+        &account,
+        "20261214T090000",
+        "20261214T093000",
+        "UTC",
+        "OPAQUE",
+    )
+    .await;
+    let hosts = RescheduleHosts {
+        user_ids: vec![owner],
+        team_id: None,
+        collective: false,
+        participants: Vec::new(),
+        claimant: None,
+    };
+    let approve = |start: &'static str, end: &'static str| {
+        let (pool, hosts, et) = (&pool, &hosts, &et);
+        async move {
+            approval_hosts_free(pool, hosts, "pending", "pending-uid", et, start, end)
+                .await
+                .unwrap()
+        }
+    };
+    assert!(
+        !approve("2026-12-14T09:00:00Z", "2026-12-14T09:30:00Z").await,
+        "the 09:00 UTC event blocks a 09:00 UTC booking"
+    );
+    assert!(approve("2026-12-14T10:00:00Z", "2026-12-14T10:30:00Z").await);
+}

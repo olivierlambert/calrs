@@ -552,3 +552,221 @@ async fn a_single_use_invite_books_once_under_concurrent_submissions() {
             .unwrap();
     assert_eq!(used, 1);
 }
+
+/// Starts a guest reschedule to 11:00 UTC, lets it read the booking and wait
+/// at the held booking lock, runs `meanwhile` (which commits a competing
+/// change), then releases the lock and returns the reschedule's response.
+async fn reschedule_overtaken_by<F, Fut>(
+    app: &Router,
+    pool: &SqlitePool,
+    day: &str,
+    meanwhile: F,
+) -> axum::response::Response
+where
+    F: FnOnce(Router, SqlitePool) -> Fut,
+    Fut: std::future::Future<Output = ()>,
+{
+    let guard = crate::resources::booking_lock().await;
+    // Only the tests that go through this helper use this token, and they
+    // hold the lock while armed, so the checkpoint is this request's.
+    let reached = crate::test_support::arm("reschedule:stale-reschedule");
+    let mut request = Box::pin(app.clone().oneshot(post_form_unauthed(
+        "/booking/reschedule/stale-reschedule",
+        "stale",
+        &format!("_csrf=stale&date={day}&time=11:00&tz=UTC"),
+    )));
+    // Wait until the handler has done its first read and is about to wait
+    // for the held lock: the competing change then lands between the two,
+    // which is the case the guard under the lock exists for.
+    tokio::select! {
+        _ = reached.notify.notified() => {}
+        response = &mut request => panic!(
+            "the reschedule answered before reaching the booking lock: {:?}",
+            response.map(|r| r.status())
+        ),
+        _ = tokio::time::sleep(std::time::Duration::from_secs(30)) => {
+            panic!("the reschedule never reached the booking lock")
+        }
+    }
+    // Unregister while the lock is still held: once it is released another
+    // test may arm the same name, and dropping ours later would remove theirs.
+    drop(reached);
+    meanwhile(app.clone(), pool.clone()).await;
+    drop(guard);
+    request.await.unwrap()
+}
+
+fn nine_utc(day: &str) -> chrono::DateTime<Utc> {
+    NaiveDate::parse_from_str(day, "%Y-%m-%d")
+        .unwrap()
+        .and_hms_opt(9, 0, 0)
+        .unwrap()
+        .and_utc()
+}
+
+fn stale_tokens() -> Vec<(&'static str, Option<String>)> {
+    vec![
+        ("reschedule_token", Some("stale-reschedule".into())),
+        ("cancel_token", Some("stale-cancel".into())),
+    ]
+}
+
+#[tokio::test]
+async fn reschedule_waiting_for_the_lock_does_not_revive_a_cancelled_booking() {
+    let (app, pool, _, et) = setup_test_app().await;
+    let day = far_future_monday();
+    let bid = insert_v1_booking(
+        &pool,
+        &et,
+        "guest@example.com",
+        nine_utc(&day),
+        30,
+        "confirmed",
+        &stale_tokens(),
+    )
+    .await;
+    let response = reschedule_overtaken_by(&app, &pool, &day, |app, pool| {
+        let bid = bid.clone();
+        async move {
+            let cancelled = app
+                .oneshot(post_form_unauthed(
+                    "/booking/cancel/stale-cancel",
+                    "stale",
+                    "_csrf=stale",
+                ))
+                .await
+                .unwrap();
+            assert!(!cancelled.status().is_server_error());
+            assert_eq!(booking_status(&pool, &bid).await, "cancelled");
+        }
+    })
+    .await;
+    assert_eq!(
+        booking_status(&pool, &bid).await,
+        "cancelled",
+        "reschedule returned {} and revived a cancelled booking",
+        response.status()
+    );
+    let (start, token): (String, String) =
+        sqlx::query_as("SELECT start_at, reschedule_token FROM bookings WHERE id = ?")
+            .bind(&bid)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(start, utc_stamp(nine_utc(&day)));
+    assert_eq!(token, "stale-reschedule");
+}
+
+#[tokio::test]
+async fn reschedule_waiting_for_the_lock_does_not_revive_a_declined_request() {
+    let (app, pool, _, et) = setup_test_app().await;
+    let day = far_future_monday();
+    let bid = insert_v1_booking(
+        &pool,
+        &et,
+        "guest@example.com",
+        nine_utc(&day),
+        30,
+        "pending",
+        &stale_tokens(),
+    )
+    .await;
+    let response = reschedule_overtaken_by(&app, &pool, &day, |_, pool| {
+        let bid = bid.clone();
+        async move {
+            sqlx::query("UPDATE bookings SET status = 'declined' WHERE id = ?")
+                .bind(&bid)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+    })
+    .await;
+    assert_eq!(
+        booking_status(&pool, &bid).await,
+        "declined",
+        "reschedule returned {}",
+        response.status()
+    );
+}
+
+#[tokio::test]
+async fn reschedule_with_a_token_another_reschedule_rotated_is_refused() {
+    let (app, pool, _, et) = setup_test_app().await;
+    let day = far_future_monday();
+    let bid = insert_v1_booking(
+        &pool,
+        &et,
+        "guest@example.com",
+        nine_utc(&day),
+        30,
+        "confirmed",
+        &stale_tokens(),
+    )
+    .await;
+    let response = reschedule_overtaken_by(&app, &pool, &day, |_, pool| {
+        let (bid, day) = (bid.clone(), day.clone());
+        async move {
+        sqlx::query(
+            "UPDATE bookings SET reschedule_token = 'rotated', start_at = ?, end_at = ? WHERE id = ?",
+        )
+        .bind(utc_stamp(nine_utc(&day) + Duration::hours(5)))
+        .bind(utc_stamp(nine_utc(&day) + Duration::hours(5) + Duration::minutes(30)))
+        .bind(&bid)
+        .execute(&pool)
+        .await
+        .unwrap();
+        }
+    })
+    .await;
+    assert_eq!(response.status(), axum::http::StatusCode::OK);
+    let (start, token): (String, String) =
+        sqlx::query_as("SELECT start_at, reschedule_token FROM bookings WHERE id = ?")
+            .bind(&bid)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(token, "rotated");
+    assert_eq!(start, utc_stamp(nine_utc(&day) + Duration::hours(5)));
+}
+
+#[tokio::test]
+async fn an_undisturbed_reschedule_moves_the_booking_and_rotates_the_token() {
+    let (app, pool, _, et) = setup_test_app().await;
+    let day = far_future_monday();
+    let bid = insert_v1_booking(
+        &pool,
+        &et,
+        "guest@example.com",
+        nine_utc(&day),
+        30,
+        "confirmed",
+        &[
+            ("reschedule_token", Some("undisturbed-reschedule".into())),
+            ("cancel_token", Some("undisturbed-cancel".into())),
+        ],
+    )
+    .await;
+    let response = app
+        .oneshot(post_form_unauthed(
+            "/booking/reschedule/undisturbed-reschedule",
+            "stale",
+            &format!("_csrf=stale&date={day}&time=11:00&tz=UTC"),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), axum::http::StatusCode::OK);
+    let (status, start, token): (String, String, String) =
+        sqlx::query_as("SELECT status, start_at, reschedule_token FROM bookings WHERE id = ?")
+            .bind(&bid)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(status, "confirmed");
+    assert_eq!(
+        start,
+        utc_stamp(nine_utc(&day) + Duration::hours(2)),
+        "the booking moved to 11:00"
+    );
+    assert_ne!(token, "undisturbed-reschedule");
+}

@@ -382,8 +382,16 @@ pub(super) async fn pick_group_member(
     buffer_after: i32,
     host_tz: Tz,
 ) -> Result<Option<(String, String, String)>, sqlx::Error> {
-    let buf_start = slot_start - Duration::minutes(buffer_before as i64);
-    let buf_end = slot_end + Duration::minutes(buffer_after as i64);
+    let Some((buf_start, buf_end)) = crate::booking_time::buffered_busy_range(
+        &slot_start.to_string(),
+        &slot_end.to_string(),
+        host_tz,
+        buffer_before.into(),
+        buffer_after.into(),
+    ) else {
+        // Unreadable bounds: no member is offered, never a guess.
+        return Ok(None);
+    };
 
     // Fetch members with per-event-type weight (fallback to default 1)
     // weight=0 means excluded from this event type
@@ -721,9 +729,7 @@ async fn busy_times(
     // ("20260618T100000" > "20260618"), so a same-day window (window_end on the
     // same date as the event, e.g. the single-slot window in pick_group_member)
     // would silently miss the event and treat a busy member as free.
-    let end_compact = window_end.format("%Y%m%dT%H%M%S").to_string();
-    let start_compact = window_start.format("%Y%m%dT%H%M%S").to_string();
-    // ISO bounds are for the bookings sub-query below (bookings store ISO times).
+    // The bounds are built by `strftime` from the ISO ones below.
     let end_iso = window_end.format("%Y-%m-%dT%H:%M:%S").to_string();
     let start_iso = window_start.format("%Y-%m-%dT%H:%M:%S").to_string();
 
@@ -734,8 +740,9 @@ async fn busy_times(
     // still make the booking conflict with its own calendar copy.
     let exclude_uid = exclude_booking_uid.unwrap_or("");
 
-    // API status events are UTC, while the requested window is host-local.
-    // Fetch them with timezone slack, then test overlap after conversion below.
+    // Events keep the wall clock of their own zone, while the window is
+    // host-local: fetch them with two days of slack (more than any two
+    // zones differ by), then test overlap after conversion below (#420).
     let events: Result<Vec<(String, String, Option<String>)>, _> = sqlx::query_as(
         "SELECT e.start_at, e.end_at, e.timezone FROM events e
          JOIN calendars c ON c.id = e.calendar_id
@@ -748,18 +755,14 @@ async fn busy_times(
            AND (e.status IS NULL OR e.status != 'CANCELLED')
            AND (e.transp IS NULL OR e.transp != 'TRANSPARENT')
            AND (? = '' OR e.uid != ?)
-           AND ((e.start_at <= ? AND e.end_at >= ?)
-                OR (e.google_out_of_office = 1
-                    AND e.start_at <= strftime('%Y%m%dT%H%M%S', ?, '+2 days')
-                    AND e.end_at >= strftime('%Y%m%dT%H%M%S', ?, '-2 days')))",
+           AND e.start_at <= strftime('%Y%m%dT%H%M%S', ?, '+2 days')
+           AND e.end_at >= strftime('%Y%m%dT%H%M%S', ?, '-2 days')",
     )
     .bind(user_id)
     .bind(et_id_for_filter)
     .bind(et_id_for_filter)
     .bind(exclude_uid)
     .bind(exclude_uid)
-    .bind(&end_compact)
-    .bind(&start_compact)
     .bind(&end_iso)
     .bind(&start_iso)
     .fetch_all(pool)
@@ -775,7 +778,13 @@ async fn busy_times(
         })
         .collect();
 
-    let end_compact_rrule = window_end.format("%Y%m%dT235959").to_string();
+    // A series starts at its DTSTART, in its own zone's wall clock, which
+    // can be a day ahead of the host's: the same slack applies (#420).
+    let end_compact_rrule = window_end
+        .checked_add_signed(Duration::days(2))
+        .unwrap_or(window_end)
+        .format("%Y%m%dT235959")
+        .to_string();
     let recurring: Result<Vec<(String, String, String, Option<String>, Option<String>)>, _> = sqlx::query_as(
         "SELECT e.start_at, e.end_at, COALESCE(e.rrule, ''), e.raw_ical, e.timezone FROM events e
          JOIN calendars c ON c.id = e.calendar_id
@@ -820,39 +829,51 @@ async fn busy_times(
     // (`pending_blocks_slot`, on by default): otherwise a second guest is
     // offered the slot, fills the form, and is bounced at submit, and an
     // overlapping slot on another event type could be requested as well (#234).
-    let bookings: Result<Vec<(String, String, i64, Option<String>)>, _> = sqlx::query_as(&format!(
-        "SELECT b.start_at, b.end_at, b.time_version,
-                COALESCE(NULLIF(et.timezone, ''), u.timezone) FROM bookings b
+    //
+    // A booking also holds its own event type's buffers, before its start
+    // and after its end (#422): the candidate's buffers alone would let a
+    // later meeting start right where an earlier one's buffer_after runs.
+    let bookings: Result<Vec<(String, String, i64, Option<String>, i64, i64)>, _> =
+        sqlx::query_as(&format!(
+            "SELECT b.start_at, b.end_at, b.time_version,
+                COALESCE(NULLIF(et.timezone, ''), u.timezone), {} FROM bookings b
          JOIN event_types et ON et.id = b.event_type_id
          JOIN accounts a ON a.id = et.account_id
          LEFT JOIN users u ON u.id = a.user_id
          WHERE {}
-           AND b.start_at <= strftime('%Y-%m-%dT%H:%M:%S', ?, '+2 days') AND b.end_at >= strftime('%Y-%m-%dT%H:%M:%S', ?, '-2 days')
+           AND {}
            AND (? = '' OR b.id != ?)",
-        crate::booking_time::user_busy_bookings(include_pending_holds)
-    ))
-    .bind(user_id)
-    .bind(user_id)
-    .bind(user_id)
-    .bind(user_id)
-    .bind(user_id)
-    .bind(&end_iso)
-    .bind(&start_iso)
-    .bind(exclude_id)
-    .bind(exclude_id)
-    .fetch_all(pool)
-    .await;
+            crate::booking_time::BOOKING_BUFFERS,
+            crate::booking_time::user_busy_bookings(include_pending_holds),
+            crate::booking_time::BUFFERED_BOOKING_WINDOW,
+        ))
+        .bind(user_id)
+        .bind(user_id)
+        .bind(user_id)
+        .bind(user_id)
+        .bind(user_id)
+        .bind(&end_iso)
+        .bind(&start_iso)
+        .bind(exclude_id)
+        .bind(exclude_id)
+        .fetch_all(pool)
+        .await;
     let bookings = busy_rows(bookings, strict, "bookings", user_id)?;
 
-    for (s, e, version, zone) in &bookings {
+    for (s, e, version, zone, before, after) in &bookings {
         let legacy_tz = zone
             .as_deref()
             .and_then(|z| z.parse().ok())
             .unwrap_or(Tz::UTC);
-        if let Some((start, end)) =
-            crate::booking_time::stored_busy_range(s, e, *version, legacy_tz, host_tz)
-        {
-            busy.push((start, end));
+        if let Some(range) = crate::booking_time::stored_buffered_busy_range(
+            s,
+            e,
+            *version,
+            legacy_tz,
+            host_tz,
+            (*before, *after),
+        ) {
+            busy.push(range);
         }
     }
 
@@ -1763,29 +1784,18 @@ pub(super) fn compute_slots_from_rules(
             .filter(|(d, _, _, _)| *d == date_str)
             .collect();
 
-        // If any override blocks this day, skip entirely
-        if day_overrides.iter().any(|(_, _, _, blocked)| *blocked != 0) {
-            continue;
-        }
-
-        // Build time windows: use custom hours if overrides exist, else weekly rules
-        let windows: Vec<(String, String)> = if !day_overrides.is_empty() {
-            // Custom hours overrides replace weekly rules
-            day_overrides
-                .iter()
-                .filter_map(|(_, s, e, _)| match (s, e) {
-                    (Some(start), Some(end)) => Some((start.clone(), end.clone())),
-                    _ => None,
-                })
-                .collect()
-        } else {
-            let weekday = date.weekday().num_days_from_sunday() as i32;
-            rules
-                .iter()
-                .filter(|(d, _, _)| *d == weekday)
-                .map(|(_, s, e)| (s.clone(), e.clone()))
-                .collect()
-        };
+        let day_overrides: Vec<crate::availability_rules::DayOverride> = day_overrides
+            .iter()
+            .map(|(_, s, e, b)| (s.clone(), e.clone(), *b))
+            .collect();
+        let weekday = date.weekday().num_days_from_sunday() as i32;
+        let weekly: Vec<(String, String)> = rules
+            .iter()
+            .filter(|(d, _, _)| *d == weekday)
+            .map(|(_, s, e)| (s.clone(), e.clone()))
+            .collect();
+        // Blocked date: none; custom hours replace the weekly rules.
+        let windows = crate::availability_rules::effective_windows_for_day(&weekly, &day_overrides);
 
         if windows.is_empty() {
             continue;
@@ -1841,8 +1851,16 @@ pub(super) fn compute_slots_from_rules(
                     cursor += slot_step;
                     continue;
                 }
-                let buf_start = check_start - Duration::minutes(buffer_before as i64);
-                let buf_end = check_end + Duration::minutes(buffer_after as i64);
+                let Some((buf_start, buf_end)) = crate::booking_time::buffered_busy_range(
+                    &slot_start_utc.to_rfc3339(),
+                    &slot_end_utc.to_rfc3339(),
+                    host_tz,
+                    buffer_before.into(),
+                    buffer_after.into(),
+                ) else {
+                    cursor += slot_step;
+                    continue;
+                };
 
                 if busy_source_is_free(&busy, buf_start, buf_end) {
                     day_slots.push(SlotTime {
@@ -2745,14 +2763,12 @@ pub(super) async fn troubleshoot(
     };
 
     // Busy events for this date — enriched with title + calendar name
-    let day_start_compact = target_date.format("%Y%m%d").to_string();
-    let day_end_compact = (target_date + Duration::days(1))
-        .format("%Y%m%d")
-        .to_string();
     let day_start_iso = target_date.format("%Y-%m-%dT00:00:00").to_string();
     let day_end_iso = target_date.format("%Y-%m-%dT23:59:59").to_string();
 
-    // Non-recurring busy events for this date
+    // Non-recurring busy events for this date. Events keep their own zone's
+    // wall clock, so they are fetched with two days of slack and kept below
+    // only when they reach the day once converted (#420).
     let raw_busy_events: Vec<(
         String,
         String,
@@ -2771,17 +2787,14 @@ pub(super) async fn troubleshoot(
            AND (e.rrule IS NULL OR e.rrule = '') AND e.rdate = 0
            AND (e.status IS NULL OR e.status != 'CANCELLED')
            AND (e.transp IS NULL OR e.transp != 'TRANSPARENT')
-           AND ((e.start_at < ? AND e.end_at > ?) OR (e.start_at < ? AND e.end_at > ?)
-                OR (e.google_out_of_office = 1
-                    AND e.start_at <= strftime('%Y%m%dT%H%M%S', ?, '+2 days')
+           AND ((e.start_at < ? AND e.end_at > ?)
+                OR (e.start_at <= strftime('%Y%m%dT%H%M%S', ?, '+2 days')
                     AND e.end_at >= strftime('%Y%m%dT%H%M%S', ?, '-2 days')))
          ORDER BY e.start_at",
     )
     .bind(&user.id)
     .bind(&et_id)
     .bind(&et_id)
-    .bind(&day_end_compact)
-    .bind(&day_start_compact)
     .bind(&day_end_iso)
     .bind(&day_start_iso)
     .bind(&day_end_iso)
@@ -2795,14 +2808,15 @@ pub(super) async fn troubleshoot(
         .filter_map(|(s, e, summary, cal_name, event_tz)| {
             let start = convert_event_to_tz(parse_ical_datetime(s)?, event_tz.as_deref(), host_tz);
             let end = convert_event_to_tz(parse_ical_datetime(e)?, event_tz.as_deref(), host_tz);
-            if start.date() > target_date || end.date() < target_date {
-                return None;
-            }
-            // An event that only touches the day at a midnight (an absence
-            // ending at 00:00) takes none of it, buffers included.
+            // Keep an event of the day before or after when this type's
+            // buffers reach into the day, as the slot grid does. An event
+            // that only touches the day at a midnight (an absence ending at
+            // 00:00) takes none of it, buffers included.
             let day_start = target_date.and_time(NaiveTime::MIN);
-            if end + Duration::minutes(buf_after as i64) <= day_start
-                || start - Duration::minutes(buf_before as i64) >= day_start + Duration::days(1)
+            // Around an event, the slot grid blocks this type's buffer_after
+            // before it and its buffer_before after it.
+            if end + Duration::minutes(buf_before as i64) <= day_start
+                || start - Duration::minutes(buf_after as i64) >= day_start + Duration::days(1)
             {
                 return None;
             }
@@ -2836,23 +2850,25 @@ pub(super) async fn troubleshoot(
            AND (e.status IS NULL OR e.status != 'CANCELLED')
            AND (e.transp IS NULL OR e.transp != 'TRANSPARENT')
            AND ((e.rrule IS NOT NULL AND e.rrule != '') OR e.rdate = 1)
-           AND (e.start_at <= ? OR e.start_at <= ?)",
+           AND (e.start_at <= ? OR e.start_at <= strftime('%Y%m%dT%H%M%S', ?, '+2 days'))",
     )
     .bind(&user.id)
     .bind(&et_id)
     .bind(&et_id)
     .bind(&day_end_iso)
-    .bind(&day_end_compact)
+    .bind(&day_end_iso)
     .fetch_all(&state.pool)
     .await
     .unwrap_or_default();
 
-    let ts_window_start = target_date
-        .and_hms_opt(0, 0, 0)
-        .unwrap_or(target_date.and_time(NaiveTime::MIN));
+    // Widened by this type's buffers, so an occurrence just outside the day
+    // whose buffer reaches into it is kept, as for single events.
+    let ts_window_start =
+        target_date.and_time(NaiveTime::MIN) - Duration::minutes(buf_before as i64);
     let ts_window_end = target_date
         .and_hms_opt(23, 59, 59)
-        .unwrap_or(target_date.and_time(NaiveTime::MIN));
+        .unwrap_or(target_date.and_time(NaiveTime::MIN))
+        + Duration::minutes(buf_after as i64);
     for (s, e, rrule_str, raw_ical, summary, cal_name, event_tz) in &recurring_events {
         // A rule calrs cannot expand is blocked as busy from its start: say
         // so, or the host has no way to tell why the day is closed.
@@ -2890,17 +2906,36 @@ pub(super) async fn troubleshoot(
     // team event type, unassigned collective ones, the ones they claimed as a
     // watcher, and held pending requests). `claimed` is 1 for a booking the
     // user is busy for only because they claimed it, so it is labelled so.
-    let bookings: Vec<(String, String, String, String, String, i64)> = sqlx::query_as(&format!(
-        "SELECT CASE b.time_version WHEN 1 THEN b.start_at ELSE rtrim(b.start_at, 'Z') END AS start_at, CASE b.time_version WHEN 1 THEN b.end_at ELSE rtrim(b.end_at, 'Z') END AS end_at, b.guest_name, et.title, b.status,
-                CASE WHEN {} THEN 0 ELSE 1 END AS claimed
+    // Each booking comes with its own event type's buffers (#422).
+    #[allow(clippy::type_complexity)]
+    // A legacy booking is read in its own event type's zone (else its
+    // owner's), as the slot grid reads it in `busy_times`.
+    let bookings: Vec<(
+        String,
+        String,
+        String,
+        String,
+        String,
+        i64,
+        i64,
+        i64,
+        i64,
+        Option<String>,
+    )> = sqlx::query_as(&format!(
+        "SELECT b.start_at, b.end_at, b.guest_name, et.title, b.status,
+                CASE WHEN {} THEN 0 ELSE 1 END AS claimed, {},
+                b.time_version, COALESCE(NULLIF(et.timezone, ''), u.timezone)
          FROM bookings b
          JOIN event_types et ON et.id = b.event_type_id
          JOIN accounts a ON a.id = et.account_id
+         LEFT JOIN users u ON u.id = a.user_id
          WHERE {}
-           AND b.start_at < strftime('%Y-%m-%dT%H:%M:%S', ?, '+2 days') AND b.end_at > strftime('%Y-%m-%dT%H:%M:%S', ?, '-2 days')
+           AND {}
          ORDER BY b.start_at",
         crate::booking_time::USER_HOSTS_BOOKING,
-        crate::booking_time::user_busy_bookings(true)
+        crate::booking_time::BOOKING_BUFFERS,
+        crate::booking_time::user_busy_bookings(true),
+        crate::booking_time::BUFFERED_BOOKING_WINDOW,
     ))
     .bind(&user.id)
     .bind(&user.id)
@@ -2941,8 +2976,11 @@ pub(super) async fn troubleshoot(
         + 1;
 
     let display_start = NaiveTime::from_hms_opt(display_start_hour, 0, 0).unwrap_or(NaiveTime::MIN);
-    let display_end = NaiveTime::from_hms_opt(display_end_hour, 0, 0).unwrap_or(NaiveTime::MIN);
-    let total_minutes = (display_end - display_start).num_minutes() as f64;
+    // The end can be 24:00 (hours running past 23:00), which no NaiveTime
+    // holds: count in minutes, and scan a fixed number of ticks, since the
+    // cursor wraps to 00:00 after the last one.
+    let total_minutes = (f64::from(display_end_hour) - f64::from(display_start_hour)) * 60.0;
+    let tick_count = display_end_hour.saturating_sub(display_start_hour) * 4;
 
     let min_start = now_host + Duration::minutes(min_notice as i64);
 
@@ -2991,29 +3029,72 @@ pub(super) async fn troubleshoot(
     // Parse bookings into (start_dt, end_dt, label, detail)
     // A pending request is shown as such, so the host can tell a held slot
     // from a confirmed meeting.
-    let bookings_parsed: Vec<(NaiveDateTime, NaiveDateTime, String, String)> = bookings
+    #[allow(clippy::type_complexity)]
+    let bookings_parsed: Vec<(
+        NaiveDateTime,
+        NaiveDateTime,
+        String,
+        String,
+        i64,
+        i64,
+        NaiveDateTime,
+        NaiveDateTime,
+    )> = bookings
         .iter()
-        .filter_map(|(s, e, guest, et_title, status, claimed)| {
-            let (start, end) = crate::booking_time::busy_range(s, e, host_tz)?;
-            let detail = if *claimed == 1 {
-                tr1(
-                    auth_user.lang,
-                    "troubleshoot-detail-claimed-booking",
-                    "title",
-                    et_title,
-                )
-            } else if status == "pending" {
-                tr1(
-                    auth_user.lang,
-                    "troubleshoot-detail-pending-request",
-                    "title",
-                    et_title,
-                )
-            } else {
-                et_title.clone()
-            };
-            Some((start, end, guest.clone(), detail))
-        })
+        .filter_map(
+            |(s, e, guest, et_title, status, claimed, before, after, version, zone)| {
+                let legacy_tz = zone
+                    .as_deref()
+                    .and_then(|z| z.parse().ok())
+                    .unwrap_or(Tz::UTC);
+                let (start, end) = crate::booking_time::stored_buffered_busy_range(
+                    s,
+                    e,
+                    *version,
+                    legacy_tz,
+                    host_tz,
+                    (0, 0),
+                )?;
+                let detail = if *claimed == 1 {
+                    tr1(
+                        auth_user.lang,
+                        "troubleshoot-detail-claimed-booking",
+                        "title",
+                        et_title,
+                    )
+                } else if status == "pending" {
+                    tr1(
+                        auth_user.lang,
+                        "troubleshoot-detail-pending-request",
+                        "title",
+                        et_title,
+                    )
+                } else {
+                    et_title.clone()
+                };
+                // Widen the stored instants by both sides' buffers. Padding the
+                // local endpoints here would disagree with slots across DST.
+                let (buffered_start, buffered_end) =
+                    crate::booking_time::stored_buffered_busy_range(
+                        s,
+                        e,
+                        *version,
+                        legacy_tz,
+                        host_tz,
+                        (before + i64::from(buf_after), after + i64::from(buf_before)),
+                    )?;
+                Some((
+                    start,
+                    end,
+                    guest.clone(),
+                    detail,
+                    *before,
+                    *after,
+                    buffered_start,
+                    buffered_end,
+                ))
+            },
+        )
         .collect();
 
     // Intervals where required shared resources block this event type
@@ -3082,7 +3163,7 @@ pub(super) async fn troubleshoot(
     let mut cursor = display_start;
     let tick_size = Duration::minutes(15);
 
-    while cursor < display_end {
+    for _ in 0..tick_count {
         let tick_dt = target_date.and_time(cursor);
         let tick_end = tick_dt + tick_size;
 
@@ -3154,9 +3235,12 @@ pub(super) async fn troubleshoot(
         }
 
         // 3. Check calendar events (with buffers)
+        // A slot is blocked when it, widened by this type's buffers, meets
+        // the event: so buffer_after runs up to the event's start and
+        // buffer_before back from its end, as for bookings.
         let event_conflict = busy_parsed.iter().find(|(s, e, _, _)| {
-            let buf_s = *s - Duration::minutes(buf_before as i64);
-            let buf_e = *e + Duration::minutes(buf_after as i64);
+            let buf_s = *s - Duration::minutes(buf_after as i64);
+            let buf_e = *e + Duration::minutes(buf_before as i64);
             tick_dt < buf_e && tick_end > buf_s
         });
 
@@ -3181,9 +3265,9 @@ pub(super) async fn troubleshoot(
                         &crate::i18n::format_duration(
                             lang,
                             i64::from(if tick_dt < *ev_s {
-                                buf_before
-                            } else {
                                 buf_after
+                            } else {
+                                buf_before
                             }),
                         ),
                     ),
@@ -3194,14 +3278,15 @@ pub(super) async fn troubleshoot(
             continue;
         }
 
-        // 4. Check bookings (with buffers)
-        let booking_conflict = bookings_parsed.iter().find(|(s, e, _, _)| {
-            let buf_s = *s - Duration::minutes(buf_before as i64);
-            let buf_e = *e + Duration::minutes(buf_after as i64);
-            tick_dt < buf_e && tick_end > buf_s
-        });
+        // 4. Check bookings, as the slot grid does: the booking widened by
+        // its own buffers (#422), the tick by this event type's, each on
+        // its own side (this type's buffer_after runs up to the booking's
+        // start, its buffer_before back to the booking's end).
+        let booking_conflict = bookings_parsed
+            .iter()
+            .find(|(_, _, _, _, _, _, buf_s, buf_e)| tick_dt < *buf_e && tick_end > *buf_s);
 
-        if let Some((bk_s, bk_e, bk_guest, bk_et)) = booking_conflict {
+        if let Some((bk_s, bk_e, bk_guest, bk_et, bk_before, bk_after, _, _)) = booking_conflict {
             let in_booking = tick_dt < *bk_e && tick_end > *bk_s;
             if in_booking {
                 ticks.push(Tick {
@@ -3220,11 +3305,11 @@ pub(super) async fn troubleshoot(
                         "duration",
                         &crate::i18n::format_duration(
                             lang,
-                            i64::from(if tick_dt < *bk_s {
-                                buf_before
+                            if tick_dt < *bk_s {
+                                bk_before + i64::from(buf_after)
                             } else {
-                                buf_after
-                            }),
+                                bk_after + i64::from(buf_before)
+                            },
                         ),
                     ),
                     detail: tr1(
@@ -3243,8 +3328,8 @@ pub(super) async fn troubleshoot(
         // events and bookings: a booking kept inside a period is the more
         // specific reason for its own slot.
         let off_conflict = time_off.iter().find(|(s, e, _)| {
-            let buf_s = *s - Duration::minutes(buf_before as i64);
-            let buf_e = *e + Duration::minutes(buf_after as i64);
+            let buf_s = *s - Duration::minutes(buf_after as i64);
+            let buf_e = *e + Duration::minutes(buf_before as i64);
             tick_dt < buf_e && tick_end > buf_s
         });
         if let Some((off_s, off_e, note)) = off_conflict {
@@ -3266,9 +3351,9 @@ pub(super) async fn troubleshoot(
                         &crate::i18n::format_duration(
                             lang,
                             i64::from(if tick_dt < *off_s {
-                                buf_before
-                            } else {
                                 buf_after
+                            } else {
+                                buf_before
                             }),
                         ),
                     ),
@@ -3315,6 +3400,15 @@ pub(super) async fn troubleshoot(
         width_pct: f64,
     }
 
+    // Minutes from a block's start to its end; an end at 24:00 reads 00:00.
+    let span_minutes = |start: NaiveTime, end: NaiveTime| {
+        let minutes = (end - start).num_minutes();
+        (if minutes <= 0 {
+            minutes + 1440
+        } else {
+            minutes
+        }) as f64
+    };
     let mut blocks: Vec<Block> = Vec::new();
     for tick in &ticks {
         let tick_end_time = (target_date.and_time(tick.time) + tick_size).time();
@@ -3325,7 +3419,7 @@ pub(super) async fn troubleshoot(
             {
                 last.end = tick_end_time;
                 let start_min = (last.start - display_start).num_minutes() as f64;
-                let dur_min = (last.end - last.start).num_minutes() as f64;
+                let dur_min = span_minutes(last.start, last.end);
                 last.left_pct = start_min / total_minutes * 100.0;
                 last.width_pct = dur_min / total_minutes * 100.0;
                 continue;

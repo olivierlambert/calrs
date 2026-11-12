@@ -127,7 +127,7 @@ impl InputError {
 /// takes the first occurrence and the end the second, so the period covers
 /// both; in a skipped hour both move to the first minute that exists after
 /// the gap (03:00 for Paris in spring, whatever minute was typed).
-fn to_utc(tz: Tz, local: NaiveDateTime, is_end: bool) -> Option<DateTime<Utc>> {
+pub(crate) fn to_utc(tz: Tz, local: NaiveDateTime, is_end: bool) -> Option<DateTime<Utc>> {
     match tz.from_local_datetime(&local) {
         LocalResult::Single(t) => Some(t.with_timezone(&Utc)),
         LocalResult::Ambiguous(first, second) => {

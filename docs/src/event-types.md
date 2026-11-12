@@ -11,16 +11,16 @@ calrs supports seven distinct booking scenarios:
 | **Personal (public)** | Anyone | Listed on your profile | You | Freelancer's "30min intro call" |
 | **Personal (internal)** | Invited guests | Any colleague generates a link | You | Senior engineer: teammates share a "Code Review" link with external contributors |
 | **Personal (private)** | Invited guests | You send an invite link | You | Executive coaching for selected clients |
-| **Team (public)** | Anyone | Listed on team page | Round-robin | Public support call page |
-| **Team (internal)** | Invited guests | Any employee generates a link | Round-robin | Cross-team: Sales shares Support links with customers |
-| **Team (private)** | Invited guests | Owner sends invite links | Round-robin | Demo team sends links to qualified leads |
+| **Team (public)** | Anyone | Listed on team page | Round-robin or collective | Public support call page |
+| **Team (internal)** | Invited guests | Any employee generates a link | Round-robin or collective | Cross-team: Sales shares Support links with customers |
+| **Team (private)** | Invited guests | Owner or team admin sends invite links | Round-robin or collective | Demo team sends links to qualified leads |
 | **Dynamic group** | Anyone with the URL | Ad-hoc link: `/u/alice+bob/slug` | Event type owner | One-off sales call needing engineering support |
 
-**Personal vs team:** Personal event types book time on your calendar only. Team event types show combined availability (any member free) and assign the booking to the least-busy member via round-robin.
+**Personal vs team:** Personal event types book time on your calendar only. Team event types can assign one available member by priority and workload (round-robin), or require all eligible members to attend (collective).
 
 **Dynamic group links:** Ad-hoc collective meetings without creating a team — see [Dynamic group links](#dynamic-group-links) below.
 
-**Multi-timezone teams:** For teams spread across timezones, set a wide availability window (e.g., 06:00–23:00) and let each member's synced CalDAV calendar handle the blocking. The slot picker naturally shows the union of all members' real availability — see [Teams > Multi-timezone teams](./teams.md#multi-timezone-teams) for details.
+**Multi-timezone teams:** Set the event's timezone and working window, and each member's personal hours in their own timezone. calrs combines those hours with calendar conflicts according to the scheduling mode; see [Teams > Multi-timezone teams](./teams.md#multi-timezone-teams) for details.
 
 ## Creating an event type
 
@@ -56,7 +56,7 @@ calrs event-type create \
 
 ## Calendar selection
 
-When you have multiple CalDAV calendars, you can choose **which calendars block availability** for each event type. For example, a "Work meeting" event type can check only the work calendar, while a "Personal chat" checks only the personal calendar.
+When you have multiple connected calendars, you can choose **which calendars block availability** for each event type. For example, a "Work meeting" event type can check only the work calendar, while a "Personal chat" checks only the personal calendar.
 
 From the dashboard form, select the calendars under the **Calendars** section. Every synced calendar of your sources appears there: a calendar turned off under **Calendars** on its source is never read, so it cannot block an event type. If none of the calendars an event type selected is synced any more, the event type checks every busy calendar again.
 
@@ -73,6 +73,14 @@ Event types can require [shared resources](./resources.md) (a demo lab, a meetin
 Whether a busy resource blocks a slot depends on the resource scheduling mode: in **all** mode every attached resource must be free, while in **round-robin** mode the slot survives as long as at least one attached resource is free.
 
 The **Required resources** section of the event type form is visible to global admins, and to team admins on team event types when their team is allowlisted for a resource. See [Shared Resources](./resources.md) for the full behavior, including the "all" vs "round-robin" scheduling modes.
+
+## Booking questions and notes
+
+The **Booking form** section configures short text, long text, single choice, multiple choice and checkbox questions, including consent boxes with policy links. Set required answers, reorder questions and decide which answers may be written to host calendars. The ordinary notes field can be optional, required or hidden. See [Booking Questions](./booking-questions.md) for limits, answer snapshots and privacy behavior.
+
+## Booking reminders
+
+Under **Access & notifications**, choose no reminder, 1 hour, 4 hours, 1 day or 2 days before the meeting. calrs emails the host and guest before confirmed bookings; [SMS reminders](./sms.md) use the same lead time when enabled. Calendar invitations also include a reminder for calendar clients that support it.
 
 ## SMS notifications
 
@@ -98,14 +106,15 @@ By default only admins see the field. An admin can let every user write footers 
 
 ## Availability schedule
 
-Each event type has its own availability rules. By default: Monday–Friday, 09:00–17:00.
+Each event type has its own availability rules and IANA timezone. A new event type in the dashboard starts from your default availability; with no personal defaults, the initial schedule is Monday–Friday, 09:00–17:00. Editing your defaults later does not rewrite existing event types.
 
 From the dashboard form, you can set:
 
 - Which days of the week are available (checkboxes)
-- Start and end time for available hours
+- One or more start/end windows per day (for example, 09:00–12:00 and 14:00–17:00)
+- The timezone in which those hours are interpreted
 
-The availability engine intersects these rules with your synced calendar events (filtered by selected calendars) and existing bookings to compute free slots.
+The availability engine intersects these rules with synced calendar events, bookings, time off and resources. Team and dynamic-group meetings also respect participant working hours. Changing the server timezone does not redefine these schedules. See [Slot computation](#slot-computation).
 
 ### First day of the week
 
@@ -131,11 +140,11 @@ Control how slots are displayed and how often the event type can be booked.
 
 ### One slot per day
 
-Enable **"One slot per day"** to show only the earliest available time each day. The guest sees one slot per day instead of all available windows — useful for daily standups, check-ins, or any event where you want at most one booking per day.
+Enable **"One slot per day"** to show only the earliest available time each day. The guest sees the earliest remaining slot instead of all available windows. This is a display setting: after that slot is booked, a later slot may become the earliest available. Set a daily frequency limit of 1 if you want at most one booking per day.
 
 ### Frequency limits
 
-Enable **"Limit booking frequency"** to cap how many bookings can be made per time period. You can combine multiple limits — for example, max 2 per day AND 8 per week. Available periods: day, week, month, year. When a limit is reached, the booking form rejects new bookings for that period.
+Enable **"Limit booking frequency"** to cap how many bookings can be made per time period. You can combine multiple limits, for example at most 2 per day and 8 per week. Available periods: day, week, month, year. When a limit is reached, matching slots disappear from the picker and submissions are checked again. On round-robin event types, **Per team member** applies a limit to each assigned member instead of pooling the whole team.
 
 Both settings are configured via toggle switches in the **Booking limits** card of the event type form.
 
@@ -217,17 +226,27 @@ By default, slot start times are spaced by the event's **duration** — a 20-min
 
 Set this when you want "every half hour on the dot" or similar rounded start times regardless of meeting length. Leave blank to preserve the legacy back-to-back behaviour. Buffers and minimum notice still apply on top.
 
+## Buffers
+
+A booking reserves its own event type's **buffer before** ahead of its start and its **buffer after** past its end. A new booking is refused, and its slot is not offered, when its own buffered time overlaps a calendar event or another booking's buffered time. This holds across all your event types: a meeting on a type with a 30-minute buffer after keeps the next 30 minutes free, even for a type that has no buffer of its own.
+
+Each side's buffer belongs to that side, so honouring both never counts one twice. With a 30-minute buffer before on every type, a 10:00 to 10:30 meeting and an 11:00 one fit together; a 10:30 one does not, since its buffer would start at 10:00.
+
+Pending requests that hold their slot keep their buffers the same way. Shared resources have no buffers of their own.
+
+Approval rechecks the pending booking's buffers too, including requests configured not to hold their slot. Buffers are elapsed minutes: a two-hour buffer still reserves two real hours when the clocks change for daylight saving.
+
 ## Slot computation
 
 Available slots are computed by:
 
 1. Generating candidate slots from availability rules (day of week + time range)
-2. Filtering out slots that overlap with calendar events (from CalDAV sync)
-3. Filtering out slots that overlap with confirmed bookings
+2. Filtering out slots that overlap with busy events from connected calendars, including recurring occurrences
+3. Filtering out conflicts with confirmed bookings, slot-holding pending requests and time off, and checking participant hours
 4. Filtering out slots blocked by required [shared resources](./resources.md) (all mode: any busy resource blocks; round-robin mode: blocked only when every resource is busy)
-5. Applying buffer times (before and after each slot)
+5. Applying buffer times (before and after each slot, and each existing booking's own, see [Buffers](#buffers))
 6. Removing slots that violate minimum notice (too close to now)
-7. Removing days past the booking horizon (too far ahead) and days outside the bookable date range
+7. Removing days past the booking horizon (too far ahead), days outside the bookable date range and slots at a frequency limit
 8. If "one slot per day" is enabled, keeping only the earliest slot per day
 
 ```bash
@@ -327,7 +346,7 @@ Internal visibility is designed for **cross-team and cross-person booking within
 
 **Typical use case (personal):** A senior engineer creates an internal "Code Review" event type. Any teammate can generate a one-time link from the Invite Links page and share it with an external contributor who needs a review session.
 
-The **Invite Links** page (`/dashboard/organization`) lists all internal event types across the organization — both personal and team. Each event type has:
+The **Invite Links** page (`/dashboard/invite-links`) lists all internal event types across the organization, both personal and team. Each event type has:
 
 - **Get link** — generates a single-use invite link (expires in 7 days) and copies it to clipboard
 - **Invites** — opens the full invite management page for custom expiry, multi-use links, and guest pre-fill
@@ -344,12 +363,14 @@ Private event types are hidden from public pages and only accessible via invite 
 
 Both internal and private event types use **booking invites** to grant access:
 
-1. Go to **Dashboard > Event Types** (or **Organization**) and click **Invite**
+1. Go to **Dashboard > Event Types** (or **Invite Links**) and click **Invite**
 2. Fill in the guest's name, email, and an optional personal message
 3. Choose an expiration (7, 14, or 30 days, or never) and whether to allow multiple bookings
 4. Click **Send invite** — the guest receives an email with a personalized booking link
 
 The invite link takes the guest directly to the slot picker with the invite token embedded. Their name and email are pre-filled on the booking form. The token is validated at every step (expired, used-up, or invalid tokens are rejected).
+
+To invite several people, use **Bulk invites** and enter one email address per line, up to 100 recipients. Each recipient gets a separate single-use link. The result reports sent, skipped and failed recipients so you can correct an address or retry a delivery.
 
 ### Invite management
 
@@ -361,6 +382,7 @@ The invite management page (`/dashboard/invites/{event_type_id}`) shows:
   - **Active** — invite is valid and unused (or has remaining uses)
   - **Expired** — past the expiration date
   - **Used** — all uses consumed (for single-use invites)
+- Copy button to reuse the URL of a sent invite
 - Delete button to revoke an invite
 
 ## Availability overrides
@@ -446,6 +468,8 @@ When a dynamic group booking is confirmed:
 - All users must have `allow_dynamic_group` enabled
 
 ## Embedding a booking page
+
+See [Embedding Booking Pages](./embedding.md) for complete inline, floating-button and click-trigger examples.
 
 **Embed** on an event type (personal or team) opens a snippet generator for your own website: an inline calendar (`Calrs.inline`), a floating button (`Calrs.floatingButton`), or any element with a `data-calrs-link` attribute. The generator writes the `config` object for you:
 

@@ -76,7 +76,7 @@ All POST forms are protected against cross-site request forgery using the **doub
 - On submission, the server verifies that the cookie value matches the form field
 - Mismatches return a `403 Forbidden` response
 
-This protects all 31 POST endpoints including booking submissions, settings changes, admin actions, and authentication forms. Multipart forms (avatar/logo/favicon upload) pass the token via query parameter.
+This protects browser form submissions, including bookings, settings, admin actions and authentication. Bearer-authenticated REST API and MCP requests use their own token and origin policies rather than the browser form token. Multipart forms (avatar/logo/favicon upload) pass the token via query parameter.
 
 The cookie uses `SameSite=Lax` and is intentionally NOT `HttpOnly` so the client-side script can read it.
 
@@ -84,7 +84,7 @@ The cookie uses `SameSite=Lax` and is intentionally NOT `HttpOnly` so the client
 
 All user-submitted data is validated server-side:
 
-- **Booking forms** — name (1–255 chars), email (format + length), notes (max 5,000 chars), date (max 365 days in the future)
+- **Booking forms** — name (1–255 chars), email (format + length), notes (max 5,000 chars), date and booking-window constraints
 - **Registration** — name (1–255 chars), email format and length validation
 - **Settings** — name length, booking email format validation
 - **Avatar upload** — strict content-type whitelist (JPEG, PNG, GIF, WebP only)
@@ -101,19 +101,19 @@ This prevents attackers from injecting arbitrary iCalendar properties (e.g., ext
 
 ## SQL injection
 
-All database queries use parameterized bindings via `sqlx`. No SQL is constructed through string concatenation.
+User-supplied values are passed through parameterized `sqlx` bindings. Dynamically selected ordering and query fragments come from controlled code paths rather than raw user input.
 
 ## XSS (cross-site scripting)
 
-All HTML output is rendered through Minijinja, which **auto-escapes** all template variables by default. No `|safe` or `|raw` filters are used.
+Minijinja auto-escapes ordinary template values. Rich descriptions use a restricted Markdown renderer before their HTML is marked safe; links are limited to supported schemes. Uploaded images are restricted by type and size, and pages have a Content Security Policy.
 
 ## Double-booking prevention
 
-A SQLite partial unique index prevents two bookings for the same event type and time slot:
+A SQLite partial unique index prevents duplicate starts for the same event type and assigned member. A round-robin slot can therefore serve different members:
 
 ```sql
 CREATE UNIQUE INDEX idx_bookings_no_overlap
-ON bookings(event_type_id, start_at)
+ON bookings(event_type_id, start_at, COALESCE(assigned_user_id, ''))
 WHERE status IN ('confirmed', 'pending');
 ```
 
@@ -132,7 +132,7 @@ Certain actions can be performed without authentication, using single-use-like t
 - **Cancel token** — allows guests to cancel their booking via a link in the confirmation email
 - **Confirm token** — allows hosts to approve or decline pending bookings via links in the approval request email
 
-Tokens are UUID v4 (128-bit random), stored with unique indexes in the database. They are not invalidated after use (the booking status check prevents replay — a token for an already-confirmed booking shows "already approved"). These links should be treated as sensitive — anyone with the link can perform the action.
+Tokens are UUID v4 (122 random bits), stored with unique indexes in the database. They are not invalidated after use (the booking status check prevents replay: a token for an already-confirmed booking shows "already approved"). Treat these links as sensitive: anyone with the link can perform the action.
 
 ## Known limitations
 
@@ -142,9 +142,9 @@ CalDAV and SMTP passwords are encrypted at rest using **AES-256-GCM**. The encry
 
 In memory, the key and the decrypted credentials calrs holds are kept in buffers that are wiped when released (`zeroize`): the key and its long-lived copies, the plaintext returned by every decryption, the CalDAV, EWS and SMTP passwords and SMS gateway secrets in calrs's own configuration and client structures, OAuth access tokens, and the captcha, meeting webhook and EWS service-account secrets the server keeps for its whole life; the AES key schedule is wiped too. This narrows what a core dump or a later memory disclosure could reveal. It does not reach the copies that libraries make while using a credential (the HTTP client's request headers, the SMTP client's credentials, the OpenID Connect client secret) or the `CALRS_SECRET_KEY` value in the process environment, which the operating system keeps for the life of the process.
 
-### No brute-force account lockout
+### Password login limits
 
-Rate limiting is per-IP, not per-account. A distributed attack from many IPs would not be rate-limited. Consider using fail2ban or your reverse proxy's rate limiting for additional protection.
+Password login rate limiting is per-IP rather than a permanent account lockout. A distributed password attack can evade a single IP bucket. Local TOTP additionally has a per-account escalating delay; see [MFA](./authentication.md#two-factor-authentication-totp). Consider using fail2ban or your reverse proxy's rate limiting for additional protection.
 
 ### SSRF (server-side request forgery)
 

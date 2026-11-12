@@ -1106,8 +1106,8 @@ use openidconnect::core::{
 };
 use openidconnect::{
     AsyncHttpClient, AuthType, AuthenticationFlow, AuthorizationCode, ClientId, ClientSecret,
-    CsrfToken, EndpointMaybeSet, EndpointNotSet, EndpointSet, IssuerUrl, Nonce, PkceCodeChallenge,
-    PkceCodeVerifier, RedirectUrl, Scope, TokenResponse,
+    CsrfToken, EndpointMaybeSet, EndpointNotSet, EndpointSet, IssuerUrl, Nonce,
+    OAuth2TokenResponse, PkceCodeChallenge, PkceCodeVerifier, RedirectUrl, Scope, TokenResponse,
 };
 
 /// An HTTP client for `oauth2` that remembers the status of the last response.
@@ -1154,26 +1154,31 @@ impl<'c> AsyncHttpClient<'c> for StatusRecordingClient {
 }
 
 fn build_http_client() -> Result<openidconnect::reqwest::Client> {
+    // Discovery, the token exchange and UserInfo all run inside a browser
+    // request, so a provider that stops answering must not hold it forever.
     let client = crate::net_guard::plain_builder()
         .redirect(openidconnect::reqwest::redirect::Policy::none())
+        .timeout(std::time::Duration::from_secs(30))
         .build()
         .map_err(|e| anyhow::anyhow!("Failed to build HTTP client: {}", e))?;
     Ok(client)
 }
 
+/// The client built from the provider's discovery document: the token and
+/// UserInfo endpoints are whatever the document lists.
+type OidcClient = CoreClient<
+    EndpointSet,
+    EndpointNotSet,
+    EndpointNotSet,
+    EndpointNotSet,
+    EndpointMaybeSet,
+    EndpointMaybeSet,
+>;
+
 async fn build_oidc_client_with_redirect(
     auth_config: &AuthConfig,
     secret_key: &[u8; 32],
-) -> Result<
-    CoreClient<
-        EndpointSet,
-        EndpointNotSet,
-        EndpointNotSet,
-        EndpointNotSet,
-        EndpointMaybeSet,
-        EndpointMaybeSet,
-    >,
-> {
+) -> Result<OidcClient> {
     let issuer_url = IssuerUrl::new(
         auth_config
             .oidc_issuer_url
@@ -1451,7 +1456,7 @@ async fn oidc_callback(
     }
 
     let subject = claims.subject().to_string();
-    let email = claims
+    let mut email = claims
         .email()
         .map(|e: &openidconnect::EndUserEmail| e.to_string())
         .unwrap_or_default();
@@ -1459,36 +1464,61 @@ async fn oidc_callback(
     // it by default). Absent, it never links or creates an account; for a
     // returning user it leaves an admin's confirmation of an unchanged
     // address in place (see `find_or_create_oidc_user_with_claim`).
-    let email_verified_claim = claims.email_verified();
-    let name = claims
-        .name()
-        .and_then(
-            |n: &openidconnect::LocalizedClaim<openidconnect::EndUserName>| {
-                n.get(None)
-                    .map(|v: &openidconnect::EndUserName| v.to_string())
-            },
+    let mut email_verified_claim = claims.email_verified();
+    let mut name = claims.name().and_then(
+        |n: &openidconnect::LocalizedClaim<openidconnect::EndUserName>| {
+            n.get(None)
+                .map(|v: &openidconnect::EndUserName| v.to_string())
+        },
+    );
+    // Groups and title from the ID token JWT payload (not standard claims).
+    let mut extra = extract_claims_from_id_token(id_token.to_string().as_str());
+
+    // OIDC Core 5.4: the claims the `email` and `profile` scopes ask for come
+    // back from the UserInfo endpoint whenever an access token is issued,
+    // which the code flow always does. Most providers copy them into the ID
+    // token as well; a provider that keeps its ID token minimal does not
+    // (#264), so an ID token without an email is completed from UserInfo.
+    // The answer must carry the ID token's `sub`, so a substituted access
+    // token cannot attach someone else's address to this login.
+    if email.is_empty() {
+        match fetch_userinfo(
+            &client,
+            &recording_client,
+            token_response.access_token().clone(),
+            claims.subject().clone(),
         )
-        .unwrap_or_else(|| email.split('@').next().unwrap_or("User").to_string());
+        .await
+        {
+            Ok(info) => {
+                email = info.email.unwrap_or_default();
+                email_verified_claim = info.email_verified;
+                name = name.or(info.name);
+                extra.groups = extra.groups.or(info.extra.groups);
+                extra.title = extra.title.or(info.extra.title);
+            }
+            // The provider failed to answer: a sign-in failure, not "your
+            // provider sends no email", which would send users to change a
+            // setup that works.
+            Err(reason) => {
+                return crate::web::oidc_error_response("oidc userinfo", &reason);
+            }
+        }
+    }
+    let name = name.unwrap_or_else(|| email.split('@').next().unwrap_or("User").to_string());
 
     if email.is_empty() {
-        tracing::warn!("OIDC callback failed: no email in token");
-        return Html("OIDC provider did not return an email address.".to_string()).into_response();
+        tracing::warn!("OIDC callback failed: no email in the ID token or from UserInfo");
+        let lang = crate::i18n::detect_from_headers(&headers);
+        return render_sso_refusal(&state, lang, "auth-sso-no-email").await;
     }
 
     // Check email domain restriction
     if !is_email_allowed(&email, &auth_config.allowed_email_domains) {
         tracing::warn!(email = %email, "OIDC callback failed: email domain not allowed");
         let lang = crate::i18n::detect_from_headers(&headers);
-        return Html(crate::i18n::translate(
-            lang,
-            "auth-error-email-domain",
-            None,
-        ))
-        .into_response();
+        return render_sso_refusal(&state, lang, "auth-error-email-domain").await;
     }
-
-    // Extract groups and title from ID token JWT payload
-    let claims = extract_claims_from_id_token(id_token.to_string().as_str());
 
     // Find or create user
     let user_id = match find_or_create_oidc_user_with_claim(
@@ -1504,12 +1534,18 @@ async fn oidc_callback(
         Ok(id) => id,
         Err(e) => {
             tracing::warn!(email = %email, error = %e, "OIDC callback failed: account error");
+            // A refusal the user can act on (or take to an administrator) is
+            // shown on the sign-in page; anything else stays a generic 500.
+            if let Some(refusal) = e.downcast_ref::<SsoRefusal>() {
+                let lang = crate::i18n::detect_from_headers(&headers);
+                return render_sso_refusal(&state, lang, refusal.key).await;
+            }
             return crate::web::oidc_error_response("oidc account link/create", &format!("{e:#}"));
         }
     };
 
     // Sync title from OIDC token (best-effort)
-    if let Some(ref title) = claims.title {
+    if let Some(ref title) = extra.title {
         let _ =
             sqlx::query("UPDATE users SET title = ?, updated_at = datetime('now') WHERE id = ?")
                 .bind(title)
@@ -1519,7 +1555,7 @@ async fn oidc_callback(
     }
 
     // Sync groups from OIDC token (best-effort, don't fail login)
-    if let Some(groups) = &claims.groups {
+    if let Some(groups) = &extra.groups {
         if let Err(e) = sync_user_groups(&state.pool, &user_id, groups).await {
             tracing::warn!(error = %e, "failed to sync OIDC groups");
         }
@@ -1678,18 +1714,27 @@ async fn find_or_create_oidc_user_with_claim(
                 email = %email, subject = %subject,
                 "OIDC login refused: the address belongs to an account linked to another identity"
             );
-            anyhow::bail!(
-                "An account with this email is already linked to another single sign-on identity. Contact an administrator."
-            );
+            // Only an identity that proved it owns the address learns that
+            // an account holds it; an unverified one reads the same refusal
+            // whether an account exists or not, so it cannot probe addresses.
+            return Err(sso_refusal(
+                if email_verified {
+                    "auth-sso-linked-elsewhere"
+                } else {
+                    "auth-sso-unverified"
+                },
+                "An account with this email is already linked to another single sign-on identity. Contact an administrator.",
+            ));
         }
         if !email_verified {
             tracing::warn!(
                 email = %email, subject = %subject,
                 "OIDC login refused: email matches existing local user but IdP did not assert email_verified=true"
             );
-            anyhow::bail!(
-                "An account with this email already exists. The identity provider has not verified that you own this address, so we cannot link them automatically. Contact an administrator."
-            );
+            return Err(sso_refusal(
+                "auth-sso-unverified",
+                "An account with this email already exists. The identity provider has not verified that you own this address, so we cannot link them automatically. Contact an administrator.",
+            ));
         }
         // Linking hands the account to the identity provider, whose own MFA
         // then applies instead of the local one. Not automatically for an
@@ -1705,9 +1750,10 @@ async fn find_or_create_oidc_user_with_claim(
                 email = %email, subject = %subject,
                 "OIDC login refused: email matches a local user with two-factor authentication"
             );
-            anyhow::bail!(
-                "An account with this email already exists and uses two-factor authentication, so it cannot be linked to single sign-on automatically. Contact an administrator."
-            );
+            return Err(sso_refusal(
+                "auth-sso-local-mfa",
+                "An account with this email already exists and uses two-factor authentication, so it cannot be linked to single sign-on automatically. Contact an administrator.",
+            ));
         }
         // A local session must not become an OIDC-authenticated session just
         // because the account is linked. In particular it must not inherit the
@@ -1731,17 +1777,23 @@ async fn find_or_create_oidc_user_with_claim(
     // 3. Create new user if auto-register is enabled — also gated on
     //    email_verified. Otherwise an attacker could create accounts keyed on
     //    addresses they don't own (squatting) or pollute the directory.
-    if !auth_config.oidc_auto_register {
-        anyhow::bail!("No account found for this email. Contact an administrator.");
-    }
+    // Checked before the auto-register setting, so an unverified identity
+    // reads the same refusal whether an account exists or not.
     if !email_verified {
         tracing::warn!(
             email = %email, subject = %subject,
-            "OIDC auto-register refused: IdP did not assert email_verified=true"
+            "OIDC login refused: no account matches and IdP did not assert email_verified=true"
         );
-        anyhow::bail!(
-            "The identity provider has not verified your email address. Ask your administrator to verify it at the provider and try again."
-        );
+        return Err(sso_refusal(
+            "auth-sso-unverified",
+            "The identity provider has not verified your email address. Ask your administrator to verify it at the provider and try again.",
+        ));
+    }
+    if !auth_config.oidc_auto_register {
+        return Err(sso_refusal(
+            "auth-sso-no-account",
+            "No account found for this email. Contact an administrator.",
+        ));
     }
 
     let user_id = uuid::Uuid::new_v4().to_string();
@@ -1770,6 +1822,65 @@ async fn find_or_create_oidc_user_with_claim(
 }
 
 // --- Helpers ---
+
+/// A single sign-on login refused for a reason the user can act on, or take
+/// to an administrator: `key` is the Fluent message shown on the sign-in page,
+/// `message` the English text logged with it.
+#[derive(Debug)]
+pub(crate) struct SsoRefusal {
+    key: &'static str,
+    message: &'static str,
+}
+
+impl std::fmt::Display for SsoRefusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.message)
+    }
+}
+
+impl std::error::Error for SsoRefusal {}
+
+fn sso_refusal(key: &'static str, message: &'static str) -> anyhow::Error {
+    anyhow::Error::new(SsoRefusal { key, message })
+}
+
+/// The sign-in page with the reason a single sign-on login was refused, as a
+/// 403. The SSO button stays, so the user can retry once the cause is fixed.
+async fn render_sso_refusal(state: &AppState, lang: &str, error_key: &str) -> Response {
+    let registration_enabled = get_auth_config(&state.pool)
+        .await
+        .map(|c| c.registration_enabled)
+        .unwrap_or(false);
+    sso_refusal_page(&state.templates, lang, error_key, registration_enabled)
+}
+
+fn sso_refusal_page(
+    templates: &minijinja::Environment<'_>,
+    lang: &str,
+    error_key: &str,
+    registration_enabled: bool,
+) -> Response {
+    let csrf_token = generate_csrf_token();
+    let error = crate::i18n::translate(lang, error_key, None);
+    let body = match templates.get_template("auth/login.html") {
+        Ok(tmpl) => tmpl
+            .render(minijinja::context! {
+                lang => lang,
+                error => error,
+                oidc_enabled => true,
+                registration_enabled => registration_enabled,
+                csrf_token => csrf_token,
+            })
+            .unwrap_or_else(|_| error.clone()),
+        Err(_) => error,
+    };
+    (
+        StatusCode::FORBIDDEN,
+        [("Set-Cookie", csrf_cookie_value(&csrf_token))],
+        Html(body),
+    )
+        .into_response()
+}
 
 fn render_login_error(state: &AppState, lang: &str, error_key: &str) -> Response {
     // Best-effort: try to show OIDC button even on error page
@@ -2072,6 +2183,7 @@ fn prefers_client_secret_post(methods: Option<&[CoreClientAuthMethod]>) -> bool 
 /// Decodes the payload (middle part) as base64 and parses JSON.
 /// Returns None if the token has no groups claim or cannot be parsed.
 /// Parsed claims from an OIDC ID token JWT payload.
+#[derive(Debug)]
 struct OidcClaims {
     groups: Option<Vec<String>>,
     title: Option<String>,
@@ -2103,7 +2215,77 @@ fn extract_claims_from_id_token(raw_token: &str) -> OidcClaims {
             }
         }
     };
+    extra_claims_from_payload(&payload)
+}
 
+/// The claims of a UserInfo answer beyond the standard ones: `groups` and
+/// `title` as calrs reads them from the ID token.
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
+struct UserInfoExtraClaims {
+    #[serde(flatten)]
+    rest: serde_json::Map<String, serde_json::Value>,
+}
+
+impl openidconnect::AdditionalClaims for UserInfoExtraClaims {}
+
+/// What a UserInfo answer tells about the signed-in user.
+#[derive(Debug)]
+struct UserInfoResult {
+    email: Option<String>,
+    email_verified: Option<bool>,
+    name: Option<String>,
+    extra: OidcClaims,
+}
+
+/// Fetch the UserInfo claims of the user `access_token` was issued to, and
+/// check that they belong to `subject` (the `sub` of the verified ID token).
+/// The error is a short reason for the log: the status and shape of a refusal,
+/// a parse failure with its quoted values masked, never the body.
+async fn fetch_userinfo(
+    client: &OidcClient,
+    http_client: &StatusRecordingClient,
+    access_token: openidconnect::AccessToken,
+    subject: openidconnect::SubjectIdentifier,
+) -> Result<UserInfoResult, String> {
+    let request = client
+        .user_info(access_token, Some(subject))
+        .map_err(|e| format!("the provider metadata lists no UserInfo endpoint ({e})"))?;
+    let info = request
+        .request_async::<UserInfoExtraClaims, _, openidconnect::core::CoreGenderClaim>(http_client)
+        .await
+        .map_err(|e| match e {
+            openidconnect::UserInfoError::Parse(parse_err) => format!(
+                "UserInfo response did not parse: {}",
+                redact_reason(&parse_err.inner().to_string())
+            ),
+            openidconnect::UserInfoError::Response(status, _body, what) => {
+                format!("UserInfo answered {status}: {what}")
+            }
+            e => format!("{e}: {}", crate::web::error_source_chain(&e)),
+        })?;
+    let extra = extra_claims_from_payload(&serde_json::Value::Object(
+        info.additional_claims().rest.clone(),
+    ));
+    Ok(UserInfoResult {
+        email: info
+            .email()
+            .map(|e: &openidconnect::EndUserEmail| e.to_string())
+            .filter(|e| !e.is_empty()),
+        email_verified: info.email_verified(),
+        name: info.name().and_then(
+            |n: &openidconnect::LocalizedClaim<openidconnect::EndUserName>| {
+                n.get(None)
+                    .map(|v: &openidconnect::EndUserName| v.to_string())
+            },
+        ),
+        extra,
+    })
+}
+
+/// `groups` (leading `/` stripped, as Keycloak writes paths) and `title`
+/// from a claims object, whether it is an ID token payload or a UserInfo
+/// answer.
+fn extra_claims_from_payload(payload: &serde_json::Value) -> OidcClaims {
     let groups = payload.get("groups").and_then(|g| {
         let arr = g.as_array()?;
         let group_strings: Vec<String> = arr
@@ -2113,7 +2295,11 @@ fn extract_claims_from_id_token(raw_token: &str) -> OidcClaims {
                     .map(|s| s.strip_prefix('/').unwrap_or(s).to_string())
             })
             .collect();
-        if group_strings.is_empty() {
+        // An empty list says "in no group": the sync clears the old OIDC
+        // memberships (a user removed from every group keeps none). A list
+        // with entries none of which is a name reads as no claim, so an
+        // unexpected shape never wipes memberships.
+        if group_strings.is_empty() && !arr.is_empty() {
             None
         } else {
             Some(group_strings)
@@ -2534,6 +2720,163 @@ mod tests {
         assert!(logged.contains("invalid type"), "{logged}");
     }
 
+    // --- UserInfo fallback (#264) ---
+
+    /// A provider on loopback whose `/userinfo` gives `answer` (status, JSON
+    /// body) to the bearer token `ACCESS` and 401 to anything else; with no
+    /// answer the discovery document lists no UserInfo endpoint at all.
+    async fn userinfo_provider(
+        answer: Option<(u16, &'static str)>,
+    ) -> (OidcClient, StatusRecordingClient) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let issuer = format!("http://{addr}");
+        let mut metadata = serde_json::json!({
+            "issuer": issuer,
+            "authorization_endpoint": format!("{issuer}/authorize"),
+            "token_endpoint": format!("{issuer}/token"),
+            "jwks_uri": format!("{issuer}/jwks"),
+            "response_types_supported": ["code"],
+            "subject_types_supported": ["public"],
+            "id_token_signing_alg_values_supported": ["RS256"],
+        });
+        if answer.is_some() {
+            metadata["userinfo_endpoint"] = format!("{issuer}/userinfo").into();
+        }
+        let app = Router::new()
+            .route(
+                "/.well-known/openid-configuration",
+                get(move || {
+                    let metadata = metadata.clone();
+                    async move { axum::Json(metadata) }
+                }),
+            )
+            // Discovery fetches the key set too.
+            .route(
+                "/jwks",
+                get(|| async { axum::Json(serde_json::json!({ "keys": [] })) }),
+            )
+            .route(
+                "/userinfo",
+                get(move |headers: HeaderMap| async move {
+                    let json = [("content-type", "application/json")];
+                    let bearer = format!("Bearer {ACCESS}");
+                    if headers.get("authorization").and_then(|v| v.to_str().ok()) != Some(&bearer) {
+                        return (
+                            StatusCode::UNAUTHORIZED,
+                            json,
+                            r#"{"error":"invalid_token"}"#,
+                        )
+                            .into_response();
+                    }
+                    let (status, body) = answer.unwrap();
+                    (StatusCode::from_u16(status).unwrap(), json, body).into_response()
+                }),
+            );
+        tokio::spawn(async move { axum::serve(listener, app).await });
+        let cfg = AuthConfig {
+            id: "singleton".to_string(),
+            registration_enabled: false,
+            allowed_email_domains: None,
+            created_at: String::new(),
+            updated_at: String::new(),
+            oidc_enabled: true,
+            oidc_issuer_url: Some(issuer),
+            oidc_client_id: Some("c".to_string()),
+            oidc_client_secret: None,
+            oidc_auto_register: false,
+            google_oauth2_client_id: None,
+            google_oauth2_client_secret: None,
+        };
+        let client = build_oidc_client_with_redirect(&cfg, &[0u8; 32])
+            .await
+            .unwrap();
+        let http = StatusRecordingClient::new(build_http_client().unwrap());
+        (client, http)
+    }
+
+    fn access() -> openidconnect::AccessToken {
+        openidconnect::AccessToken::new(ACCESS.to_string())
+    }
+
+    fn sub(s: &str) -> openidconnect::SubjectIdentifier {
+        openidconnect::SubjectIdentifier::new(s.to_string())
+    }
+
+    const USERINFO: &str = r#"{"sub":"u-1","email":"ann@example.com","email_verified":true,"name":"Ann Example","groups":["/staff","sales"],"title":"CTO"}"#;
+
+    #[tokio::test]
+    async fn userinfo_completes_an_id_token_without_email() {
+        // A provider that keeps its ID token minimal answers UserInfo with
+        // the claims the `email` and `profile` scopes asked for.
+        let (client, http) = userinfo_provider(Some((200, USERINFO))).await;
+        let info = fetch_userinfo(&client, &http, access(), sub("u-1"))
+            .await
+            .unwrap();
+        assert_eq!(info.email.as_deref(), Some("ann@example.com"));
+        assert_eq!(info.email_verified, Some(true));
+        assert_eq!(info.name.as_deref(), Some("Ann Example"));
+        assert_eq!(
+            info.extra.groups,
+            Some(vec!["staff".to_string(), "sales".to_string()])
+        );
+        assert_eq!(info.extra.title.as_deref(), Some("CTO"));
+    }
+
+    #[tokio::test]
+    async fn userinfo_of_another_subject_is_refused() {
+        // The answer must be about the user the verified ID token names, so
+        // a substituted access token cannot attach someone else's address.
+        let (client, http) = userinfo_provider(Some((200, USERINFO))).await;
+        let err = fetch_userinfo(&client, &http, access(), sub("u-2"))
+            .await
+            .unwrap_err();
+        assert!(err.contains("Invalid subject"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn userinfo_without_email_leaves_it_unset() {
+        let body = r#"{"sub":"u-1","name":"Ann Example","email":""}"#;
+        let (client, http) = userinfo_provider(Some((200, body))).await;
+        let info = fetch_userinfo(&client, &http, access(), sub("u-1"))
+            .await
+            .unwrap();
+        assert_eq!(info.email, None);
+        assert_eq!(info.email_verified, None);
+        assert_eq!(info.name.as_deref(), Some("Ann Example"));
+    }
+
+    #[tokio::test]
+    async fn userinfo_refusal_is_logged_without_its_body() {
+        let body = r#"{"error":"invalid_token","error_description":"body-secret"}"#;
+        let (client, http) = userinfo_provider(Some((401, body))).await;
+        let err = fetch_userinfo(&client, &http, access(), sub("u-1"))
+            .await
+            .unwrap_err();
+        assert!(err.contains("401"), "{err}");
+        assert!(!err.contains("body-secret"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn userinfo_parse_failure_masks_the_values() {
+        let body = r#"{"sub":"u-1","email_verified":"ann-secret"}"#;
+        let (client, http) = userinfo_provider(Some((200, body))).await;
+        let err = fetch_userinfo(&client, &http, access(), sub("u-1"))
+            .await
+            .unwrap_err();
+        assert!(err.contains("email_verified"), "{err}");
+        assert!(!err.contains("ann-secret"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn userinfo_needs_an_endpoint_in_the_metadata() {
+        let (client, http) = userinfo_provider(None).await;
+        let err = fetch_userinfo(&client, &http, access(), sub("u-1"))
+            .await
+            .unwrap_err();
+        assert!(err.contains("no UserInfo endpoint"), "{err}");
+    }
+
     #[test]
     fn real_parse_failure_is_summarized_safely() {
         // Drive openidconnect's own token response type over a body that
@@ -2685,6 +3028,18 @@ mod tests {
         let header = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(r#"{"alg":"RS256"}"#);
         let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD
             .encode(r#"{"sub":"user1","groups":[]}"#);
+        let token = format!("{}.{}.fake-sig", header, payload);
+
+        // Present and empty: the user is in no group, and the login sync
+        // clears their old OIDC memberships.
+        assert_eq!(extract_groups_from_id_token(&token), Some(vec![]));
+    }
+
+    #[test]
+    fn extract_groups_of_an_unreadable_shape_is_no_claim() {
+        let header = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(r#"{"alg":"RS256"}"#);
+        let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .encode(r#"{"sub":"user1","groups":[{"id":1},{"id":2}]}"#);
         let token = format!("{}.{}.fake-sig", header, payload);
 
         assert_eq!(extract_groups_from_id_token(&token), None);
@@ -3303,6 +3658,108 @@ mod tests {
                 .unwrap();
         assert_eq!(provider, "local", "auth_provider must not change");
         assert!(oidc_subject.is_none(), "oidc_subject must remain NULL");
+    }
+
+    // --- SSO refusals reach the user (beta.4 feedback) ---
+
+    fn refusal_key(err: &anyhow::Error) -> Option<&'static str> {
+        err.downcast_ref::<SsoRefusal>().map(|r| r.key)
+    }
+
+    /// Each refusal a user can act on carries the message shown on the
+    /// sign-in page, rather than ending as a 500 with the reason in the log.
+    #[tokio::test]
+    async fn sso_refusals_carry_their_message() {
+        let pool = setup_db().await;
+        let closed = auth_config_with_oidc(&pool, false).await;
+        let open = auth_config_with_oidc(&pool, true).await;
+        let refuse = |subject: &'static str, email: &'static str, verified: Option<bool>, cfg| {
+            let pool = pool.clone();
+            async move {
+                let err = find_or_create_oidc_user_with_claim(
+                    &pool, subject, email, verified, "Someone", &cfg,
+                )
+                .await
+                .unwrap_err();
+                refusal_key(&err)
+            }
+        };
+        insert_user(&pool, "local@company.com", "Local", "user").await;
+        let linked = insert_user(&pool, "linked@company.com", "Linked", "user").await;
+        sqlx::query("UPDATE users SET oidc_subject = 'other', auth_provider = 'oidc' WHERE id = ?")
+            .bind(&linked)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let mfa = insert_user(&pool, "mfa@company.com", "Mfa", "user").await;
+        sqlx::query(
+            "INSERT INTO user_mfa (user_id, secret_enc, last_step) VALUES (?, 'enc:v1:x', 0)",
+        )
+        .bind(&mfa)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // An identity that proved it owns the address learns why.
+        assert_eq!(
+            refuse("v1", "nobody@company.com", Some(true), closed.clone()).await,
+            Some("auth-sso-no-account")
+        );
+        assert_eq!(
+            refuse("v2", "linked@company.com", Some(true), open.clone()).await,
+            Some("auth-sso-linked-elsewhere")
+        );
+        assert_eq!(
+            refuse("v3", "mfa@company.com", Some(true), open.clone()).await,
+            Some("auth-sso-local-mfa")
+        );
+
+        // An unverified one reads the same refusal whether an account holds
+        // the address or not, so it cannot probe which addresses have one.
+        for email in [
+            "nobody@company.com",
+            "local@company.com",
+            "linked@company.com",
+            "mfa@company.com",
+        ] {
+            for verified in [Some(false), None] {
+                for cfg in [&closed, &open] {
+                    assert_eq!(
+                        refuse("u", email, verified, cfg.clone()).await,
+                        Some("auth-sso-unverified"),
+                        "{email} {verified:?} auto_register={}",
+                        cfg.oidc_auto_register
+                    );
+                }
+            }
+        }
+    }
+
+    /// The refusal is the sign-in page, in the reader's language, with the
+    /// SSO button kept, answered as 403.
+    #[tokio::test]
+    async fn sso_refusal_page_is_a_translated_403() {
+        let mut env = minijinja::Environment::new();
+        env.set_undefined_behavior(minijinja::UndefinedBehavior::Lenient);
+        env.set_loader(minijinja::path_loader("templates"));
+        crate::i18n::register(&mut env);
+        for (lang, key) in [
+            ("en", "auth-sso-unverified"),
+            ("fr", "auth-sso-no-account"),
+            ("de", "auth-error-email-domain"),
+            ("ru", "auth-sso-no-email"),
+        ] {
+            let response = sso_refusal_page(&env, lang, key, false);
+            assert_eq!(response.status(), StatusCode::FORBIDDEN);
+            let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            let body = String::from_utf8(body.to_vec()).unwrap();
+            let message = crate::i18n::translate(lang, key, None);
+            let shown = message.replace('\'', "&#x27;");
+            assert!(body.contains(&shown), "{lang}: {message}");
+            assert!(body.contains("/auth/oidc/login"), "{lang}: SSO button kept");
+        }
     }
 
     /// The matching address alone must not switch off an account's local

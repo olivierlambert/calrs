@@ -28,7 +28,7 @@ Sending is best-effort: a gateway outage, an unconfigured gateway, or a number t
 
 ## Configuring the gateway
 
-Go to **Dashboard > Admin > SMS settings**. Pick a gateway and the form relabels itself for it, because the fields are named differently by each vendor.
+Go to **Dashboard > Admin > Email and SMS > SMS settings**. Pick a gateway and the form relabels itself for it, because the fields are named differently by each vendor.
 
 | Field | Twilio | GatewayAPI | seven.io | Webhook |
 |---|---|---|---|---|

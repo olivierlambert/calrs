@@ -3588,6 +3588,213 @@ async fn troubleshoot_labels_a_claimed_booking() {
     assert!(body.contains("Alice Demo (claimed booking)"), "{body}");
 }
 
+/// The troubleshoot view shows a booking's own buffers around it (#422),
+/// each on its side, as the slot grid applies them: the viewed type's
+/// buffer_after before the booking, the booking's own buffer_after after
+/// it, never the two added on one side. Here the booking is on another
+/// event type of the user, and the slot page offers the same times.
+#[tokio::test]
+async fn troubleshoot_shows_a_bookings_own_buffers() {
+    let (app, pool, session, et_id) = setup_test_app().await;
+    let me: String = sqlx::query_scalar("SELECT id FROM users WHERE username = 'testuser'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE event_types SET buffer_before = 0, buffer_after = 30 WHERE id = ?")
+        .bind(&et_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let other = insert_personal_et(&pool, &me, "buffered-ts-422").await;
+    sqlx::query("UPDATE event_types SET buffer_before = 0, buffer_after = 30 WHERE id = ?")
+        .bind(&other)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let day = far_future_monday();
+    let start = NaiveDate::parse_from_str(&day, "%Y-%m-%d")
+        .unwrap()
+        .and_hms_opt(10, 0, 0)
+        .unwrap();
+    insert_booking(&pool, &other, None, start, "confirmed").await;
+
+    let response = app
+        .clone()
+        .oneshot(get_authed(
+            &format!("/dashboard/troubleshoot?date={day}&event_type=test-meeting"),
+            &session,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = body_string(response).await;
+    assert!(body.contains("09:30&ndash;10:00: Buffer ("), "{body}");
+    assert!(body.contains("10:30&ndash;11:00: Buffer ("), "{body}");
+    assert!(!body.contains("&ndash;11:30: Buffer ("), "{body}");
+
+    let page = body_string(
+        app.oneshot(get(&format!(
+            "/u/testuser/test-meeting?month={}&tz=UTC",
+            &day[..7]
+        )))
+        .await
+        .unwrap(),
+    )
+    .await;
+    let offered = slot_times_on(&page, &day);
+    for free in ["09:00", "11:00"] {
+        assert!(offered.contains(&free.to_string()), "{offered:?}");
+    }
+    for blocked in ["09:30", "10:00", "10:30"] {
+        assert!(!offered.contains(&blocked.to_string()), "{offered:?}");
+    }
+}
+
+/// Around a calendar event and a time off period, the troubleshoot view
+/// shades the buffers the slot grid applies: the viewed type's buffer_after
+/// before them, its buffer_before after them. They were mirrored, so the
+/// view showed a buffer after the event where the grid offers a slot.
+#[tokio::test]
+async fn troubleshoot_shades_event_and_time_off_buffers_on_the_grids_sides() {
+    let (app, pool, session, et_id) = setup_test_app().await;
+    let (me, account_id): (String, String) = sqlx::query_as(
+        "SELECT u.id, a.id FROM users u JOIN accounts a ON a.user_id = u.id WHERE u.username = 'testuser'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE event_types SET buffer_before = 0, buffer_after = 30 WHERE id = ?")
+        .bind(&et_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let day = far_future_monday();
+    let compact = day.replace('-', "");
+    seed_synced_event(
+        &pool,
+        &account_id,
+        &format!("{compact}T100000"),
+        &format!("{compact}T110000"),
+        "UTC",
+        "OPAQUE",
+    )
+    .await;
+    sqlx::query(
+        "INSERT INTO user_time_off (id, user_id, start_at, end_at, timezone, label) VALUES ('off-rt', ?, ?, ?, 'UTC', NULL)",
+    )
+    .bind(&me)
+    .bind(format!("{day}T14:00:00Z"))
+    .bind(format!("{day}T15:00:00Z"))
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let body = body_string(
+        app.clone()
+            .oneshot(get_authed(
+                &format!("/dashboard/troubleshoot?date={day}&event_type=test-meeting"),
+                &session,
+            ))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(body.contains("09:30&ndash;10:00: Buffer ("), "{body}");
+    assert!(!body.contains("11:00&ndash;11:30: Buffer ("), "{body}");
+    assert!(body.contains("13:30&ndash;14:00: Buffer ("), "{body}");
+    assert!(!body.contains("15:00&ndash;15:30: Buffer ("), "{body}");
+
+    let page = body_string(
+        app.oneshot(get(&format!(
+            "/u/testuser/test-meeting?month={}&tz=UTC",
+            &day[..7]
+        )))
+        .await
+        .unwrap(),
+    )
+    .await;
+    let offered = slot_times_on(&page, &day);
+    for free in ["09:00", "11:00", "15:00"] {
+        assert!(offered.contains(&free.to_string()), "{free}: {offered:?}");
+    }
+    for blocked in ["09:30", "10:00", "13:30", "14:00"] {
+        assert!(
+            !offered.contains(&blocked.to_string()),
+            "{blocked}: {offered:?}"
+        );
+    }
+}
+
+/// An event early the next morning whose buffer reaches back into the day
+/// blocks the day's last slot on the grid; troubleshoot showed that slot as
+/// available, since it dropped events dated another day before checking
+/// the buffers.
+#[tokio::test]
+async fn troubleshoot_keeps_a_next_day_event_whose_buffer_reaches_the_day() {
+    let (app, pool, session, et_id) = setup_test_app().await;
+    let account_id: String = sqlx::query_scalar(
+        "SELECT a.id FROM users u JOIN accounts a ON a.user_id = u.id WHERE u.username = 'testuser'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE event_types SET buffer_before = 0, buffer_after = 60 WHERE id = ?")
+        .bind(&et_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM availability_rules WHERE event_type_id = ?")
+        .bind(&et_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO availability_rules (id, event_type_id, day_of_week, start_time, end_time) VALUES ('late-monday', ?, 1, '22:00', '23:30')")
+        .bind(&et_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let day = far_future_monday();
+    let next = (NaiveDate::parse_from_str(&day, "%Y-%m-%d").unwrap() + chrono::Duration::days(1))
+        .format("%Y%m%d")
+        .to_string();
+    seed_synced_event(
+        &pool,
+        &account_id,
+        &format!("{next}T001000"),
+        &format!("{next}T010000"),
+        "UTC",
+        "OPAQUE",
+    )
+    .await;
+
+    let body = body_string(
+        app.clone()
+            .oneshot(get_authed(
+                &format!("/dashboard/troubleshoot?date={day}&event_type=test-meeting"),
+                &session,
+            ))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(body.contains("23:00&ndash;23:30: Buffer ("), "{body}");
+    // Hours running past 23:00 used to end the timeline at a wrapped 00:00.
+    assert!(!body.contains("style=\"left: -"), "{body}");
+
+    let page = body_string(
+        app.oneshot(get(&format!(
+            "/u/testuser/test-meeting?month={}&tz=UTC",
+            &day[..7]
+        )))
+        .await
+        .unwrap(),
+    )
+    .await;
+    let offered = slot_times_on(&page, &day);
+    assert!(offered.contains(&"22:30".to_string()), "{offered:?}");
+    assert!(!offered.contains(&"23:00".to_string()), "{offered:?}");
+}
+
 /// A member excluded from a collective event type (weight 0) is not made
 /// busy by its unassigned bookings, the owner included, while the other
 /// members are; and the excluded member's own busy time does not block the
@@ -3904,4 +4111,213 @@ async fn a_series_of_extra_dates_blocks_each_of_them() {
         );
         assert_eq!(busy.len(), 2, "the start is not counted twice: {busy:?}");
     }
+}
+
+// --- Calendar events stored in another timezone (#420) ---
+
+/// Seeds one busy event for `account_id`, stored in `tz` (None: floating).
+async fn seed_event_in_zone(
+    pool: &SqlitePool,
+    account_id: &str,
+    start: &str,
+    end: &str,
+    tz: Option<&str>,
+) {
+    seed_synced_event(pool, account_id, start, end, "UTC", "OPAQUE").await;
+    sqlx::query("UPDATE events SET timezone = ? WHERE start_at = ?")
+        .bind(tz)
+        .bind(start)
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+/// A slot-sized window, as `pick_group_member` and the approval check read
+/// it, sees an event stored in any zone once converted to the host's, and
+/// only when it overlaps after conversion.
+#[tokio::test]
+async fn busy_times_see_events_stored_in_another_timezone() {
+    let paris: Tz = "Europe/Paris".parse().unwrap();
+    let (start, end) = (dt(2026, 12, 14, 10, 0), dt(2026, 12, 14, 10, 30));
+    for (from, to, tz, blocks) in [
+        ("20261214T090000", "20261214T093000", Some("UTC"), true),
+        (
+            "20261214T180000",
+            "20261214T183000",
+            Some("Asia/Tokyo"),
+            true,
+        ),
+        (
+            "20261214T010000",
+            "20261214T013000",
+            Some("America/Los_Angeles"),
+            true,
+        ),
+        ("20261214T100000", "20261214T103000", None, true),
+        // 11:00 in Paris: same wall clock as the slot, but no overlap.
+        ("20261214T100000", "20261214T103000", Some("UTC"), false),
+    ] {
+        let pool = setup_test_db().await;
+        let (user_id, account_id, et_id) = seed_test_data(&pool).await;
+        seed_event_in_zone(&pool, &account_id, from, to, tz).await;
+        let busy = try_fetch_busy_times_for_user(&pool, &user_id, start, end, paris, Some(&et_id))
+            .await
+            .unwrap();
+        assert_eq!(
+            has_conflict(&busy, start, end),
+            blocks,
+            "{from} in {tz:?}: {busy:?}"
+        );
+    }
+}
+
+/// The first occurrence of a series stored on the next day in a zone east
+/// of the host still falls in the host's evening.
+#[tokio::test]
+async fn busy_times_see_a_series_starting_in_another_timezone() {
+    let pool = setup_test_db().await;
+    let (user_id, account_id, et_id) = seed_test_data(&pool).await;
+    // 05:00 in Tokyo on the 15th is 21:00 in Paris on the 14th.
+    seed_event_in_zone(
+        &pool,
+        &account_id,
+        "20261215T050000",
+        "20261215T053000",
+        Some("Asia/Tokyo"),
+    )
+    .await;
+    sqlx::query("UPDATE events SET rrule = 'FREQ=DAILY;COUNT=3'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let paris: Tz = "Europe/Paris".parse().unwrap();
+    let (start, end) = (dt(2026, 12, 14, 21, 0), dt(2026, 12, 14, 21, 30));
+    let busy = try_fetch_busy_times_for_user(&pool, &user_id, start, end, paris, Some(&et_id))
+        .await
+        .unwrap();
+    assert!(has_conflict(&busy, start, end), "{busy:?}");
+}
+
+/// Round robin skips the preferred member when a calendar event stored in
+/// UTC makes them busy at the requested Paris time.
+#[tokio::test]
+async fn round_robin_skips_a_member_busy_in_another_timezone() {
+    let (app, pool, _, et) = setup_test_app().await;
+    let (owner, account): (String, String) = sqlx::query_as("SELECT user_id, id FROM accounts WHERE id = (SELECT account_id FROM event_types WHERE id = ?)")
+        .bind(&et)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let free = insert_role_user(&pool, "free@example.com", "user").await;
+    sqlx::query("INSERT INTO teams (id, name, slug, visibility) VALUES ('tz-team', 'Tz', 'tz-team', 'public')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    for user in [&owner, &free] {
+        sqlx::query("INSERT INTO team_members (team_id, user_id, role, source) VALUES ('tz-team', ?, 'member', 'direct')")
+            .bind(user)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+    sqlx::query("UPDATE event_types SET team_id = 'tz-team', timezone = 'Europe/Paris', scheduling_mode = 'round_robin' WHERE id = ?")
+        .bind(&et)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO event_type_member_weights (event_type_id, user_id, weight) VALUES (?, ?, 10)",
+    )
+    .bind(&et)
+    .bind(&owner)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let day = far_future_monday();
+    let date = NaiveDate::parse_from_str(&day, "%Y-%m-%d").unwrap();
+    let paris: Tz = "Europe/Paris".parse().unwrap();
+    // 10:00 to 10:30 in Paris, stored in UTC as the owner's calendar has it.
+    let utc = |minute: u32| {
+        paris
+            .from_local_datetime(&date.and_hms_opt(10, minute, 0).unwrap())
+            .single()
+            .unwrap()
+            .naive_utc()
+            .format("%Y%m%dT%H%M%S")
+            .to_string()
+    };
+    seed_event_in_zone(&pool, &account, &utc(0), &utc(30), Some("UTC")).await;
+    let response = app
+        .oneshot(post_form_unauthed(
+            "/team/tz-team/test-meeting/book",
+            "tz",
+            &format!("_csrf=tz&date={day}&time=10:00&tz=Europe%2FParis&name=Guest&email=guest%40example.com"),
+        ))
+        .await
+        .unwrap();
+    let status = response.status();
+    let assigned: Option<String> =
+        sqlx::query_scalar("SELECT assigned_user_id FROM bookings WHERE event_type_id = ?")
+            .bind(&et)
+            .fetch_optional(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        assigned.as_deref(),
+        Some(free.as_str()),
+        "response {status}; the busy owner is {owner}"
+    );
+}
+
+/// The troubleshoot view lists, on the host's day, an event stored on the
+/// next day in a zone east of the host, single or recurring.
+#[tokio::test]
+async fn troubleshoot_lists_events_stored_in_another_timezone() {
+    let (app, pool, session, et_id) = setup_test_app().await;
+    sqlx::query("UPDATE event_types SET timezone = 'UTC' WHERE id = ?")
+        .bind(&et_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let account_id: String =
+        sqlx::query_scalar("SELECT id FROM accounts WHERE email = 'test@example.com'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let day = far_future_monday();
+    let next = NaiveDate::parse_from_str(&day, "%Y-%m-%d").unwrap() + Duration::days(1);
+    // 00:00 and 01:00 in Tokyo are 15:00 and 16:00 the day before in UTC,
+    // the host's zone, inside the working hours the timeline draws.
+    let at = |hm: &str| format!("{}T{hm}00", next.format("%Y%m%d"));
+    for (summary, hour, rrule) in [
+        ("Tokyo-Single", "00", None),
+        ("Tokyo-Series", "01", Some("FREQ=DAILY;COUNT=2")),
+    ] {
+        seed_event_in_zone(
+            &pool,
+            &account_id,
+            &at(&format!("{hour}00")),
+            &at(&format!("{hour}30")),
+            Some("Asia/Tokyo"),
+        )
+        .await;
+        sqlx::query("UPDATE events SET summary = ?, rrule = ? WHERE start_at = ?")
+            .bind(summary)
+            .bind(rrule)
+            .bind(at(&format!("{hour}00")))
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+    let response = app
+        .oneshot(get_authed(
+            &format!("/dashboard/troubleshoot?date={day}&event_type=test-meeting"),
+            &session,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = body_string(response).await;
+    assert!(body.contains("Tokyo-Single"), "{body}");
+    assert!(body.contains("Tokyo-Series"), "{body}");
 }

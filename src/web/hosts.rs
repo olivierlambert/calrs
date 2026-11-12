@@ -596,8 +596,18 @@ pub(super) async fn approval_hosts_free(
         return Ok(false);
     }
     let host_tz = get_host_tz(pool, et_id).await;
-    let Some((start, end)) = crate::booking_time::busy_range(start_at, end_at, host_tz) else {
-        return Ok(true);
+    let (before, after): (i64, i64) =
+        sqlx::query_as("SELECT MAX(COALESCE(buffer_before, 0), 0), MAX(COALESCE(buffer_after, 0), 0) FROM event_types WHERE id = ?")
+            .bind(et_id)
+            .fetch_one(pool)
+            .await?;
+    // The pending booking was excluded from busy time below, so its own
+    // buffers must widen the approval check too. Another booking or a new
+    // calendar event may have occupied them since the request was made.
+    let Some((start, end)) =
+        crate::booking_time::buffered_busy_range(start_at, end_at, host_tz, before, after)
+    else {
+        return Ok(false);
     };
     // The co-hosts of a dynamic group booking read all their calendars, as
     // on the dynamic group slot page (the calendar selection is the owner's),

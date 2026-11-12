@@ -1465,3 +1465,211 @@ async fn booking_with_first_slot_only_follows_the_first_free_slot() {
         "with 09:00 taken, 09:30 is the first free slot and must be accepted"
     );
 }
+
+// --- A booking's own buffers (#422) ---
+
+async fn set_buffers(pool: &SqlitePool, et_id: &str, before: i32, after: i32) {
+    sqlx::query("UPDATE event_types SET buffer_before = ?, buffer_after = ? WHERE id = ?")
+        .bind(before)
+        .bind(after)
+        .bind(et_id)
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+/// Post the guest booking form of `test-meeting` at `time` on `day`.
+async fn book_test_meeting(app: &Router, day: &str, time: &str) {
+    let response = app
+        .clone()
+        .oneshot(post_form_unauthed(
+            "/u/testuser/test-meeting/book",
+            "buf422",
+            &format!(
+                "_csrf=buf422&date={day}&time={time}&tz=UTC&name=Guest&email=guest%40example.com"
+            ),
+        ))
+        .await
+        .unwrap();
+    assert!(!response.status().is_server_error());
+}
+
+/// The start times (HH:MM, UTC) of every booking, in order.
+async fn booked_starts(pool: &SqlitePool) -> Vec<String> {
+    let starts: Vec<String> = sqlx::query_scalar("SELECT start_at FROM bookings ORDER BY start_at")
+        .fetch_all(pool)
+        .await
+        .unwrap();
+    starts.iter().map(|s| s[11..16].to_string()).collect()
+}
+
+/// A meeting's buffer_after is kept after it: a booking at 10:00 with a
+/// 30-minute buffer after refuses a second one at 10:30, and 11:00 is fine.
+#[tokio::test]
+async fn buffer_after_refuses_a_booking_right_after_an_existing_one() {
+    let (app, pool, _, et) = setup_test_app().await;
+    set_buffers(&pool, &et, 0, 30).await;
+    let day = far_future_monday();
+    for time in ["10:00", "10:30", "11:00"] {
+        book_test_meeting(&app, &day, time).await;
+    }
+    assert_eq!(booked_starts(&pool).await, ["10:00", "11:00"]);
+}
+
+/// A meeting's buffer_before is kept before it: a booking at 10:30 with a
+/// 30-minute buffer before refuses an earlier one at 10:00, and 09:30 is fine.
+#[tokio::test]
+async fn buffer_before_refuses_a_booking_right_before_an_existing_one() {
+    let (app, pool, _, et) = setup_test_app().await;
+    set_buffers(&pool, &et, 30, 0).await;
+    let day = far_future_monday();
+    for time in ["10:30", "10:00", "09:30"] {
+        book_test_meeting(&app, &day, time).await;
+    }
+    assert_eq!(booked_starts(&pool).await, ["09:30", "10:30"]);
+}
+
+/// Each side's buffer belongs to that side and is not counted twice: with
+/// buffer_before = 30, a 10:00 booking and an 11:00 one fit, 10:30 does not.
+#[tokio::test]
+async fn buffers_on_both_bookings_are_not_counted_twice() {
+    let (app, pool, _, et) = setup_test_app().await;
+    set_buffers(&pool, &et, 30, 0).await;
+    let day = far_future_monday();
+    for time in ["10:00", "10:30", "11:00"] {
+        book_test_meeting(&app, &day, time).await;
+    }
+    assert_eq!(booked_starts(&pool).await, ["10:00", "11:00"]);
+}
+
+/// A booking on another event type of the same host keeps that type's
+/// buffers, though the event type being booked has none: the slot page does
+/// not offer the times they cover and the form refuses them.
+#[tokio::test]
+async fn another_event_types_buffers_block_the_hosts_slots() {
+    let (app, pool, _, _et) = setup_test_app().await;
+    let host: String = sqlx::query_scalar("SELECT id FROM users WHERE username = 'testuser'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let other = insert_personal_et(&pool, &host, "buffered-422").await;
+    set_buffers(&pool, &other, 30, 30).await;
+    let day = far_future_monday();
+    let date = NaiveDate::parse_from_str(&day, "%Y-%m-%d").unwrap();
+    insert_booking(
+        &pool,
+        &other,
+        None,
+        date.and_hms_opt(10, 0, 0).unwrap(),
+        "confirmed",
+    )
+    .await;
+
+    let page = body_string(
+        app.clone()
+            .oneshot(get(&format!(
+                "/u/testuser/test-meeting?month={}&tz=UTC",
+                &day[..7]
+            )))
+            .await
+            .unwrap(),
+    )
+    .await;
+    let offered = slot_times_on(&page, &day);
+    assert!(offered.contains(&"09:00".to_string()), "{offered:?}");
+    assert!(offered.contains(&"11:00".to_string()), "{offered:?}");
+    for blocked in ["09:30", "10:00", "10:30"] {
+        assert!(!offered.contains(&blocked.to_string()), "{offered:?}");
+    }
+
+    for time in ["09:30", "10:30", "11:00"] {
+        book_test_meeting(&app, &day, time).await;
+    }
+    let mine: Vec<String> = sqlx::query_scalar(
+        "SELECT substr(start_at, 12, 5) FROM bookings WHERE event_type_id != ? ORDER BY start_at",
+    )
+    .bind(&other)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(mine, ["11:00"]);
+}
+
+async fn cli_book(pool: &sqlx::SqlitePool, day: &str, time: &str) -> anyhow::Result<()> {
+    crate::commands::booking::run(
+        pool,
+        &[0; 32],
+        crate::commands::booking::BookingCommands::Create {
+            slug: "test-meeting".into(),
+            date: Some(day.into()),
+            time: Some(time.into()),
+            name: Some("Guest".into()),
+            email: Some("guest@example.com".into()),
+            timezone: "UTC".into(),
+            notes: None,
+        },
+    )
+    .await
+}
+
+#[tokio::test]
+async fn cli_booking_create_refuses_a_blocked_date_override() {
+    let pool = setup_test_db().await;
+    let (_, _, et) = seed_test_data(&pool).await;
+    let day = far_future_monday();
+    sqlx::query("INSERT INTO availability_overrides (id, event_type_id, date, is_blocked) VALUES ('o1', ?, ?, 1)").bind(&et).bind(&day).execute(&pool).await.unwrap();
+    let result = cli_book(&pool, &day, "10:00").await;
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM bookings")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        count, 0,
+        "CLI created a booking on a blocked date: {result:?}"
+    );
+}
+
+#[tokio::test]
+async fn cli_booking_create_refuses_time_outside_custom_hours_override() {
+    let pool = setup_test_db().await;
+    let (_, _, et) = seed_test_data(&pool).await;
+    let day = far_future_monday();
+    sqlx::query("INSERT INTO availability_overrides (id, event_type_id, date, start_time, end_time, is_blocked) VALUES ('o1', ?, ?, '13:00', '15:00', 0)").bind(&et).bind(&day).execute(&pool).await.unwrap();
+    let result = cli_book(&pool, &day, "10:00").await;
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM bookings")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        count, 0,
+        "10:00 is outside the 13:00-15:00 override: {result:?}"
+    );
+}
+
+#[tokio::test]
+async fn cli_booking_create_accepts_time_inside_custom_hours_override() {
+    let pool = setup_test_db().await;
+    let (_, _, et) = seed_test_data(&pool).await;
+    let day = far_future_monday();
+    sqlx::query("INSERT INTO availability_overrides (id, event_type_id, date, start_time, end_time, is_blocked) VALUES ('o1', ?, ?, '13:00', '15:00', 0)").bind(&et).bind(&day).execute(&pool).await.unwrap();
+    let result = cli_book(&pool, &day, "13:00").await;
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM bookings")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 1, "13:00 is inside the override: {result:?}");
+}
+
+#[tokio::test]
+async fn cli_booking_create_on_a_plain_date_follows_weekly_rules() {
+    let pool = setup_test_db().await;
+    seed_test_data(&pool).await;
+    let day = far_future_monday();
+
+    let result = cli_book(&pool, &day, "10:00").await;
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM bookings")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 1, "plain date unchanged: {result:?}");
+}

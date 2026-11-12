@@ -615,10 +615,12 @@ pub(super) async fn fetch_calendar_busy(
     from: NaiveDateTime,
     to: NaiveDateTime,
 ) -> CalendarBusy {
-    let lo = (from - Duration::days(1))
+    // Events keep their own zone's wall clock, up to 26 hours from the
+    // viewer's: two days of slack, then `in_view` after conversion (#420).
+    let lo = (from - Duration::days(2))
         .format("%Y%m%dT%H%M%S")
         .to_string();
-    let hi = (to + Duration::days(1)).format("%Y%m%dT%H%M%S").to_string();
+    let hi = (to + Duration::days(2)).format("%Y%m%dT%H%M%S").to_string();
     // The subquery's own `b`, `et` and `a` shadow the outer `a`. Binds the
     // user id five times.
     let scope = format!(

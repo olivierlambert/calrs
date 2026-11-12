@@ -54,7 +54,7 @@ Where a team booking is written is each member's own choice: the booking lands i
 Additional team-specific options:
 
 - **Scheduling mode** — round-robin or collective (see below)
-- **Member weights** — admins can set priority per member via the Member Priority card, which appears during both creation and editing. Weights can be set globally on the team or overridden per event type. Weight 0 excludes a member from round-robin assignment for that event type — excluded members also don't appear on the public booking page's avatar list.
+- **Member weights** — admins can set priority per member via the Member Priority card, which appears during both creation and editing. Weights belong to the event type: a member without one there counts as priority 1. The weights shown on a group in the admin panel do not affect assignment. Weight 0 excludes a member from round-robin assignment for that event type — excluded members also don't appear on the public booking page's avatar list.
 
 ## Public team pages
 
@@ -67,14 +67,14 @@ Additional team-specific options:
 
 ### Round-robin
 
-A slot is available if **any** team member is free. The booking is assigned to the **least-busy available member** (fewest confirmed bookings).
+A slot is available if **any** team member is free. The booking is assigned by member priority, then workload (among equally prioritized available members, the one assigned the fewest bookings over the last 30 days).
 
 When a booking is submitted:
 
 1. calrs finds all team members (with weight > 0)
 2. For each member, checks if the slot is free (no calendar events or bookings in the buffer window)
-3. Among available members, picks the one with the fewest confirmed bookings
-4. The booking is assigned to that member and pushed to their CalDAV calendar
+3. Among available members, prefers the highest configured priority, then the fewest bookings assigned over the last 30 days
+4. The booking is assigned to that member and written to their configured calendar destination
 5. If no member is available, the booking is rejected
 
 **Best for:** support queues, sales demos, intake calls — any scenario where the guest doesn't care who they meet.
@@ -86,7 +86,7 @@ A slot is available only if **all** team members are free. The booking includes 
 When a booking is submitted:
 
 1. calrs verifies all members are free for the slot
-2. The booking is created and pushed to **every** member's CalDAV calendar
+2. The booking is created and written to **each eligible** member's configured calendar destination
 3. Email notifications are sent to all members
 4. If any member has a conflict, the slot is not shown
 
@@ -114,15 +114,11 @@ Configuration: in the event type editor, or on the create form once a team is pi
 
 ## Multi-timezone teams
 
-The availability window on a team event type (e.g., Mon-Fri 09:00-17:00) is defined once for the whole team and interpreted in the server's timezone. For teams spread across timezones, this window may not cover everyone's working hours.
+A team event type's weekly rules use its **explicit event timezone**, not the server's timezone. Each member's default working hours use that member's profile timezone. A member who has set no personal hours is not limited by them: only the team schedule, their time off, busy calendars and bookings apply. calrs converts the member's hours and calendar events into the event timezone before checking availability.
 
-**Recommended setup:** Set a wide availability window (e.g., 06:00-23:00 or even 00:00-23:59) and let each member's CalDAV calendar handle the actual blocking. Because calrs syncs each member's calendar independently and converts events from their original timezone, the slot picker naturally shows the correct availability:
+For example, give a Paris/New York support team a broad event schedule in `Europe/Paris`, then have each member set their actual hours in **Profile & Settings**. Round-robin offers a slot when an eligible member is within their own hours and free; collective requires every eligible member to be within their hours and free. Daylight-saving changes are applied using the named timezones.
 
-- Alice (Paris, 09:00-17:00 CET) — her calendar blocks evenings and weekends
-- Bob (New York, 09:00-17:00 EST) — his calendar blocks his mornings (CET afternoon/evening)
-- A guest sees slots from 09:00-23:00 CET, with Alice covering the morning and Bob covering the evening
-
-This approach requires no per-member configuration — just sync your calendars and set a wide window.
+Each member's [time off](./event-types.md#time-off), busy calendars and existing bookings also constrain their availability. A broad team schedule does not by itself make people available outside their personal hours. Guests view the resulting slots in their selected timezone.
 
 ## OIDC group sync
 

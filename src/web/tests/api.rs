@@ -2024,10 +2024,19 @@ async fn dropping_an_idempotent_request_stops_its_lease_renewals() {
     tokio::time::sleep(std::time::Duration::from_millis(30)).await;
     handle.abort();
     let _ = handle.await;
-    sqlx::query("UPDATE api_idempotency SET lease_at = 0")
-        .execute(&pool)
-        .await
-        .unwrap();
+    // Aborting cancels the renewal future, not a statement SQLite's worker
+    // thread already holds: one write in flight at the abort may still land
+    // after a reset (it did under the slower coverage build). Reset once to
+    // absorb it, then again: no renewal may follow the second.
+    let reset = || async {
+        sqlx::query("UPDATE api_idempotency SET lease_at = 0")
+            .execute(&pool)
+            .await
+            .unwrap();
+    };
+    reset().await;
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    reset().await;
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     assert_eq!(lease_at().await, 0, "no renewal after the drop");
 }

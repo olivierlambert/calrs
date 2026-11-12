@@ -60,6 +60,36 @@ pub fn user_busy_bookings(include_pending_holds: bool) -> String {
     )
 }
 
+/// The buffers a booking holds around itself, its own event type's
+/// `buffer_before` and `buffer_after` in minutes (#422), as two columns.
+/// Expects the alias `et` for the booking's event type.
+pub const BOOKING_BUFFERS: &str =
+    "MAX(COALESCE(et.buffer_before, 0), 0), MAX(COALESCE(et.buffer_after, 0), 0)";
+
+/// SQL condition keeping the bookings whose buffered interval can touch a
+/// window, given as ISO local times (binds its end, then its start). The two
+/// days on each side cover stored UTC times; the booking's own buffers
+/// widen it further. Expects the aliases `b` and `et`.
+pub const BUFFERED_BOOKING_WINDOW: &str = "b.start_at <= strftime('%Y-%m-%dT%H:%M:%S', ?, '+2 days', printf('%+d minutes', MAX(COALESCE(et.buffer_before, 0), 0)))
+           AND b.end_at >= strftime('%Y-%m-%dT%H:%M:%S', ?, '-2 days', printf('%+d minutes', -MAX(COALESCE(et.buffer_after, 0), 0)))";
+
+/// Pad instants before taking their local envelope. Adding minutes to a
+/// local wall clock loses or invents elapsed time at a DST change (#422).
+fn buffered_local_range(
+    start: DateTime<Utc>,
+    end: DateTime<Utc>,
+    target: Tz,
+    before: i64,
+    after: i64,
+) -> (NaiveDateTime, NaiveDateTime) {
+    let minutes = |m: i64| Duration::minutes(m.clamp(0, i32::MAX.into()));
+    crate::time_off::local_range(
+        start.checked_sub_signed(minutes(before)).unwrap_or(start),
+        end.checked_add_signed(minutes(after)).unwrap_or(end),
+        target,
+    )
+}
+
 pub fn naive(value: &str) -> Option<NaiveDateTime> {
     NaiveDateTime::parse_from_str(value.trim_end_matches('Z'), "%Y-%m-%dT%H:%M:%S")
         .or_else(|_| NaiveDateTime::parse_from_str(value, "%Y-%m-%d %H:%M:%S"))
@@ -76,11 +106,10 @@ pub fn local(value: &str, legacy_tz: Tz, target: Tz) -> Option<NaiveDateTime> {
     if legacy_tz == target {
         return Some(wall);
     }
+    // A wall clock in a skipped hour moves to the first minute after the
+    // gap, as time off does; it was read as UTC, hours away.
     Some(
-        legacy_tz
-            .from_local_datetime(&wall)
-            .earliest()
-            .unwrap_or_else(|| legacy_tz.from_utc_datetime(&wall))
+        crate::time_off::to_utc(legacy_tz, wall, false)?
             .with_timezone(&target)
             .naive_local(),
     )
@@ -111,30 +140,54 @@ pub fn busy_range(start: &str, end: &str, tz: Tz) -> Option<(NaiveDateTime, Naiv
     Some((first, last))
 }
 
+/// A candidate or booking with buffers measured in elapsed minutes. Legacy
+/// unmarked timestamps are interpreted in `tz`; callers reading versioned
+/// storage use `stored_buffered_busy_range` instead. With no padding, retain
+/// `busy_range`'s historical handling of unmarked wall clocks.
+pub fn buffered_busy_range(
+    start: &str,
+    end: &str,
+    tz: Tz,
+    before: i64,
+    after: i64,
+) -> Option<(NaiveDateTime, NaiveDateTime)> {
+    if before <= 0 && after <= 0 {
+        return busy_range(start, end, tz);
+    }
+    let instant = |value: &str, latest: bool| {
+        if let Ok(t) = DateTime::parse_from_rfc3339(value) {
+            return Some(t.with_timezone(&Utc));
+        }
+        crate::time_off::to_utc(tz, naive(value)?, latest)
+    };
+    Some(buffered_local_range(
+        instant(start, false)?,
+        instant(end, true)?,
+        tz,
+        before,
+        after,
+    ))
+}
+
 /// Read a stored booking in a different calendar timezone. Legacy values,
 /// including historical values with a misleading Z suffix, are wall clocks
 /// in their event's zone. Keep the full possible interval at a repeated hour.
-pub fn stored_busy_range(
+pub fn stored_buffered_busy_range(
     start: &str,
     end: &str,
     time_version: i64,
     legacy_tz: Tz,
     target: Tz,
+    (before, after): (i64, i64),
 ) -> Option<(NaiveDateTime, NaiveDateTime)> {
     if time_version == 1 {
-        return busy_range(start, end, target);
+        return buffered_busy_range(start, end, target, before, after);
     }
     let start_wall = naive(start)?;
     let end_wall = naive(end)?;
-    let start = legacy_tz
-        .from_local_datetime(&start_wall)
-        .earliest()
-        .unwrap_or_else(|| legacy_tz.from_utc_datetime(&start_wall));
-    let end = legacy_tz
-        .from_local_datetime(&end_wall)
-        .latest()
-        .unwrap_or_else(|| legacy_tz.from_utc_datetime(&end_wall));
-    busy_range(&start.to_rfc3339(), &end.to_rfc3339(), target)
+    let start = crate::time_off::to_utc(legacy_tz, start_wall, false)?;
+    let end = crate::time_off::to_utc(legacy_tz, end_wall, true)?;
+    Some(buffered_local_range(start, end, target, before, after))
 }
 
 /// A new booking must identify one instant. Reject nonexistent/ambiguous local
@@ -452,6 +505,140 @@ mod tests {
                 naive("2026-10-25T02:30:00").unwrap(),
                 naive("2026-10-25T03:30:00").unwrap()
             ))
+        );
+    }
+
+    #[test]
+    fn booking_buffers_measure_elapsed_minutes_at_clock_changes() {
+        for (zone, start, end, before, after, expected_start, expected_end) in [
+            (
+                "Europe/Paris",
+                "2027-03-28T00:00:00Z",
+                "2027-03-28T00:30:00Z",
+                0,
+                120,
+                "2027-03-28T01:00:00",
+                "2027-03-28T04:30:00",
+            ),
+            (
+                "Europe/Paris",
+                "2027-03-28T01:30:00Z",
+                "2027-03-28T02:00:00Z",
+                120,
+                0,
+                "2027-03-28T00:30:00",
+                "2027-03-28T04:00:00",
+            ),
+            (
+                "Europe/Paris",
+                "2027-10-31T00:00:00Z",
+                "2027-10-31T00:30:00Z",
+                0,
+                120,
+                "2027-10-31T02:00:00",
+                "2027-10-31T03:30:00",
+            ),
+            // The before-buffer starts in the repeated hour: retain its
+            // conservative local envelope, but do not invent another hour.
+            (
+                "Europe/Paris",
+                "2027-10-31T02:30:00Z",
+                "2027-10-31T03:00:00Z",
+                120,
+                0,
+                "2027-10-31T02:00:00",
+                "2027-10-31T04:00:00",
+            ),
+            // Lord Howe jumps by half an hour, not a whole hour.
+            (
+                "Australia/Lord_Howe",
+                "2026-10-03T15:00:00Z",
+                "2026-10-03T15:15:00Z",
+                0,
+                60,
+                "2026-10-04T01:30:00",
+                "2026-10-04T03:15:00",
+            ),
+        ] {
+            assert_eq!(
+                buffered_busy_range(start, end, zone.parse().unwrap(), before, after),
+                Some((naive(expected_start).unwrap(), naive(expected_end).unwrap())),
+                "{zone}, {start}, before={before}, after={after}",
+            );
+        }
+    }
+
+    /// A legacy wall clock that does not exist (inside the spring gap) is
+    /// read as the first minute after the gap, as time off reads it, not as
+    /// UTC, which moved it by the zone's offset once buffers were applied.
+    #[test]
+    fn a_legacy_time_in_the_spring_gap_moves_past_the_gap() {
+        let paris: Tz = "Europe/Paris".parse().unwrap();
+        assert_eq!(
+            buffered_busy_range("2027-03-28T02:30:00", "2027-03-28T03:30:00", paris, 15, 0),
+            Some((
+                naive("2027-03-28T01:45:00").unwrap(),
+                naive("2027-03-28T03:30:00").unwrap()
+            )),
+        );
+        assert_eq!(
+            stored_buffered_busy_range(
+                "2027-03-28T02:30:00",
+                "2027-03-28T03:30:00",
+                0,
+                paris,
+                Tz::UTC,
+                (0, 0),
+            ),
+            Some((
+                naive("2027-03-28T01:00:00").unwrap(),
+                naive("2027-03-28T01:30:00").unwrap()
+            )),
+        );
+        assert_eq!(
+            local("2027-03-28T02:30:00", paris, Tz::UTC),
+            naive("2027-03-28T01:00:00")
+        );
+    }
+
+    #[test]
+    fn booking_buffers_preserve_legacy_timezone_and_time_version() {
+        let paris = "Europe/Paris".parse().unwrap();
+        let expected = Some((
+            naive("2027-03-28T00:00:00").unwrap(),
+            naive("2027-03-28T02:30:00").unwrap(),
+        ));
+        for suffix in ["", "Z"] {
+            // A legacy Z is a misleading marker, not an actual UTC instant.
+            assert_eq!(
+                stored_buffered_busy_range(
+                    &format!("2027-03-28T01:00:00{suffix}"),
+                    &format!("2027-03-28T01:30:00{suffix}"),
+                    0,
+                    paris,
+                    Tz::UTC,
+                    (0, 120),
+                ),
+                expected,
+            );
+        }
+        assert_eq!(
+            stored_buffered_busy_range(
+                "2027-03-28T00:00:00Z",
+                "2027-03-28T00:30:00Z",
+                1,
+                paris,
+                Tz::UTC,
+                (0, 120),
+            ),
+            expected,
+        );
+        assert_eq!(
+            buffered_busy_range("2027-03-28T01:00:00", "2027-03-28T01:30:00", paris, 0, 120),
+            Some((
+                naive("2027-03-28T01:00:00").unwrap(),
+                naive("2027-03-28T04:30:00").unwrap()
+            )),
         );
     }
 

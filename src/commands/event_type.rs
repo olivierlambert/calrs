@@ -101,8 +101,8 @@ struct EventTypeRow {
     bookable: String,
 }
 
-/// Bookings that make the host of `et_id` busy around a window, as raw
-/// (start_at, end_at) strings for `booking_time::busy_range`. The host is the
+/// Bookings that make the host of `et_id` busy around a window, as local
+/// ranges in `host_tz` widened by each booking's own buffers (#422). The host is the
 /// event type owner, and the rule is the web slot engine's
 /// (`booking_time::user_busy_bookings`): their own bookings, bookings assigned
 /// to them on other people's team event types, unassigned collective team
@@ -116,17 +116,25 @@ pub(crate) async fn host_busy_bookings(
     et_id: &str,
     window_start_iso: &str,
     window_end_iso: &str,
-) -> Result<Vec<(String, String)>> {
+    host_tz: chrono_tz::Tz,
+) -> Result<Vec<(NaiveDateTime, NaiveDateTime)>> {
     let Some(host) = event_type_host(pool, et_id).await? else {
         return Ok(Vec::new());
     };
-    let rows = sqlx::query_as(&format!(
-        "SELECT CASE b.time_version WHEN 1 THEN b.start_at ELSE rtrim(b.start_at, 'Z') END AS start_at, CASE b.time_version WHEN 1 THEN b.end_at ELSE rtrim(b.end_at, 'Z') END AS end_at FROM bookings b
+    // Each booking read as the web reads it: a legacy wall clock in its own
+    // event type's zone (else its owner's), not in this host's.
+    #[allow(clippy::type_complexity)]
+    let rows: Vec<(String, String, i64, Option<String>, i64, i64)> = sqlx::query_as(&format!(
+        "SELECT b.start_at, b.end_at, b.time_version,
+                COALESCE(NULLIF(et.timezone, ''), u.timezone), {} FROM bookings b
          JOIN event_types et ON et.id = b.event_type_id
          JOIN accounts a ON a.id = et.account_id
+         LEFT JOIN users u ON u.id = a.user_id
          WHERE {}
-           AND b.start_at <= strftime('%Y-%m-%dT%H:%M:%S', ?, '+2 days') AND b.end_at >= strftime('%Y-%m-%dT%H:%M:%S', ?, '-2 days')",
-        crate::booking_time::user_busy_bookings(true)
+           AND {}",
+        crate::booking_time::BOOKING_BUFFERS,
+        crate::booking_time::user_busy_bookings(true),
+        crate::booking_time::BUFFERED_BOOKING_WINDOW,
     ))
     .bind(&host)
     .bind(&host)
@@ -137,7 +145,23 @@ pub(crate) async fn host_busy_bookings(
     .bind(window_start_iso)
     .fetch_all(pool)
     .await?;
-    Ok(rows)
+    Ok(rows
+        .iter()
+        .filter_map(|(s, e, version, zone, before, after)| {
+            let legacy_tz = zone
+                .as_deref()
+                .and_then(|z| z.parse().ok())
+                .unwrap_or(chrono_tz::Tz::UTC);
+            crate::booking_time::stored_buffered_busy_range(
+                s,
+                e,
+                *version,
+                legacy_tz,
+                host_tz,
+                (*before, *after),
+            )
+        })
+        .collect())
 }
 
 /// The user who hosts `et_id` on the CLI paths: the owner of its account.
@@ -296,16 +320,15 @@ pub(crate) async fn host_microsoft_gaps(
 /// event sorts lexically after its own date prefix ("20260618T100000" >
 /// "20260618"), so a window ending on the event's own date would silently miss
 /// it. Returns raw (start_at, end_at, timezone) rows for tz conversion by the
-/// caller. UTC Google status events use a two-day SQL margin so host-local
-/// slots aren't missed before the caller converts the returned busy ranges.
+/// caller. Events keep their own zone's wall clock while the window is
+/// host-local, so the SQL bounds carry two days of slack: a row outside the
+/// window once converted only blocks times no slot is offered at (#420).
 async fn fetch_nonrecurring_busy_events(
     pool: &SqlitePool,
     et_id: &str,
     window_start: NaiveDateTime,
     window_end: NaiveDateTime,
 ) -> Result<Vec<(String, String, Option<String>)>> {
-    let end_compact = window_end.format("%Y%m%dT%H%M%S").to_string();
-    let start_compact = window_start.format("%Y%m%dT%H%M%S").to_string();
     let rows = sqlx::query_as(
         "SELECT e.start_at, e.end_at, e.timezone FROM events e
          JOIN calendars c ON c.id = e.calendar_id
@@ -319,16 +342,12 @@ async fn fetch_nonrecurring_busy_events(
            AND (e.rrule IS NULL OR e.rrule = '') AND e.rdate = 0
            AND (e.status IS NULL OR e.status != 'CANCELLED')
            AND (e.transp IS NULL OR e.transp != 'TRANSPARENT')
-           AND ((e.start_at <= ? AND e.end_at >= ?)
-                OR (e.google_out_of_office = 1
-                    AND e.start_at <= strftime('%Y%m%dT%H%M%S', ?, '+2 days')
-                    AND e.end_at >= strftime('%Y%m%dT%H%M%S', ?, '-2 days')))",
+           AND e.start_at <= strftime('%Y%m%dT%H%M%S', ?, '+2 days')
+           AND e.end_at >= strftime('%Y%m%dT%H%M%S', ?, '-2 days')",
     )
     .bind(et_id)
     .bind(et_id)
     .bind(et_id)
-    .bind(&end_compact)
-    .bind(&start_compact)
     .bind(window_end.format("%Y-%m-%dT%H:%M:%S").to_string())
     .bind(window_start.format("%Y-%m-%dT%H:%M:%S").to_string())
     .fetch_all(pool)
@@ -539,16 +558,22 @@ pub async fn run(pool: &SqlitePool, cmd: EventTypeCommands) -> Result<()> {
                 })
                 .collect();
 
-            // The host's bookings, converted by `busy_range` at the
-            // comparison below (UTC rows) or kept as wall clock (legacy rows).
-            let booking_busy = host_busy_bookings(pool, &et_id, &now_iso, &end_iso)
+            // The host's bookings with their own buffers, as local times.
+            let booking_busy = host_busy_bookings(pool, &et_id, &now_iso, &end_iso, host_tz)
                 .await
                 .unwrap_or_default();
+            for (s, e) in booking_busy {
+                busy_events.push((
+                    s.format("%Y-%m-%dT%H:%M:%S").to_string(),
+                    e.format("%Y-%m-%dT%H:%M:%S").to_string(),
+                ));
+            }
 
-            busy_events.extend(booking_busy);
-
-            // Expand recurring events
-            let end_compact_rrule = end_date.format("%Y%m%dT235959").to_string();
+            // Expand recurring events. A series' DTSTART is in its own zone's
+            // wall clock, possibly a day ahead of the host's (#420).
+            let end_compact_rrule = (end_date + Duration::days(2))
+                .format("%Y%m%dT235959")
+                .to_string();
             let recurring: Vec<(String, String, String, Option<String>, Option<String>)> = sqlx::query_as(
                 "SELECT e.start_at, e.end_at, COALESCE(e.rrule, ''), e.raw_ical, e.timezone FROM events e
                  JOIN calendars c ON c.id = e.calendar_id
@@ -694,8 +719,14 @@ pub async fn run(pool: &SqlitePool, cmd: EventTypeCommands) -> Result<()> {
                         }
 
                         // Check conflicts with busy events
-                        let buf_start = slot_start - Duration::minutes(buffer_before as i64);
-                        let buf_end = slot_end + Duration::minutes(buffer_after as i64);
+                        let (buf_start, buf_end) = crate::booking_time::buffered_busy_range(
+                            &start.to_rfc3339(),
+                            &end.to_rfc3339(),
+                            host_tz,
+                            buffer_before.into(),
+                            buffer_after.into(),
+                        )
+                        .unwrap();
 
                         let has_conflict =
                             busy_events.iter().any(
@@ -1066,6 +1097,55 @@ mod tests {
         assert!(busy.is_empty(), "{busy:?}");
     }
 
+    /// The window is host-local but events keep their own zone's wall clock:
+    /// an event in Los Angeles ending at 01:00 ends at 10:00 in Paris, inside
+    /// a window opening at 09:30 there (#420).
+    #[tokio::test]
+    async fn slots_busy_query_reads_events_stored_in_another_timezone() {
+        let pool = setup_db().await;
+        let (_user_id, account_id) = seed_account(&pool).await;
+        sqlx::raw_sql(
+            "INSERT INTO caldav_sources (id, account_id, name, url, username)
+                 SELECT 'src', id, 'S', 'https://x/dav', 'u' FROM accounts;
+             INSERT INTO calendars (id, source_id, href, display_name, is_busy)
+                 VALUES ('cal', 'src', '/c/', 'C', 1);
+             INSERT INTO events (id, calendar_id, uid, summary, start_at, end_at, all_day, timezone, status, transp)
+                 VALUES ('ev', 'cal', 'u1', 'Busy', '20261214T003000', '20261214T010000', 0, 'America/Los_Angeles', 'CONFIRMED', 'OPAQUE');",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let et_id = Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO event_types (id, account_id, slug, title, duration_min, timezone) VALUES (?, ?, 'demo', 'Demo', 30, 'Europe/Paris')")
+            .bind(&et_id)
+            .bind(&account_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let day = NaiveDate::from_ymd_opt(2026, 12, 14).unwrap();
+        let busy = fetch_nonrecurring_busy_events(
+            &pool,
+            &et_id,
+            day.and_hms_opt(9, 30, 0).unwrap(),
+            day.and_hms_opt(23, 59, 59).unwrap(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(busy.len(), 1, "{busy:?}");
+        let paris: chrono_tz::Tz = "Europe/Paris".parse().unwrap();
+        let (start, end, tz) = &busy[0];
+        let convert =
+            |s: &str| convert_event_to_tz(parse_ical_datetime(s).unwrap(), tz.as_deref(), paris);
+        assert_eq!(
+            (convert(start), convert(end)),
+            (
+                day.and_hms_opt(9, 30, 0).unwrap(),
+                day.and_hms_opt(10, 0, 0).unwrap()
+            )
+        );
+    }
+
     // --- Rolling booking horizon (migration 063) ---
 
     /// How many days `slots` prints for a horizon-only window.
@@ -1302,11 +1382,12 @@ mod tests {
             "et-host",
             "2030-03-18T00:00:00",
             "2030-03-18T23:59:59",
+            chrono_tz::Tz::UTC,
         )
         .await
         .unwrap()
         .into_iter()
-        .map(|(s, _)| s)
+        .map(|(s, _)| s.format("%Y-%m-%dT%H:%M:%S").to_string())
         .collect();
         starts.sort();
         assert_eq!(
@@ -1317,6 +1398,43 @@ mod tests {
                 "2030-03-18T13:00:00"
             ]
         );
+    }
+
+    /// A booking stored before UTC timestamps is a wall clock in its own
+    /// event type's zone, as the web slot grid reads it: a 09:00 New York
+    /// booking keeps a Paris host busy at 15:00, not at 09:00.
+    #[tokio::test]
+    async fn host_busy_bookings_read_a_legacy_booking_in_its_own_zone() {
+        let pool = setup_db().await;
+        sqlx::raw_sql(
+            "INSERT INTO users (id, email, name, role, auth_provider, username, enabled) VALUES
+                 ('host', 'host@x', 'Host', 'admin', 'local', 'host', 1);
+             INSERT INTO accounts (id, name, email, timezone, user_id) VALUES
+                 ('acc-host', 'Host', 'host@x', 'Europe/Paris', 'host');
+             INSERT INTO event_types (id, account_id, slug, title, duration_min, timezone) VALUES
+                 ('et-paris', 'acc-host', 'here', 'Here', 30, 'Europe/Paris'),
+                 ('et-ny', 'acc-host', 'there', 'There', 30, 'America/New_York');
+             INSERT INTO bookings (id, event_type_id, uid, guest_name, guest_email, guest_timezone, start_at, end_at, status, cancel_token, reschedule_token, time_version) VALUES
+                 ('legacy-ny', 'et-ny', 'u1', 'G', 'g@x', 'UTC', '2030-12-16T09:00:00', '2030-12-16T09:30:00', 'confirmed', 'c1', 'r1', 0);",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let paris: chrono_tz::Tz = "Europe/Paris".parse().unwrap();
+        let busy = host_busy_bookings(
+            &pool,
+            "et-paris",
+            "2030-12-16T00:00:00",
+            "2030-12-16T23:59:59",
+            paris,
+        )
+        .await
+        .unwrap();
+        let shown: Vec<String> = busy
+            .iter()
+            .map(|(s, e)| format!("{} {}", s.format("%H:%M"), e.format("%H:%M")))
+            .collect();
+        assert_eq!(shown, vec!["15:00 15:30"]);
     }
 
     // --- Bookable date range (migration 076) ---

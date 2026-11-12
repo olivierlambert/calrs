@@ -93,3 +93,45 @@ pub(crate) async fn redirect_trap() -> (String, std::sync::Arc<std::sync::atomic
     });
     (format!("http://127.0.0.1:{front_port}/"), hits)
 }
+
+/// Named points a handler reports reaching, for concurrency tests that must
+/// act at a precise moment of a request (e.g. after its first read, before
+/// it waits for the booking lock). A handler calls [`checkpoint`] under
+/// `#[cfg(test)]`; a test [`arm`]s the name first and awaits the returned
+/// `Notify`. Unarmed names cost one map lookup.
+static CHECKPOINTS: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::HashMap<String, std::sync::Arc<tokio::sync::Notify>>>,
+> = std::sync::LazyLock::new(Default::default);
+
+/// Reports that the current request reached `name`.
+pub(crate) fn checkpoint(name: &str) {
+    let notify = CHECKPOINTS.lock().unwrap().get(name).cloned();
+    if let Some(notify) = notify {
+        notify.notify_one();
+    }
+}
+
+/// Arms `name` until the guard drops; `notified()` on the guard's `Notify`
+/// resolves once a request reaches it (a reach before the wait is kept).
+pub(crate) fn arm(name: &str) -> Checkpoint {
+    let notify = std::sync::Arc::new(tokio::sync::Notify::new());
+    CHECKPOINTS
+        .lock()
+        .unwrap()
+        .insert(name.to_string(), notify.clone());
+    Checkpoint {
+        name: name.to_string(),
+        notify,
+    }
+}
+
+pub(crate) struct Checkpoint {
+    name: String,
+    pub(crate) notify: std::sync::Arc<tokio::sync::Notify>,
+}
+
+impl Drop for Checkpoint {
+    fn drop(&mut self) {
+        CHECKPOINTS.lock().unwrap().remove(&self.name);
+    }
+}
