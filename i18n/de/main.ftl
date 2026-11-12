@@ -847,6 +847,12 @@ auth-error-email-invalid = Bitte gib eine gültige E-Mail-Adresse ein
 auth-error-email-domain = E-Mail-Domain nicht zugelassen
 auth-error-password-length = Das Passwort muss mindestens 12 Zeichen lang sein
 auth-error-email-taken = Diese E-Mail-Adresse ist bereits registriert
+auth-sso-linked-elsewhere = Ein Konto mit dieser E-Mail-Adresse ist bereits mit einer anderen SSO-Identität verknüpft. Wende dich an deine Administration.
+auth-sso-unverified-link = Ein Konto mit dieser E-Mail-Adresse besteht bereits, aber dein Identitätsanbieter hat nicht bestätigt, dass die Adresse dir gehört. Deshalb können beide nicht automatisch verknüpft werden. Wende dich an deine Administration.
+auth-sso-local-mfa = Ein Konto mit dieser E-Mail-Adresse besteht bereits und nutzt die Zwei-Faktor-Authentifizierung. Deshalb kann es nicht automatisch mit SSO verknüpft werden. Wende dich an deine Administration.
+auth-sso-no-account = Für diese E-Mail-Adresse gibt es kein Konto, und neue Konten werden nicht automatisch angelegt. Wende dich an deine Administration.
+auth-sso-unverified-register = Dein Identitätsanbieter hat deine E-Mail-Adresse nicht verifiziert. Bitte deine Administration, sie beim Anbieter zu verifizieren, und versuche es dann erneut.
+auth-sso-no-email = Dein Identitätsanbieter hat keine E-Mail-Adresse übermittelt. Bitte deine Administration, sie für calrs freizugeben, und versuche es dann erneut.
 auth-error-create-failed = Konto konnte nicht erstellt werden
 
 # Calendar source test and write-back setup (templates/source_test.html, templates/source_write_setup.html)

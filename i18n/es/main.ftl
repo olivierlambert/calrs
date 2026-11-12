@@ -850,6 +850,12 @@ auth-error-email-invalid = Por favor, introduce una dirección de correo válida
 auth-error-email-domain = Dominio de correo no permitido
 auth-error-password-length = La contraseña debe tener al menos 12 caracteres
 auth-error-email-taken = Ese correo ya está registrado
+auth-sso-linked-elsewhere = Ya hay una cuenta con esta dirección de correo vinculada a otra identidad SSO. Habla con tu administración.
+auth-sso-unverified-link = Ya existe una cuenta con esta dirección de correo, pero tu proveedor de identidad no ha confirmado que la dirección sea tuya, así que no se pueden vincular automáticamente. Habla con tu administración.
+auth-sso-local-mfa = Ya existe una cuenta con esta dirección de correo que usa la autenticación de dos factores, así que no se puede vincular automáticamente a SSO. Habla con tu administración.
+auth-sso-no-account = No hay ninguna cuenta con esta dirección de correo y las cuentas nuevas no se crean automáticamente. Habla con tu administración.
+auth-sso-unverified-register = Tu proveedor de identidad no ha verificado tu dirección de correo. Pide a tu administración que la verifique en el proveedor y vuelve a intentarlo.
+auth-sso-no-email = Tu proveedor de identidad no ha enviado ninguna dirección de correo. Pide a tu administración que la comparta con calrs y vuelve a intentarlo.
 auth-error-create-failed = No se pudo crear la cuenta
 
 # Calendar source test and write-back setup (templates/source_test.html, templates/source_write_setup.html)

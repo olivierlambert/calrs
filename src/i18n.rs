@@ -990,6 +990,8 @@ mod tests {
             "microsoft_failure(",
             "BookingRefusal::Plain(",
             "BookingRefusal::Keys(",
+            "sso_refusal(",
+            "render_sso_refusal(",
         ];
         for call in KEY_TAKING_HELPERS {
             let mut i = 0;

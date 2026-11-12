@@ -540,3 +540,11 @@ settings-based-in-help = Eine Stadt oder Region, angezeigt unter Ihrem Namen auf
 settings-speaks = Ihre Sprachen
 settings-speaks-help = Unter Ihrem Namen auf Ihrer öffentlichen Seite, in der Sprache der Besucher.
 page-order-heading = Reihenfolge Ihrer Seite
+
+# SSO sign-in refusals (src/auth.rs, render_sso_refusal)
+auth-sso-linked-elsewhere = Ein Konto mit dieser E-Mail-Adresse ist bereits mit einer anderen SSO-Identität verknüpft. Wenden Sie sich an Ihre Administration.
+auth-sso-unverified-link = Ein Konto mit dieser E-Mail-Adresse besteht bereits, aber Ihr Identitätsanbieter hat nicht bestätigt, dass die Adresse Ihnen gehört. Deshalb können beide nicht automatisch verknüpft werden. Wenden Sie sich an Ihre Administration.
+auth-sso-local-mfa = Ein Konto mit dieser E-Mail-Adresse besteht bereits und nutzt die Zwei-Faktor-Authentifizierung. Deshalb kann es nicht automatisch mit SSO verknüpft werden. Wenden Sie sich an Ihre Administration.
+auth-sso-no-account = Für diese E-Mail-Adresse gibt es kein Konto, und neue Konten werden nicht automatisch angelegt. Wenden Sie sich an Ihre Administration.
+auth-sso-unverified-register = Ihr Identitätsanbieter hat Ihre E-Mail-Adresse nicht verifiziert. Bitten Sie Ihre Administration, sie beim Anbieter zu verifizieren, und versuchen Sie es dann erneut.
+auth-sso-no-email = Ihr Identitätsanbieter hat keine E-Mail-Adresse übermittelt. Bitten Sie Ihre Administration, sie für calrs freizugeben, und versuchen Sie es dann erneut.

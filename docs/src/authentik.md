@@ -2,9 +2,8 @@
 
 calrs speaks standard OpenID Connect (Authorization Code flow with PKCE), so it
 integrates with [Authentik](https://goauthentik.io/) out of the box. This page
-walks through the full setup and — importantly — the one Authentik-specific
-gotcha that will otherwise block every login with a generic
-*"Authentication failed"* error: the **`email_verified` claim**.
+walks through the full setup and, importantly, the one Authentik-specific
+gotcha that will otherwise block every login: the **`email_verified` claim**.
 
 A common deployment pairs OIDC login with calrs's
 [global EWS impersonation](#tying-it-together-ews-impersonation): users sign in
@@ -111,7 +110,9 @@ WARN  calrs::auth: OIDC callback failed: account error
        error=The identity provider has not verified your email address.
 ```
 
-and the browser lands on a generic *"Authentication failed"* page.
+and the browser lands back on the sign-in page with *"Your identity provider
+has not verified your email address"* (before 2.0.0-rc.1, a generic
+*"Authentication failed"* page).
 
 ### Option A — assert `email_verified` for a trusted directory (recommended for EWS setups)
 
@@ -188,8 +189,8 @@ this on one or two accounts before rolling out broadly.
 | Symptom | Cause | Fix |
 |---|---|---|
 | Authentik shows **"Redirect URI Error"** | The redirect URI in the provider doesn't match `{CALRS_BASE_URL}/auth/oidc/callback` | Set the provider redirect URI to exactly `https://<host>/auth/oidc/callback` and make sure `CALRS_BASE_URL` matches (host, scheme, and the `/auth/` segment) |
-| **"Authentication failed"** after returning from Authentik; logs show `email_verified=true` not asserted | Authentik 2025.10+ returns `email_verified: false` by default | Apply [step 4](#4-fix-email_verified-authentik-202510) |
-| **"An account with this email already exists … not verified"** | A local account with that email exists, but `email_verified` is false so calrs won't auto-link it | Same as above — assert `email_verified: true` |
+| **"Your identity provider has not verified your email address"** on the sign-in page (a generic "Authentication failed" before 2.0.0-rc.1) | Authentik 2025.10+ returns `email_verified: false` by default | Apply [step 4](#4-fix-email_verified-authentik-202510) |
+| **"An account with this email address already exists, but your identity provider has not confirmed that the address is yours"** | A local account with that email exists, but `email_verified` is false so calrs won't auto-link it | Same as above: assert `email_verified: true` |
 | Login works but no calendar appears | Global EWS auto-provision is off, or the impersonation target domain is wrong | Enable auto-provision and/or set the impersonation domain override in **Admin → Sign-in and security → Exchange** |
 | ID token signature / discovery errors | No signing key on the provider | Assign a certificate as the provider's **Signing Key** |
 

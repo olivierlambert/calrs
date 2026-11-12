@@ -872,6 +872,12 @@ auth-error-email-invalid = Please enter a valid email address
 auth-error-email-domain = Email domain not allowed
 auth-error-password-length = Password must be at least 12 characters
 auth-error-email-taken = Email already registered
+auth-sso-linked-elsewhere = An account with this email address is already linked to another SSO identity. Contact an administrator.
+auth-sso-unverified-link = An account with this email address already exists, but your identity provider has not confirmed that the address is yours, so the two cannot be linked automatically. Contact an administrator.
+auth-sso-local-mfa = An account with this email address already exists and uses two-factor authentication, so it cannot be linked to SSO automatically. Contact an administrator.
+auth-sso-no-account = There is no account for this email address, and new accounts are not created automatically. Contact an administrator.
+auth-sso-unverified-register = Your identity provider has not verified your email address. Ask an administrator to verify it at the provider, then try again.
+auth-sso-no-email = Your identity provider did not send an email address. Ask an administrator to share it with calrs, then try again.
 auth-error-create-failed = Failed to create account
 
 # Calendar source test and write-back setup (templates/source_test.html, templates/source_write_setup.html)
