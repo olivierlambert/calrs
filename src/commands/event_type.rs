@@ -121,10 +121,15 @@ pub(crate) async fn host_busy_bookings(
     let Some(host) = event_type_host(pool, et_id).await? else {
         return Ok(Vec::new());
     };
-    let rows: Vec<(String, String, i64, i64)> = sqlx::query_as(&format!(
-        "SELECT CASE b.time_version WHEN 1 THEN b.start_at ELSE rtrim(b.start_at, 'Z') END AS start_at, CASE b.time_version WHEN 1 THEN b.end_at ELSE rtrim(b.end_at, 'Z') END AS end_at, {} FROM bookings b
+    // Each booking read as the web reads it: a legacy wall clock in its own
+    // event type's zone (else its owner's), not in this host's.
+    #[allow(clippy::type_complexity)]
+    let rows: Vec<(String, String, i64, Option<String>, i64, i64)> = sqlx::query_as(&format!(
+        "SELECT b.start_at, b.end_at, b.time_version,
+                COALESCE(NULLIF(et.timezone, ''), u.timezone), {} FROM bookings b
          JOIN event_types et ON et.id = b.event_type_id
          JOIN accounts a ON a.id = et.account_id
+         LEFT JOIN users u ON u.id = a.user_id
          WHERE {}
            AND {}",
         crate::booking_time::BOOKING_BUFFERS,
@@ -142,8 +147,19 @@ pub(crate) async fn host_busy_bookings(
     .await?;
     Ok(rows
         .iter()
-        .filter_map(|(s, e, before, after)| {
-            crate::booking_time::buffered_busy_range(s, e, host_tz, *before, *after)
+        .filter_map(|(s, e, version, zone, before, after)| {
+            let legacy_tz = zone
+                .as_deref()
+                .and_then(|z| z.parse().ok())
+                .unwrap_or(chrono_tz::Tz::UTC);
+            crate::booking_time::stored_buffered_busy_range(
+                s,
+                e,
+                *version,
+                legacy_tz,
+                host_tz,
+                (*before, *after),
+            )
         })
         .collect())
 }
@@ -1382,6 +1398,43 @@ mod tests {
                 "2030-03-18T13:00:00"
             ]
         );
+    }
+
+    /// A booking stored before UTC timestamps is a wall clock in its own
+    /// event type's zone, as the web slot grid reads it: a 09:00 New York
+    /// booking keeps a Paris host busy at 15:00, not at 09:00.
+    #[tokio::test]
+    async fn host_busy_bookings_read_a_legacy_booking_in_its_own_zone() {
+        let pool = setup_db().await;
+        sqlx::raw_sql(
+            "INSERT INTO users (id, email, name, role, auth_provider, username, enabled) VALUES
+                 ('host', 'host@x', 'Host', 'admin', 'local', 'host', 1);
+             INSERT INTO accounts (id, name, email, timezone, user_id) VALUES
+                 ('acc-host', 'Host', 'host@x', 'Europe/Paris', 'host');
+             INSERT INTO event_types (id, account_id, slug, title, duration_min, timezone) VALUES
+                 ('et-paris', 'acc-host', 'here', 'Here', 30, 'Europe/Paris'),
+                 ('et-ny', 'acc-host', 'there', 'There', 30, 'America/New_York');
+             INSERT INTO bookings (id, event_type_id, uid, guest_name, guest_email, guest_timezone, start_at, end_at, status, cancel_token, reschedule_token, time_version) VALUES
+                 ('legacy-ny', 'et-ny', 'u1', 'G', 'g@x', 'UTC', '2030-12-16T09:00:00', '2030-12-16T09:30:00', 'confirmed', 'c1', 'r1', 0);",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let paris: chrono_tz::Tz = "Europe/Paris".parse().unwrap();
+        let busy = host_busy_bookings(
+            &pool,
+            "et-paris",
+            "2030-12-16T00:00:00",
+            "2030-12-16T23:59:59",
+            paris,
+        )
+        .await
+        .unwrap();
+        let shown: Vec<String> = busy
+            .iter()
+            .map(|(s, e)| format!("{} {}", s.format("%H:%M"), e.format("%H:%M")))
+            .collect();
+        assert_eq!(shown, vec!["15:00 15:30"]);
     }
 
     // --- Bookable date range (migration 076) ---

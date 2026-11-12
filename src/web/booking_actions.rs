@@ -1966,6 +1966,10 @@ pub(super) async fn guest_reschedule_booking(
     if !resched_resource_ids.is_empty() {
         crate::resources::sync_if_stale(&state.pool, &resched_resource_ids).await;
     }
+    // Concurrency tests commit a competing change exactly here: after the
+    // first read, before the lock.
+    #[cfg(test)]
+    crate::test_support::checkpoint(&format!("reschedule:{token}"));
     let booking_guard = crate::resources::booking_lock().await;
 
     // The row was read before the lock was free. A cancellation, decline,
