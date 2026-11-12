@@ -2810,8 +2810,10 @@ pub(super) async fn troubleshoot(
             // An event that only touches the day at a midnight (an absence
             // ending at 00:00) takes none of it, buffers included.
             let day_start = target_date.and_time(NaiveTime::MIN);
-            if end + Duration::minutes(buf_after as i64) <= day_start
-                || start - Duration::minutes(buf_before as i64) >= day_start + Duration::days(1)
+            // Around an event, the slot grid blocks this type's buffer_after
+            // before it and its buffer_before after it.
+            if end + Duration::minutes(buf_before as i64) <= day_start
+                || start - Duration::minutes(buf_after as i64) >= day_start + Duration::days(1)
             {
                 return None;
             }
@@ -3195,9 +3197,12 @@ pub(super) async fn troubleshoot(
         }
 
         // 3. Check calendar events (with buffers)
+        // A slot is blocked when it, widened by this type's buffers, meets
+        // the event: so buffer_after runs up to the event's start and
+        // buffer_before back from its end, as for bookings.
         let event_conflict = busy_parsed.iter().find(|(s, e, _, _)| {
-            let buf_s = *s - Duration::minutes(buf_before as i64);
-            let buf_e = *e + Duration::minutes(buf_after as i64);
+            let buf_s = *s - Duration::minutes(buf_after as i64);
+            let buf_e = *e + Duration::minutes(buf_before as i64);
             tick_dt < buf_e && tick_end > buf_s
         });
 
@@ -3222,9 +3227,9 @@ pub(super) async fn troubleshoot(
                         &crate::i18n::format_duration(
                             lang,
                             i64::from(if tick_dt < *ev_s {
-                                buf_before
-                            } else {
                                 buf_after
+                            } else {
+                                buf_before
                             }),
                         ),
                     ),
@@ -3285,8 +3290,8 @@ pub(super) async fn troubleshoot(
         // events and bookings: a booking kept inside a period is the more
         // specific reason for its own slot.
         let off_conflict = time_off.iter().find(|(s, e, _)| {
-            let buf_s = *s - Duration::minutes(buf_before as i64);
-            let buf_e = *e + Duration::minutes(buf_after as i64);
+            let buf_s = *s - Duration::minutes(buf_after as i64);
+            let buf_e = *e + Duration::minutes(buf_before as i64);
             tick_dt < buf_e && tick_end > buf_s
         });
         if let Some((off_s, off_e, note)) = off_conflict {
@@ -3308,9 +3313,9 @@ pub(super) async fn troubleshoot(
                         &crate::i18n::format_duration(
                             lang,
                             i64::from(if tick_dt < *off_s {
-                                buf_before
-                            } else {
                                 buf_after
+                            } else {
+                                buf_before
                             }),
                         ),
                     ),

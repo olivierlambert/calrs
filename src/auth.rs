@@ -1497,8 +1497,11 @@ async fn oidc_callback(
                 extra.groups = extra.groups.or(info.extra.groups);
                 extra.title = extra.title.or(info.extra.title);
             }
+            // The provider failed to answer: a sign-in failure, not "your
+            // provider sends no email", which would send users to change a
+            // setup that works.
             Err(reason) => {
-                tracing::warn!(reason = %reason, "OIDC callback: UserInfo request failed")
+                return crate::web::oidc_error_response("oidc userinfo", &reason);
             }
         }
     }
