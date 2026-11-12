@@ -82,7 +82,7 @@ calrs config oidc \
   --auto-register true
 ```
 
-You can also do this from **Admin → OIDC**. Once enabled, the login page shows a
+You can also do this from **Admin → Sign-in and security → OIDC**. Once enabled, the login page shows a
 **"Sign in with SSO"** button.
 
 ---

@@ -233,6 +233,7 @@ Thanks to @ilia-ae for the Russian translation, to @huntervcx, @optimistic5 and 
 ### Documentation
 
 - **Which paths a reverse proxy can keep private** (#432) - The deployment guide lists every group of paths calrs serves and who needs it: guest pages and email links, the files they load, sign-in and dashboard, the REST API, MCP and OAuth. It gives an nginx example that serves guest pages to everyone and the rest to one network only, and covers what to settle before exposing anything: the first account becomes the admin, open registration lets anyone sign up, and calrs's own port must not be reachable around the proxy. Asked for by @optimistic5 while testing beta.4.
+- **The documentation covers v2** (#438) - A feature map, new chapters for the dashboard and profile, website embeds, on-premises Exchange and upgrading to v2, and the existing guides brought up to date with the v2 behaviour: calendar providers, availability, bookings, sign-in, the admin panel, deployment and backups (the credential key and uploads, not only the database) and the CLI. Screenshots are retaken in dark mode with fictional demo profiles. The website follows with the release.
 
 ## [2.0.0-beta.4] - 2026-11-09
 

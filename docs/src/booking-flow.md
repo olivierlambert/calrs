@@ -6,13 +6,13 @@ A host's page (`/u/{username}`) and a team's page (`/team/{slug}`) list their pu
 
 1. **Visit the booking page** — `/u/host/meeting-slug` (or via an invite link for private event types, or `/u/host+other/slug` for [dynamic group links](./event-types.md#dynamic-group-links))
 2. **Pick a timezone** — auto-detected from the browser, changeable via dropdown
-3. **Browse available slots** — displayed as a week view, navigate with Previous/Next buttons
+3. **Browse available slots** — use the month, week or column view and navigate within the bookable date range
 4. **Click a slot** — opens the booking form
-5. **Fill in details** — name, email, optional notes (pre-filled from invite if applicable)
+5. **Fill in details** — name, email, any configured phone field, booking questions and notes (guest identity may be pre-filled from an invitation)
 6. **Add guests** — optionally invite additional attendees (if the event type allows it)
 7. **Submit** — booking is created
-8. **Confirmation page** — shows booking summary (including any additional attendees)
-9. **Email** — guest and any additional attendees receive a confirmation email with an `.ics` calendar invite attached
+8. **Confirmation page** — shows the confirmed or pending state, booking summary and, for a confirmed booking, an **Add to calendar** download
+9. **Email** — with SMTP configured, the guest receives the relevant confirmation or pending message; additional attendees receive their invitation when the booking is first confirmed
 
 ![Available time slots](images/slots.png)
 
@@ -47,10 +47,10 @@ new bookings (legacy bookings retain the previous format).
 
 Durations and minimum notice use elapsed time. The slot picker omits nonexistent
 or ambiguous local starts, since booking forms do not carry a DST-fold marker.
-Conflict checks retain the existing wall-clock availability engine: a UTC booking
-that crosses a backward clock change blocks a conservative envelope covering both
-occurrences of the repeated hour. This can hide otherwise free slots around the
-transition, but prevents a reversed local interval from allowing double-booking.
+Conflict checks retain the existing wall-clock availability engine: a booking
+inside a repeated hour blocks both occurrences of that local time. A booking that
+merely spans the clock change does not also block the hour before and after its
+actual range.
 Host email text and calendar attachments use the exact UTC endpoints for new rows.
 
 
@@ -119,24 +119,25 @@ Bookings can be rescheduled without cancelling and rebooking. Both guests and ho
 
 ### Guest reschedule
 
-Guests can reschedule their booking via the reschedule link in the confirmation or pending email:
+Guests use the reschedule link in their confirmation or pending email:
 
-1. Click the "Reschedule" button in the email
-2. Pick a new time slot from the slot picker (the current booking's slot is freed so it remains available)
-3. Confirm the new time
-4. The booking moves to `pending` status — the host must approve via email or dashboard. The request expiry starts over from the reschedule.
-5. If the booking was previously pushed to CalDAV, the event is removed (re-pushed on approval)
+1. Choose an available new slot; the booking being moved is excluded from its own conflict check.
+2. Confirm the new time. Guest notice rules, date bounds and availability are checked again.
+3. If the event type requires confirmation, the booking becomes `pending` and the host must approve the new time. The request-expiry window starts again. Its old calendar reservation is removed while approval is pending.
+4. Otherwise the new time is confirmed immediately and calendar copies and notifications are updated.
+
+The old time is not retained as a second booking. Declining or expiring a reschedule that needs approval does not restore the original meeting.
 
 ### Host reschedule
 
-Hosts can reschedule from the dashboard:
+The dashboard's **Reschedule** action asks the **guest to pick a new time**:
 
-1. Go to **Dashboard > Bookings** and click **Reschedule** on a booking
-2. Pick a new time slot
-3. Confirm the new time
-4. The booking stays `confirmed` — no approval needed
-5. The CalDAV event is updated in place (same UID). Google Meet bookings keep the existing Meet link; only the event times are patched.
-6. The guest receives a reschedule notification with the updated `.ics` invite
+1. Open the action from **Bookings** and confirm that the guest should receive a rescheduling request.
+2. calrs sends the guest a new link. The booking stays at its current time until the guest chooses another.
+3. The guest picks and confirms an available slot. Because the host requested the change, it is confirmed without another host-approval step, even on an event type that normally requires confirmation.
+4. Calendar copies are updated and the guest receives the changed invitation. Google Meet keeps its existing conference link.
+
+A second request while one is already waiting is refused. The existing request can be resent, at most once an hour. A request is refused when the event type has no bookable dates left; extend its range first. The REST API exposes the same request-to-reschedule operation, not an arbitrary new-time edit.
 
 ### Token regeneration
 
@@ -189,14 +190,19 @@ Notes stay with the booking when it is rescheduled, and when it is cancelled or 
 
 Before a booking is accepted, calrs checks for conflicts:
 
-- **Calendar events** — from synced CalDAV sources
-- **Existing bookings** — confirmed bookings on any event type
+- **Calendar events** — busy events from all selected connected calendars, including recurrence and supported out-of-office events
+- **Existing bookings** — confirmed bookings and pending requests configured to hold time, across event types the participant hosts
+- **Time off and working hours** — the event schedule and relevant participants
+- **Shared resources** — the required resources under their scheduling mode
+- **Booking limits and date bounds** — frequency caps, rolling horizon and fixed bookable dates
 - **Buffer times** — the buffer before/after is included in the conflict window
 - **Minimum notice** — slots too close to the current time are rejected
 
 Additionally, a database-level unique index prevents two bookings from occupying the same slot, even if two guests submit simultaneously. On round-robin team event types the uniqueness is per assigned member, so two guests can book the same time as long as different members take the bookings.
 
 ## CalDAV write-back
+
+Write-back also uses the connected Exchange or Microsoft Graph provider where applicable; see the [calendar guides](./features.md#calendars).
 
 When a booking is confirmed (either directly or via approval), calrs can push the event to the host's CalDAV calendar. For team event types the host is the assigned member (round-robin), or every eligible member (collective: enabled members with a non-zero per-event-type weight, the same set the slot grid checks). See [CalDAV Integration > Write-back](./caldav.md#caldav-write-back) for setup.
 
@@ -208,12 +214,12 @@ If SMTP is configured, calrs sends emails at these moments:
 
 | Event | Guest receives | Host receives |
 |---|---|---|
-| Booking confirmed | Confirmation + `.ics` REQUEST | Notification + `.ics` REQUEST |
+| Booking confirmed | Confirmation + `.ics` invitation | Notification (calendar attachment depends on the notification path) |
 | Booking pending | "Awaiting confirmation" notice | Approval request with Approve/Decline buttons |
 | Booking declined | Decline notice (with optional reason) | — |
 | Booking cancelled | Cancellation + `.ics` CANCEL | Cancellation + `.ics` CANCEL |
-| Booking rescheduled (by host) | Reschedule notification + updated `.ics` | — |
-| Reschedule request (by guest) | "Pending" notice with updated time | Reschedule approval request with Approve/Decline buttons |
+| New time chosen after a host request | Reschedule notification + updated `.ics` | Confirmation notification |
+| Guest reschedule requiring approval | "Pending" notice with updated time | Reschedule approval request with Approve/Decline buttons |
 | Booking reminder | Reminder with cancel button | Reminder with details |
 | Invite sent | Invite email with booking link | — |
 
