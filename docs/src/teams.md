@@ -54,7 +54,7 @@ Where a team booking is written is each member's own choice: the booking lands i
 Additional team-specific options:
 
 - **Scheduling mode** — round-robin or collective (see below)
-- **Member weights** — admins can set priority per member via the Member Priority card, which appears during both creation and editing. Group member weights provide a default; the event type can override the member priority. Weight 0 excludes a member from round-robin assignment for that event type — excluded members also don't appear on the public booking page's avatar list.
+- **Member weights** — admins can set priority per member via the Member Priority card, which appears during both creation and editing. Weights belong to the event type: a member without one there counts as priority 1. The weights shown on a group in the admin panel do not affect assignment. Weight 0 excludes a member from round-robin assignment for that event type — excluded members also don't appear on the public booking page's avatar list.
 
 ## Public team pages
 
@@ -114,7 +114,7 @@ Configuration: in the event type editor, or on the create form once a team is pi
 
 ## Multi-timezone teams
 
-A team event type's weekly rules use its **explicit event timezone**, not the server's timezone. Each member's default working hours use that member's profile timezone. calrs converts the member's hours and calendar events into the event timezone before checking availability.
+A team event type's weekly rules use its **explicit event timezone**, not the server's timezone. Each member's default working hours use that member's profile timezone. A member who has set no personal hours is not limited by them: only the team schedule, their time off, busy calendars and bookings apply. calrs converts the member's hours and calendar events into the event timezone before checking availability.
 
 For example, give a Paris/New York support team a broad event schedule in `Europe/Paris`, then have each member set their actual hours in **Profile & Settings**. Round-robin offers a slot when an eligible member is within their own hours and free; collective requires every eligible member to be within their hours and free. Daylight-saving changes are applied using the named timezones.
 

@@ -3725,6 +3725,76 @@ async fn troubleshoot_shades_event_and_time_off_buffers_on_the_grids_sides() {
     }
 }
 
+/// An event early the next morning whose buffer reaches back into the day
+/// blocks the day's last slot on the grid; troubleshoot showed that slot as
+/// available, since it dropped events dated another day before checking
+/// the buffers.
+#[tokio::test]
+async fn troubleshoot_keeps_a_next_day_event_whose_buffer_reaches_the_day() {
+    let (app, pool, session, et_id) = setup_test_app().await;
+    let account_id: String = sqlx::query_scalar(
+        "SELECT a.id FROM users u JOIN accounts a ON a.user_id = u.id WHERE u.username = 'testuser'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE event_types SET buffer_before = 0, buffer_after = 60 WHERE id = ?")
+        .bind(&et_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM availability_rules WHERE event_type_id = ?")
+        .bind(&et_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO availability_rules (id, event_type_id, day_of_week, start_time, end_time) VALUES ('late-monday', ?, 1, '22:00', '23:30')")
+        .bind(&et_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let day = far_future_monday();
+    let next = (NaiveDate::parse_from_str(&day, "%Y-%m-%d").unwrap() + chrono::Duration::days(1))
+        .format("%Y%m%d")
+        .to_string();
+    seed_synced_event(
+        &pool,
+        &account_id,
+        &format!("{next}T001000"),
+        &format!("{next}T010000"),
+        "UTC",
+        "OPAQUE",
+    )
+    .await;
+
+    let body = body_string(
+        app.clone()
+            .oneshot(get_authed(
+                &format!("/dashboard/troubleshoot?date={day}&event_type=test-meeting"),
+                &session,
+            ))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(body.contains("23:00&ndash;23:30: Buffer ("), "{body}");
+    // Hours running past 23:00 used to end the timeline at a wrapped 00:00.
+    assert!(!body.contains("style=\"left: -"), "{body}");
+
+    let page = body_string(
+        app.oneshot(get(&format!(
+            "/u/testuser/test-meeting?month={}&tz=UTC",
+            &day[..7]
+        )))
+        .await
+        .unwrap(),
+    )
+    .await;
+    let offered = slot_times_on(&page, &day);
+    assert!(offered.contains(&"22:30".to_string()), "{offered:?}");
+    assert!(!offered.contains(&"23:00".to_string()), "{offered:?}");
+}
+
 /// A member excluded from a collective event type (weight 0) is not made
 /// busy by its unassigned bookings, the owner included, while the other
 /// members are; and the excluded member's own busy time does not block the

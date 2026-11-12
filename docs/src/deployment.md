@@ -76,8 +76,10 @@ cargo build --release
 sudo useradd -r -s /bin/false -m -d /var/lib/calrs calrs
 sudo install -d -o calrs -g calrs -m 750 /var/lib/calrs
 
-# Install the binary and matching templates
+# Install the binary and matching templates (replace the whole tree:
+# copying into an existing templates/ would nest the new one inside it)
 sudo install -m 755 target/release/calrs /usr/local/bin/calrs
+sudo rm -rf /var/lib/calrs/templates
 sudo cp -r templates /var/lib/calrs/templates
 
 # Install the service
@@ -96,7 +98,7 @@ Environment=CALRS_BASE_URL=https://cal.example.com
 Environment=CALRS_TRUSTED_PROXIES=127.0.0.1,::1
 ```
 
-The included unit runs from `/var/lib/calrs`, where it finds `templates/`, and listens on `127.0.0.1:3000`. Put your TLS reverse proxy on that host, or deliberately change the bind address and proxy trust for a different topology. Install matching templates whenever you replace the binary.
+The included unit runs from `/var/lib/calrs`, where it finds `templates/`, and listens on `127.0.0.1:3000`. Put your TLS reverse proxy on that host, or deliberately change the bind address and proxy trust for a different topology. Install matching templates whenever you replace the binary: stop the service, replace the binary, remove `/var/lib/calrs/templates` and copy the new `templates/` in its place, then start the service.
 
 ### systemd service
 
