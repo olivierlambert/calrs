@@ -204,13 +204,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [2.0.0-rc.2] - 2026-11-13
+
+Second release candidate of 2.0, with one change: the bundled timezone data. calrs carried IANA tzdata 2026b, and four releases since then move zones to permanent offsets, most of them already in effect, so times in Alberta, the Northwest Territories, Manitoba, Morocco and Cuba were an hour off. **Upgrade from rc.1** if you, your guests or your calendar events use one of those zones. Synced calendar events are read correctly again as soon as you upgrade; bookings and time off saved while the data was stale keep the instant they were saved with, so check those made in these zones since the change. CI now fails while the bundled data is older than IANA's latest, so this cannot go stale silently again. The same data ships for the 1.23 line as 1.23.4. **No migrations since rc.1.**
+
+Docker: this version is published as `:2.0.0-rc.2` and `:next`. `:latest` stays on the 1.23 line (now 1.23.4) until 2.0 is final.
+
 ### Fixed
 
-- **Timezone data updated to IANA 2026f** (#285) - calrs bundled tzdata 2026b, and four releases since then move zones to permanent offsets, most already in effect: Morocco +00 from 2026-09-20, Manitoba (`America/Winnipeg`) -05 from 2026-10-31, Alberta (`America/Edmonton`) and the Northwest Territories -06 from 2026-11-01, and Cuba staying on -04 until 2027-11-07. For hosts, guests or calendar events in those zones, every time (slots, busy times, emails, invites) was an hour off. Tests pin each change.
+- **Timezone data updated to IANA 2026f** (#285) - calrs bundled tzdata 2026b, and four releases since then move zones to permanent offsets, most already in effect: Morocco +00 from 2026-09-20, Manitoba (`America/Winnipeg`) -05 from 2026-10-31, Alberta (`America/Edmonton`) and the Northwest Territories -06 from 2026-11-01, and Cuba staying on -04 until 2027-11-07. For hosts, guests or calendar events in those zones, every time (slots, busy times, emails, invites) was an hour off. Tests pin each change. Bookings and time off saved while the data was stale keep the instant they were saved with.
 
 ### Internal
 
 - **CI fails when the bundled tz data is stale** (#285) - `scripts/check-tzdata.sh` compares `vendor/chrono-tz/tz` with IANA's latest release. CI runs it on every push and pull request, and a daily workflow opens an issue when IANA publishes, so a new release is noticed before a zone's clocks change.
+- **A cross-check of the bundled tz data against IANA's tools** (#285) - `vendor/chrono-tz/crosscheck.py` and the opt-in test `tzdata_matches_zdump` compare what calrs reads with `zic`/`zdump` for every zone, at each transition from 1800 and monthly to 2040. It caught one regression in 2026f before release: the parser calrs builds with ignores the UTC suffix on Alaska's 1867 changeover, which the vendored copy writes in local time.
 
 ## [2.0.0-rc.1] - 2026-11-12
 
@@ -460,6 +467,18 @@ Please report what looks wrong, reads badly in your language, or is slow on your
 
 - Migration 080 adds `users.last_login_at`, filled from the sessions each user still has, then stamped at each completed sign-in (after the MFA code when MFA applies).
 - Migration 081 only adds and replaces indexes. On a large database it takes a few seconds at the first start.
+
+## [1.23.4] - 2026-11-13
+
+Timezone data release for the 1.23 line. **Upgrade now** if you, your guests or your calendar events use Alberta, the Northwest Territories, Manitoba, Morocco or Cuba time: the bundled data dated from 2026b, and those zones changed their rules since, most of them already in effect. No migrations, nothing else changes.
+
+### Fixed
+
+- **Timezone data updated to IANA 2026f** (#285, #441) - Four tz releases since 2026b move zones to permanent offsets: Morocco +00 from 2026-09-20, Manitoba (`America/Winnipeg`) -05 from 2026-10-31, Alberta (`America/Edmonton`) and the Northwest Territories -06 from 2026-11-01, and Cuba staying on -04 until 2027-11-07. calrs put every time in those zones an hour off (slots, busy times, emails, invites). Synced calendar events are read correctly again as soon as you upgrade, since they keep their own timezone. Bookings and time off saved while the data was stale keep the instant they were saved with: if hosts or guests in these zones booked since the change, check those bookings' times.
+
+### Internal
+
+- **CI fails when the bundled tz data is stale** (#285) - `scripts/check-tzdata.sh` compares `vendor/chrono-tz/tz` with IANA's latest release on every push and pull request.
 
 ## [1.23.3] - 2026-11-09
 
