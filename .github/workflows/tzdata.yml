@@ -1,0 +1,51 @@
+name: tzdata
+
+# Daily check that the bundled tz database (vendor/chrono-tz) is IANA's
+# latest (#285). The CI job of the same check only runs on pushes and pull
+# requests; this one notices a new release when nothing else is happening,
+# and opens an issue so it does not depend on someone reading a failed run.
+
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  tzdata:
+    name: tzdata current
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - id: check
+        run: |
+          set +e
+          scripts/check-tzdata.sh > check.out
+          status=$?
+          cat check.out
+          grep -E '^(ours|latest)=' check.out >> "$GITHUB_OUTPUT"
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          exit 0
+      - name: Open an issue for a new release
+        if: steps.check.outputs.status == '1'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OURS: ${{ steps.check.outputs.ours }}
+          LATEST: ${{ steps.check.outputs.latest }}
+        run: |
+          title="tzdata $LATEST is out: refresh vendor/chrono-tz (calrs bundles $OURS)"
+          if gh issue list --state open --search "in:title tzdata $LATEST is out" --json number --jq '.[].number' | grep -q .; then
+            echo "an issue for tzdata $LATEST is already open"
+          else
+            printf '%s\n\n%s\n\n%s\n' \
+              "IANA published tzdata $LATEST; calrs bundles $OURS in \`vendor/chrono-tz/tz\`. Zones whose rules changed are off until it is refreshed." \
+              "Refresh it as \`vendor/chrono-tz/CALRS.md\` describes (verify the signature, convert to rearguard form, add a test pinning the change), on \`i18n\` and on the maintenance branch, and release both. See https://data.iana.org/time-zones/tzdb/NEWS for what changed." \
+              "Opened by the daily tzdata workflow (#285)." > body.md
+            gh issue create --title "$title" --body-file body.md
+          fi
+      - name: Fail when stale or unchecked
+        if: steps.check.outputs.status != '0'
+        run: exit 1
