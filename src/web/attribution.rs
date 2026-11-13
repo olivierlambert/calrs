@@ -18,12 +18,17 @@ const MAX_LEN: usize = 100;
 /// The five standard UTM parameters, each `None` when absent or blank.
 /// Deserialized from any query or form map: other keys are ignored, values
 /// are cleaned (`clean`), so whatever a visitor puts in the URL is bounded.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, sqlx::FromRow)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub(crate) struct Attribution {
+    #[schema(required = true)]
     pub(crate) utm_source: Option<String>,
+    #[schema(required = true)]
     pub(crate) utm_medium: Option<String>,
+    #[schema(required = true)]
     pub(crate) utm_campaign: Option<String>,
+    #[schema(required = true)]
     pub(crate) utm_term: Option<String>,
+    #[schema(required = true)]
     pub(crate) utm_content: Option<String>,
 }
 
@@ -73,6 +78,11 @@ impl Attribution {
 
     pub(crate) fn is_empty(&self) -> bool {
         self.pairs().is_empty()
+    }
+
+    /// `None` when no parameter is set, for a JSON `null` or a hidden row.
+    pub(crate) fn non_empty(self) -> Option<Self> {
+        (!self.is_empty()).then_some(self)
     }
 
     /// One line for a list row: the values set, "website · cpc · pricing".
@@ -192,6 +202,7 @@ mod tests {
     fn nothing_set_is_empty() {
         let a = Attribution::from_params(&params(&[("utm_source", ""), ("tz", "UTC")]));
         assert!(a.is_empty());
+        assert_eq!(a.non_empty(), None);
     }
 
     #[test]

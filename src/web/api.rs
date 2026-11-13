@@ -891,6 +891,10 @@ pub(super) struct Booking {
     /// `POST /bookings`.
     #[schema(required = true)]
     host_notes: Option<String>,
+    /// The `utm_*` parameters of the link the guest booked through. Null
+    /// when the link carried none, and for bookings made through the API.
+    #[schema(required = true)]
+    attribution: Option<super::Attribution>,
 }
 
 /// A page of bookings.
@@ -1322,11 +1326,13 @@ const BOOKING_COLUMNS: &str = "SELECT b.id, b.uid, b.status,
         et.location_type, COALESCE(NULLIF(b.meeting_url, ''), et.location_value) AS location_value,
         et.sms_phone_mode, COALESCE(NULLIF(et.timezone, ''), u.timezone, 'UTC') AS stored_tz,
         (SELECT json_group_array(ba.email) FROM booking_attendees ba WHERE ba.booking_id = b.id) AS attendees,
-        b.start_at AS raw_start
+        b.start_at AS raw_start,
+        bt.utm_source, bt.utm_medium, bt.utm_campaign, bt.utm_term, bt.utm_content
      FROM bookings b
      JOIN event_types et ON et.id = b.event_type_id
      LEFT JOIN accounts a ON a.id = et.account_id
-     LEFT JOIN users u ON u.id = a.user_id";
+     LEFT JOIN users u ON u.id = a.user_id
+     LEFT JOIN booking_attribution bt ON bt.booking_id = b.id";
 
 #[derive(sqlx::FromRow)]
 struct BookingRow {
@@ -1354,6 +1360,8 @@ struct BookingRow {
     attendees: Option<String>,
     /// The stored `start_at`, which the list's cursor pages on.
     raw_start: String,
+    #[sqlx(flatten)]
+    attribution: super::Attribution,
 }
 
 /// A booking as the API shows it to one of its hosts. Never its cancel,
@@ -1409,6 +1417,7 @@ fn booking_json(row: BookingRow, with_host_notes: bool, answers: Vec<QuestionAns
             value: row.location_value,
         },
         host_notes,
+        attribution: row.attribution.non_empty(),
     }
 }
 

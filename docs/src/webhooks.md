@@ -121,7 +121,8 @@ X-Calrs-Signature: sha256=4f0c...e9
     "location": { "type": "link", "value": "https://meet.example.com/abc" },
     "previous": null,
     "cancelled_by": null,
-    "reason": null
+    "reason": null,
+    "attribution": { "utm_source": "website", "utm_medium": null, "utm_campaign": "pricing", "utm_term": null, "utm_content": null }
   },
   "event_type": {
     "id": "6c1e4f0a-...",
@@ -156,6 +157,9 @@ X-Calrs-Signature: sha256=4f0c...e9
 - **`guest.phone`** is set only when the event type asks for a phone number,
   in E.164 form. **`notes`**, **`phone`**, **`language`**, **`location`** and
   **`team`** can be `null`.
+- **`attribution`** holds the `utm_*` parameters of the link the guest booked
+  through ([campaign tracking](booking-flow.md#campaign-tracking-utm)), each
+  `null` when absent; the object is `null` when the link carried none.
 - **`answers`** are the guest's answers to the event type's
   [booking questions](booking-questions.md), in form order, empty when it asks
   none. `key` is the question's stable identifier (it survives a rename),
