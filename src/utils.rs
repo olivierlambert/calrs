@@ -1021,6 +1021,26 @@ END:VCALENDAR";
         assert_eq!(offset(0, 31, 13), -(8 * 3600 + 57 * 60 + 41));
     }
 
+    /// 2026e ends Ireland's 1925 summer time on 09-20 at 02:00 GMT, written
+    /// `2:00s`, a suffix the vendored parser ignores on an UNTIL time; the
+    /// vendored file writes it as 03:00 IST wall time.
+    #[test]
+    fn tzdata_dublin_1925_fall_back_at_two_gmt() {
+        use chrono::{NaiveDate, Offset, TimeZone};
+        let offset = |h, m| {
+            let utc = NaiveDate::from_ymd_opt(1925, 9, 20)
+                .unwrap()
+                .and_hms_opt(h, m, 0)
+                .unwrap();
+            chrono_tz::Europe::Dublin
+                .offset_from_utc_datetime(&utc)
+                .fix()
+                .local_minus_utc()
+        };
+        assert_eq!(offset(1, 59), 3600);
+        assert_eq!(offset(2, 0), 0);
+    }
+
     /// Every zone's offsets at every transition from 1800 to 2040, and on the
     /// 15th of every month from 1900 to 2040, against zic's reading of the
     /// same tzdata (`vendor/chrono-tz/crosscheck.py` writes them). Run on a
