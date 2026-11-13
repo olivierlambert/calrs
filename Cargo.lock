@@ -1929,6 +1929,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5ea5ea1e90055f200af6b8e52a4a34e05e77e7fee953a9fb40c631efdc43cab1"
 dependencies = [
  "memo-map",
+ "percent-encoding",
  "self_cell 1.2.2",
  "serde",
  "serde_json",
