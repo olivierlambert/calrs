@@ -891,6 +891,84 @@ END:VCALENDAR";
         assert_eq!(hours(America::Regina, 2026, 12, 15), -6);
     }
 
+    /// 2026f writes Alaska's 1867 switch from Asian to American LMT in UT
+    /// (`0:31:13u`), a suffix chrono-tz 0.8.6's parser ignores on an UNTIL
+    /// time; the vendored file keeps it in local time. Juneau was +15:02:19
+    /// until then, -08:57:41 after.
+    #[test]
+    fn tzdata_alaska_1867_switch_at_the_right_instant() {
+        use chrono::{NaiveDate, Offset, TimeZone};
+        let offset = |h, m, s| {
+            let utc = NaiveDate::from_ymd_opt(1867, 10, 19)
+                .unwrap()
+                .and_hms_opt(h, m, s)
+                .unwrap();
+            chrono_tz::America::Juneau
+                .offset_from_utc_datetime(&utc)
+                .fix()
+                .local_minus_utc()
+        };
+        assert_eq!(offset(0, 31, 12), 15 * 3600 + 2 * 60 + 19);
+        assert_eq!(offset(0, 31, 13), -(8 * 3600 + 57 * 60 + 41));
+    }
+
+    /// Every zone's offsets at every transition from 1800 to 2040, against
+    /// zic's reading of the same tzdata (`vendor/chrono-tz/crosscheck.py`
+    /// writes them). Run on a refresh, see `vendor/chrono-tz/CALRS.md`:
+    /// `TZ_EXPECT=<file> cargo test tzdata_matches_zdump -- --ignored`.
+    /// Fails on a zone that disagrees and is not in the baseline.
+    #[test]
+    #[ignore]
+    fn tzdata_matches_zdump() {
+        use chrono::{Offset, TimeZone};
+        use std::collections::BTreeSet;
+        let expect = std::env::var("TZ_EXPECT").expect("TZ_EXPECT=<crosscheck.py output>");
+        let baseline: BTreeSet<String> = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/vendor/chrono-tz/crosscheck-baseline.txt"
+        ))
+        .unwrap()
+        .lines()
+        .filter(|l| !l.starts_with('#') && !l.trim().is_empty())
+        .map(str::to_string)
+        .collect();
+        let (mut checked, mut differ, mut unknown) = (0, BTreeSet::new(), BTreeSet::new());
+        let mut first = std::collections::BTreeMap::new();
+        for line in std::fs::read_to_string(expect).unwrap().lines() {
+            let mut fields = line.split('\t');
+            let (zone, at, offset) = (
+                fields.next().unwrap(),
+                fields.next().unwrap().parse::<i64>().unwrap(),
+                fields.next().unwrap().parse::<i32>().unwrap(),
+            );
+            let Ok(tz) = zone.parse::<chrono_tz::Tz>() else {
+                unknown.insert(zone.to_string());
+                continue;
+            };
+            let utc = chrono::DateTime::from_timestamp(at, 0).unwrap().naive_utc();
+            let got = tz.offset_from_utc_datetime(&utc).fix().local_minus_utc();
+            checked += 1;
+            if got != offset {
+                differ.insert(zone.to_string());
+                first
+                    .entry(zone.to_string())
+                    .or_insert(format!("{utc} UTC: zic {offset}, chrono-tz {got}"));
+            }
+        }
+        let new: Vec<_> = differ.difference(&baseline).collect();
+        let fixed: Vec<_> = baseline.difference(&differ).collect();
+        println!(
+            "{checked} transitions, {} zones differ, fixed since the baseline: {fixed:?}",
+            differ.len()
+        );
+        assert!(unknown.is_empty(), "zones chrono-tz lacks: {unknown:?}");
+        assert!(
+            new.is_empty(),
+            "zones that differ and are not in the baseline: {:?}",
+            new.iter().map(|z| (z, &first[*z])).collect::<Vec<_>>()
+        );
+    }
+
     /// The vendored data is in rearguard form: numeric abbreviations are
     /// spelled out, not the main form's literal `%z`.
     #[test]

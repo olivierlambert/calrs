@@ -184,7 +184,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
-## [1.23.4] - 2026-11-12
+## [1.23.4] - 2026-11-13
 
 Timezone data release for the 1.23 line. **Upgrade now** if you, your guests or your calendar events use Alberta, the Northwest Territories, Manitoba, Morocco or Cuba time: the bundled data dated from 2026b, and those zones changed their rules since, most of them already in effect. No migrations, nothing else changes.
 

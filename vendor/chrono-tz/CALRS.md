@@ -6,7 +6,12 @@ This is chrono-tz 0.8.6 from crates.io, unchanged except for:
   `asia`, `australasia`, `backward`, `etcetera`, `europe`, `northamerica`,
   `southamerica`) are IANA tzdata **2026f** in the *rearguard* form, with
   `NEWS` (the build reads the version from it), `LICENSE` and `version`. The
-  files the build does not read are removed.
+  files the build does not read are removed. One edit to the data itself:
+  `northamerica` writes the 1867 Alaska switch of seven zones (Juneau, Sitka,
+  Metlakatla, Yakutat, Anchorage, Nome, Adak) in local time instead of 2026f's
+  `0:31:13u`, the same instants (2026b's values). The parser chrono-tz 0.8.6
+  builds with (parse-zoneinfo 0.3) ignores the `u` and `s` suffixes on a
+  zone's UNTIL time, and moved that switch by about 15 hours.
 - `build.rs`: one `cargo:rerun-if-changed=tz` line. chrono-tz-build only
   reruns on an environment variable, so without it a refreshed `tz/` is
   silently ignored by an existing `target/`.
@@ -49,9 +54,17 @@ stale copy is noticed before a zone's clocks change rather than after.
    with `NEWS`, `LICENSE` and `version`, into `tz/`:
    `awk -v DATAFORM=rearguard -f ziguard.awk europe > tz/europe` (and so on).
    Check `grep '%z' tz/*` only finds comments.
-3. Compare UTC offsets with the main form: compile both with `zic -d`, then
-   compare, for every zone, the offset changes `zdump -c 1900,2041 -v`
-   prints (only the negative-DST zones differ in their DST flag).
+3. Check what chrono-tz actually reads against IANA's own tools:
+   `python3 vendor/chrono-tz/crosscheck.py <tzdata dir> /tmp/expect.tsv`
+   (compiles the main form with `zic`, writes every zone's offsets at each
+   transition from 1800 to 2040 with `zdump`), then
+   `TZ_EXPECT=/tmp/expect.tsv cargo test tzdata_matches_zdump -- --ignored`.
+   It fails on any zone that disagrees and is not in
+   `crosscheck-baseline.txt`: the zones the parser already reads wrongly at
+   some transition, all in 2015 or earlier (the suffix limit above). A new
+   entry is a regression from the new data: write the line in a form the
+   parser reads (local time, as for Alaska), never grow the baseline. Drop a
+   zone the test reports as fixed.
 4. Add a `tzdata_*` test in `src/utils.rs` for any new rule change, and run
    `cargo test` (the tests pin the changes we rely on).
 5. Apply the same refresh to the maintenance branch (`1.23.x`) and release
