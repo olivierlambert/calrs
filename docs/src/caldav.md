@@ -74,14 +74,27 @@ Sync pulls all VEVENT data from your calendars and stores it in the local SQLite
 
 ### Choosing which calendars are synced
 
-Some servers (Kerio Connect, for instance) list every calendar the account subscribed to, colleagues' calendars included. Click **Calendars** on a source to pick the ones calrs syncs. An unchecked calendar is still listed, but its events are never fetched, its cached events are dropped at once, and it never blocks availability. Newly discovered calendars are synced until you uncheck them. A calendar does not need to be synced to receive bookings through write-back.
+Some servers (Kerio Connect, for instance) list every calendar the account subscribed to, colleagues' calendars included. Click **Calendars** on a source to pick the ones calrs syncs. An unchecked calendar is still listed, but its events are never fetched, its cached events are dropped at once, and it never blocks availability. A calendar does not need to be synced to receive bookings through write-back.
+
+When you add a CalDAV source from the dashboard (with a password or through Google), calrs lists its calendars without fetching anything and opens this page first. None of them is checked. Pick the ones to sync and click **Save and sync**: the first sync then reads only those. If you leave the page without saving, nothing of that source is synced, and the sources page says so.
+
+**Also sync calendars that appear on this source later** decides what happens to a calendar the server lists for the first time after that, such as one a colleague just shared with you. Checked (the default), it is synced until you uncheck it. Unchecked, it shows up on this page unchecked, and nothing is fetched from it until you check it. Exchange and Microsoft 365 sources keep syncing at once when added; the setting for calendars found later applies to them too.
 
 ```bash
+# Add a CalDAV source and list its calendars without syncing any
+calrs source add --url https://dav.example.com/ --username me --name Work --pick-calendars
+
 # List a source's calendars
 calrs source calendars <id-prefix>
 
+# Read the calendar list from the server again, without fetching events
+calrs source calendars <id-prefix> --discover
+
 # Stop syncing one, sync another (calendar ID prefix, href or display name)
 calrs source calendars <id-prefix> --disable "Colleague" --enable "Personal"
+
+# Leave calendars found later unsynced until you enable them
+calrs source calendars <id-prefix> --sync-new false
 ```
 
 The **Conflict calendars** section of an event type then picks, among the synced calendars, the ones that count for that event type. If none of the calendars it picked is synced any more, it falls back to every synced busy calendar, as when it picks none, so turning calendars off never leaves an event type with no conflicts at all.
