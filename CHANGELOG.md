@@ -217,7 +217,7 @@ Docker: this version is published as `:2.0.0-rc.2` and `:next`. `:latest` stays 
 ### Internal
 
 - **CI fails when the bundled tz data is stale** (#285) - `scripts/check-tzdata.sh` compares `vendor/chrono-tz/tz` with IANA's latest release. CI runs it on every push and pull request, and a daily workflow opens an issue when IANA publishes, so a new release is noticed before a zone's clocks change.
-- **A cross-check of the bundled tz data against IANA's tools** (#285) - `vendor/chrono-tz/crosscheck.py` and the opt-in test `tzdata_matches_zdump` compare what calrs reads with `zic`/`zdump` for every zone, at each transition from 1800 and monthly to 2040. It caught one regression in 2026f before release: the parser calrs builds with ignores the UTC suffix on Alaska's 1867 changeover, which the vendored copy writes in local time.
+- **A cross-check of the bundled tz data against IANA's tools** (#285) - `vendor/chrono-tz/crosscheck.py` and the opt-in test `tzdata_matches_zdump` compare what calrs reads with `zic`/`zdump` for every zone, at each transition from 1800 and monthly to 2040. It caught two regressions in the new data before release, where the parser calrs builds with ignores a time suffix (Alaska's 1867 changeover, Dublin's 1925 return to GMT); the vendored copy writes both in wall time.
 
 ## [2.0.0-rc.1] - 2026-11-12
 
