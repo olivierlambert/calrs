@@ -855,6 +855,143 @@ END:VCALENDAR";
         assert_eq!(la(11), -8);
     }
 
+    /// tzdata 2026c to 2026f: zones that stopped changing clocks in 2026,
+    /// all in effect by 2026-11-01. tzdata 2026b gave each of them its old
+    /// winter offset, an hour off.
+    #[test]
+    fn tzdata_2026f_permanent_offsets() {
+        use chrono::{NaiveDate, Offset, TimeZone};
+        fn hours(zone: chrono_tz::Tz, y: i32, m: u32, d: u32) -> i32 {
+            let utc = NaiveDate::from_ymd_opt(y, m, d)
+                .unwrap()
+                .and_hms_opt(12, 0, 0)
+                .unwrap();
+            zone.offset_from_utc_datetime(&utc).fix().local_minus_utc() / 3600
+        }
+        use chrono_tz::{Africa, America};
+        // 2026c: Alberta permanent -06 (Yellowknife links to Edmonton).
+        assert_eq!(hours(America::Edmonton, 2026, 1, 15), -7);
+        assert_eq!(hours(America::Edmonton, 2026, 12, 15), -6);
+        assert_eq!(hours(America::Yellowknife, 2027, 1, 15), -6);
+        // 2026c: Morocco permanent +00 from 2026-09-20, Ramadan included.
+        assert_eq!(hours(Africa::Casablanca, 2026, 12, 15), 0);
+        assert_eq!(hours(Africa::Casablanca, 2027, 2, 15), 0);
+        assert_eq!(hours(Africa::Casablanca, 2027, 7, 15), 0);
+        // 2026d: Northwest Territories permanent -06.
+        assert_eq!(hours(America::Inuvik, 2026, 12, 15), -6);
+        // 2026e: Manitoba permanent -05.
+        assert_eq!(hours(America::Winnipeg, 2026, 1, 15), -6);
+        assert_eq!(hours(America::Winnipeg, 2026, 12, 15), -5);
+        // 2026f: Cuba stays on -04 through 2027-11-07.
+        assert_eq!(hours(America::Havana, 2026, 12, 15), -4);
+        assert_eq!(hours(America::Havana, 2027, 2, 15), -4);
+        // Neighbours keep their DST.
+        assert_eq!(hours(America::Denver, 2026, 12, 15), -7);
+        assert_eq!(hours(America::Chicago, 2026, 12, 15), -6);
+        assert_eq!(hours(America::Regina, 2026, 12, 15), -6);
+    }
+
+    /// 2026f writes Alaska's 1867 switch from Asian to American LMT in UT
+    /// (`0:31:13u`), a suffix chrono-tz 0.8.6's parser ignores on an UNTIL
+    /// time; the vendored file keeps it in local time. Juneau was +15:02:19
+    /// until then, -08:57:41 after.
+    #[test]
+    fn tzdata_alaska_1867_switch_at_the_right_instant() {
+        use chrono::{NaiveDate, Offset, TimeZone};
+        let offset = |h, m, s| {
+            let utc = NaiveDate::from_ymd_opt(1867, 10, 19)
+                .unwrap()
+                .and_hms_opt(h, m, s)
+                .unwrap();
+            chrono_tz::America::Juneau
+                .offset_from_utc_datetime(&utc)
+                .fix()
+                .local_minus_utc()
+        };
+        assert_eq!(offset(0, 31, 12), 15 * 3600 + 2 * 60 + 19);
+        assert_eq!(offset(0, 31, 13), -(8 * 3600 + 57 * 60 + 41));
+    }
+
+    /// Every zone's offsets at every transition from 1800 to 2040, and on the
+    /// 15th of every month from 1900 to 2040, against zic's reading of the
+    /// same tzdata (`vendor/chrono-tz/crosscheck.py` writes them). Run on a
+    /// refresh, see `vendor/chrono-tz/CALRS.md`:
+    /// `TZ_EXPECT=<file> cargo test tzdata_matches_zdump -- --ignored`.
+    /// Fails on any disagreement that is not in the baseline, which lists
+    /// each known one by zone and instant; prints the new ones as baseline
+    /// lines, and the baseline lines that agree now.
+    #[test]
+    #[ignore]
+    fn tzdata_matches_zdump() {
+        use chrono::{Offset, TimeZone};
+        use std::collections::BTreeSet;
+        let expect = std::env::var("TZ_EXPECT").expect("TZ_EXPECT=<crosscheck.py output>");
+        let baseline: BTreeSet<(String, i64)> = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/vendor/chrono-tz/crosscheck-baseline.txt"
+        ))
+        .unwrap()
+        .lines()
+        .filter(|l| !l.starts_with('#') && !l.trim().is_empty())
+        .map(|l| {
+            let (zone, at) = l.split_once('\t').expect("zone<TAB>unix time");
+            (zone.to_string(), at.parse().unwrap())
+        })
+        .collect();
+        let (mut checked, mut differ, mut unknown) = (0, BTreeSet::new(), BTreeSet::new());
+        let (mut zones, mut end) = (BTreeSet::new(), None);
+        for line in std::fs::read_to_string(expect).unwrap().lines() {
+            if let Some(record) = line.strip_prefix("#end\t") {
+                let (z, n) = record.split_once('\t').unwrap();
+                end = Some((z.parse::<usize>().unwrap(), n.parse::<usize>().unwrap()));
+                continue;
+            }
+            assert!(end.is_none(), "rows after the #end record");
+            let mut fields = line.split('\t');
+            let (zone, at, offset) = (
+                fields.next().unwrap(),
+                fields.next().unwrap().parse::<i64>().unwrap(),
+                fields.next().unwrap().parse::<i32>().unwrap(),
+            );
+            zones.insert(zone.to_string());
+            let Ok(tz) = zone.parse::<chrono_tz::Tz>() else {
+                unknown.insert(zone.to_string());
+                continue;
+            };
+            let utc = chrono::DateTime::from_timestamp(at, 0).unwrap().naive_utc();
+            checked += 1;
+            if tz.offset_from_utc_datetime(&utc).fix().local_minus_utc() != offset {
+                differ.insert((zone.to_string(), at));
+            }
+        }
+        // An empty or truncated file must not pass as "nothing differs": the
+        // script ends with the zone and row counts it wrote.
+        let (end_zones, end_rows) = end.expect("no #end record: the file is truncated");
+        assert!(unknown.is_empty(), "zones chrono-tz lacks: {unknown:?}");
+        assert_eq!(
+            (zones.len(), checked),
+            (end_zones, end_rows),
+            "zones and rows read vs written"
+        );
+        let new: Vec<_> = differ.difference(&baseline).collect();
+        let fixed: Vec<_> = baseline.difference(&differ).collect();
+        println!(
+            "{checked} offsets checked, {} known differences",
+            differ.len() - new.len()
+        );
+        for (zone, at) in &fixed {
+            println!("agrees now, drop from the baseline: {zone}\t{at}");
+        }
+        for (zone, at) in &new {
+            println!("NEW\t{zone}\t{at}");
+        }
+        assert!(
+            new.is_empty(),
+            "{} offsets differ outside the baseline",
+            new.len()
+        );
+    }
+
     /// The vendored data is in rearguard form: numeric abbreviations are
     /// spelled out, not the main form's literal `%z`.
     #[test]
