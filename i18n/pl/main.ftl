@@ -1120,6 +1120,7 @@ source-form-help-zimbra = <strong>Zimbra</strong> — Użyj punktu końcowego DA
 source-form-help-sogo = <strong>SOGo</strong> — Użyj punktu końcowego DAV SOGo.<br> Zwykle: <code>https://mail.example.com/SOGo/dav/</code>
 source-form-help-radicale = <strong>Radicale</strong> — Użyj adresu głównego serwera.<br> Zwykle: <code>https://cal.example.com/</code>
 source-form-help-baikal = <strong>Baikal</strong>: Użyj punktu końcowego DAV swojego serwera Baikal.<br> Zwykle: <code>https://cal.example.com/dav.php/</code>
+source-form-help-kerio = <strong>Kerio Connect</strong>: Użyj punktu końcowego CalDAV swojego serwera Kerio Connect.<br> Zwykle: <code>https://mail.example.com/caldav/</code><br> Kerio zwraca wszystkie subskrybowane kalendarze. Po dodaniu źródła wybierz te do synchronizacji przyciskiem <em>Kalendarze</em>.
 source-form-help-exchange = <strong>Microsoft Exchange (EWS)</strong>. Użyj punktu końcowego SOAP:<br> <code>https://mail.example.com/EWS/Exchange.asmx</code><br> Nazwa użytkownika to adres skrzynki; hasło musi działać z HTTP Basic po TLS (włącz je na skrzynce serwisowej, jeśli w twojej organizacji Basic jest wyłączone).<br> Pamiętaj też, aby wybrać <strong>Microsoft Exchange (EWS)</strong> na liście Backend powyżej.
 source-form-help-google = <strong>Kalendarz Google</strong>: połączenie przez OAuth2. Hasło nie jest potrzebne.<br>
 source-form-help-other = Podaj <strong>główny adres DAV</strong> swojego serwera CalDAV — nie adres pojedynczego kalendarza ani link publiczny.<br> calrs sam wykryje twoje kalendarze przez PROPFIND (RFC 4791).

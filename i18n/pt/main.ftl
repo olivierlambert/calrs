@@ -1034,6 +1034,7 @@ source-form-help-zimbra = <strong>Zimbra</strong> — Use o endpoint DAV do seu 
 source-form-help-sogo = <strong>SOGo</strong> — Use o endpoint DAV do SOGo.<br> Normalmente: <code>https://mail.example.com/SOGo/dav/</code>
 source-form-help-radicale = <strong>Radicale</strong> — Use a URL raiz do servidor.<br> Normalmente: <code>https://cal.example.com/</code>
 source-form-help-baikal = <strong>Baikal</strong>: Use o endpoint DAV do seu servidor Baikal.<br> Normalmente: <code>https://cal.example.com/dav.php/</code>
+source-form-help-kerio = <strong>Kerio Connect</strong>: Use o endpoint CalDAV do seu servidor Kerio Connect.<br> Normalmente: <code>https://mail.example.com/caldav/</code><br> O Kerio lista todas as agendas que você assina. Depois de adicionar a fonte, escolha quais sincronizar com o botão <em>Agendas</em>.
 source-form-help-exchange = <strong>Microsoft Exchange (EWS)</strong>. Use o endpoint SOAP:<br> <code>https://mail.example.com/EWS/Exchange.asmx</code><br> O usuário é o endereço da caixa postal; a senha precisa aceitar HTTP Basic sobre TLS (ative numa caixa de serviço se o seu tenant desativou o Basic).<br> Escolha também <strong>Microsoft Exchange (EWS)</strong> no menu Backend acima.
 source-form-help-google = <strong>Google Agenda</strong>: conexão via OAuth2. Não é preciso senha.<br>
 source-form-help-other = Informe a <strong>URL raiz DAV</strong> do seu servidor CalDAV, não a de uma agenda específica nem um link público.<br> O calrs descobrirá suas agendas automaticamente via PROPFIND (RFC 4791).

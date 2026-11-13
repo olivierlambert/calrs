@@ -28,7 +28,7 @@ Connect CalDAV, Google Calendar, Microsoft 365 / Outlook or on-premises Exchange
 
 ### Calendars that work together
 
-- **CalDAV** with discovery, incremental sync and write-back: Nextcloud, BlueMind, Fastmail, iCloud, SOGo, Zimbra, Radicale, Baikal and other compatible servers.
+- **CalDAV** with discovery, incremental sync and write-back: Nextcloud, BlueMind, Fastmail, iCloud, SOGo, Zimbra, Radicale, Baikal, Kerio Connect and other compatible servers.
 - **Google Calendar through OAuth2**, including out-of-office blocking and host-owned Google Meet links.
 - **Microsoft 365 and Outlook.com through Microsoft Graph**, with delegated OAuth2 consent.
 - **On-premises Exchange through EWS**, per mailbox or centrally provisioned with a service account and impersonation.

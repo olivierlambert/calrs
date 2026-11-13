@@ -38,6 +38,7 @@ calrs source add --url https://mail.company.com/dav/ \
 | SOGo | `https://mail.example.com/SOGo/dav/` |
 | Radicale | `https://cal.example.com/` |
 | Baikal | `https://cal.example.com/dav.php/` |
+| Kerio Connect | `https://mail.example.com/caldav/` |
 
 > **Tip:** Use app-specific passwords for Fastmail and iCloud.
 
