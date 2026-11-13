@@ -204,6 +204,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Fixed
+
+- **Timezone data updated to IANA 2026f** (#285) - calrs bundled tzdata 2026b, and four releases since then move zones to permanent offsets, most already in effect: Morocco +00 from 2026-09-20, Manitoba (`America/Winnipeg`) -05 from 2026-10-31, Alberta (`America/Edmonton`) and the Northwest Territories -06 from 2026-11-01, and Cuba staying on -04 until 2027-11-07. For hosts, guests or calendar events in those zones, every time (slots, busy times, emails, invites) was an hour off. Tests pin each change.
+
+### Internal
+
+- **CI fails when the bundled tz data is stale** (#285) - `scripts/check-tzdata.sh` compares `vendor/chrono-tz/tz` with IANA's latest release. CI runs it on every push and pull request, and a daily workflow opens an issue when IANA publishes, so a new release is noticed before a zone's clocks change.
+
 ## [2.0.0-rc.1] - 2026-11-12
 
 First release candidate of 2.0. Nothing new since beta.4 but a language: this candidate is about correctness. A review of beta.4 found four bugs in the booking checks: calendar events stored in another timezone than the host's could be missed by round robin and approvals (#420), a guest reschedule waiting behind another booking could bring a cancelled booking back (#421), a booking's buffers did not hold against later bookings, at approval or across a clock change (#422), and `calrs booking create` ignored date overrides (#423). From the beta testers: an SSO login refused on purpose now says why instead of failing with a 500, and an identity provider that keeps its ID token minimal can now sign users in (#264). calrs now speaks Russian (#419), and the deployment guide lists which paths a reverse proxy can keep private. **No migrations since beta.4**, so upgrading from it changes no data. Coming from 1.23 or an earlier beta, read the upgrade notes of each 2.0 pre-release below, and back up your database first.

@@ -62,6 +62,18 @@ jobs:
           if [ "$BASE" = "0000000000000000000000000000000000000000" ]; then exit 0; fi
           scripts/check-migrations.sh "$BASE"
 
+  tzdata:
+    # #285: calrs converts every time through the tz database it bundles in
+    # vendor/chrono-tz. Fail while IANA has a newer one, so a stale copy is
+    # noticed before a release rather than when a zone's clocks change.
+    name: tzdata current
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - run: scripts/check-tzdata.sh
+
   check:
     name: Clippy + Tests
     runs-on: ubuntu-latest

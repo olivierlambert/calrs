@@ -8,6 +8,13 @@ Run `scripts/new-migration.sh short_description`. It creates
 adds sort after the newest one on `main`, and that none of `main`'s is deleted
 or renamed. CI runs it on every pull request and push.
 
+# Bundled tz database
+
+`scripts/check-tzdata.sh` fails when IANA has published a tz database newer
+than the copy in `vendor/chrono-tz/tz` (#285). CI runs it on every pull
+request and push, and the daily `tzdata` workflow opens an issue for a new
+release. `vendor/chrono-tz/CALRS.md` has the refresh steps.
+
 # Functional checks
 
 ## Booking timezones
