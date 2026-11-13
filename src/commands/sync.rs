@@ -2539,10 +2539,12 @@ pub(crate) async fn cancel_orphaned_booking(
         Option<String>,
         Option<String>,
         String,
+        i64,
+        Option<String>,
     )> = sqlx::query_as(
         "SELECT b.id, b.guest_name, b.guest_email, COALESCE(b.guest_timezone, 'UTC'), CASE b.time_version WHEN 1 THEN b.start_at ELSE rtrim(b.start_at, 'Z') END AS start_at, CASE b.time_version WHEN 1 THEN b.end_at ELSE rtrim(b.end_at, 'Z') END AS end_at, b.uid,
                 et.title, u.name, COALESCE(u.booking_email, u.email), b.caldav_calendar_href, u.timezone,
-                u.language, u.id
+                u.language, u.id, b.time_version, COALESCE(NULLIF(et.timezone, ''), u.timezone)
          FROM bookings b
          JOIN event_types et ON et.id = b.event_type_id
          JOIN accounts a ON a.id = et.account_id
@@ -2594,15 +2596,29 @@ pub(crate) async fn cancel_orphaned_booking(
         host_timezone,
         host_language,
         host_user_id,
+        time_version,
+        legacy_zone,
     ) = booking;
     let host_language = crate::email::supported_language(host_language);
 
     // A meeting that is already over is left alone: a host clearing past
     // events from their calendar must not send the guest a cancellation.
-    // Legacy rows (no UTC timestamp) keep the former behaviour.
-    let ended = crate::booking_time::ics_times(&start_at, &end_at)
-        .and_then(|(_, end)| chrono::NaiveDateTime::parse_from_str(&end, "%Y%m%dT%H%M%SZ").ok())
-        .is_some_and(|end| end <= Utc::now().naive_utc());
+    // Legacy rows (a wall clock, no UTC timestamp) are read in their event's
+    // zone, as every other reader does: a past one fell out of the synced
+    // window, so the sweep found it on every sync and asked the server again.
+    let legacy_tz: chrono_tz::Tz = legacy_zone
+        .as_deref()
+        .and_then(|z| z.parse().ok())
+        .unwrap_or(chrono_tz::Tz::UTC);
+    let ended = crate::booking_time::stored_buffered_busy_range(
+        &start_at,
+        &end_at,
+        time_version,
+        legacy_tz,
+        chrono_tz::Tz::UTC,
+        (0, 0),
+    )
+    .is_some_and(|(_, end)| end <= Utc::now().naive_utc());
     if ended {
         return OrphanOutcome::NoAction;
     }

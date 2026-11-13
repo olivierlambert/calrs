@@ -204,6 +204,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Fixed
+
+- **A past booking from before UTC times is no longer checked as if upcoming** - When a booking's event leaves the synced calendar window, calrs leaves a meeting that is already over alone, so a host clearing old events never sends a guest a cancellation. Bookings made before booking times were stored in UTC keep a wall-clock time, which that check could not read: every sync took each such past booking for an upcoming one whose event had vanished, asked the calendar server whether it still existed, and logged "skipping booking cancellation". Had the host deleted the old event, calrs would have cancelled a meeting held months before and emailed the guest. The check now reads those times in their event's timezone. Reported from the Vates production logs.
+
 ## [2.0.0-rc.2] - 2026-11-13
 
 Second release candidate of 2.0, with one change: the bundled timezone data. calrs carried IANA tzdata 2026b, and four releases since then move zones to permanent offsets, most of them already in effect, so times in Alberta, the Northwest Territories, Manitoba, Morocco and Cuba were an hour off. **Upgrade from rc.1** if you, your guests or your calendar events use one of those zones. Synced calendar events are read correctly again as soon as you upgrade; bookings and time off saved while the data was stale keep the instant they were saved with, so check those made in these zones since the change. CI now fails while the bundled data is older than IANA's latest, so this cannot go stale silently again. The same data ships for the 1.23 line as 1.23.4. **No migrations since rc.1.**

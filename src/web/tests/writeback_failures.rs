@@ -985,6 +985,55 @@ async fn an_orphan_cancellation_deletes_the_other_copies() {
     assert_eq!(status, "cancelled");
 }
 
+/// A legacy booking (a wall clock, stored before UTC times) that is over is
+/// left alone when its event leaves the synced window, as a UTC one is: the
+/// check could not read its time, so every sync treated a meeting of months
+/// ago as upcoming and asked the server again. A legacy one still to come is
+/// cancelled as before.
+#[tokio::test]
+async fn an_ended_legacy_booking_is_not_an_orphan() {
+    let (pool, _dav, host, id, uid) = writeback_fixture(DavMode::Ok).await;
+    push_fresh(&pool, &host, &uid).await;
+    let source: String = sqlx::query_scalar("SELECT caldav_source_id FROM bookings WHERE id = ?")
+        .bind(&id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let legacy = |start: chrono::NaiveDateTime| {
+        let pool = pool.clone();
+        let id = id.clone();
+        async move {
+            sqlx::query(
+                "UPDATE bookings SET time_version = 0, start_at = ?, end_at = ? WHERE id = ?",
+            )
+            .bind(start.format("%Y-%m-%dT%H:%M:%S").to_string())
+            .bind(
+                (start + chrono::Duration::hours(1))
+                    .format("%Y-%m-%dT%H:%M:%S")
+                    .to_string(),
+            )
+            .bind(&id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+    };
+    let now = chrono::Utc::now().naive_utc();
+    legacy(now - chrono::Duration::days(100)).await;
+    assert!(
+        !crate::commands::sync::cancel_orphan_unverified(&pool, &[0u8; 32], &source, &uid).await
+    );
+    let (_, _, _, _, status) = writeback_state(&pool, &id).await;
+    assert_eq!(status, "confirmed", "a meeting held months ago");
+
+    legacy(now + chrono::Duration::days(30)).await;
+    assert!(
+        crate::commands::sync::cancel_orphan_unverified(&pool, &[0u8; 32], &source, &uid).await
+    );
+    let (_, _, _, _, status) = writeback_state(&pool, &id).await;
+    assert_eq!(status, "cancelled", "a legacy meeting still to come");
+}
+
 /// Cancelling a claimed booking removes the claimant's copy with the host's.
 #[tokio::test]
 async fn cancelling_a_claimed_booking_deletes_the_claimants_copy() {
