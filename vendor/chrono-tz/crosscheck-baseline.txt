@@ -69,7 +69,6 @@ Atlantic/Madeira	-1830380400
 CET	-1613826001
 CET	-934668001
 Chile/EasterIsland	384922800
-Eire	-1397426401
 Eire	-1680471280
 Eire	-699487201
 Eire	-733356001
@@ -80,7 +79,6 @@ Europe/Belfast	57722399
 Europe/Belgrade	-766623601
 Europe/Brussels	-1613826001
 Europe/Brussels	-934668001
-Europe/Dublin	-1397426401
 Europe/Dublin	-1680471280
 Europe/Dublin	-699487201
 Europe/Dublin	-733356001
