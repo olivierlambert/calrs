@@ -1021,28 +1021,33 @@ END:VCALENDAR";
         assert_eq!(offset(0, 31, 13), -(8 * 3600 + 57 * 60 + 41));
     }
 
-    /// Every zone's offsets at every transition from 1800 to 2040, against
-    /// zic's reading of the same tzdata (`vendor/chrono-tz/crosscheck.py`
-    /// writes them). Run on a refresh, see `vendor/chrono-tz/CALRS.md`:
+    /// Every zone's offsets at every transition from 1800 to 2040, and on the
+    /// 15th of every month from 1900 to 2040, against zic's reading of the
+    /// same tzdata (`vendor/chrono-tz/crosscheck.py` writes them). Run on a
+    /// refresh, see `vendor/chrono-tz/CALRS.md`:
     /// `TZ_EXPECT=<file> cargo test tzdata_matches_zdump -- --ignored`.
-    /// Fails on a zone that disagrees and is not in the baseline.
+    /// Fails on any disagreement that is not in the baseline, which lists
+    /// each known one by zone and instant; prints the new ones as baseline
+    /// lines, and the baseline lines that agree now.
     #[test]
     #[ignore]
     fn tzdata_matches_zdump() {
         use chrono::{Offset, TimeZone};
         use std::collections::BTreeSet;
         let expect = std::env::var("TZ_EXPECT").expect("TZ_EXPECT=<crosscheck.py output>");
-        let baseline: BTreeSet<String> = std::fs::read_to_string(concat!(
+        let baseline: BTreeSet<(String, i64)> = std::fs::read_to_string(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/vendor/chrono-tz/crosscheck-baseline.txt"
         ))
         .unwrap()
         .lines()
         .filter(|l| !l.starts_with('#') && !l.trim().is_empty())
-        .map(str::to_string)
+        .map(|l| {
+            let (zone, at) = l.split_once('\t').expect("zone<TAB>unix time");
+            (zone.to_string(), at.parse().unwrap())
+        })
         .collect();
         let (mut checked, mut differ, mut unknown) = (0, BTreeSet::new(), BTreeSet::new());
-        let mut first = std::collections::BTreeMap::new();
         for line in std::fs::read_to_string(expect).unwrap().lines() {
             let mut fields = line.split('\t');
             let (zone, at, offset) = (
@@ -1055,26 +1060,30 @@ END:VCALENDAR";
                 continue;
             };
             let utc = chrono::DateTime::from_timestamp(at, 0).unwrap().naive_utc();
-            let got = tz.offset_from_utc_datetime(&utc).fix().local_minus_utc();
             checked += 1;
-            if got != offset {
-                differ.insert(zone.to_string());
-                first
-                    .entry(zone.to_string())
-                    .or_insert(format!("{utc} UTC: zic {offset}, chrono-tz {got}"));
+            if tz.offset_from_utc_datetime(&utc).fix().local_minus_utc() != offset {
+                differ.insert((zone.to_string(), at));
             }
         }
+        // An empty or truncated file must not pass as "nothing differs".
+        assert!(checked > 100_000, "only {checked} offsets checked");
+        assert!(unknown.is_empty(), "zones chrono-tz lacks: {unknown:?}");
         let new: Vec<_> = differ.difference(&baseline).collect();
         let fixed: Vec<_> = baseline.difference(&differ).collect();
         println!(
-            "{checked} transitions, {} zones differ, fixed since the baseline: {fixed:?}",
-            differ.len()
+            "{checked} offsets checked, {} known differences",
+            differ.len() - new.len()
         );
-        assert!(unknown.is_empty(), "zones chrono-tz lacks: {unknown:?}");
+        for (zone, at) in &fixed {
+            println!("agrees now, drop from the baseline: {zone}\t{at}");
+        }
+        for (zone, at) in &new {
+            println!("NEW\t{zone}\t{at}");
+        }
         assert!(
             new.is_empty(),
-            "zones that differ and are not in the baseline: {:?}",
-            new.iter().map(|z| (z, &first[*z])).collect::<Vec<_>>()
+            "{} offsets differ outside the baseline",
+            new.len()
         );
     }
 

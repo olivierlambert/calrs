@@ -56,15 +56,17 @@ stale copy is noticed before a zone's clocks change rather than after.
    Check `grep '%z' tz/*` only finds comments.
 3. Check what chrono-tz actually reads against IANA's own tools:
    `python3 vendor/chrono-tz/crosscheck.py <tzdata dir> /tmp/expect.tsv`
-   (compiles the main form with `zic`, writes every zone's offsets at each
-   transition from 1800 to 2040 with `zdump`), then
-   `TZ_EXPECT=/tmp/expect.tsv cargo test tzdata_matches_zdump -- --ignored`.
-   It fails on any zone that disagrees and is not in
-   `crosscheck-baseline.txt`: the zones the parser already reads wrongly at
-   some transition, all in 2015 or earlier (the suffix limit above). A new
-   entry is a regression from the new data: write the line in a form the
-   parser reads (local time, as for Alaska), never grow the baseline. Drop a
-   zone the test reports as fixed.
+   (compiles the main form with `zic`; writes every zone's offset at each
+   transition `zdump` lists from 1800 to 2040, and on the 15th of every
+   month from 1900 to 2040, about a million offsets), then
+   `TZ_EXPECT=/tmp/expect.tsv cargo test tzdata_matches_zdump -- --ignored --nocapture`.
+   It fails on any offset that differs and is not in
+   `crosscheck-baseline.txt`, which lists the known differences by zone and
+   instant: 141, all at a transition in 2015 or earlier (the suffix limit
+   above); the monthly samples all agree. A new difference is a regression
+   from the new data: write the line in a form the parser reads (local
+   time, as for Alaska) rather than adding it to the baseline. Remove the
+   lines the test reports as agreeing now.
 4. Add a `tzdata_*` test in `src/utils.rs` for any new rule change, and run
    `cargo test` (the tests pin the changes we rely on).
 5. Apply the same refresh to the maintenance branch (`1.23.x`) and release
