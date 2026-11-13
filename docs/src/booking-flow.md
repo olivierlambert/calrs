@@ -18,7 +18,7 @@ A host's page (`/u/{username}`) and a team's page (`/team/{slug}`) list their pu
 
 Add the standard `utm_source`, `utm_medium`, `utm_campaign`, `utm_term` and `utm_content` parameters to any booking link, such as `https://cal.example.com/u/alice/intro?utm_source=website&utm_campaign=pricing`, or to a host or team page link. calrs carries them from page to page in the URL (no cookie, nothing stored in the visitor's browser) and stores them with the booking. Values are trimmed and cut at 100 characters; other parameters are ignored. A visitor who leaves and comes back through a link without them books without attribution.
 
-Only hosts see them: one line on the bookings page, a **Source** block on the booking's notes page, and the `attribution` object of [webhooks](./webhooks.md) and the [REST API](./api.md). Guests, additional attendees, emails, calendar events and SMS never carry them.
+Only hosts see them: one line on the bookings page, a **Source** block on the booking's notes page, and the `attribution` object of [webhooks](./webhooks.md) and the [REST API](./api.md). Guests, additional attendees, emails, calendar events and SMS never carry them. On an [embedded](./embedding.md) page, the parameters of the website page hosting the embed are passed on automatically.
 
 ![Available time slots](images/slots.png)
 

@@ -41,6 +41,17 @@
       if (config.timeFormat) url += '&time_format=' + encodeURIComponent(config.timeFormat);
       if (config.fixedTimezone) url += '&fixed_tz=1';
     }
+    // The page's own utm_* parameters, so a booking made in the embed is
+    // attributed to the campaign that brought the visitor to the site. A
+    // value already on `link` wins.
+    try {
+      var here = new URLSearchParams(location.search);
+      ['utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content'].forEach(function (k) {
+        if (here.get(k) && !new RegExp('[?&]' + k + '=').test(link)) {
+          url += '&' + k + '=' + encodeURIComponent(here.get(k));
+        }
+      });
+    } catch (e) {}
     return url;
   }
 
