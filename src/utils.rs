@@ -939,13 +939,21 @@ END:VCALENDAR";
         })
         .collect();
         let (mut checked, mut differ, mut unknown) = (0, BTreeSet::new(), BTreeSet::new());
+        let (mut zones, mut end) = (BTreeSet::new(), None);
         for line in std::fs::read_to_string(expect).unwrap().lines() {
+            if let Some(record) = line.strip_prefix("#end\t") {
+                let (z, n) = record.split_once('\t').unwrap();
+                end = Some((z.parse::<usize>().unwrap(), n.parse::<usize>().unwrap()));
+                continue;
+            }
+            assert!(end.is_none(), "rows after the #end record");
             let mut fields = line.split('\t');
             let (zone, at, offset) = (
                 fields.next().unwrap(),
                 fields.next().unwrap().parse::<i64>().unwrap(),
                 fields.next().unwrap().parse::<i32>().unwrap(),
             );
+            zones.insert(zone.to_string());
             let Ok(tz) = zone.parse::<chrono_tz::Tz>() else {
                 unknown.insert(zone.to_string());
                 continue;
@@ -956,9 +964,15 @@ END:VCALENDAR";
                 differ.insert((zone.to_string(), at));
             }
         }
-        // An empty or truncated file must not pass as "nothing differs".
-        assert!(checked > 100_000, "only {checked} offsets checked");
+        // An empty or truncated file must not pass as "nothing differs": the
+        // script ends with the zone and row counts it wrote.
+        let (end_zones, end_rows) = end.expect("no #end record: the file is truncated");
         assert!(unknown.is_empty(), "zones chrono-tz lacks: {unknown:?}");
+        assert_eq!(
+            (zones.len(), checked),
+            (end_zones, end_rows),
+            "zones and rows read vs written"
+        );
         let new: Vec<_> = differ.difference(&baseline).collect();
         let fixed: Vec<_> = baseline.difference(&differ).collect();
         println!(

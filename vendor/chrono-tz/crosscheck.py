@@ -8,7 +8,9 @@ every zone, each transition zdump reports from 1800 to 2040 (the second
 before it and the second it starts), and the offset on the 15th of every
 month at 12:00 UTC from 1900 to 2040 (read from the compiled file with
 Python's zoneinfo), so a seasonal rule that should have ended shows up
-between transitions too. One `zone<TAB>unix time<TAB>offset` per line.
+between transitions too. One `zone<TAB>unix time<TAB>offset` per line, and
+a last `#end<TAB>zones<TAB>lines` record the test requires, so a truncated
+file fails.
 `TZ_EXPECT=<out.tsv> cargo test tzdata_matches_zdump -- --ignored` then checks
 the vendored chrono-tz against it. See CALRS.md.
 """
@@ -43,21 +45,26 @@ def main(src, out_path):
         n = 0
         with open(out_path, "w") as out:
             for zone in zones:
+                # By name, read from the compiled tree through TZDIR (not the
+                # system's zoneinfo): the output then starts with the zone
+                # name, which has no spaces, whatever the temporary path.
                 dump = subprocess.run(
-                    [zdump, "-c", "1800,2041", "-v", os.path.join(zdir, zone)],
-                    capture_output=True, text=True, env={"TZ": ""}, check=True,
+                    [zdump, "-c", "1800,2041", "-v", zone],
+                    capture_output=True, text=True, check=True,
+                    env={"TZ": "", "TZDIR": zdir},
                 ).stdout
                 for line in dump.splitlines():
                     parts = line.split()
                     gmtoff = [p for p in parts if p.startswith("gmtoff=")]
-                    if "UT" not in parts or not gmtoff:
-                        continue
-                    try:
-                        at = datetime.datetime.strptime(
-                            " ".join(parts[2:6]), "%b %d %H:%M:%S %Y"
-                        ).replace(tzinfo=datetime.timezone.utc)
-                    except ValueError:
-                        continue
+                    if not gmtoff or "failed)" in line:
+                        continue  # "NULL" lines, and zdump's bounds of time
+                    if parts[0] != zone or parts[6] != "UT":
+                        sys.exit(f"unexpected zdump line: {line}")
+                    if not 1800 <= int(parts[5]) <= 2041:
+                        continue  # zdump's bounds of time, outside the range
+                    at = datetime.datetime.strptime(
+                        " ".join(parts[2:6]), "%b %d %H:%M:%S %Y"
+                    ).replace(tzinfo=datetime.timezone.utc)
                     out.write(f"{zone}\t{int(at.timestamp())}\t{gmtoff[0][7:]}\n")
                     n += 1
                 with open(os.path.join(zdir, zone), "rb") as f:
@@ -68,6 +75,7 @@ def main(src, out_path):
                         offset = int(at.astimezone(tz).utcoffset().total_seconds())
                         out.write(f"{zone}\t{int(at.timestamp())}\t{offset}\n")
                         n += 1
+            out.write(f"#end\t{len(zones)}\t{n}\n")
     print(f"{n} offsets in {len(zones)} zones")
 
 
