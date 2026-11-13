@@ -1,5 +1,5 @@
 //! Campaign tracking: the `utm_*` parameters travel from the host's page to
-//! the booking and are stored with it.
+//! the booking, are stored with it and shown to hosts only.
 
 use super::*;
 
@@ -10,8 +10,8 @@ async fn page(app: &Router, uri: &str) -> String {
 }
 
 #[tokio::test]
-async fn utm_parameters_follow_the_visitor_to_the_booking() {
-    let (app, pool, _, et_id) = setup_test_app().await;
+async fn utm_parameters_follow_the_visitor_to_the_booking_and_reach_hosts_only() {
+    let (app, pool, session, et_id) = setup_test_app().await;
 
     // Every page on the way keeps them in its links, nothing else.
     let profile = page(&app, &format!("/u/testuser?{UTM}&tz=UTC")).await;
@@ -57,7 +57,7 @@ async fn utm_parameters_follow_the_visitor_to_the_booking() {
     .fetch_one(&pool)
     .await
     .unwrap();
-    let (_, source, medium, campaign) = stored;
+    let (booking_id, source, medium, campaign) = stored;
     assert_eq!(
         (source.as_deref(), medium, campaign.as_deref()),
         (Some("website"), None, Some("pricing"))
@@ -65,6 +65,30 @@ async fn utm_parameters_follow_the_visitor_to_the_booking() {
     assert!(
         !confirmation.contains("pricing"),
         "the guest's page never shows it"
+    );
+
+    // Hosts read it on the bookings page and on the booking's notes page.
+    let bookings = body_string(
+        app.clone()
+            .oneshot(get_authed("/dashboard/bookings", &session))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(bookings.contains("website · pricing"), "{bookings}");
+    let notes = body_string(
+        app.clone()
+            .oneshot(get_authed(
+                &format!("/dashboard/bookings/{booking_id}/notes"),
+                &session,
+            ))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(
+        notes.contains("<dt>utm_campaign</dt><dd>pricing</dd>"),
+        "{notes}"
     );
 }
 

@@ -133,6 +133,8 @@ pub(super) struct NoteBooking {
     pub updated_as: Option<String>,
     /// The guest's answers to the booking questions (#210).
     pub answers: Vec<crate::email::BookingAnswer>,
+    /// The `utm_*` parameters the guest arrived with, if any.
+    pub source: Option<Attribution>,
 }
 
 /// The booking `booking_id` when `user_id` may read and edit its host notes,
@@ -218,6 +220,7 @@ pub(super) async fn note_booking(
             updated_by,
             updated_as,
             answers: Vec::new(),
+            source: None,
         },
     );
     let Some(mut booking) = booking else {
@@ -227,6 +230,9 @@ pub(super) async fn note_booking(
         .await
         .remove(&booking.id)
         .unwrap_or_default();
+    booking.source = super::attribution::by_booking(pool, &[booking.id.as_str()])
+        .await
+        .remove(&booking.id);
     Ok(Some(booking))
 }
 
@@ -352,6 +358,7 @@ fn render_notes_page(
                 lang,
                 crate::email::AnswerReader::Host,
             ),
+            source => booking.source.as_ref().map(Attribution::pairs),
             when => when,
             status_mark => status_mark,
             status_label => crate::i18n::translate(lang, status_key, None),

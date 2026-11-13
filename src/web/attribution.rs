@@ -9,6 +9,7 @@
 //! attendee or a calendar receives does (`guest_facing_code_never_reads_attribution`).
 
 use serde::{Deserialize, Deserializer, Serialize};
+use sqlx::SqlitePool;
 use std::collections::HashMap;
 
 /// Longest value kept, in characters; a longer one is cut.
@@ -17,7 +18,7 @@ const MAX_LEN: usize = 100;
 /// The five standard UTM parameters, each `None` when absent or blank.
 /// Deserialized from any query or form map: other keys are ignored, values
 /// are cleaned (`clean`), so whatever a visitor puts in the URL is bounded.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, sqlx::FromRow)]
 pub(crate) struct Attribution {
     pub(crate) utm_source: Option<String>,
     pub(crate) utm_medium: Option<String>,
@@ -74,6 +75,15 @@ impl Attribution {
         self.pairs().is_empty()
     }
 
+    /// One line for a list row: the values set, "website · cpc · pricing".
+    pub(crate) fn summary(&self) -> String {
+        self.pairs()
+            .into_iter()
+            .map(|(_, v)| v)
+            .collect::<Vec<_>>()
+            .join(" · ")
+    }
+
     /// Stores the attribution of a new booking, in its transaction. Nothing
     /// is written when no parameter is set.
     pub(crate) async fn insert(
@@ -98,6 +108,36 @@ impl Attribution {
         .await?;
         Ok(())
     }
+}
+
+/// The attribution of several bookings by booking id, for a list page: one
+/// query per hundred bookings. Bookings without one are absent.
+pub(crate) async fn by_booking(
+    pool: &SqlitePool,
+    booking_ids: &[&str],
+) -> HashMap<String, Attribution> {
+    #[derive(sqlx::FromRow)]
+    struct Row {
+        booking_id: String,
+        #[sqlx(flatten)]
+        attribution: Attribution,
+    }
+    let mut by_booking = HashMap::new();
+    for chunk in booking_ids.chunks(100) {
+        let placeholders = vec!["?"; chunk.len()].join(", ");
+        let sql = format!(
+            "SELECT booking_id, utm_source, utm_medium, utm_campaign, utm_term, utm_content
+             FROM booking_attribution WHERE booking_id IN ({placeholders})"
+        );
+        let mut query = sqlx::query_as::<_, Row>(&sql);
+        for id in chunk {
+            query = query.bind(*id);
+        }
+        for row in query.fetch_all(pool).await.unwrap_or_default() {
+            by_booking.insert(row.booking_id, row.attribution);
+        }
+    }
+    by_booking
 }
 
 #[cfg(test)]
@@ -132,6 +172,7 @@ mod tests {
                 ("utm_content", "hero"),
             ]
         );
+        assert_eq!(a.summary(), "website · cpc · pricing · calendar · hero");
     }
 
     #[test]
@@ -160,9 +201,6 @@ mod tests {
             .unwrap();
         let axum::extract::Query(a) =
             axum::extract::Query::<Attribution>::try_from_uri(&uri).unwrap();
-        assert_eq!(
-            a.pairs(),
-            vec![("utm_source", "linked in"), ("utm_campaign", "q4")]
-        );
+        assert_eq!(a.summary(), "linked in · q4");
     }
 }
