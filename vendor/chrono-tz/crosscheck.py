@@ -5,7 +5,10 @@ Usage: crosscheck.py <tzdata source dir> <out.tsv>
 
 Compiles the main form of the nine data files with zic, then writes, for
 every zone, each transition zdump reports from 1800 to 2040 (the second
-before it and the second it starts) as `zone<TAB>unix time<TAB>offset`.
+before it and the second it starts), and the offset on the 15th of every
+month at 12:00 UTC from 1900 to 2040 (read from the compiled file with
+Python's zoneinfo), so a seasonal rule that should have ended shows up
+between transitions too. One `zone<TAB>unix time<TAB>offset` per line.
 `TZ_EXPECT=<out.tsv> cargo test tzdata_matches_zdump -- --ignored` then checks
 the vendored chrono-tz against it. See CALRS.md.
 """
@@ -15,6 +18,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import zoneinfo
 
 FILES = ["africa", "antarctica", "asia", "australasia", "backward",
          "etcetera", "europe", "northamerica", "southamerica"]
@@ -56,7 +60,15 @@ def main(src, out_path):
                         continue
                     out.write(f"{zone}\t{int(at.timestamp())}\t{gmtoff[0][7:]}\n")
                     n += 1
-    print(f"{n} transitions in {len(zones)} zones")
+                with open(os.path.join(zdir, zone), "rb") as f:
+                    tz = zoneinfo.ZoneInfo.from_file(f)
+                for year in range(1900, 2041):
+                    for month in range(1, 13):
+                        at = datetime.datetime(year, month, 15, 12, tzinfo=datetime.timezone.utc)
+                        offset = int(at.astimezone(tz).utcoffset().total_seconds())
+                        out.write(f"{zone}\t{int(at.timestamp())}\t{offset}\n")
+                        n += 1
+    print(f"{n} offsets in {len(zones)} zones")
 
 
 if __name__ == "__main__":
