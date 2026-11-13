@@ -10,13 +10,19 @@
   .source-cal-name { flex: 1 1 12rem; min-width: 0; overflow-wrap: anywhere; }
   .source-cal-meta { color: var(--text-muted); font-size: 0.8rem; }
   .source-cal-badge { font-size: 0.75rem; padding: 0.05rem 0.4rem; border: 1px solid var(--rule-strong); border-radius: var(--r-control, 4px); color: var(--text-secondary); }
+  .source-cal-new { display: flex; align-items: center; gap: 0.6rem; margin-bottom: 1.25rem; color: var(--text-secondary); font-size: 0.9rem; cursor: pointer; }
+  .source-cal-new input { accent-color: var(--accent); width: 1rem; height: 1rem; flex-shrink: 0; }
   .source-cal-toolbar { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.75rem; }
 </style>
 <a href="/dashboard/sources" class="back-link">&larr; {{ t("source-calendars-back") }}</a>
 <header class="page-header">
   <div class="page-header-text">
     <h1 class="page-title">{{ t("source-calendars-heading") }}</h1>
+    {% if setup %}
+    <p class="page-subtitle">{{ t("source-calendars-setup-help", name='<strong>' ~ (source_name | escape) ~ '</strong>') | safe }}</p>
+    {% else %}
     <p class="page-subtitle">{{ t("source-calendars-help", name='<strong>' ~ (source_name | escape) ~ '</strong>') | safe }}</p>
+    {% endif %}
   </div>
 </header>
 <section class="card">
@@ -26,6 +32,7 @@
   {% endif %}
   {% if calendars %}
   <form method="post" action="/dashboard/sources/{{ source_id }}/calendars">
+    {% if setup %}<input type="hidden" name="setup" value="1">{% endif %}
     <div class="source-cal-toolbar">
       <button type="button" class="slot-btn" style="font-size: 0.8rem; cursor: pointer;" onclick="this.form.querySelectorAll('input[name=sync]').forEach(function (c) { c.checked = true; })">{{ t("source-calendars-select-all") }}</button>
       <button type="button" class="slot-btn" style="font-size: 0.8rem; cursor: pointer;" onclick="this.form.querySelectorAll('input[name=sync]').forEach(function (c) { c.checked = false; })">{{ t("source-calendars-select-none") }}</button>
@@ -41,7 +48,14 @@
       </label>
       {% endfor %}
     </div>
-    <button type="submit" class="slot-btn" style="background: var(--accent); color: #fff; border: none; padding: 0.5rem 1.5rem; border-radius: var(--radius); font-size: 0.95rem; cursor: pointer;">{{ t("source-calendars-save") }}</button>
+    <label class="source-cal-new">
+      <input type="checkbox" name="sync_new" value="on" {% if sync_new %}checked{% endif %}>
+      <span>{{ t("source-calendars-sync-new") }}</span>
+    </label>
+    <button type="submit" class="slot-btn" style="background: var(--accent); color: #fff; border: none; padding: 0.5rem 1.5rem; border-radius: var(--radius); font-size: 0.95rem; cursor: pointer;">
+      {% if setup %}{{ t("source-calendars-setup-save") }}
+      {% else %}{{ t("source-calendars-save") }}{% endif %}
+    </button>
   </form>
   {% else %}
   <p class="empty" style="padding: 1rem;">{{ t("source-calendars-empty") }}</p>

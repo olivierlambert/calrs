@@ -763,6 +763,85 @@ async fn sources_dashboard_links_the_calendar_selection() {
     assert!(body.contains("Calendars synced: 1 of 2"));
 }
 
+/// The first visit after a source was added: nothing is synced yet, the
+/// page says so, offers "Save and sync", and suggests syncing calendars
+/// found later.
+#[tokio::test]
+async fn the_setup_visit_of_the_calendar_picker() {
+    let (app, pool, session, _) = setup_test_app().await;
+    let sid = seed_source(&pool, "Kerio", "pw").await;
+    let (mine, colleague) = seed_two_calendars(&pool, &sid).await;
+    sqlx::query("UPDATE calendars SET sync_enabled = 0 WHERE source_id = ?")
+        .bind(&sid).execute(&pool).await.unwrap();
+
+    let response = app
+        .oneshot(get_authed(
+            &format!("/dashboard/sources/{sid}/calendars?setup=1"),
+            &session
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = body_string(response).await;
+    assert!(body.contains("nothing is fetched until you save"));
+    assert!(body.contains("Save and sync"));
+    assert!(body.contains(r#"<input type="hidden" name="setup" value="1">"#));
+    assert!(body.contains(r#"name="sync_new" value="on" checked"#));
+    assert!(body.contains(&format!("value=\"{mine}\" >")));
+    assert!(body.contains(&format!("value=\"{colleague}\" >")));
+}
+
+/// Unchecking "Also sync calendars that appear later" is stored on the
+/// source, and the page shows it unchecked afterwards.
+#[tokio::test]
+async fn saving_the_picker_stores_the_setting_for_new_calendars() {
+    let (app, pool, session, _) = setup_test_app().await;
+    let sid = seed_source(&pool, "Kerio", "pw").await;
+    let (mine, _) = seed_two_calendars(&pool, &sid).await;
+
+    let csrf = "test-csrf-sync-new";
+    let response = app
+        .clone()
+        .oneshot(post_form(
+            &format!("/dashboard/sources/{sid}/calendars"),
+            &session,
+            csrf,
+            &format!("_csrf={csrf}&sync={mine}"),
+        ))
+        .await
+        .unwrap();
+    assert!(response.status().is_redirection());
+    let sync_new: bool =
+        sqlx::query_scalar("SELECT sync_new_calendars FROM caldav_sources WHERE id = ?")
+            .bind(&sid).fetch_one(&pool).await.unwrap();
+    assert!(!sync_new);
+
+    let body = body_string(
+        app.oneshot(get_authed(
+                &format!("/dashboard/sources/{sid}/calendars"),
+                &session
+            ))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(body.contains(r#"name="sync_new" value="on" >"#));
+    assert!(body.contains(">Save<"));
+}
+
+/// A source whose calendars are all off (a picker left without saving)
+/// says it blocks nothing.
+#[tokio::test]
+async fn sources_dashboard_warns_when_no_calendar_is_synced() {
+    let (app, pool, session, _) = setup_test_app().await;
+    let sid = seed_source(&pool, "Kerio", "pw").await;
+    seed_two_calendars(&pool, &sid).await;
+    sqlx::query("UPDATE calendars SET sync_enabled = 0 WHERE source_id = ?")
+        .bind(&sid).execute(&pool).await.unwrap();
+    let body = body_string(app.oneshot(get_authed("/dashboard/sources", &session)).await.unwrap()).await;
+    assert!(body.contains("No calendar of this source is synced"));
+}
+
 /// #388: the Sync button waits a little for a sync of the same source
 /// already running, then says so instead of hanging behind it.
 #[tokio::test]
