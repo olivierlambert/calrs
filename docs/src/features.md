@@ -6,7 +6,7 @@ This is the feature map for v2, including capabilities carried forward from v1. 
 
 | Capability | What you can do |
 |---|---|
-| CalDAV | Connect Nextcloud, BlueMind, Fastmail, iCloud, SOGo, Zimbra, Radicale, Baikal and other CalDAV servers; discover calendars, sync changes and write bookings back. [CalDAV](./caldav.md) |
+| CalDAV | Connect Nextcloud, BlueMind, Fastmail, iCloud, SOGo, Zimbra, Radicale, Baikal, Kerio Connect and other CalDAV servers; discover calendars, sync changes and write bookings back. [CalDAV](./caldav.md) |
 | Google Calendar | Connect with OAuth2, block out-of-office events, write bookings and create host-owned Google Meet links. [Google Calendar](./google-calendar.md) |
 | Microsoft 365 / Outlook.com | Connect with delegated OAuth2 through Microsoft Graph; select calendars and a writable destination. [Microsoft Calendar](./microsoft-calendar.md) |
 | On-premises Exchange | Connect individual mailboxes through EWS, or provision managed calendars with a service account and trusted mailbox addresses. [Exchange](./exchange.md), [EWS impersonation](./ews-impersonation.md) |
