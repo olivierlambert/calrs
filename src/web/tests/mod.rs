@@ -9,6 +9,7 @@ mod admin_stats;
 mod api;
 mod api_answers;
 mod api_doc;
+mod attribution;
 mod auth_pages;
 mod availability;
 mod booking;

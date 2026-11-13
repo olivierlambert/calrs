@@ -68,4 +68,8 @@ Leave the last two options out to let visitors use the usual clock and timezone 
 
 An embed uses the same availability, date range, questions, captcha and booking rules as the direct link. Embedding does not make a private or internal event type public. If a booking URL needs an invitation, preserve its query parameters and remember that the invitation's expiry and usage limit still apply.
 
+## Campaign tracking
+
+The runtime passes the hosting page's `utm_source`, `utm_medium`, `utm_campaign`, `utm_term` and `utm_content` parameters on to the booking page, so a visitor who reaches `https://example.com/contact?utm_source=newsletter` books with that attribution. A parameter already present in `link` wins. See [Campaign tracking](./booking-flow.md#campaign-tracking-utm).
+
 Set the public base URL correctly before generating snippets. If your website has a Content Security Policy, allow your calrs origin for the script and frame. If the picker does not load, check the browser console and any framing policy added by your reverse proxy.

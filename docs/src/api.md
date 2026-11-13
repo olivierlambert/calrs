@@ -300,7 +300,9 @@ them the order near those rows can be off by the timezone's offset.
                    "attested_by": null}],
       "attendees": ["paul@example.com"],
       "location": {"type": "link", "value": "https://meet.example.com/abc"},
-      "host_notes": "Prefers mornings."
+      "host_notes": "Prefers mornings.",
+      "attribution": {"utm_source": "website", "utm_medium": null,
+                      "utm_campaign": "pricing", "utm_term": null, "utm_content": null}
     }
   ],
   "next_cursor": null
@@ -314,7 +316,9 @@ emails, webhooks and calendar events.
 `host_notes` are the hosts' own notes on the booking. `answers` are the
 guest's answers to the event type's [booking questions](booking-questions.md),
 in the shape webhooks use; match choices on `option_ids`, `value` is for
-display.
+display. `attribution` holds the `utm_*` parameters of the link the guest
+booked through ([campaign tracking](booking-flow.md#campaign-tracking-utm)),
+null when it carried none and for bookings made through the API.
 
 ### `GET /api/v1/bookings/{id}`
 

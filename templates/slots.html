@@ -4,6 +4,8 @@
 {% block title %}{{ event_type.title }} — {{ host_name }}{% endblock %}
 
 {% block content %}
+{#- The visitor's utm_* parameters, carried to every link and posted with the booking. #}
+{% set utm_q = utm | urlencode %}
 {# Compute base path: reschedule, /t/token, /team/team_slug/slug, /u/username/slug, or /slug #}
 {% if reschedule_base is defined and reschedule_base %}
   {% set base = reschedule_base %}
@@ -926,12 +928,12 @@
       </div>
       <div class="cal-nav" id="main-cal-nav">
         {% if prev_month is defined and prev_month %}
-          <a href="{{ base }}?month={{ prev_month }}{% if guest_tz is defined and guest_tz %}&tz={{ guest_tz }}{% endif %}{% if invite_token is defined and invite_token %}&invite={{ invite_token }}{% endif %}" class="cal-nav-link">&larr;</a>
+          <a href="{{ base }}?month={{ prev_month }}{% if guest_tz is defined and guest_tz %}&tz={{ guest_tz }}{% endif %}{% if invite_token is defined and invite_token %}&invite={{ invite_token }}{% endif %}{% if utm_q %}&{{ utm_q }}{% endif %}" class="cal-nav-link">&larr;</a>
         {% else %}
           <span class="disabled">&larr;</span>
         {% endif %}
         {% if next_month is defined and next_month %}
-          <a href="{{ base }}?month={{ next_month }}{% if guest_tz is defined and guest_tz %}&tz={{ guest_tz }}{% endif %}{% if invite_token is defined and invite_token %}&invite={{ invite_token }}{% endif %}" class="cal-nav-link">&rarr;</a>
+          <a href="{{ base }}?month={{ next_month }}{% if guest_tz is defined and guest_tz %}&tz={{ guest_tz }}{% endif %}{% if invite_token is defined and invite_token %}&invite={{ invite_token }}{% endif %}{% if utm_q %}&{{ utm_q }}{% endif %}" class="cal-nav-link">&rarr;</a>
         {% else %}
           <span class="disabled">&rarr;</span>
         {% endif %}
@@ -1028,7 +1030,9 @@
   // Embed mode threads ?embed=1&layout=...&theme=...&brand=... through every
   // navigation so slot clicks, month nav, and the book form stay in the
   // chrome-stripped embed flow.
-  var embedSuffix = decHtml("{{ embed_qs_amp | default('') }}");
+  // Carried to every link the picker builds: the embed options and the
+  // visitor's utm_* parameters.
+  var embedSuffix = decHtml("{{ embed_qs_amp | default('') }}"){% if utm_q %} + decHtml("&{{ utm_q }}"){% endif %};
 
   // An embed whose owner fixed the format wins over the visitor's stored
   // choice, and is never written back to localStorage.
