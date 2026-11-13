@@ -2544,7 +2544,8 @@ pub(crate) async fn cancel_orphaned_booking(
     )> = sqlx::query_as(
         "SELECT b.id, b.guest_name, b.guest_email, COALESCE(b.guest_timezone, 'UTC'), CASE b.time_version WHEN 1 THEN b.start_at ELSE rtrim(b.start_at, 'Z') END AS start_at, CASE b.time_version WHEN 1 THEN b.end_at ELSE rtrim(b.end_at, 'Z') END AS end_at, b.uid,
                 et.title, u.name, COALESCE(u.booking_email, u.email), b.caldav_calendar_href, u.timezone,
-                u.language, u.id, b.time_version, COALESCE(NULLIF(et.timezone, ''), u.timezone)
+                u.language, u.id, b.time_version,
+                COALESCE(NULLIF(et.timezone, ''), (SELECT owner.timezone FROM users owner WHERE owner.id = a.user_id))
          FROM bookings b
          JOIN event_types et ON et.id = b.event_type_id
          JOIN accounts a ON a.id = et.account_id
@@ -2604,7 +2605,8 @@ pub(crate) async fn cancel_orphaned_booking(
     // A meeting that is already over is left alone: a host clearing past
     // events from their calendar must not send the guest a cancellation.
     // Legacy rows (a wall clock, no UTC timestamp) are read in their event's
-    // zone, as every other reader does: a past one fell out of the synced
+    // zone, else its owner's (not the assigned member's), as
+    // booking_time::event_timezone does: a past one fell out of the synced
     // window, so the sweep found it on every sync and asked the server again.
     let legacy_tz: chrono_tz::Tz = legacy_zone
         .as_deref()

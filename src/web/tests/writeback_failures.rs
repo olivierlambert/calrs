@@ -1034,6 +1034,58 @@ async fn an_ended_legacy_booking_is_not_an_orphan() {
     assert_eq!(status, "cancelled", "a legacy meeting still to come");
 }
 
+/// A legacy wall clock is read in its event's zone, else its owner's: the
+/// assigned member's own zone does not count. A meeting that ended an hour
+/// ago in Tokyo (the owner's zone, the event type has none) is not upcoming
+/// for a member in UTC, for whom the same wall clock is eight hours ahead.
+#[tokio::test]
+async fn an_ended_legacy_booking_is_read_in_its_owners_zone() {
+    let (pool, _dav, host, id, uid) = writeback_fixture(DavMode::Ok).await;
+    push_fresh(&pool, &host, &uid).await;
+    let source: String = sqlx::query_scalar("SELECT caldav_source_id FROM bookings WHERE id = ?")
+        .bind(&id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let owner = insert_role_user(&pool, "owner@wb.test", "user").await;
+    sqlx::query("INSERT INTO accounts (id, name, email, timezone, user_id) VALUES ('owner-account', 'O', 'owner@wb.test', 'UTC', ?)")
+        .bind(&owner)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let owners_et = insert_personal_et(&pool, &owner, "wb-owner").await;
+    sqlx::query("UPDATE users SET timezone = CASE id WHEN ? THEN 'Asia/Tokyo' ELSE 'UTC' END WHERE id IN (?, ?)")
+        .bind(&owner)
+        .bind(&owner)
+        .bind(&host)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE event_types SET timezone = NULL WHERE id = ?")
+        .bind(&owners_et)
+        .execute(&pool)
+        .await
+        .unwrap();
+    // Tokyo is UTC+9 all year: a wall clock of now + 8 h ended an hour ago.
+    let end = Utc::now().naive_utc() + Duration::hours(8);
+    sqlx::query(
+        "UPDATE bookings SET event_type_id = ?, assigned_user_id = ?, time_version = 0, start_at = ?, end_at = ? WHERE id = ?",
+    )
+    .bind(&owners_et)
+    .bind(&host)
+    .bind((end - Duration::hours(1)).format("%Y-%m-%dT%H:%M:%S").to_string())
+    .bind(end.format("%Y-%m-%dT%H:%M:%S").to_string())
+    .bind(&id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    assert!(
+        !crate::commands::sync::cancel_orphan_unverified(&pool, &[0u8; 32], &source, &uid).await
+    );
+    let (_, _, _, _, status) = writeback_state(&pool, &id).await;
+    assert_eq!(status, "confirmed");
+}
+
 /// Cancelling a claimed booking removes the claimant's copy with the host's.
 #[tokio::test]
 async fn cancelling_a_claimed_booking_deletes_the_claimants_copy() {
