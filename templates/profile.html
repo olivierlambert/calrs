@@ -22,7 +22,8 @@
   </header>
 </section>
 
-{% with href_kind = "u", href_owner = username, href_tail = "", empty_text = t("profile-no-event-type") %}{% include "partials/landing_list.html" %}{% endwith %}
+{% set utm_q = utm | urlencode %}
+{% with href_kind = "u", href_owner = username, href_tail = ("?" ~ utm_q) if utm_q else "", empty_text = t("profile-no-event-type") %}{% include "partials/landing_list.html" %}{% endwith %}
 {% include "partials/landing_script.html" %}
 {% endblock %}
 {% block footer %}<div class="lp-foot">{{ t("base-powered-by") }} <a href="https://cal.rs">calrs</a> <img src="/brand-logo" alt=""></div>{% endblock %}
