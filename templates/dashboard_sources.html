@@ -114,6 +114,10 @@
         </div>
       </div>
       {% if s.sync_error %}<div class="source-sync-error">{{ t("sources-sync-failing", since=s.sync_failing_since, error=s.sync_error) }}</div>{% endif %}
+      {% if s.calendar_count and not s.synced_count %}
+      <div class="notice notice--warning" style="font-size: 13px; padding: 0.45rem 0.7rem; margin-top: 0.5rem;">{{ ic.icon("alert", 14) }}
+        <span>{{ t("sources-no-calendar-synced") }}</span>
+      </div>{% endif %}
       {% if s.not_ready %}<div class="notice notice--warning" style="font-size: 13px; padding: 0.45rem 0.7rem; margin-top: 0.5rem;">{{ ic.icon("alert", 14) }}<span>{{ t("sources-microsoft-not-ready") }}</span></div>{% endif %}
       {% if s.calendars %}
       <div style="margin-top: 0.5rem;">

@@ -242,6 +242,65 @@ pub async fn sync_source(
     result
 }
 
+// List a CalDAV source's calendars into the cache without fetching any
+/// event. Calendars already known keep their setting; new ones follow the
+/// source's `sync_new_calendars`. Returns the number of calendars listed.
+pub async fn discover_caldav_calendars(
+    pool: &SqlitePool,
+    client: &CaldavClient,
+    source_id: &str,
+) -> Result<usize> {
+    let principal = client.discover_principal().await?;
+    let calendar_home = client.discover_calendar_home(&principal).await?;
+    let calendars = client.list_calendars(&calendar_home).await?;
+    for cal_info in &calendars {
+        upsert_calendar(pool, source_id, cal_info).await?;
+    }
+    Ok(calendars.len())
+}
+
+/// First contact with a CalDAV source just created with
+/// `sync_new_calendars = 0`: list its calendars, all unsynced, so its owner
+/// picks the ones to sync before any event is fetched. Then set the source
+/// back to syncing calendars that appear later, as every source does by
+/// default; the owner can change that on the calendar picker.
+///
+/// A failure is recorded on the source like a failed sync. Whatever the
+/// outcome, the source ends with `sync_new_calendars = 1`, so a source whose
+/// listing failed or found nothing behaves as before on its next sync.
+pub async fn discover_new_caldav_source(
+    pool: &SqlitePool,
+    key: &[u8; 32],
+    client: &CaldavClient,
+    source_id: &str,
+) -> Result<usize> {
+    let lock = source_lock(source_id).await;
+    let _guard = lock.lock().await;
+    let result = discover_caldav_calendars(pool, client, source_id).await;
+    if let Err(e) = &result {
+        crate::commands::sync_health::record_sync_failure(pool, key, source_id, e).await;
+    }
+    sqlx::query("UPDATE caldav_sources SET sync_new_calendars = 1 WHERE id = ?")
+        .bind(source_id)
+        .execute(pool)
+        .await?;
+    result
+}
+
+/// Set what `source_id` does with calendars it lists for the first time.
+pub(crate) async fn set_sync_new_calendars(
+    pool: &SqlitePool,
+    source_id: &str,
+    enabled: bool,
+) -> Result<()> {
+    sqlx::query("UPDATE caldav_sources SET sync_new_calendars = ? WHERE id = ?")
+        .bind(enabled)
+        .bind(source_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
 /// Turn the calendars that failed during a sync into the sync's error.
 fn calendar_failures_result(failures: &[String]) -> Result<()> {
     if failures.is_empty() {
@@ -2078,8 +2137,9 @@ async fn upsert_calendar_provider(
             // Someone else's calendar does not make the user busy until they
             // say so: a colleague's meetings are not the host's. Only the
             // first discovery decides; the user's later choice stands.
+            let sync_enabled = source_syncs_new_calendars(pool, source_id).await?;
             sqlx::query(
-                "INSERT INTO calendars (id, source_id, href, display_name, color, ctag, is_busy, read_only) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO calendars (id, source_id, href, display_name, color, ctag, is_busy, read_only, sync_enabled) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             )
             .bind(&id)
             .bind(source_id)
@@ -2089,9 +2149,10 @@ async fn upsert_calendar_provider(
             .bind(&cal_info.change_marker)
             .bind(!cal_info.shared)
             .bind(cal_info.read_only)
+            .bind(sync_enabled)
             .execute(pool)
             .await?;
-            Ok((id, None, None, true))
+            Ok((id, None, None, sync_enabled))
         }
     }
 }
@@ -2238,8 +2299,9 @@ async fn upsert_calendar(
         }
         None => {
             let id = Uuid::new_v4().to_string();
+            let sync_enabled = source_syncs_new_calendars(pool, source_id).await?;
             sqlx::query(
-                "INSERT INTO calendars (id, source_id, href, display_name, color, ctag) VALUES (?, ?, ?, ?, ?, ?)",
+                "INSERT INTO calendars (id, source_id, href, display_name, color, ctag, sync_enabled) VALUES (?, ?, ?, ?, ?, ?, ?)",
             )
             .bind(&id)
             .bind(source_id)
@@ -2247,11 +2309,24 @@ async fn upsert_calendar(
             .bind(&cal_info.display_name)
             .bind(&cal_info.color)
             .bind(&cal_info.ctag)
+            .bind(sync_enabled)
             .execute(pool)
             .await?;
-            Ok((id, None, None, true))
+            Ok((id, None, None, sync_enabled))
         }
     }
+}
+
+/// Whether a calendar `source_id` lists for the first time starts synced:
+/// the source's `sync_new_calendars` setting. A source that is gone (the
+/// row was deleted mid-sync) answers `true`, as before the setting existed.
+async fn source_syncs_new_calendars(pool: &SqlitePool, source_id: &str) -> Result<bool> {
+    let setting: Option<bool> =
+        sqlx::query_scalar("SELECT sync_new_calendars FROM caldav_sources WHERE id = ?")
+            .bind(source_id)
+            .fetch_optional(pool)
+            .await?;
+    Ok(setting.unwrap_or(true))
 }
 
 /// Upsert events from raw CalDAV data. Returns count of events processed.
@@ -5665,6 +5740,116 @@ mod tests {
             state(pool.clone(), source_id.clone()).await,
             (Some("m2".into()), Some("s3".into()))
         );
+    }
+
+    /// A source added from the dashboard lists its calendars, all unsynced,
+    /// without a single REPORT, then syncs only what its owner turns on.
+    #[tokio::test]
+    async fn a_new_source_lists_its_calendars_without_fetching_any() {
+        let pool = setup_test_db().await;
+        let (source_id, _) = seed_fixtures(&pool).await;
+        let key = [0u8; 32];
+        set_sync_new_calendars(&pool, &source_id, false).await.unwrap();
+        let (base, requests) = spawn_two_calendar_dav().await;
+        let client = CaldavClient::new(&base, "user", "pw");
+
+        let found = discover_new_caldav_source(&pool, &key, &client, &source_id)
+            .await
+            .unwrap();
+        assert_eq!(found, 2);
+        let seen = requests.lock().unwrap().clone();
+        assert!(
+            seen.iter().all(|r| r.starts_with("PROPFIND")),
+            "discovery fetched events: {seen:?}"
+        );
+        let off: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM calendars WHERE source_id = ? AND sync_enabled = 0",
+        )
+        .bind(&source_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(off, 2, "both calendars are listed unsynced");
+        assert!(
+            source_syncs_new_calendars(&pool, &source_id).await.unwrap(),
+            "calendars found later are synced again, as by default"
+        );
+
+        let mine: String = sqlx::query_scalar(
+            "SELECT id FROM calendars WHERE source_id = ? AND href = '/cals/mine/'",
+        )
+        .bind(&source_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        set_calendar_sync_enabled(&pool, &source_id, &mine, true).await.unwrap();
+        requests.lock().unwrap().clear();
+        sync_source(&pool, &key, &client, &source_id).await.unwrap();
+        let seen = requests.lock().unwrap().clone();
+        assert!(seen.iter().any(|r| r.starts_with("REPORT /cals/mine")));
+        assert!(
+            !seen.iter().any(|r| r.contains("/cals/colleague")),
+            "the calendar left off was requested: {seen:?}"
+        );
+        assert_eq!(calendar_event_count(&pool, &source_id, "/cals/mine/").await, 1);
+    }
+
+    /// With `sync_new_calendars = 0`, a sync lists new calendars but never
+    /// fetches them; calendars already known keep their own setting.
+    #[tokio::test]
+    async fn calendars_found_by_a_sync_follow_the_source_setting() {
+        let pool = setup_test_db().await;
+        let (source_id, _) = seed_fixtures(&pool).await;
+        let key = [0u8; 32];
+        let (base, requests) = spawn_two_calendar_dav().await;
+        let client = CaldavClient::new(&base, "user", "pw");
+        // `/cals/mine/` is known and synced; `/cals/colleague/` is new.
+        sqlx::query("INSERT INTO calendars (id, source_id, href, display_name) VALUES ('known', ?, '/cals/mine/', 'Mine')")
+            .bind(&source_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        set_sync_new_calendars(&pool, &source_id, false).await.unwrap();
+
+        sync_source(&pool, &key, &client, &source_id).await.unwrap();
+        let seen = requests.lock().unwrap().clone();
+        assert!(seen.iter().any(|r| r.starts_with("REPORT /cals/mine")));
+        assert!(
+            !seen.iter().any(|r| r.starts_with("REPORT /cals/colleague")),
+            "the new calendar was fetched: {seen:?}"
+        );
+        let colleague_synced: bool = sqlx::query_scalar(
+            "SELECT sync_enabled FROM calendars WHERE source_id = ? AND href = '/cals/colleague/'",
+        )
+        .bind(&source_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(!colleague_synced);
+    }
+
+    /// A listing that fails is recorded on the source like a failed sync,
+    /// and leaves the source syncing new calendars, as before.
+    #[tokio::test]
+    async fn a_failed_first_listing_restores_the_default() {
+        let pool = setup_test_db().await;
+        let (source_id, _) = seed_fixtures(&pool).await;
+        let key = [0u8; 32];
+        set_sync_new_calendars(&pool, &source_id, false).await.unwrap();
+        // Nothing listens on port 1.
+        let client = CaldavClient::new("http://127.0.0.1:1/dav/", "user", "pw");
+
+        assert!(discover_new_caldav_source(&pool, &key, &client, &source_id)
+            .await
+            .is_err());
+        assert!(source_syncs_new_calendars(&pool, &source_id).await.unwrap());
+        let error: Option<String> =
+            sqlx::query_scalar("SELECT last_sync_error FROM caldav_sources WHERE id = ?")
+                .bind(&source_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(error.is_some(), "the failure is shown on the source");
     }
 
     #[tokio::test]

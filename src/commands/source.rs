@@ -40,6 +40,11 @@ pub enum SourceCommands {
         /// since stdin then holds the password.
         #[arg(long)]
         password_stdin: bool,
+        /// CalDAV only: list the source's calendars now, none of them
+        /// synced, so you pick them with `calrs source calendars` before the
+        /// first sync fetches anything.
+        #[arg(long)]
+        pick_calendars: bool,
     },
     /// List connected sources
     List,
@@ -90,6 +95,14 @@ pub enum SourceCommands {
         /// href or display name; repeatable)
         #[arg(long)]
         disable: Vec<String>,
+        /// CalDAV only: read the calendar list from the server again,
+        /// without fetching any event
+        #[arg(long)]
+        discover: bool,
+        /// Whether calendars the source lists later start synced (true, the
+        /// default) or not (false)
+        #[arg(long, value_name = "BOOL")]
+        sync_new: Option<bool>,
     },
 }
 
@@ -188,10 +201,14 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: SourceCommands) -> Resu
             email,
             no_test,
             password_stdin,
+            pick_calendars,
         } => {
             let provider = provider.trim().to_ascii_lowercase();
             if provider != factory::kinds::CALDAV && provider != factory::kinds::EWS {
                 bail!("unknown provider '{}'. Use 'caldav' or 'ews'.", provider);
+            }
+            if pick_calendars && provider != factory::kinds::CALDAV {
+                bail!("--pick-calendars works with CalDAV sources only");
             }
             let url_known = url.is_some() || (provider == factory::kinds::EWS && email.is_some());
             if password_stdin && (username.is_none() || name.is_none() || !url_known) {
@@ -286,7 +303,7 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: SourceCommands) -> Resu
             let password_enc = crate::crypto::encrypt_password(key, &password)?;
 
             sqlx::query(
-                "INSERT INTO caldav_sources (id, account_id, name, url, username, password_enc, provider_type) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO caldav_sources (id, account_id, name, url, username, password_enc, provider_type, sync_new_calendars) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             )
             .bind(&id)
             .bind(&account.0)
@@ -295,6 +312,7 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: SourceCommands) -> Resu
             .bind(&username)
             .bind(&password_enc)
             .bind(&provider)
+            .bind(!pick_calendars)
             .execute(pool)
             .await?;
 
@@ -305,6 +323,21 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: SourceCommands) -> Resu
                 factory::label(&provider),
                 &id[..8]
             );
+
+            if pick_calendars {
+                let client = crate::caldav::CaldavClient::new(&url, &username, &password);
+                let found =
+                    crate::commands::sync::discover_new_caldav_source(pool, key, &client, &id)
+                    .await?;
+                println!(
+                    "{} {} calendar(s) listed, none synced yet. Pick them with:",
+                    "✓".green(),
+                    found
+                );
+                println!(
+                    "  calrs source calendars {} --enable <calendar>", &id[..8]
+                );
+            }
         }
         SourceCommands::List => {
             let sources: Vec<(String, String, String, String, Option<String>, String)> =
@@ -442,19 +475,44 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: SourceCommands) -> Resu
             id,
             enable,
             disable,
+            discover,
+            sync_new,
         } => {
             let source_id = resolve_source_id(pool, &id).await?;
-            let (source_name,): (String,) =
-                sqlx::query_as("SELECT name FROM caldav_sources WHERE id = ?")
-                    .bind(&source_id)
-                    .fetch_one(pool)
-                    .await?;
+            #[allow(clippy::type_complexity)]
+            let (source_name, url, username, password_enc, auth_type, access_token_enc, token_expires_at, provider_type):
+                (String, String, String, Option<String>, String, Option<String>, Option<String>, String) =
+                sqlx::query_as(
+                    "SELECT name, url, username, password_enc, auth_type, access_token_enc, \
+                     token_expires_at, provider_type FROM caldav_sources WHERE id = ?",
+                )
+                .bind(&source_id)
+                .fetch_one(pool)
+                .await?;
+
+            if let Some(sync_new) = sync_new {
+                crate::commands::sync::set_sync_new_calendars(pool, &source_id, sync_new).await?;
+            }
+
+            if discover {
+                if provider_type != factory::kinds::CALDAV {
+                    bail!("--discover works with CalDAV sources only; run `calrs sync` instead");
+                }
+                let client = crate::oauth2_caldav::build_client_for_source(
+                    pool, key, &source_id, &url, &auth_type, &username,
+                    password_enc.as_deref(), access_token_enc.as_deref(), token_expires_at.as_deref(),
+                )
+                .await?;
+                crate::commands::sync::discover_caldav_calendars(pool, &client, &source_id).await?;
+            }
 
             let calendars = list_source_calendars(pool, &source_id).await?;
             if calendars.is_empty() {
                 println!(
-                    "No calendars discovered for '{}' yet. Run `calrs sync` first.",
-                    source_name
+                    "No calendars discovered for '{}' yet. Run `calrs source calendars {} --discover` \
+                     to list them without syncing, or `calrs sync`.",
+                    source_name,
+                    &source_id[..8.min(source_id.len())]
                 );
                 return Ok(());
             }
@@ -493,6 +551,12 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: SourceCommands) -> Resu
                 })
                 .collect();
             println!("{}", Table::new(rows));
+            let syncs_new: bool =
+                sqlx::query_scalar("SELECT sync_new_calendars FROM caldav_sources WHERE id = ?")
+                    .bind(&source_id)
+                    .fetch_one(pool)
+                    .await?;
+            println!("  Calendars found later: {}", if syncs_new { "synced" } else { "not synced" });
             if changes.iter().any(|(_, enabled)| *enabled) {
                 println!(
                     "{}",
@@ -774,6 +838,8 @@ mod tests {
                 id: "ab".to_string(),
                 enable: vec![],
                 disable: vec![],
+                discover: false,
+                sync_new: None,
             },
         )
         .await
