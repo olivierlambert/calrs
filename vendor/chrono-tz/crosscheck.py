@@ -56,12 +56,21 @@ def main(src, out_path):
                 for line in dump.splitlines():
                     parts = line.split()
                     gmtoff = [p for p in parts if p.startswith("gmtoff=")]
-                    if not gmtoff or "failed)" in line:
-                        continue  # "NULL" lines, and zdump's bounds of time
-                    if parts[0] != zone or parts[6] != "UT":
+                    if parts[0] != zone:
                         sys.exit(f"unexpected zdump line: {line}")
-                    if not 1800 <= int(parts[5]) <= 2041:
-                        continue  # zdump's bounds of time, outside the range
+                    # Only two kinds of line are not transitions: "= NULL"
+                    # (none in range), and zdump's bounds of time, far
+                    # outside the range (a 64-bit extreme that fails to
+                    # convert, or year -2147481748). Anything else fails.
+                    if line.rstrip().endswith("= NULL"):
+                        continue
+                    stamp, year = parts[1].lstrip("-"), parts[5].lstrip("-")
+                    if (stamp.isdigit() and len(stamp) > 12) or (
+                        year.isdigit() and len(year) > 6
+                    ):
+                        continue
+                    if not gmtoff or parts[6] != "UT" or not 1800 <= int(parts[5]) <= 2041:
+                        sys.exit(f"unexpected zdump line: {line}")
                     at = datetime.datetime.strptime(
                         " ".join(parts[2:6]), "%b %d %H:%M:%S %Y"
                     ).replace(tzinfo=datetime.timezone.utc)

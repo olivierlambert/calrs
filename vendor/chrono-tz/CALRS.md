@@ -11,7 +11,9 @@ This is chrono-tz 0.8.6 from crates.io, unchanged except for:
   Metlakatla, Yakutat, Anchorage, Nome, Adak) in local time instead of 2026f's
   `0:31:13u`, the same instants (2026b's values). The parser chrono-tz 0.8.6
   builds with (parse-zoneinfo 0.3) ignores the `u` and `s` suffixes on a
-  zone's UNTIL time, and moved that switch by about 15 hours.
+  zone's UNTIL time, and moved that switch by about 15 hours. Likewise
+  `europe` writes Dublin's 1925 return to GMT (2026e) as `3:00`, the wall
+  time in IST, instead of `2:00s`.
 - `build.rs`: one `cargo:rerun-if-changed=tz` line. chrono-tz-build only
   reruns on an environment variable, so without it a refreshed `tz/` is
   silently ignored by an existing `target/`.
@@ -62,10 +64,12 @@ stale copy is noticed before a zone's clocks change rather than after.
    `TZ_EXPECT=/tmp/expect.tsv cargo test tzdata_matches_zdump -- --ignored --nocapture`.
    It fails on any offset that differs and is not in
    `crosscheck-baseline.txt`, which lists the known differences by zone and
-   instant: 141, all at a transition in 2015 or earlier (the suffix limit
+   instant: 139, all at a transition in 2015 or earlier (the suffix limit
    above); the monthly samples all agree. A new difference is a regression
-   from the new data: write the line in a form the parser reads (local
-   time, as for Alaska) rather than adding it to the baseline. Remove the
+   from the new data: write the line in a form the parser reads (wall
+   time, as for Alaska and Dublin) rather than adding it to the baseline.
+   Compare by instant, not by zone: a zone with an old difference can hide
+   a new one. Remove the
    lines the test reports as agreeing now.
 4. Add a `tzdata_*` test in `src/utils.rs` for any new rule change, and run
    `cargo test` (the tests pin the changes we rely on).
