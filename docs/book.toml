@@ -6,4 +6,4 @@ src = "src"
 
 [output.html]
 git-repository-url = "https://github.com/olivierlambert/calrs"
-edit-url-template = "https://github.com/olivierlambert/calrs/edit/main/docs/src/{path}"
+edit-url-template = "https://github.com/olivierlambert/calrs/edit/main/docs/{path}"
