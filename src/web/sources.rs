@@ -571,7 +571,8 @@ async fn render_source_form_error(
 }
 
 /// Render the source form in editing mode with the given values.
-fn render_source_edit_form(
+#[allow(clippy::too_many_arguments)]
+async fn render_source_edit_form(
     state: &AppState,
     auth_user: &crate::auth::AuthUser,
     source_id: &str,
@@ -579,7 +580,16 @@ fn render_source_edit_form(
     url: &str,
     username: &str,
     error: &str,
+    calendars_saved: bool,
 ) -> Html<String> {
+    // The card below the connection: the calendars the source lists, as
+    // cached by its last sync or listing.
+    let write_href = owned_source(&state.pool, source_id, &auth_user.user.id)
+        .await
+        .and_then(|(_, write)| write);
+    let (calendars, sync_new) =
+        source_calendar_values(&state.pool, source_id, write_href.as_deref()).await;
+
     let tmpl = match state.templates.get_template("source_form.html") {
         Ok(t) => t,
         Err(e) => return Html(format!("Template error: {}", e)),
@@ -601,6 +611,10 @@ fn render_source_edit_form(
             form_url => url,
             form_username => username,
             error => error,
+            calendars => calendars,
+            sync_new => sync_new,
+            calendars_saved => calendars_saved,
+            return_to => "edit",
             sidebar => sidebar_context(auth_user, "sources"),
             lang => auth_user.lang,
             impersonating => impersonating,
@@ -610,10 +624,17 @@ fn render_source_edit_form(
     )
 }
 
+#[derive(Deserialize)]
+pub(super) struct SourceEditQuery {
+    /// Back from saving the calendars card.
+    saved: Option<String>,
+}
+
 pub(super) async fn edit_source_form(
     State(state): State<Arc<AppState>>,
     auth_user: crate::auth::AuthUser,
     Path(source_id): Path<String>,
+    Query(query): Query<SourceEditQuery>,
 ) -> impl IntoResponse {
     let user = &auth_user.user;
     // A managed source takes its endpoint and credentials from the admin's
@@ -645,8 +666,18 @@ pub(super) async fn edit_source_form(
         return Redirect::to("/dashboard/sources").into_response();
     }
 
-    render_source_edit_form(&state, &auth_user, &source_id, &name, &url, &username, "")
-        .into_response()
+    render_source_edit_form(
+        &state,
+        &auth_user,
+        &source_id,
+        &name,
+        &url,
+        &username,
+        "",
+        query.saved.is_some(),
+    )
+    .await
+    .into_response()
 }
 
 pub(super) async fn update_source(
@@ -704,7 +735,9 @@ pub(super) async fn update_source(
             &form.url,
             &form.username,
             "Name, URL, and username are required.",
+            false,
         )
+        .await
         .into_response();
     }
 
@@ -717,7 +750,9 @@ pub(super) async fn update_source(
             &url,
             &username,
             &e.to_string(),
+            false,
         )
+        .await
         .into_response();
     }
 
@@ -748,8 +783,9 @@ pub(super) async fn update_source(
         if let Err(e) = client.check_connection().await {
             let msg = format!("Connection failed: {}. Check the URL and credentials, or check \"Skip connection test\" to save anyway.", e);
             return render_source_edit_form(
-                &state, &auth_user, &source_id, &name, &url, &username, &msg,
+                &state, &auth_user, &source_id, &name, &url, &username, &msg, false,
             )
+            .await
             .into_response();
         }
     }
@@ -809,6 +845,28 @@ pub(super) async fn update_source(
         user = %auth_user.user.email,
         "CalDAV source updated"
     );
+
+    // Pointed at another server or account: list what the new one holds,
+    // without fetching events, and show it in the calendars card of this
+    // page, so the owner picks before the next sync. Not with "Skip
+    // connection test": the owner asked not to contact the server now.
+    let moved =
+        previous_url.trim() != url || !previous_username.trim().eq_ignore_ascii_case(&username);
+    if provider_type == crate::providers::factory::kinds::CALDAV && moved && !skip_test {
+        let client = crate::caldav::CaldavClient::new(&url, &username, &plaintext_password);
+        match crate::commands::sync::discover_caldav_calendars(&state.pool, &client, &source_id)
+            .await
+        {
+            Ok(count) if count > 0 => {
+                return Redirect::to(&format!("/dashboard/sources/{source_id}/edit#calendars"))
+                    .into_response();
+            }
+            Ok(_) => {}
+            Err(e) => {
+                tracing::warn!(source_id = %source_id, error = %format!("{e:#}"), "could not list the calendars of an edited source");
+            }
+        }
+    }
 
     Redirect::to("/dashboard/sources").into_response()
 }
@@ -1940,6 +1998,51 @@ async fn owned_source(
     .unwrap_or(None)
 }
 
+/// The calendars of `source_id` as the picker shows them (the picker page
+/// and the card on the edit page), and whether calendars it lists later
+/// start synced.
+async fn source_calendar_values(
+    pool: &SqlitePool,
+    source_id: &str,
+    write_href: Option<&str>,
+) -> (Vec<minijinja::Value>, bool) {
+    #[allow(clippy::type_complexity)]
+    let calendars: Vec<(String, String, Option<String>, Option<String>, bool, i64)> =
+        sqlx::query_as(
+            "SELECT c.id, c.href, c.display_name, c.color, c.sync_enabled,
+                    (SELECT COUNT(*) FROM events e WHERE e.calendar_id = c.id)
+             FROM calendars c WHERE c.source_id = ?
+             ORDER BY c.display_name, c.href",
+        )
+        .bind(source_id)
+        .fetch_all(pool)
+        .await
+        .unwrap_or_default();
+
+    let sync_new: bool =
+        sqlx::query_scalar("SELECT sync_new_calendars FROM caldav_sources WHERE id = ?")
+            .bind(source_id)
+            .fetch_one(pool)
+            .await
+            .unwrap_or(true);
+
+    let values: Vec<minijinja::Value> = calendars
+        .iter()
+        .map(|(id, href, name, color, sync_enabled, event_count)| {
+            context! {
+                id => id,
+                name => name.as_deref().unwrap_or(href),
+                // The color lands in a style attribute: only a hex color.
+                color => color.as_deref().filter(|c| is_css_hex_color(c)),
+                sync_enabled => sync_enabled,
+                event_count => event_count,
+                is_write => write_href == Some(href.as_str()),
+            }
+        })
+        .collect();
+    (values, sync_new)
+}
+
 #[derive(Deserialize)]
 pub(super) struct SourceCalendarsQuery {
     saved: Option<String>,
@@ -1960,42 +2063,11 @@ pub(super) async fn source_calendars_form(
         return Redirect::to("/dashboard/sources").into_response();
     };
 
-    #[allow(clippy::type_complexity)]
-    let calendars: Vec<(String, String, Option<String>, Option<String>, bool, i64)> =
-        sqlx::query_as(
-            "SELECT c.id, c.href, c.display_name, c.color, c.sync_enabled,
-                    (SELECT COUNT(*) FROM events e WHERE e.calendar_id = c.id)
-             FROM calendars c WHERE c.source_id = ?
-             ORDER BY c.display_name, c.href",
-        )
-        .bind(&source_id)
-        .fetch_all(&state.pool)
-        .await
-        .unwrap_or_default();
-
+    let (cal_values, stored_sync_new) =
+        source_calendar_values(&state.pool, &source_id, write_href.as_deref()).await;
     // A new source holds 0 until its picker is saved, so nothing it lists
     // meanwhile gets synced. The box still offers the default, checked.
-    let sync_new: bool = query.setup.is_some()
-        || sqlx::query_scalar("SELECT sync_new_calendars FROM caldav_sources WHERE id = ?")
-            .bind(&source_id)
-            .fetch_one(&state.pool)
-            .await
-            .unwrap_or(true);
-
-    let cal_values: Vec<minijinja::Value> = calendars
-        .iter()
-        .map(|(id, href, name, color, sync_enabled, event_count)| {
-            context! {
-                id => id,
-                name => name.as_deref().unwrap_or(href),
-                // The color lands in a style attribute: only a hex color.
-                color => color.as_deref().filter(|c| is_css_hex_color(c)),
-                sync_enabled => sync_enabled,
-                event_count => event_count,
-                is_write => write_href.as_deref() == Some(href.as_str()),
-            }
-        })
-        .collect();
+    let sync_new = query.setup.is_some() || stored_sync_new;
 
     let tmpl = match state.templates.get_template("source_calendars.html") {
         Ok(t) => t,
@@ -2036,6 +2108,8 @@ pub(super) struct SourceCalendarsForm {
     sync: Vec<String>,
     /// Checkbox: calendars the source lists later start synced.
     sync_new: Option<String>,
+    /// Hidden field of the card on the edit page: go back there.
+    return_to: Option<String>,
     /// Hidden field of the setup visit: save, then run the first sync.
     setup: Option<String>,
 }
@@ -2089,6 +2163,12 @@ pub(super) async fn update_source_calendars(
 
     if form.setup.is_some() {
         return first_sync_after_setup(&state, &source_id).await;
+    }
+    if form.return_to.as_deref() == Some("edit") {
+        return Redirect::to(&format!(
+            "/dashboard/sources/{source_id}/edit?saved=1#calendars"
+        ))
+        .into_response();
     }
     Redirect::to(&format!("/dashboard/sources/{source_id}/calendars?saved=1")).into_response()
 }

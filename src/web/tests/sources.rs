@@ -83,6 +83,66 @@ async fn edit_source_form_renders_prefilled() {
     );
 }
 
+/// The edit page lists the source's calendars in a card below the
+/// connection, and saving that card comes back to the edit page.
+#[tokio::test]
+async fn the_edit_page_shows_the_calendars_card() {
+    let (app, pool, session, _) = setup_test_app().await;
+    let sid = seed_source(&pool, "Kerio", "pw").await;
+    let (mine, colleague) = seed_two_calendars(&pool, &sid).await;
+
+    let body = body_string(
+        app.clone()
+            .oneshot(get_authed(
+                &format!("/dashboard/sources/{sid}/edit"),
+                &session,
+            ))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(body.contains(r#"id="calendars""#));
+    assert!(body.contains(&format!(r#"value="{mine}""#)));
+    assert!(body.contains(&format!(r#"value="{colleague}""#)));
+    assert!(body.contains(r#"<input type="hidden" name="return_to" value="edit">"#));
+
+    let csrf = "test-csrf-edit-card";
+    let response = app
+        .clone()
+        .oneshot(post_form(
+            &format!("/dashboard/sources/{sid}/calendars"),
+            &session,
+            csrf,
+            &format!("_csrf={csrf}&sync={mine}&sync_new=on&return_to=edit"),
+        ))
+        .await
+        .unwrap();
+    assert!(response.status().is_redirection());
+    let location = response.headers()["location"].to_str().unwrap();
+    assert_eq!(
+        location,
+        format!("/dashboard/sources/{sid}/edit?saved=1#calendars")
+    );
+    let colleague_synced: bool =
+        sqlx::query_scalar("SELECT sync_enabled FROM calendars WHERE id = ?")
+            .bind(&colleague)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(!colleague_synced);
+
+    let body = body_string(
+        app.oneshot(get_authed(
+            &format!("/dashboard/sources/{sid}/edit?saved=1"),
+            &session,
+        ))
+        .await
+        .unwrap(),
+    )
+    .await;
+    assert!(body.contains("Newly checked calendars are fetched at the next sync"));
+}
+
 #[tokio::test]
 async fn update_source_changes_fields_and_keeps_password_when_blank() {
     let (app, pool, session, _) = setup_test_app().await;
