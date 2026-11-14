@@ -3444,6 +3444,191 @@ mod tests {
         assert_eq!(timezone.as_deref(), Some("Europe/Berlin"));
     }
 
+    /// Syncs `ical` (CRLF line endings applied here) and checks that the event
+    /// `uid` is stored in Zurich time from 13:30 to 14:30 on 2026-11-18, and
+    /// that the busy readers (slot engine, troubleshoot) see that one hour.
+    async fn assert_synced_as_one_hour_in_zurich(ical: &str, uid: &str) {
+        let pool = setup_test_db().await;
+        let (source_id, _) = seed_fixtures(&pool).await;
+        let cal_id = Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO calendars (id, source_id, href, display_name, is_busy) VALUES (?, ?, '/c/', 'C', 1)")
+            .bind(&cal_id).bind(&source_id).execute(&pool).await.unwrap();
+
+        let raw = vec![RawEvent {
+            href: format!("/c/{uid}.ics"),
+            ical_data: ical.replace('\n', "\r\n"),
+        }];
+        assert_eq!(upsert_raw_events(&pool, &cal_id, &raw).await, 1);
+
+        let (start_at, end_at, timezone): (String, String, Option<String>) =
+            sqlx::query_as("SELECT start_at, end_at, timezone FROM events WHERE uid = ?")
+                .bind(uid)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(timezone.as_deref(), Some("Europe/Zurich"));
+        assert_eq!(start_at, "20261118T133000");
+        assert_eq!(end_at, "20261118T143000");
+
+        // What the busy readers (slot engine, troubleshoot) make of the row:
+        // one hour, 13:30 to 14:30 Zurich time.
+        let day = chrono::NaiveDate::from_ymd_opt(2026, 11, 18).unwrap();
+        let at = |h, m| day.and_hms_opt(h, m, 0).unwrap();
+        let busy = crate::rrule::occurrences_in(
+            &start_at,
+            &end_at,
+            "",
+            None,
+            timezone.as_deref(),
+            at(0, 0),
+            day.succ_opt().unwrap().and_hms_opt(0, 0, 0).unwrap(),
+            chrono_tz::Europe::Zurich,
+        );
+        assert_eq!(busy, vec![(at(13, 30), at(14, 30))]);
+    }
+
+    /// An event whose DTEND is in another zone than its DTSTART, as exported
+    /// by Thunderbird: 13:30 Zurich to 13:30 UTC, one hour. The row stores
+    /// one zone, the DTSTART's, so the end must be normalized to it, or every
+    /// busy reader sees a zero-length event that blocks nothing.
+    #[tokio::test]
+    async fn sync_normalizes_an_end_in_another_zone_to_the_start_zone() {
+        let ical = r#"BEGIN:VCALENDAR
+PRODID:-//Mozilla.org/NONSGML Mozilla Calendar V1.1//EN
+VERSION:2.0
+METHOD:PUBLISH
+X-CALENDARSERVER-ACCESS:PUBLIC
+BEGIN:VTIMEZONE
+TZID:Europe/Zurich
+X-TZINFO:Europe/Zurich[2026e]
+BEGIN:STANDARD
+TZOFFSETTO:+002946
+TZOFFSETFROM:+003408
+TZNAME:Europe/Zurich(STD)
+DTSTART:18530716T000000
+RDATE:18530716T000000
+END:STANDARD
+BEGIN:STANDARD
+TZOFFSETTO:+0100
+TZOFFSETFROM:+002946
+TZNAME:Europe/Zurich(STD)
+DTSTART:18940601T000000
+RDATE:18940601T000000
+END:STANDARD
+BEGIN:DAYLIGHT
+TZOFFSETTO:+0200
+TZOFFSETFROM:+0100
+TZNAME:Europe/Zurich(DST)
+DTSTART:19410505T010000
+RRULE:FREQ=YEARLY;UNTIL=19420504T010000Z;BYMONTH=5;BYDAY=1MO
+END:DAYLIGHT
+BEGIN:STANDARD
+TZOFFSETTO:+0100
+TZOFFSETFROM:+0200
+TZNAME:Europe/Zurich(STD)
+DTSTART:19411006T020000
+RRULE:FREQ=YEARLY;UNTIL=19421005T020000Z;BYMONTH=10;BYDAY=1MO
+END:STANDARD
+BEGIN:STANDARD
+TZOFFSETTO:+0100
+TZOFFSETFROM:+0200
+TZNAME:Europe/Zurich(STD)
+DTSTART:19810927T030000
+RRULE:FREQ=YEARLY;UNTIL=19950924T030000Z;BYMONTH=9;BYDAY=-1SU
+END:STANDARD
+BEGIN:DAYLIGHT
+TZOFFSETTO:+0200
+TZOFFSETFROM:+0100
+TZNAME:Europe/Zurich(DST)
+DTSTART:19810329T020000
+RRULE:FREQ=YEARLY;UNTIL=19960331T020000Z;BYMONTH=3;BYDAY=-1SU
+END:DAYLIGHT
+BEGIN:STANDARD
+TZOFFSETTO:+0100
+TZOFFSETFROM:+0200
+TZNAME:Europe/Zurich(STD)
+DTSTART:19961027T030000
+RDATE:19961027T030000
+END:STANDARD
+BEGIN:DAYLIGHT
+TZOFFSETTO:+0200
+TZOFFSETFROM:+0100
+TZNAME:(DST)
+DTSTART:19970330T020000
+RRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=-1SU
+END:DAYLIGHT
+BEGIN:STANDARD
+TZOFFSETTO:+0100
+TZOFFSETFROM:+0200
+TZNAME:(STD)
+DTSTART:19971026T030000
+RRULE:FREQ=YEARLY;BYMONTH=10;BYDAY=-1SU
+END:STANDARD
+END:VTIMEZONE
+BEGIN:VTIMEZONE
+TZID:Etc/UTC
+X-TZINFO:Etc/UTC[2026e]
+BEGIN:STANDARD
+TZOFFSETTO:+0000
+TZOFFSETFROM:+0000
+TZNAME:Etc/UTC(STD)
+DTSTART:19700101T000000
+END:STANDARD
+END:VTIMEZONE
+BEGIN:VEVENT
+CREATED:20261113T225755Z
+LAST-MODIFIED:20261113T225814Z
+DTSTAMP:20261113T225814Z
+UID:57ed742c-1dc0-465d-86c5-f23efeb104f1
+SUMMARY:13:30 to 14:30
+DTSTART;TZID=Europe/Zurich:20261118T133000
+DTEND;TZID=Etc/UTC:20261118T133000
+TRANSP:OPAQUE
+X-MICROSOFT-CDO-BUSYSTATUS:BUSY
+BEGIN:VALARM
+UID:8f32d873-bd22-4747-8e69-5ff148ffdceb
+TRIGGER;VALUE=DATE-TIME:19760401T005545Z
+ACTION:NONE
+END:VALARM
+END:VEVENT
+END:VCALENDAR
+"#;
+        assert_synced_as_one_hour_in_zurich(ical, "57ed742c-1dc0-465d-86c5-f23efeb104f1").await;
+    }
+
+    /// The same, with an end TZID that only its VTIMEZONE defines (New York
+    /// rules under a custom name, as Outlook writes "Customized Time Zone"):
+    /// DTEND has to be resolved through the resource's VTIMEZONE blocks like
+    /// DTSTART is. 08:30 New York is 13:30 UTC, 14:30 in Zurich.
+    #[tokio::test]
+    async fn sync_resolves_an_end_tzid_through_its_vtimezone() {
+        let ical = "BEGIN:VCALENDAR
+VERSION:2.0
+BEGIN:VTIMEZONE
+TZID:Customized Time Zone
+BEGIN:STANDARD
+TZOFFSETFROM:-0400
+TZOFFSETTO:-0500
+DTSTART:16010101T020000
+RRULE:FREQ=YEARLY;BYDAY=1SU;BYMONTH=11
+END:STANDARD
+BEGIN:DAYLIGHT
+TZOFFSETFROM:-0500
+TZOFFSETTO:-0400
+DTSTART:16010101T020000
+RRULE:FREQ=YEARLY;BYDAY=2SU;BYMONTH=3
+END:DAYLIGHT
+END:VTIMEZONE
+BEGIN:VEVENT
+UID:custom-end-zone
+DTSTART;TZID=Europe/Zurich:20261118T133000
+DTEND;TZID=Customized Time Zone:20261118T083000
+END:VEVENT
+END:VCALENDAR
+";
+        assert_synced_as_one_hour_in_zurich(ical, "custom-end-zone").await;
+    }
+
     /// A provider whose only job is answering `event_exists`: `Some(found)`,
     /// or `None` for a lookup that fails.
     struct ExistsProvider(Option<bool>);

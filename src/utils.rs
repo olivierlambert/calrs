@@ -1493,6 +1493,97 @@ END:VEVENT";
         assert_eq!(end_of(event), Some("20261027T171500Z".to_string()),);
     }
 
+    /// DTEND in another zone than DTSTART. The stored end is read in the
+    /// DTSTART zone, so it must be converted to it: 13:30 UTC is 14:30 in
+    /// Zurich in November, and the event lasts one hour, not zero.
+    #[test]
+    fn normalizes_dtend_to_the_dtstart_zone() {
+        let cases = [
+            // TZID on both, different zones.
+            (
+                "DTSTART;TZID=Europe/Zurich:20261118T133000",
+                "DTEND;TZID=Etc/UTC:20261118T133000",
+                "20261118T143000",
+            ),
+            // UTC end written with the Z suffix.
+            (
+                "DTSTART;TZID=Europe/Zurich:20261118T133000",
+                "DTEND:20261118T133000Z",
+                "20261118T143000",
+            ),
+            // Two named zones, neither UTC.
+            (
+                "DTSTART;TZID=Europe/Zurich:20261118T133000",
+                "DTEND;TZID=Europe/London:20261118T133000",
+                "20261118T143000",
+            ),
+            // Overnight across the fall-back change (01:00 UTC on Oct 25):
+            // 02:00 UTC is 03:00 in Zurich (+01:00), not 04:00 with the
+            // +02:00 offset the start had.
+            (
+                "DTSTART;TZID=Europe/Zurich:20261024T230000",
+                "DTEND:20261025T020000Z",
+                "20261025T030000",
+            ),
+            // UTC start, zoned end: the end is stored in UTC like the start.
+            (
+                "DTSTART:20261118T123000Z",
+                "DTEND;TZID=Europe/Zurich:20261118T143000",
+                "20261118T133000Z",
+            ),
+            // Same zone on both: stays as written.
+            (
+                "DTSTART;TZID=Europe/Zurich:20261118T133000",
+                "DTEND;TZID=Europe/Zurich:20261118T143000",
+                "20261118T143000",
+            ),
+        ];
+
+        for (start, end, expected) in cases {
+            let event = format!("BEGIN:VEVENT\n{start}\n{end}\nEND:VEVENT");
+
+            assert_eq!(end_of(&event), Some(expected.to_string()), "{start}, {end}");
+        }
+    }
+
+    /// When either side has no zone calrs can convert from, there is no
+    /// instant to normalize, so DTEND is kept as written.
+    #[test]
+    fn keeps_dtend_as_written_when_a_zone_does_not_resolve() {
+        let cases = [
+            // DTEND TZID unknown, and no VTIMEZONE at hand.
+            (
+                "DTSTART;TZID=Europe/Zurich:20261118T133000",
+                "DTEND;TZID=Nowhere/Special:20261118T143000",
+                "20261118T143000",
+            ),
+            // DTSTART TZID unknown: the start is read as floating time.
+            (
+                "DTSTART;TZID=Nowhere/Special:20261118T133000",
+                "DTEND;TZID=Etc/UTC:20261118T143000",
+                "20261118T143000",
+            ),
+            // Floating start, zoned end (invalid per RFC 5545 3.8.2.2).
+            (
+                "DTSTART:20261118T133000",
+                "DTEND;TZID=Etc/UTC:20261118T143000",
+                "20261118T143000",
+            ),
+            // Floating start, UTC end (equally invalid).
+            (
+                "DTSTART:20261118T133000",
+                "DTEND:20261118T143000Z",
+                "20261118T143000Z",
+            ),
+        ];
+
+        for (start, end, expected) in cases {
+            let event = format!("BEGIN:VEVENT\n{start}\n{end}\nEND:VEVENT");
+
+            assert_eq!(end_of(&event), Some(expected.to_string()), "{start}, {end}");
+        }
+    }
+
     #[test]
     fn rejects_invalid_durations() {
         for duration in [
