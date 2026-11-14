@@ -81,7 +81,8 @@ When you add a CalDAV source from the dashboard (with a password or through Goog
 **Also sync calendars that appear on this source later** decides what happens to a calendar the server lists for the first time after that, such as one a colleague just shared with you. Checked (the default), it is synced until you uncheck it. Unchecked, it shows up on this page unchecked, and nothing is fetched from it until you check it. Exchange and Microsoft 365 sources keep syncing at once when added; the setting for calendars found later applies to them too.
 
 ```bash
-# Add a CalDAV source and list its calendars without syncing any
+# Add a CalDAV source and list its calendars without syncing any.
+# Calendars that appear later stay unsynced until you run --sync-new true.
 calrs source add --url https://dav.example.com/ --username me --name Work --pick-calendars
 
 # List a source's calendars

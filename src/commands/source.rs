@@ -328,15 +328,19 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: SourceCommands) -> Resu
                 let client = crate::caldav::CaldavClient::new(&url, &username, &password);
                 let found =
                     crate::commands::sync::discover_new_caldav_source(pool, key, &client, &id)
-                    .await?;
+                        .await?;
                 println!(
                     "{} {} calendar(s) listed, none synced yet. Pick them with:",
                     "✓".green(),
                     found
                 );
-                println!(
-                    "  calrs source calendars {} --enable <calendar>", &id[..8]
-                );
+                println!("  calrs source calendars {} --enable <calendar>", &id[..8]);
+                if found > 0 {
+                    // Like the web picker: calendars that appear later stay
+                    // off until the owner has chosen.
+                    println!("Calendars that appear later are not synced until you run:");
+                    println!("  calrs source calendars {} --sync-new true", &id[..8]);
+                }
             }
         }
         SourceCommands::List => {
@@ -480,15 +484,31 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: SourceCommands) -> Resu
         } => {
             let source_id = resolve_source_id(pool, &id).await?;
             #[allow(clippy::type_complexity)]
-            let (source_name, url, username, password_enc, auth_type, access_token_enc, token_expires_at, provider_type):
-                (String, String, String, Option<String>, String, Option<String>, Option<String>, String) =
-                sqlx::query_as(
-                    "SELECT name, url, username, password_enc, auth_type, access_token_enc, \
+            let (
+                source_name,
+                url,
+                username,
+                password_enc,
+                auth_type,
+                access_token_enc,
+                token_expires_at,
+                provider_type,
+            ): (
+                String,
+                String,
+                String,
+                Option<String>,
+                String,
+                Option<String>,
+                Option<String>,
+                String,
+            ) = sqlx::query_as(
+                "SELECT name, url, username, password_enc, auth_type, access_token_enc, \
                      token_expires_at, provider_type FROM caldav_sources WHERE id = ?",
-                )
-                .bind(&source_id)
-                .fetch_one(pool)
-                .await?;
+            )
+            .bind(&source_id)
+            .fetch_one(pool)
+            .await?;
 
             if let Some(sync_new) = sync_new {
                 crate::commands::sync::set_sync_new_calendars(pool, &source_id, sync_new).await?;
@@ -499,8 +519,15 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: SourceCommands) -> Resu
                     bail!("--discover works with CalDAV sources only; run `calrs sync` instead");
                 }
                 let client = crate::oauth2_caldav::build_client_for_source(
-                    pool, key, &source_id, &url, &auth_type, &username,
-                    password_enc.as_deref(), access_token_enc.as_deref(), token_expires_at.as_deref(),
+                    pool,
+                    key,
+                    &source_id,
+                    &url,
+                    &auth_type,
+                    &username,
+                    password_enc.as_deref(),
+                    access_token_enc.as_deref(),
+                    token_expires_at.as_deref(),
                 )
                 .await?;
                 crate::commands::sync::discover_caldav_calendars(pool, &client, &source_id).await?;
@@ -556,7 +583,10 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: SourceCommands) -> Resu
                     .bind(&source_id)
                     .fetch_one(pool)
                     .await?;
-            println!("  Calendars found later: {}", if syncs_new { "synced" } else { "not synced" });
+            println!(
+                "  Calendars found later: {}",
+                if syncs_new { "synced" } else { "not synced" }
+            );
             if changes.iter().any(|(_, enabled)| *enabled) {
                 println!(
                     "{}",

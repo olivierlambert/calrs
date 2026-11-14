@@ -30,9 +30,9 @@
   {% if saved %}
   <div class="notice notice--success" role="status" style="margin-bottom: 1rem;">{{ t("source-calendars-saved") }}</div>
   {% endif %}
-  {% if calendars %}
   <form method="post" action="/dashboard/sources/{{ source_id }}/calendars">
     {% if setup %}<input type="hidden" name="setup" value="1">{% endif %}
+    {% if calendars %}
     <div class="source-cal-toolbar">
       <button type="button" class="slot-btn" style="font-size: 0.8rem; cursor: pointer;" onclick="this.form.querySelectorAll('input[name=sync]').forEach(function (c) { c.checked = true; })">{{ t("source-calendars-select-all") }}</button>
       <button type="button" class="slot-btn" style="font-size: 0.8rem; cursor: pointer;" onclick="this.form.querySelectorAll('input[name=sync]').forEach(function (c) { c.checked = false; })">{{ t("source-calendars-select-none") }}</button>
@@ -48,18 +48,17 @@
       </label>
       {% endfor %}
     </div>
+    {% else %}
+    <p class="empty" style="padding: 1rem;">{{ t("source-calendars-empty") }}</p>
+    {% endif %}
     <label class="source-cal-new">
       <input type="checkbox" name="sync_new" value="on" {% if sync_new %}checked{% endif %}>
       <span>{{ t("source-calendars-sync-new") }}</span>
     </label>
     <button type="submit" class="slot-btn" style="background: var(--accent); color: #fff; border: none; padding: 0.5rem 1.5rem; border-radius: var(--radius); font-size: 0.95rem; cursor: pointer;">
-      {% if setup %}{{ t("source-calendars-setup-save") }}
-      {% else %}{{ t("source-calendars-save") }}{% endif %}
+      {%- if setup %}{{ t("source-calendars-setup-save") }}{% else %}{{ t("source-calendars-save") }}{% endif -%}
     </button>
   </form>
-  {% else %}
-  <p class="empty" style="padding: 1rem;">{{ t("source-calendars-empty") }}</p>
-  {% endif %}
   </div>
 </section>
 {% endblock %}

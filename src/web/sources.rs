@@ -1888,7 +1888,9 @@ pub(super) async fn google_callback(
             Ok(client) => client,
             Err(e) => {
                 tracing::warn!(source_id = %source_id, error = %format!("{e:#}"), "could not use a newly connected Google calendar");
-                let _ = crate::commands::sync::set_sync_new_calendars(&state.pool, &source_id, true).await;
+                let _ =
+                    crate::commands::sync::set_sync_new_calendars(&state.pool, &source_id, true)
+                        .await;
                 return (headers, Redirect::to("/dashboard/sources")).into_response();
             }
         };
@@ -1971,8 +1973,10 @@ pub(super) async fn source_calendars_form(
         .await
         .unwrap_or_default();
 
-    let sync_new: bool =
-        sqlx::query_scalar("SELECT sync_new_calendars FROM caldav_sources WHERE id = ?")
+    // A new source holds 0 until its picker is saved, so nothing it lists
+    // meanwhile gets synced. The box still offers the default, checked.
+    let sync_new: bool = query.setup.is_some()
+        || sqlx::query_scalar("SELECT sync_new_calendars FROM caldav_sources WHERE id = ?")
             .bind(&source_id)
             .fetch_one(&state.pool)
             .await
@@ -2103,8 +2107,15 @@ async fn first_sync_after_setup(state: &AppState, source_id: &str) -> Response {
         .fetch_optional(&state.pool)
         .await
         .unwrap_or(None);
-    let Some((url, username, password_enc, auth_type, access_token_enc, token_expires_at, provider_type)) =
-        source
+    let Some((
+        url,
+        username,
+        password_enc,
+        auth_type,
+        access_token_enc,
+        token_expires_at,
+        provider_type,
+    )) = source
     else {
         return Redirect::to("/dashboard/sources").into_response();
     };
@@ -2125,9 +2136,9 @@ async fn first_sync_after_setup(state: &AppState, source_id: &str) -> Response {
 
     let target = if calendar_count > 0 {
         let encoded_messages = urlencoding::encode(&messages.join("\n")).into_owned();
-        &format!(
-            "/dashboard/sources/{source_id}/setup-write?sync_messages={encoded_messages}"
-        )
-    } else { "/dashboard/sources" };
+        &format!("/dashboard/sources/{source_id}/setup-write?sync_messages={encoded_messages}")
+    } else {
+        "/dashboard/sources"
+    };
     Redirect::to(target).into_response()
 }

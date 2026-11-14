@@ -2,40 +2,54 @@
 
 {% block title %}{{ t("source-write-page-title") }}, calrs{% endblock %}
 
+{% block head %}
+<style>
+  .source-write-help { color: var(--text-secondary); margin-bottom: 1.5rem; }
+  .source-write-list { display: flex; flex-direction: column; gap: 0.75rem; margin-bottom: 1.5rem; }
+  .source-write-item { display: flex; align-items: center; gap: 0.75rem; padding: 0.75rem 1rem; border: 1px solid var(--border); border-radius: var(--radius); cursor: pointer; transition: border-color 0.15s; }
+  .source-write-item input { accent-color: var(--ink); }
+  .source-write-color { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
+  .source-write-meta { color: var(--text-muted); font-size: 0.8rem; }
+  .source-write-actions { display: flex; gap: 0.75rem; align-items: center; }
+  .source-write-skip { color: var(--text-muted); text-decoration: none; font-size: 0.9rem; }
+  .source-write-results { margin-bottom: 1rem; }
+  .source-write-results h2 { font-size: 1rem; }
+  .source-write-log { padding: 0.75rem; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.85rem; white-space: pre-line; font-family: inherit; }
+</style>
+{% endblock %}
+
 {% block content %}
 <a href="/dashboard" class="back-link">&larr; {{ t("source-write-back") }}</a>
 
+{% if sync_messages %}
+<div class="card source-write-results">
+  <h2>{{ t("source-write-sync-results") }}</h2>
+  <div class="source-write-log">{{ sync_messages }}</div>
+</div>
+{% endif %}
+
 <div class="card">
   <h1>{{ t("source-write-heading") }}</h1>
-  <p style="color: var(--text-secondary); margin-bottom: 1.5rem;">
+  <p class="source-write-help">
     {{ t("source-write-help", name='<strong>' ~ (source_name | escape) ~ '</strong>') | safe }}
   </p>
 
   <form method="post" action="/dashboard/sources/{{ source_id }}/write-calendar">
-    <div style="display: flex; flex-direction: column; gap: 0.75rem; margin-bottom: 1.5rem;">
+    <div class="source-write-list">
       {% for cal in calendars %}
-      <label style="display: flex; align-items: center; gap: 0.75rem; padding: 0.75rem 1rem; border: 1px solid var(--border); border-radius: var(--radius); cursor: pointer; transition: border-color 0.15s;">
-        <input type="radio" name="calendar_href" value="{{ cal.href }}" {% if loop.first %}checked{% endif %} style="accent-color: var(--ink);">
-        {% if cal.color %}
-        <span style="width: 12px; height: 12px; border-radius: 50%; background: {{ cal.color }}; flex-shrink: 0;"></span>
-        {% endif %}
+      <label class="source-write-item">
+        <input type="radio" name="calendar_href" value="{{ cal.href }}" {% if loop.first %}checked{% endif %}>
+        {% if cal.color %}<span class="source-write-color" style="background: {{ cal.color }};"></span>{% endif %}
         <span>{{ cal.name }}</span>
-        <span style="color: var(--text-muted); font-size: 0.8rem;">{{ t("source-write-event-count", count=cal.event_count) }}</span>
+        <span class="source-write-meta">{{ t("source-write-event-count", count=cal.event_count) }}</span>
       </label>
       {% endfor %}
     </div>
 
-    <div style="display: flex; gap: 0.75rem; align-items: center;">
+    <div class="source-write-actions">
       <button type="submit" class="ui-btn ui-btn--primary">{{ t("source-write-save") }}</button>
-      <a href="/dashboard" style="color: var(--text-muted); text-decoration: none; font-size: 0.9rem;">{{ t("source-write-skip") }}</a>
+      <a href="/dashboard" class="source-write-skip">{{ t("source-write-skip") }}</a>
     </div>
   </form>
 </div>
-
-{% if sync_messages %}
-<div class="card" style="margin-top: 1rem;">
-  <h2 style="font-size: 1rem;">{{ t("source-write-sync-results") }}</h2>
-  <div style="padding: 0.75rem; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.85rem; white-space: pre-line; font-family: inherit;">{{ sync_messages }}</div>
-</div>
-{% endif %}
 {% endblock %}

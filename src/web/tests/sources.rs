@@ -772,12 +772,21 @@ async fn the_setup_visit_of_the_calendar_picker() {
     let sid = seed_source(&pool, "Kerio", "pw").await;
     let (mine, colleague) = seed_two_calendars(&pool, &sid).await;
     sqlx::query("UPDATE calendars SET sync_enabled = 0 WHERE source_id = ?")
-        .bind(&sid).execute(&pool).await.unwrap();
+        .bind(&sid)
+        .execute(&pool)
+        .await
+        .unwrap();
+    // As discovery leaves a source that listed calendars: off until saved.
+    sqlx::query("UPDATE caldav_sources SET sync_new_calendars = 0 WHERE id = ?")
+        .bind(&sid)
+        .execute(&pool)
+        .await
+        .unwrap();
 
     let response = app
         .oneshot(get_authed(
             &format!("/dashboard/sources/{sid}/calendars?setup=1"),
-            &session
+            &session,
         ))
         .await
         .unwrap();
@@ -813,19 +822,43 @@ async fn saving_the_picker_stores_the_setting_for_new_calendars() {
     assert!(response.status().is_redirection());
     let sync_new: bool =
         sqlx::query_scalar("SELECT sync_new_calendars FROM caldav_sources WHERE id = ?")
-            .bind(&sid).fetch_one(&pool).await.unwrap();
+            .bind(&sid)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
     assert!(!sync_new);
 
     let body = body_string(
         app.oneshot(get_authed(
-                &format!("/dashboard/sources/{sid}/calendars"),
-                &session
-            ))
-            .await
-            .unwrap(),
+            &format!("/dashboard/sources/{sid}/calendars"),
+            &session,
+        ))
+        .await
+        .unwrap(),
     )
     .await;
     assert!(body.contains(r#"name="sync_new" value="on" >"#));
+    assert!(body.contains(">Save<"));
+}
+
+/// A source with no calendar yet still offers the setting for calendars
+/// that appear later, so it can be turned off before they do.
+#[tokio::test]
+async fn the_picker_of_a_source_without_calendars_offers_the_setting() {
+    let (app, pool, session, _) = setup_test_app().await;
+    let sid = seed_source(&pool, "Kerio", "pw").await;
+
+    let body = body_string(
+        app.oneshot(get_authed(
+            &format!("/dashboard/sources/{sid}/calendars"),
+            &session,
+        ))
+        .await
+        .unwrap(),
+    )
+    .await;
+    assert!(body.contains("No calendars found for this source yet"));
+    assert!(body.contains(r#"name="sync_new" value="on" checked"#));
     assert!(body.contains(">Save<"));
 }
 
@@ -837,8 +870,16 @@ async fn sources_dashboard_warns_when_no_calendar_is_synced() {
     let sid = seed_source(&pool, "Kerio", "pw").await;
     seed_two_calendars(&pool, &sid).await;
     sqlx::query("UPDATE calendars SET sync_enabled = 0 WHERE source_id = ?")
-        .bind(&sid).execute(&pool).await.unwrap();
-    let body = body_string(app.oneshot(get_authed("/dashboard/sources", &session)).await.unwrap()).await;
+        .bind(&sid)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let body = body_string(
+        app.oneshot(get_authed("/dashboard/sources", &session))
+            .await
+            .unwrap(),
+    )
+    .await;
     assert!(body.contains("No calendar of this source is synced"));
 }
 
