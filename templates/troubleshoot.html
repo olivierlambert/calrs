@@ -10,8 +10,8 @@
   .ts-date { font-size: 15px; font-weight: 640; margin: 0 0 0.6rem; }
   .ts-track { position: relative; height: 44px; border-top: 1px solid var(--rule-strong); border-bottom: 1px solid var(--rule); margin-bottom: 0.25rem; }
   .ts-blk { position: absolute; top: 6px; bottom: 6px; }
-  .ts-available { background: var(--hours); top: 0; bottom: 0; }
-  .ts-busy_event { background: var(--data-busy); }
+  .ts-available { background: color-mix(in srgb, var(--success) 52%, var(--surface)); top: 0; bottom: 0; }
+  .ts-busy_event { background: color-mix(in srgb, var(--error-text) 55%, var(--surface)); }
   .ts-time_off { background: var(--data-busy); box-shadow: inset 0 0 0 1px var(--data); }
   .ts-booking { background: var(--data); }
   .ts-resource_busy { background: var(--paper) var(--hatch); box-shadow: inset 0 0 0 1px var(--data); }
@@ -19,7 +19,8 @@
   .ts-beyond_horizon, .ts-outside_date_range { box-shadow: inset 0 0 0 1px var(--data); }
   .ts-hours { position: relative; height: 20px; font-size: 11px; color: var(--text-muted); margin-bottom: 1.75rem; font-variant-numeric: tabular-nums; }
   .ts-hours span { position: absolute; transform: translateX(-50%); }
-  .ts-key .g.ts-available, .ts-key .g.ts-buffer { box-shadow: inset 0 0 0 1px var(--rule); }
+  .ts-key .g.ts-available { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--success) 78%, var(--surface)); }
+  .ts-key .g.ts-buffer { box-shadow: inset 0 0 0 1px var(--rule); }
   .ts-key { margin-bottom: 0.75rem; }
   .ts-row { display: grid; grid-template-columns: 7.5rem 0.7rem minmax(0, 1fr); gap: 0.75rem; align-items: baseline; padding: 0.45rem 0; border-bottom: 1px solid var(--rule); font-size: 13.5px; }
   .ts-row time { font-variant-numeric: tabular-nums; font-weight: 600; white-space: nowrap; }
