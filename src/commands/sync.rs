@@ -2351,29 +2351,30 @@ async fn delete_events_by_href(
 ) -> u32 {
     let mut deleted = 0u32;
     for href in hrefs {
-        // Extract UID from href: /calendars/alice/default/abc123.ics -> abc123.
-        // CalDAV hrefs are URLs, so providers may percent-encode UID characters
-        // (Google encodes `@` as `%40`).
-        let encoded_uid = href
-            .rsplit('/')
-            .next()
-            .unwrap_or("")
-            .trim_end_matches(".ics");
-        let uid = urlencoding::decode(encoded_uid).unwrap_or_else(|_| encoded_uid.into());
-        if uid.is_empty() {
+        let Some((raw, decoded)) = crate::caldav::href_uid(href) else {
             continue;
-        }
+        };
         // Calendar API snapshots have their own deletion lifecycle, even when
-        // a CalDAV href happens to carry the same UID.
-        let rows = sqlx::query(
-            "DELETE FROM events WHERE calendar_id = ? AND uid = ? AND google_out_of_office = 0",
-        )
-        .bind(cal_id)
-        .bind(uid.as_ref())
-        .execute(pool)
-        .await
-        .map(|r| r.rows_affected())
-        .unwrap_or(0);
+        // a CalDAV href happens to carry the same UID. The decoded name is
+        // tried first (Google writes `@` as `%40`), then the name as written,
+        // for a server that puts a literal `%` in a path.
+        let mut uid = decoded.as_str();
+        let mut rows = 0;
+        for candidate in [decoded.as_str(), raw] {
+            rows = sqlx::query(
+                "DELETE FROM events WHERE calendar_id = ? AND uid = ? AND google_out_of_office = 0",
+            )
+            .bind(cal_id)
+            .bind(candidate)
+            .execute(pool)
+            .await
+            .map(|r| r.rows_affected())
+            .unwrap_or(0);
+            if rows > 0 || candidate == raw {
+                uid = candidate;
+                break;
+            }
+        }
         if rows > 0 {
             deleted += rows as u32;
             // Cancel any matching booking that was deleted on the CalDAV server.
@@ -2382,14 +2383,8 @@ async fn delete_events_by_href(
             // (e.g. BlueMind sync-collection emitting spurious 404 propstats) — not
             // proof the host deleted the event. Cancelling on that signal alone has
             // wrongly cancelled live bookings in production.
-            let _ = cancel_orphaned_booking(
-                pool,
-                key,
-                OrphanCheck::Caldav(client),
-                source_id,
-                uid.as_ref(),
-            )
-            .await;
+            let _ = cancel_orphaned_booking(pool, key, OrphanCheck::Caldav(client), source_id, uid)
+                .await;
         } else {
             tracing::warn!(
                 uid = %uid,
@@ -5192,6 +5187,46 @@ END:VCALENDAR
                 .await
                 .unwrap();
         assert_eq!(remaining, 0);
+    }
+
+    /// A server that writes a literal `%` in a resource name: decoding it
+    /// names another UID, so the name as written still matches (#460).
+    #[tokio::test]
+    async fn delete_events_by_href_falls_back_to_the_name_as_written() {
+        let pool = setup_test_db().await;
+        let (source_id, _) = seed_fixtures(&pool).await;
+        let key = [0u8; 32];
+        let cal_id = Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO calendars (id, source_id, href) VALUES (?, ?, '/cal/')")
+            .bind(&cal_id)
+            .bind(&source_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        for uid in ["a%40b", "kept@b"] {
+            sqlx::query(
+                "INSERT INTO events (id, calendar_id, uid, start_at, end_at) \
+                 VALUES (?, ?, ?, '2030-06-15T10:00:00', '2030-06-15T10:30:00')",
+            )
+            .bind(Uuid::new_v4().to_string())
+            .bind(&cal_id)
+            .bind(uid)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        let href = "/cal/a%40b.ics".to_string();
+        let deleted = delete_events_by_href(&pool, &key, None, &source_id, &cal_id, &[href]).await;
+
+        assert_eq!(deleted, 1);
+        let left: Vec<String> =
+            sqlx::query_scalar("SELECT uid FROM events WHERE calendar_id = ? ORDER BY uid")
+                .bind(&cal_id)
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(left, vec!["kept@b"]);
     }
 
     /// Confirm-before-cancel (issue #105): when the verification HTTP call can't

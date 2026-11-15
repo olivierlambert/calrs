@@ -83,16 +83,12 @@ impl CalendarProvider for CaldavProvider {
     async fn sync_delta(&self, calendar_id: &str, sync_state: Option<&str>) -> Result<DeltaResult> {
         let result = self.client.sync_collection(calendar_id, sync_state).await?;
         // CalDAV reports deletions as 404 hrefs. The href ends with `{uid}.ics`,
-        // so we extract the UID — the rest of calrs keys events by UID.
+        // so we extract the UID (percent-decoded): the rest of calrs keys events
+        // by UID.
         let deleted_uids = result
             .deleted_hrefs
             .iter()
-            .filter_map(|href| {
-                href.rsplit('/')
-                    .next()
-                    .map(|s| s.trim_end_matches(".ics").to_string())
-            })
-            .filter(|s| !s.is_empty())
+            .filter_map(|href| crate::caldav::href_uid(href).map(|(_, uid)| uid))
             .collect();
         Ok(DeltaResult {
             added_or_changed: result
