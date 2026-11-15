@@ -16,7 +16,7 @@ docker run -d --name calrs \
 
 > **Podman** works as a drop-in replacement — just use `podman` instead of `docker` in all commands. The Containerfile (Dockerfile) is compatible with both runtimes.
 
-`latest` follows stable releases; `next` follows prereleases. An exact prerelease tag looks like `ghcr.io/olivierlambert/calrs:2.0.0-beta.4`. The loopback port binding above assumes a reverse proxy on the host; adapt it if your proxy runs in a separate container.
+`latest` follows stable releases; `next` follows prereleases. An exact prerelease tag looks like `ghcr.io/olivierlambert/calrs:2.0.0-rc.3`. The loopback port binding above assumes a reverse proxy on the host; adapt it if your proxy runs in a separate container.
 
 The image uses a multi-stage build:
 

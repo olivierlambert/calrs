@@ -72,6 +72,28 @@ async fn team_page_shows_each_type_roster_and_first_names() {
     assert!(page.contains("with everyone"));
 }
 
+/// A private team's page opened with its invite renders, and its meeting
+/// links carry the token, percent-encoded: the template's `urlencode` filter
+/// needs minijinja's `urlencode` feature, and without it the page was the
+/// internal error page (#449). No test opened that page with an invite.
+#[tokio::test]
+async fn private_team_page_opens_with_its_invite() {
+    let (app, pool, _, _) = setup_test_app().await;
+    let (team_id, _) = seed_team_event_type(&pool).await;
+    sqlx::query("UPDATE teams SET visibility = 'private', invite_token = 'tok&1 2' WHERE id = ?")
+        .bind(&team_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let response = app
+        .oneshot(get("/team/horizon-team?invite=tok%261%202"))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), axum::http::StatusCode::OK);
+    let page = body_string(response).await;
+    assert!(page.contains("?invite=tok%261%202"), "{page}");
+}
+
 /// A meeting's length is drawn as clock dials, one per hour (at most three),
 /// the last one filled in proportion, with the exact length written under
 /// them and spoken in words.
