@@ -569,12 +569,26 @@ fn end_in_start_zone(start: &str, end: String, zone: Option<Tz>, end_zone: Optio
     if start_tz == end_tz || !start.contains('T') || !end.contains('T') {
         return end;
     }
-    let Some(converted) = parse_ical_datetime(&end)
-        .and_then(|local| localize(end_tz, local))
-        .map(|zoned| zoned.with_timezone(&start_tz).naive_local())
-    else {
+    let Some(instant) = parse_ical_datetime(&end).and_then(|local| localize(end_tz, local)) else {
         return end;
     };
+    let mut converted = instant.with_timezone(&start_tz).naive_local();
+    // Every reader takes a wall time repeated by a fall-back change as its
+    // first occurrence. An end on the second one would read an hour early,
+    // so it moves to the first wall time that reads at or after it: the
+    // event may block up to the end of the repeated hour, never less.
+    for _ in 0..24 * 60 {
+        if localize(start_tz, converted).is_some_and(|read| read >= instant) {
+            break;
+        }
+        // On whole minutes, so the end stops at the hour's boundary.
+        use chrono::Timelike;
+        converted = converted
+            .with_second(0)
+            .and_then(|t| t.with_nanosecond(0))
+            .unwrap_or(converted)
+            + chrono::Duration::minutes(1);
+    }
     let format = if end.contains('-') {
         "%Y-%m-%dT%H:%M:%S"
     } else {
@@ -1601,6 +1615,41 @@ END:VEVENT";
             let event = format!("BEGIN:VEVENT\n{start}\n{end}\nEND:VEVENT");
 
             assert_eq!(end_of(&event), Some(expected.to_string()), "{start}, {end}");
+        }
+    }
+
+    /// An end converted into the hour a fall-back change repeats: readers
+    /// take that wall time as its first occurrence, so the second one is
+    /// stored as the end of the repeated hour, never as an earlier instant.
+    /// New York falls back at 06:00 UTC on 2026-11-01.
+    #[test]
+    fn an_end_in_the_repeated_hour_is_never_read_early() {
+        let cases = [
+            // 05:30 UTC is 01:30 EDT, the first 01:30: kept.
+            ("DTEND:20261101T053000Z", "20261101T013000"),
+            // 06:30 UTC is 01:30 EST, the second 01:30: read as 02:00 EST.
+            ("DTEND:20261101T063000Z", "20261101T020000"),
+            // With seconds: still the end of the repeated hour, not 02:00:30.
+            ("DTEND:20261101T063030Z", "20261101T020000"),
+            // 07:30 UTC is 02:30 EST, after the change: kept.
+            ("DTEND:20261101T073000Z", "20261101T023000"),
+        ];
+        let ny = chrono_tz::America::New_York;
+        for (end, expected) in cases {
+            let event = format!(
+                "BEGIN:VEVENT\nDTSTART;TZID=America/New_York:20261101T003000\n{end}\nEND:VEVENT"
+            );
+            let stored = end_of(&event).unwrap();
+            assert_eq!(stored, expected, "{end}");
+
+            // What a busy reader makes of it, in UTC: never before the end.
+            let wanted = parse_ical_datetime(end.strip_prefix("DTEND:").unwrap()).unwrap();
+            let read = convert_event_to_tz(
+                parse_ical_datetime(&stored).unwrap(),
+                Some(ny.name()),
+                Tz::UTC,
+            );
+            assert!(read >= wanted, "{end}: read as {read}");
         }
     }
 
