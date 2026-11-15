@@ -1034,6 +1034,7 @@ source-form-help-zimbra = <strong>Zimbra</strong> — Kasuta oma Zimbra serveri 
 source-form-help-sogo = <strong>SOGo</strong> — Kasuta SOGo DAV-lõpp-punkti.<br> Tavaliselt: <code>https://mail.example.com/SOGo/dav/</code>
 source-form-help-radicale = <strong>Radicale</strong> — Kasuta serveri juuraadressi.<br> Tavaliselt: <code>https://cal.example.com/</code>
 source-form-help-baikal = <strong>Baikal</strong>: Kasuta oma Baikali serveri DAV-lõpp-punkti.<br> Tavaliselt: <code>https://cal.example.com/dav.php/</code>
+source-form-help-kerio = <strong>Kerio Connect</strong>: Kasuta oma Kerio Connecti serveri CalDAV-lõpp-punkti.<br> Tavaliselt: <code>https://mail.example.com/caldav/</code><br> Kerio loetleb kõik kalendrid, mida tellid. Pärast allika lisamist vali nupuga <em>Kalendrid</em>, milliseid sünkroonida.
 source-form-help-exchange = <strong>Microsoft Exchange (EWS)</strong>. Kasuta SOAP-lõpp-punkti:<br> <code>https://mail.example.com/EWS/Exchange.asmx</code><br> Kasutajanimi on postkasti aadress; parool peab lubama HTTP Basicut üle TLS-i (kui teie keskkonnas on Basic keelatud, luba see teeninduspostkastil).<br> Vali kindlasti ka ülalolevast taustsüsteemi menüüst <strong>Microsoft Exchange (EWS)</strong>.
 source-form-help-google = <strong>Google’i kalender</strong>: ühendus OAuth2 kaudu. Parooli pole vaja.<br>
 source-form-help-other = Sisesta oma CalDAV-serveri <strong>DAV-i juuraadress</strong> — mitte üksiku kalendri oma ega avalikku linki.<br> calrs leiab sinu kalendrid ise PROPFINDi abil (RFC 4791).

@@ -276,6 +276,12 @@ fn caldav_providers() -> Vec<(&'static str, &'static str, &'static str, &'static
             "https://cal.example.com/dav.php/",
             "caldav",
         ),
+        (
+            "kerio",
+            "Kerio Connect",
+            "https://mail.example.com/caldav/",
+            "caldav",
+        ),
         ("google", "Google Calendar", "", "caldav"),
         (
             "exchange",

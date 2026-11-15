@@ -1059,6 +1059,7 @@ source-form-help-zimbra = <strong>Zimbra</strong> — Use the DAV endpoint of yo
 source-form-help-sogo = <strong>SOGo</strong> — Use the SOGo DAV endpoint.<br> Typically: <code>https://mail.example.com/SOGo/dav/</code>
 source-form-help-radicale = <strong>Radicale</strong> — Use the server root URL.<br> Typically: <code>https://cal.example.com/</code>
 source-form-help-baikal = <strong>Baikal</strong>: Use the DAV endpoint of your Baikal server.<br> Typically: <code>https://cal.example.com/dav.php/</code>
+source-form-help-kerio = <strong>Kerio Connect</strong>: Use the CalDAV endpoint of your Kerio Connect server.<br> Typically: <code>https://mail.example.com/caldav/</code><br> Kerio lists every calendar you subscribe to. After adding the source, pick the ones to sync with the <em>Calendars</em> button.
 source-form-help-exchange = <strong>Microsoft Exchange (EWS)</strong>. Use the SOAP endpoint:<br> <code>https://mail.example.com/EWS/Exchange.asmx</code><br> Username is the mailbox email; password must accept HTTP Basic over TLS (enable on a service mailbox if your tenant disabled Basic).<br> Make sure to also pick <strong>Microsoft Exchange (EWS)</strong> in the Backend dropdown above.
 source-form-help-google = <strong>Google Calendar</strong>: Connect via OAuth2. No password needed.<br>
 source-form-help-other = Enter your CalDAV server's <strong>DAV root URL</strong> — not a specific calendar or public link.<br> calrs will auto-discover your calendars via PROPFIND (RFC 4791).

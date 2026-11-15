@@ -1145,6 +1145,7 @@ source-form-help-zimbra = <strong>Zimbra</strong> — укажите DAV-адр�
 source-form-help-sogo = <strong>SOGo</strong> — укажите DAV-адрес SOGo.<br> Обычно это <code>https://mail.example.com/SOGo/dav/</code>
 source-form-help-radicale = <strong>Radicale</strong> — укажите корневой адрес сервера.<br> Обычно это <code>https://cal.example.com/</code>
 source-form-help-baikal = <strong>Baikal</strong> — укажите DAV-адрес вашего сервера Baikal.<br> Обычно это <code>https://cal.example.com/dav.php/</code>
+source-form-help-kerio = <strong>Kerio Connect</strong> — укажите CalDAV-адрес вашего сервера Kerio Connect.<br> Обычно это <code>https://mail.example.com/caldav/</code><br> Kerio возвращает все календари, на которые вы подписаны. После добавления источника выберите нужные кнопкой <em>Календари</em>.
 source-form-help-exchange = <strong>Microsoft Exchange (EWS)</strong> — укажите адрес SOAP:<br> <code>https://mail.example.com/EWS/Exchange.asmx</code><br> Имя пользователя — адрес почтового ящика; пароль должен работать с HTTP Basic через TLS (если в вашей организации Basic отключён, включите его для служебного почтового ящика).<br> Не забудьте выбрать <strong>Microsoft Exchange (EWS)</strong> в списке «Протокол» выше.
 source-form-help-google = <strong>Google Calendar</strong> — подключение через OAuth2, пароль не нужен.<br>
 source-form-help-other = Укажите <strong>корневой DAV-адрес</strong> вашего сервера CalDAV, а не адрес отдельного календаря или публичную ссылку.<br> calrs сам найдёт ваши календари через PROPFIND (RFC 4791).
