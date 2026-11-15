@@ -8,7 +8,7 @@ This book covers the v2 prerelease line. Use the [release list](https://github.c
 |---|---|
 | `latest` | Stable release tags only; a v2 prerelease does not move it |
 | `next` | Prerelease tags, including betas and release candidates |
-| Exact version, such as `2.0.0-beta.4` | That release; recommended when you need a repeatable deployment |
+| Exact version, such as `2.0.0-rc.3` | That release; recommended when you need a repeatable deployment |
 | `main` | Builds from the main branch, which can contain unreleased changes |
 
 Use an exact tag from the release you selected to pin an installation. `next` is convenient for a test instance but can advance without a configuration change. When stable v2 is released, select its actual release tag rather than assuming that `latest` already contains it.
