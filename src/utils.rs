@@ -581,7 +581,13 @@ fn end_in_start_zone(start: &str, end: String, zone: Option<Tz>, end_zone: Optio
         if localize(start_tz, converted).is_some_and(|read| read >= instant) {
             break;
         }
-        converted += chrono::Duration::minutes(1);
+        // On whole minutes, so the end stops at the hour's boundary.
+        use chrono::Timelike;
+        converted = converted
+            .with_second(0)
+            .and_then(|t| t.with_nanosecond(0))
+            .unwrap_or(converted)
+            + chrono::Duration::minutes(1);
     }
     let format = if end.contains('-') {
         "%Y-%m-%dT%H:%M:%S"
@@ -1623,6 +1629,8 @@ END:VEVENT";
             ("DTEND:20261101T053000Z", "20261101T013000"),
             // 06:30 UTC is 01:30 EST, the second 01:30: read as 02:00 EST.
             ("DTEND:20261101T063000Z", "20261101T020000"),
+            // With seconds: still the end of the repeated hour, not 02:00:30.
+            ("DTEND:20261101T063030Z", "20261101T020000"),
             // 07:30 UTC is 02:30 EST, after the change: kept.
             ("DTEND:20261101T073000Z", "20261101T023000"),
         ];
