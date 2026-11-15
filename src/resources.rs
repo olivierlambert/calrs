@@ -217,9 +217,11 @@ pub async fn sync_resource(
         let rdate = recurrence_id.is_none() && crate::rrule::has_rdate(&fields);
         let transp = extract_vevent_field(&fields, "TRANSP");
         let timezone = zones.event_timezone(&fields);
-        let end_at = crate::utils::extract_vevent_end(
+        let end_zone = zones.field_timezone(&fields, "DTEND");
+        let end_at = crate::utils::extract_vevent_end_in(
             &fields,
             timezone.as_deref().and_then(crate::tzid::resolve_or_offset),
+            end_zone.as_deref().and_then(crate::tzid::resolve_or_offset),
         )
         .unwrap_or_default();
         // All-day events use VALUE=DATE ("20260730"), timed use full stamps.

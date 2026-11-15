@@ -59,11 +59,17 @@ impl<'a> ResourceZones<'a> {
     /// the TZID resolves, the TZID unchanged when nothing does (read as
     /// floating time), and `None` for floating and all-day events.
     pub fn event_timezone(&mut self, vevent: &str) -> Option<String> {
-        let tzid = crate::utils::extract_vevent_tzid(vevent, "DTSTART")?;
+        self.field_timezone(vevent, "DTSTART")
+    }
+
+    /// [`Self::event_timezone`] for another property of the VEVENT, `DTEND`
+    /// when it names a zone of its own (#455).
+    pub fn field_timezone(&mut self, vevent: &str, field: &str) -> Option<String> {
+        let tzid = crate::utils::extract_vevent_tzid(vevent, field)?;
         if let Some(tz) = resolve(&tzid) {
             return Some(tz.name().to_string());
         }
-        let year = crate::utils::extract_vevent_field(vevent, "DTSTART")
+        let year = crate::utils::extract_vevent_field(vevent, field)
             .and_then(|v| parse_ical_datetime(&v))
             .map(|dt| dt.year())
             .unwrap_or_else(|| Utc::now().year());
