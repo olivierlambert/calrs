@@ -204,6 +204,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [2.0.0-rc.3] - 2026-11-15
+
+Third release candidate of 2.0, with fixes from RC feedback. **Upgrade from rc.2** if you use private team invite links (the team page showed an error since beta.4), or if calendar events written by Thunderbird or Outlook can end in another timezone than they start (they could block nothing). **No migrations since rc.2.**
+
+Docker: this version is published as `:2.0.0-rc.3` and `:next`. `:latest` stays on the 1.23 line (1.23.4) until 2.0 is final.
+
 ### Changed
 
 - **Troubleshoot timeline colours** (#453) - Available time is green and calendar events are red, where both were low-contrast greys. Thanks @threema-danilo.
@@ -212,7 +218,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 - **An event whose end is written in another timezone than its start blocked the wrong time** (#455) - calrs stores one timezone per event, the start's, and read the end in it as written. Thunderbird can save an event from 13:30 in Zurich to 13:30 UTC: one hour, which calrs read as zero minutes, so it blocked nothing. The end is now converted to the start's timezone when a calendar or a resource feed is synced, including an end timezone that only its `VTIMEZONE` defines (Outlook's "Customized Time Zone"). Calendar events already synced are read again by the daily full resync, or at once with `calrs sync --full`; a resource feed is read whole at each refresh, so its events are corrected the next time it is used. Thanks @threema-danilo for the report and the regression tests.
 - **A private team's page opened with its invite link showed an error** (#449) - Since 2.0.0-beta.4 the team page writes its invite into its meeting links with minijinja's `urlencode` filter, which needs a feature calrs did not enable: `/team/{slug}?invite=...` answered the internal error page instead of the team. Fixed by @Frankkkkk; a test now opens that page with an invite.
-- **A past booking from before UTC times is no longer checked as if upcoming** - When a booking's event leaves the synced calendar window, calrs leaves a meeting that is already over alone, so a host clearing old events never sends a guest a cancellation. Bookings made before booking times were stored in UTC keep a wall-clock time, which that check could not read: every sync took each such past booking for an upcoming one whose event had vanished, asked the calendar server whether it still existed, and logged "skipping booking cancellation". Had the host deleted the old event, calrs would have cancelled a meeting held months before and emailed the guest. The check now reads those times in their event's timezone. Reported from the Vates production logs.
+- **A past booking from before UTC times is no longer checked as if upcoming** (#447) - When a booking's event leaves the synced calendar window, calrs leaves a meeting that is already over alone, so a host clearing old events never sends a guest a cancellation. Bookings made before booking times were stored in UTC keep a wall-clock time, which that check could not read: every sync took each such past booking for an upcoming one whose event had vanished, asked the calendar server whether it still existed, and logged "skipping booking cancellation". Had the host deleted the old event, calrs would have cancelled a meeting held months before and emailed the guest. The check now reads those times in their event's timezone. Reported from the Vates production logs.
+
+### Documentation
+
+- **"Suggest an edit" opens the right page** (#444) - Every docs page linked its edit button to a path that does not exist since the site moved to mdbook 0.5. Fixed by @AymericFerreira; the published site already has it.
 
 ## [2.0.0-rc.2] - 2026-11-13
 
