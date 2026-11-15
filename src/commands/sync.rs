@@ -2354,27 +2354,41 @@ async fn delete_events_by_href(
         let Some((raw, decoded)) = crate::caldav::href_uid(href) else {
             continue;
         };
-        // Calendar API snapshots have their own deletion lifecycle, even when
-        // a CalDAV href happens to carry the same UID. The decoded name is
-        // tried first (Google writes `@` as `%40`), then the name as written,
-        // for a server that puts a literal `%` in a path.
-        let mut uid = decoded.as_str();
-        let mut rows = 0;
-        for candidate in [decoded.as_str(), raw] {
-            rows = sqlx::query(
-                "DELETE FROM events WHERE calendar_id = ? AND uid = ? AND google_out_of_office = 0",
-            )
-            .bind(cal_id)
-            .bind(candidate)
-            .execute(pool)
-            .await
-            .map(|r| r.rows_affected())
-            .unwrap_or(0);
-            if rows > 0 || candidate == raw {
-                uid = candidate;
-                break;
+        // The decoded name is the UID (Google writes `@` as `%40`), unless only
+        // the name as written matches, for a server that puts a literal `%` in
+        // a path. When both match, the href cannot say which event went:
+        // delete neither, and let the next full resync reconcile them.
+        let uid = if decoded == raw {
+            raw
+        } else {
+            let decoded_known = has_caldav_event(pool, cal_id, &decoded).await;
+            let raw_known = has_caldav_event(pool, cal_id, raw).await;
+            if decoded_known && raw_known {
+                tracing::warn!(
+                    href = %href,
+                    calendar_id = %cal_id,
+                    "sync-collection deletion matches two local events, as written and \
+                     decoded; keeping both until the next full sync"
+                );
+                continue;
             }
-        }
+            if raw_known {
+                raw
+            } else {
+                decoded.as_str()
+            }
+        };
+        // Calendar API snapshots have their own deletion lifecycle, even when
+        // a CalDAV href happens to carry the same UID.
+        let rows = sqlx::query(
+            "DELETE FROM events WHERE calendar_id = ? AND uid = ? AND google_out_of_office = 0",
+        )
+        .bind(cal_id)
+        .bind(uid)
+        .execute(pool)
+        .await
+        .map(|r| r.rows_affected())
+        .unwrap_or(0);
         if rows > 0 {
             deleted += rows as u32;
             // Cancel any matching booking that was deleted on the CalDAV server.
@@ -2396,6 +2410,21 @@ async fn delete_events_by_href(
         }
     }
     deleted
+}
+
+/// Whether the calendar caches a CalDAV event with this UID (Calendar API
+/// out-of-office rows excluded, as in [`delete_events_by_href`]). A failed read
+/// counts as present, so an ambiguous deletion is skipped rather than guessed.
+async fn has_caldav_event(pool: &SqlitePool, cal_id: &str, uid: &str) -> bool {
+    sqlx::query_scalar::<_, i64>(
+        "SELECT EXISTS(SELECT 1 FROM events \
+         WHERE calendar_id = ? AND uid = ? AND google_out_of_office = 0)",
+    )
+    .bind(cal_id)
+    .bind(uid)
+    .fetch_one(pool)
+    .await
+    .map_or(true, |found| found != 0)
 }
 
 /// Remove local events that no longer exist on the server (full sync orphan cleanup).
@@ -5227,6 +5256,45 @@ END:VCALENDAR
                 .await
                 .unwrap();
         assert_eq!(left, vec!["kept@b"]);
+    }
+
+    /// Both the name as written and its decoded form are cached: the href
+    /// cannot tell which event was deleted, so neither is (#461 review).
+    #[tokio::test]
+    async fn delete_events_by_href_keeps_both_when_both_names_match() {
+        let pool = setup_test_db().await;
+        let (source_id, _) = seed_fixtures(&pool).await;
+        let key = [0u8; 32];
+        let cal_id = Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO calendars (id, source_id, href) VALUES (?, ?, '/cal/')")
+            .bind(&cal_id)
+            .bind(&source_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        for uid in ["a%40b", "a@b"] {
+            sqlx::query(
+                "INSERT INTO events (id, calendar_id, uid, start_at, end_at) \
+                 VALUES (?, ?, ?, '2030-06-15T10:00:00', '2030-06-15T10:30:00')",
+            )
+            .bind(Uuid::new_v4().to_string())
+            .bind(&cal_id)
+            .bind(uid)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        let href = "/cal/a%40b.ics".to_string();
+        let deleted = delete_events_by_href(&pool, &key, None, &source_id, &cal_id, &[href]).await;
+
+        assert_eq!(deleted, 0);
+        let left: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM events WHERE calendar_id = ?")
+            .bind(&cal_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(left, 2);
     }
 
     /// Confirm-before-cancel (issue #105): when the verification HTTP call can't
