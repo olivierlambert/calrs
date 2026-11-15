@@ -2351,12 +2351,15 @@ async fn delete_events_by_href(
 ) -> u32 {
     let mut deleted = 0u32;
     for href in hrefs {
-        // Extract UID from href: /calendars/alice/default/abc123.ics -> abc123
-        let uid = href
+        // Extract UID from href: /calendars/alice/default/abc123.ics -> abc123.
+        // CalDAV hrefs are URLs, so providers may percent-encode UID characters
+        // (Google encodes `@` as `%40`).
+        let encoded_uid = href
             .rsplit('/')
             .next()
             .unwrap_or("")
             .trim_end_matches(".ics");
+        let uid = urlencoding::decode(encoded_uid).unwrap_or_else(|_| encoded_uid.into());
         if uid.is_empty() {
             continue;
         }
@@ -2366,7 +2369,7 @@ async fn delete_events_by_href(
             "DELETE FROM events WHERE calendar_id = ? AND uid = ? AND google_out_of_office = 0",
         )
         .bind(cal_id)
-        .bind(uid)
+        .bind(uid.as_ref())
         .execute(pool)
         .await
         .map(|r| r.rows_affected())
@@ -2379,8 +2382,14 @@ async fn delete_events_by_href(
             // (e.g. BlueMind sync-collection emitting spurious 404 propstats) — not
             // proof the host deleted the event. Cancelling on that signal alone has
             // wrongly cancelled live bookings in production.
-            let _ = cancel_orphaned_booking(pool, key, OrphanCheck::Caldav(client), source_id, uid)
-                .await;
+            let _ = cancel_orphaned_booking(
+                pool,
+                key,
+                OrphanCheck::Caldav(client),
+                source_id,
+                uid.as_ref(),
+            )
+            .await;
         } else {
             tracing::warn!(
                 uid = %uid,
@@ -5138,6 +5147,51 @@ END:VCALENDAR
             .await
             .unwrap();
         assert_eq!(status, "cancelled");
+    }
+
+    /// Google percent-encodes `@` in CalDAV resource hrefs. The decoded resource
+    /// name still matches the iCalendar UID stored in `events`.
+    #[tokio::test]
+    async fn delete_events_by_href_decodes_percent_encoded_uid() {
+        let pool = setup_test_db().await;
+        let (source_id, _) = seed_fixtures(&pool).await;
+        let key = [0u8; 32];
+
+        let cal_id = Uuid::new_v4().to_string();
+        sqlx::query(
+            "INSERT INTO calendars (id, source_id, href, display_name) \
+             VALUES (?, ?, '/caldav/v2/host/events/', 'Google')",
+        )
+        .bind(&cal_id)
+        .bind(&source_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let uid = "google-event-id@google.com";
+        sqlx::query(
+            "INSERT INTO events (id, calendar_id, uid, summary, start_at, end_at) \
+             VALUES (?, ?, ?, 'Demo', '2030-06-15T10:00:00', '2030-06-15T10:30:00')",
+        )
+        .bind(Uuid::new_v4().to_string())
+        .bind(&cal_id)
+        .bind(uid)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let href = "/caldav/v2/host/events/google-event-id%40google.com.ics".to_string();
+        let deleted = delete_events_by_href(&pool, &key, None, &source_id, &cal_id, &[href]).await;
+
+        assert_eq!(deleted, 1, "URL-encoded UID should match the local event");
+        let remaining: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM events WHERE calendar_id = ? AND uid = ?")
+                .bind(&cal_id)
+                .bind(uid)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(remaining, 0);
     }
 
     /// Confirm-before-cancel (issue #105): when the verification HTTP call can't
