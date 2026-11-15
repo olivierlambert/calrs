@@ -188,6 +188,26 @@ pub fn validate_caldav_url(url: &str) -> Result<()> {
     Ok(())
 }
 
+/// The resource name of a CalDAV href, which calrs reads as the event's UID:
+/// `/calendars/alice/default/abc123.ics` gives `abc123`. Returns the name as
+/// written and percent-decoded (Google writes `@` as `%40`, #460); the two are
+/// equal for most servers. `None` for an href with no name.
+pub fn href_uid(href: &str) -> Option<(&str, String)> {
+    let raw = href
+        .rsplit('/')
+        .next()
+        .unwrap_or("")
+        .trim_end_matches(".ics");
+    if raw.is_empty() {
+        return None;
+    }
+    let decoded = urlencoding::decode(raw).map_or_else(|_| raw.to_string(), |d| d.into_owned());
+    if decoded.is_empty() {
+        return None;
+    }
+    Some((raw, decoded))
+}
+
 impl CaldavClient {
     /// Only send Google OAuth credentials to the Calendar API for a Google
     /// source. Other CalDAV servers (including bearer-auth servers) stay local.
@@ -1013,6 +1033,24 @@ pub(crate) fn refused_for_good(status: u16, body: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn href_uid_decodes_the_resource_name() {
+        assert_eq!(
+            href_uid("/caldav/v2/me/events/abc%40google.com.ics"),
+            Some(("abc%40google.com", "abc@google.com".to_string()))
+        );
+        assert_eq!(
+            href_uid("/calendars/alice/default/abc123.ics"),
+            Some(("abc123", "abc123".to_string()))
+        );
+        // A plus sign is not a space in a path.
+        assert_eq!(href_uid("/c/a+b.ics"), Some(("a+b", "a+b".to_string())));
+        // Not valid percent-encoding: kept as written.
+        assert_eq!(href_uid("/c/100%.ics"), Some(("100%", "100%".to_string())));
+        assert_eq!(href_uid("/c/"), None);
+        assert_eq!(href_uid("/c/.ics"), None);
+    }
 
     // --- HTTP status and body checks (#325) ---
 
