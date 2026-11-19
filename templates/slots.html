@@ -297,13 +297,10 @@
   .cal-cell.past {
     opacity: 0.3;
   }
-  .cal-cell.other-month {
-    opacity: 0.25;
-    font-size: 0.775rem;
+  .cal-cell.other-month:not(.has-slots):not(.past) {
     cursor: pointer;
   }
-  .cal-cell.other-month:hover {
-    opacity: 0.45;
+  .cal-cell.other-month:not(.has-slots):not(.past):hover {
     background: var(--surface-hover);
   }
   /* Available day dot removed — the bold text + background is enough */
@@ -1242,21 +1239,19 @@
     var myYear = parseInt(myParts[0], 10);
     var myMonth = parseInt(myParts[1], 10);
 
-    // Previous month trailing days
-    var prevMonthLastDay = new Date(myYear, myMonth - 1, 0).getDate();
-    for (var i = 0; i < firstWeekday; i++) {
-      var pd = prevMonthLastDay - firstWeekday + 1 + i;
-      var cell = document.createElement('div');
-      cell.className = 'cal-cell other-month';
-      cell.textContent = pd;
-      grid.appendChild(cell);
-    }
+    var pm = myMonth - 1, py = myYear;
+    if (pm < 1) { pm = 12; py--; }
+    var nm = myMonth + 1, ny = myYear;
+    if (nm > 12) { nm = 1; ny++; }
+    function ym(y, m) { return y + '-' + (m < 10 ? '0' : '') + m; }
 
-    // Current month days
-    for (var d = 1; d <= daysInMonth; d++) {
-      var dateStr = monthYear + '-' + (d < 10 ? '0' : '') + d;
+    // One day cell. Spill-over days of the neighbouring months read like this
+    // month's (the slot window covers the whole grid): bookable ones select the
+    // day, the others jump to their month.
+    function addDay(year, month, d, otherMonth) {
+      var dateStr = ym(year, month) + '-' + (d < 10 ? '0' : '') + d;
       var cell = document.createElement('div');
-      cell.className = 'cal-cell';
+      cell.className = 'cal-cell' + (otherMonth ? ' other-month' : '');
       cell.textContent = d;
       cell.dataset.date = dateStr;
 
@@ -1271,45 +1266,32 @@
       }
 
       if (cell.classList.contains('has-slots')) {
-        cell.addEventListener('click', (function(ds) {
-          return function() { selectDay(ds); };
-        })(dateStr));
+        cell.addEventListener('click', function() { selectDay(dateStr); });
+      } else if (otherMonth && dateStr >= todayDate &&
+                 (month === nm ? calData.hasNextMonth : hasPrevMonth)) {
+        cell.addEventListener('click', function() { navigateMonth(year, month); });
       }
 
       grid.appendChild(cell);
+    }
+
+    // Previous month trailing days
+    var prevMonthLastDay = new Date(myYear, myMonth - 1, 0).getDate();
+    for (var i = 0; i < firstWeekday; i++) {
+      addDay(py, pm, prevMonthLastDay - firstWeekday + 1 + i, true);
+    }
+
+    // Current month days
+    for (var d = 1; d <= daysInMonth; d++) {
+      addDay(myYear, myMonth, d, false);
     }
 
     // Next month leading days to fill the grid
     var totalCells = firstWeekday + daysInMonth;
     var remaining = (7 - (totalCells % 7)) % 7;
     for (var i = 1; i <= remaining; i++) {
-      var cell = document.createElement('div');
-      cell.className = 'cal-cell other-month';
-      cell.textContent = i;
-      grid.appendChild(cell);
+      addDay(ny, nm, i, true);
     }
-
-    // Other-month day click handlers
-    grid.querySelectorAll('.cal-cell.other-month').forEach(function(cell) {
-      cell.style.cursor = 'pointer';
-      var dayNum = parseInt(cell.textContent, 10);
-      var isPrev = dayNum > 15;
-      if ((isPrev && !hasPrevMonth) || (!isPrev && !calData.hasNextMonth)) {
-        cell.style.cursor = 'default';
-        return;
-      }
-      cell.addEventListener('click', function() {
-        if (isPrev) {
-          var pm = myMonth - 1, py = myYear;
-          if (pm < 1) { pm = 12; py--; }
-          navigateMonth(py, pm);
-        } else {
-          var nm = myMonth + 1, ny = myYear;
-          if (nm > 12) { nm = 1; ny++; }
-          navigateMonth(ny, nm);
-        }
-      });
-    });
 
     // Auto-select first available date
     var firstAvail = null;
