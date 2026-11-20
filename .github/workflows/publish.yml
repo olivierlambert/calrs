@@ -31,11 +31,17 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/${{ env.IMAGE_NAME }}
+          # `latest` is on the 2.x line since 2.0.0 and is set by main's
+          # copy of this file. A 1.23.x tag must never move it: that would
+          # hand a 1.x image to a database 2.0 has migrated, and there is
+          # no downgrade path. metadata-action sets `latest` on its own
+          # for a semver tag unless told not to.
+          flavor: |
+            latest=false
           tags: |
             type=ref,event=branch
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest,enable={{is_default_branch}}
 
       - uses: docker/build-push-action@v6
         with:
