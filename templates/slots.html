@@ -291,6 +291,10 @@
     background: var(--accent) !important;
     color: #fff !important;
   }
+  .cal-cell:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
   .cal-cell.today:not(.selected) {
     box-shadow: inset 0 0 0 2px var(--accent);
   }
@@ -1278,6 +1282,30 @@
     if (nm > 12) { nm = 1; ny++; }
     function ym(y, m) { return y + '-' + (m < 10 ? '0' : '') + m; }
 
+    // A day is bookable only with a time left: a day whose times a booking
+    // frequency cap removed is still listed in availableDates.
+    function dayHasSlots(dateStr) {
+      return !!availableDates[dateStr] && (slotData[dateStr] || []).length > 0;
+    }
+
+    // A cell that does something is reachable and usable from the keyboard.
+    function makeActionable(cell, action) {
+      cell.tabIndex = 0;
+      cell.setAttribute('role', 'button');
+      // Read out as the whole date: the number alone does not say the month.
+      try {
+        var p = cell.dataset.date.split('-');
+        cell.setAttribute('aria-label', new Intl.DateTimeFormat(document.documentElement.lang || undefined, { dateStyle: 'full' }).format(new Date(+p[0], +p[1] - 1, +p[2])));
+      } catch (e) {}
+      cell.addEventListener('click', action);
+      cell.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          action();
+        }
+      });
+    }
+
     // One day cell. Spill-over days of the neighbouring months read like this
     // month's (the slot window covers the whole grid): bookable ones select the
     // day, the others jump to their month.
@@ -1300,7 +1328,7 @@
 
       if (dateStr < todayDate) {
         cell.classList.add('past');
-      } else if (availableDates[dateStr]) {
+      } else if (dayHasSlots(dateStr)) {
         cell.classList.add('has-slots');
       }
 
@@ -1309,11 +1337,11 @@
       }
 
       if (cell.classList.contains('has-slots')) {
-        cell.addEventListener('click', function() { selectDay(dateStr); });
+        makeActionable(cell, function() { selectDay(dateStr); });
       } else if (otherMonth && dateStr >= todayDate &&
                  (month === nm ? calData.hasNextMonth : hasPrevMonth)) {
         cell.classList.add('to-month');
-        cell.addEventListener('click', function() { navigateMonth(year, month); });
+        makeActionable(cell, function() { navigateMonth(year, month); });
       }
 
       grid.appendChild(cell);
@@ -1342,7 +1370,7 @@
     // availableDates can hold days outside this month (the week grid's
     // spill-over, or months merged by the week view): only pick one shown here.
     for (var key in availableDates) {
-      if (key.indexOf(monthYear + '-') !== 0) continue;
+      if (key.indexOf(monthYear + '-') !== 0 || !dayHasSlots(key)) continue;
       if (!firstAvail || key < firstAvail) firstAvail = key;
     }
     if (firstAvail) selectDay(firstAvail);
