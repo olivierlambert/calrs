@@ -206,7 +206,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Changed
 
-- **Month view: larger arrows, and next month's days can be booked in one click** (#463) - The previous and next arrows of the slot picker are larger, drawn as chevrons, with a visible keyboard focus. The days of the neighbouring months that fill the first and last week now show their availability: a bookable one opens its times directly instead of only jumping to its month, and is drawn paler than this month's days so the grid still shows where the month ends. Thanks @Frankkkkk.
+- **Month view: larger arrows, and next month's days can be booked in one click** (#463) - The previous and next arrows of the slot picker are larger, drawn as chevrons, with a visible keyboard focus. The days of the neighbouring months that fill the first and last week now show their availability: a bookable one opens its times directly instead of only jumping to its month, and is drawn quieter than this month's days, with the month's short name above its first day, so the grid still shows where the month ends. Thanks @Frankkkkk.
 
 ### Fixed
 

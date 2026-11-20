@@ -301,14 +301,32 @@
      grid still shows where the month ends: a bookable one is a paler copy of
      a bookable day, the others are fainter still. */
   .cal-cell.other-month.has-slots:not(.selected) {
-    opacity: 0.6;
+    color: color-mix(in srgb, var(--text) 62%, var(--surface));
     font-weight: 500;
   }
-  .cal-cell.other-month.has-slots:hover {
-    opacity: 1;
+  /* On a dark surface the tile itself carries the weight: thin it too. */
+  html.dark .cal-cell.other-month.has-slots:not(.selected):not(:hover) {
+    color: var(--text-muted);
+    background: color-mix(in srgb, var(--surface-hover) 45%, transparent);
+  }
+  .cal-cell.other-month.has-slots:not(.selected):hover {
+    color: var(--text);
   }
   .cal-cell.other-month:not(.has-slots):not(.past) {
     opacity: 0.5;
+  }
+  .cal-month-tag {
+    position: absolute;
+    top: 14%;
+    left: 0;
+    right: 0;
+    text-align: center;
+    font-size: 0.55rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    line-height: 1;
+    pointer-events: none;
   }
   /* Only a day that leads to its month is a link. */
   .cal-cell.other-month.to-month {
@@ -1269,6 +1287,16 @@
       cell.className = 'cal-cell' + (otherMonth ? ' other-month' : '');
       cell.textContent = d;
       cell.dataset.date = dateStr;
+      // Name the neighbouring month once, on its first day shown.
+      if (otherMonth && dateStr >= todayDate && (month === nm ? d === 1 : !grid.querySelector('.cal-month-tag'))) {
+        var tag = document.createElement('span');
+        tag.className = 'cal-month-tag';
+        tag.setAttribute('aria-hidden', 'true');
+        try {
+          tag.textContent = new Intl.DateTimeFormat(document.documentElement.lang || undefined, { month: 'short' }).format(new Date(year, month - 1, 1));
+        } catch (e) { tag.textContent = ''; }
+        cell.appendChild(tag);
+      }
 
       if (dateStr < todayDate) {
         cell.classList.add('past');
