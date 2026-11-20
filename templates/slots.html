@@ -1267,6 +1267,9 @@
   // Build calendar grid
   var grid = document.getElementById('cal-grid');
   var selectedDate = null;
+  // Set when a day was activated from the keyboard: the grid it rebuilds
+  // (a month change) takes the focus back, which the old cell took with it.
+  var refocusGrid = false;
 
   function buildCalendar() {
     grid.innerHTML = '';
@@ -1289,7 +1292,7 @@
     }
 
     // A cell that does something is reachable and usable from the keyboard.
-    function makeActionable(cell, action) {
+    function makeActionable(cell, action, rebuilds) {
       cell.tabIndex = 0;
       cell.setAttribute('role', 'button');
       // Read out as the whole date: the number alone does not say the month.
@@ -1301,6 +1304,7 @@
       cell.addEventListener('keydown', function(e) {
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault();
+          refocusGrid = !!rebuilds;
           action();
         }
       });
@@ -1341,7 +1345,7 @@
       } else if (otherMonth && dateStr >= todayDate &&
                  (month === nm ? calData.hasNextMonth : hasPrevMonth)) {
         cell.classList.add('to-month');
-        makeActionable(cell, function() { navigateMonth(year, month); });
+        makeActionable(cell, function() { navigateMonth(year, month); }, true);
       }
 
       grid.appendChild(cell);
@@ -1375,6 +1379,12 @@
     }
     if (firstAvail) selectDay(firstAvail);
     else clearSlotPanel();
+
+    if (refocusGrid) {
+      refocusGrid = false;
+      var focusCell = grid.querySelector('.cal-cell.selected') || grid.querySelector('.cal-cell[tabindex]');
+      if (focusCell) focusCell.focus();
+    }
   }
 
   function clearSlotPanel() {
