@@ -1,6 +1,6 @@
 # Deployment
 
-This guide covers v2, currently a prerelease. Read [Upgrading to v2](./upgrading.md) before using an existing data directory. The examples use `next`; choose an exact tag from [Releases](https://github.com/olivierlambert/calrs/releases) for a repeatable deployment.
+This guide covers v2. Coming from 1.x, read [Upgrading to v2](./upgrading.md) before using an existing data directory. The examples use `latest`; choose an exact tag from [Releases](https://github.com/olivierlambert/calrs/releases) for a repeatable deployment.
 
 ## Docker / Podman (recommended)
 
@@ -11,12 +11,12 @@ docker run -d --name calrs \
   -p 127.0.0.1:3000:3000 \
   -v calrs-data:/var/lib/calrs \
   -e CALRS_BASE_URL=https://cal.example.com \
-  ghcr.io/olivierlambert/calrs:next
+  ghcr.io/olivierlambert/calrs:latest
 ```
 
 > **Podman** works as a drop-in replacement — just use `podman` instead of `docker` in all commands. The Containerfile (Dockerfile) is compatible with both runtimes.
 
-`latest` follows stable releases; `next` follows prereleases. An exact prerelease tag looks like `ghcr.io/olivierlambert/calrs:2.0.0-rc.4`. The loopback port binding above assumes a reverse proxy on the host; adapt it if your proxy runs in a separate container.
+`latest` follows stable releases; `next` follows prereleases. An exact tag looks like `ghcr.io/olivierlambert/calrs:2.0.0`, and `2.0` follows the patch releases of 2.0. The loopback port binding above assumes a reverse proxy on the host; adapt it if your proxy runs in a separate container.
 
 The image uses a multi-stage build:
 
@@ -33,7 +33,7 @@ To build from source instead: `docker build -t calrs .`
 ```yaml
 services:
   calrs:
-    image: ghcr.io/olivierlambert/calrs:next
+    image: ghcr.io/olivierlambert/calrs:latest
     ports:
       - "127.0.0.1:3000:3000"
     volumes:

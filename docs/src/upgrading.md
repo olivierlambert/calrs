@@ -1,17 +1,18 @@
 # Upgrading to v2
 
-This book covers the v2 prerelease line. Use the [release list](https://github.com/olivierlambert/calrs/releases) to select an available build and read its release notes. A beta or release candidate is not a stable release.
+This page is for installations coming from 1.x, or from a 2.0 beta or release candidate. Use the [release list](https://github.com/olivierlambert/calrs/releases) to select a build and read its release notes.
 
 ## Choose a container channel
 
 | Tag | Tracks |
 |---|---|
-| `latest` | Stable release tags only; a v2 prerelease does not move it |
-| `next` | Prerelease tags, including betas and release candidates |
-| Exact version, such as `2.0.0-rc.4` | That release; recommended when you need a repeatable deployment |
+| `latest` | Stable release tags only. Since 2.0.0 it is on the v2 line, so a 1.x installation that follows `latest` upgrades to v2 at its next pull |
+| `2.0` | The patch releases of 2.0 |
+| Exact version, such as `2.0.0` | That release; recommended when you need a repeatable deployment |
+| `next` | Prerelease tags only (betas and release candidates). It stays on the last release candidate until the next prerelease, so an instance that followed `next` during the 2.0 candidates should move to `latest` or an exact tag |
 | `main` | Builds from the main branch, which can contain unreleased changes |
 
-Use an exact tag from the release you selected to pin an installation. `next` is convenient for a test instance but can advance without a configuration change. When stable v2 is released, select its actual release tag rather than assuming that `latest` already contains it.
+Use an exact tag from the release you selected to pin an installation. `latest` and `next` can advance without a configuration change. To stay on 1.x for now, pin `1.23` or an exact 1.23 tag before pulling.
 
 ## Back up and test the upgrade
 
