@@ -200,29 +200,49 @@
   }
   .cal-nav {
     display: flex;
-    gap: 0.25rem;
+    gap: 0.375rem;
   }
+  /* The ←/→ glyph stays as the accessible name; a drawn chevron replaces it visually. */
   .cal-nav a, .cal-nav span.disabled {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 30px;
-    height: 30px;
-    border-radius: 50%;
+    width: 36px;
+    height: 36px;
+    border-radius: 10px;
     border: 1px solid var(--border);
     background: var(--surface);
     color: var(--text);
     text-decoration: none;
-    font-size: 0.8rem;
-    transition: all 0.15s ease;
+    font-size: 0;
+    transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
   }
+  .cal-nav a::before, .cal-nav span.disabled::before {
+    content: '';
+    width: 8px;
+    height: 8px;
+    border-left: 2px solid currentColor;
+    border-bottom: 2px solid currentColor;
+    border-radius: 1px;
+  }
+  .cal-nav > :first-child::before { transform: translateX(2px) rotate(45deg); }
+  .cal-nav > :last-child::before { transform: translateX(-2px) rotate(-135deg); }
   .cal-nav a:hover {
-    border-color: var(--border-hover);
-    background: var(--surface-hover);
+    border-color: var(--accent);
+    background: var(--accent-subtle);
+    color: var(--accent);
+  }
+  .cal-nav a:active { transform: scale(0.94); }
+  .cal-nav a:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
   }
   .cal-nav span.disabled {
-    opacity: 0.3;
-    cursor: default;
+    color: var(--text-muted);
+    border-color: transparent;
+    background: transparent;
+    opacity: 0.4;
+    cursor: not-allowed;
   }
   .cal-weekdays {
     display: grid;
@@ -271,19 +291,53 @@
     background: var(--accent) !important;
     color: #fff !important;
   }
+  .cal-cell:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
   .cal-cell.today:not(.selected) {
     box-shadow: inset 0 0 0 2px var(--accent);
   }
   .cal-cell.past {
     opacity: 0.3;
   }
-  .cal-cell.other-month {
-    opacity: 0.25;
-    font-size: 0.775rem;
+  /* Days of the neighbouring months are quieter than this month's, so the
+     grid still shows where the month ends: a bookable one is a paler copy of
+     a bookable day, the others are fainter still. */
+  .cal-cell.other-month.has-slots:not(.selected) {
+    color: color-mix(in srgb, var(--text) 62%, var(--surface));
+    font-weight: 500;
+  }
+  /* On a dark surface the tile itself carries the weight: thin it too. */
+  html.dark .cal-cell.other-month.has-slots:not(.selected):not(:hover) {
+    color: var(--text-muted);
+    background: color-mix(in srgb, var(--surface-hover) 45%, transparent);
+  }
+  .cal-cell.other-month.has-slots:not(.selected):hover {
+    color: var(--text);
+  }
+  .cal-cell.other-month:not(.has-slots):not(.past) {
+    opacity: 0.5;
+  }
+  .cal-month-tag {
+    position: absolute;
+    top: 14%;
+    left: 0;
+    right: 0;
+    text-align: center;
+    font-size: 0.55rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    line-height: 1;
+    pointer-events: none;
+  }
+  /* Only a day that leads to its month is a link. */
+  .cal-cell.other-month.to-month {
     cursor: pointer;
   }
-  .cal-cell.other-month:hover {
-    opacity: 0.45;
+  .cal-cell.other-month.to-month:hover {
+    opacity: 0.8;
     background: var(--surface-hover);
   }
   /* Available day dot removed — the bold text + background is enough */
@@ -452,9 +506,8 @@
       font-size: 0.85rem;
     }
     .cal-nav a, .cal-nav span.disabled {
-      width: 26px;
-      height: 26px;
-      font-size: 0.7rem;
+      width: 32px;
+      height: 32px;
     }
     .slot-pill {
       padding: 0.4rem 0.625rem;
@@ -1214,6 +1267,9 @@
   // Build calendar grid
   var grid = document.getElementById('cal-grid');
   var selectedDate = null;
+  // Set when a day was activated from the keyboard: the grid it rebuilds
+  // (a month change) takes the focus back, which the old cell took with it.
+  var refocusGrid = false;
 
   function buildCalendar() {
     grid.innerHTML = '';
@@ -1223,27 +1279,60 @@
     var myYear = parseInt(myParts[0], 10);
     var myMonth = parseInt(myParts[1], 10);
 
-    // Previous month trailing days
-    var prevMonthLastDay = new Date(myYear, myMonth - 1, 0).getDate();
-    for (var i = 0; i < firstWeekday; i++) {
-      var pd = prevMonthLastDay - firstWeekday + 1 + i;
-      var cell = document.createElement('div');
-      cell.className = 'cal-cell other-month';
-      cell.textContent = pd;
-      grid.appendChild(cell);
+    var pm = myMonth - 1, py = myYear;
+    if (pm < 1) { pm = 12; py--; }
+    var nm = myMonth + 1, ny = myYear;
+    if (nm > 12) { nm = 1; ny++; }
+    function ym(y, m) { return y + '-' + (m < 10 ? '0' : '') + m; }
+
+    // A day is bookable only with a time left: a day whose times a booking
+    // frequency cap removed is still listed in availableDates.
+    function dayHasSlots(dateStr) {
+      return !!availableDates[dateStr] && (slotData[dateStr] || []).length > 0;
     }
 
-    // Current month days
-    for (var d = 1; d <= daysInMonth; d++) {
-      var dateStr = monthYear + '-' + (d < 10 ? '0' : '') + d;
+    // A cell that does something is reachable and usable from the keyboard.
+    function makeActionable(cell, action, rebuilds) {
+      cell.tabIndex = 0;
+      cell.setAttribute('role', 'button');
+      // Read out as the whole date: the number alone does not say the month.
+      try {
+        var p = cell.dataset.date.split('-');
+        cell.setAttribute('aria-label', new Intl.DateTimeFormat(document.documentElement.lang || undefined, { dateStyle: 'full' }).format(new Date(+p[0], +p[1] - 1, +p[2])));
+      } catch (e) {}
+      cell.addEventListener('click', action);
+      cell.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          refocusGrid = !!rebuilds;
+          action();
+        }
+      });
+    }
+
+    // One day cell. Spill-over days of the neighbouring months read like this
+    // month's (the slot window covers the whole grid): bookable ones select the
+    // day, the others jump to their month.
+    function addDay(year, month, d, otherMonth) {
+      var dateStr = ym(year, month) + '-' + (d < 10 ? '0' : '') + d;
       var cell = document.createElement('div');
-      cell.className = 'cal-cell';
+      cell.className = 'cal-cell' + (otherMonth ? ' other-month' : '');
       cell.textContent = d;
       cell.dataset.date = dateStr;
+      // Name the neighbouring month once, on its first day shown.
+      if (otherMonth && dateStr >= todayDate && (month === nm ? d === 1 : !grid.querySelector('.cal-month-tag'))) {
+        var tag = document.createElement('span');
+        tag.className = 'cal-month-tag';
+        tag.setAttribute('aria-hidden', 'true');
+        try {
+          tag.textContent = new Intl.DateTimeFormat(document.documentElement.lang || undefined, { month: 'short' }).format(new Date(year, month - 1, 1));
+        } catch (e) { tag.textContent = ''; }
+        cell.appendChild(tag);
+      }
 
       if (dateStr < todayDate) {
         cell.classList.add('past');
-      } else if (availableDates[dateStr]) {
+      } else if (dayHasSlots(dateStr)) {
         cell.classList.add('has-slots');
       }
 
@@ -1252,56 +1341,50 @@
       }
 
       if (cell.classList.contains('has-slots')) {
-        cell.addEventListener('click', (function(ds) {
-          return function() { selectDay(ds); };
-        })(dateStr));
+        makeActionable(cell, function() { selectDay(dateStr); });
+      } else if (otherMonth && dateStr >= todayDate &&
+                 (month === nm ? calData.hasNextMonth : hasPrevMonth)) {
+        cell.classList.add('to-month');
+        makeActionable(cell, function() { navigateMonth(year, month); }, true);
       }
 
       grid.appendChild(cell);
+    }
+
+    // Previous month trailing days
+    var prevMonthLastDay = new Date(myYear, myMonth - 1, 0).getDate();
+    for (var i = 0; i < firstWeekday; i++) {
+      addDay(py, pm, prevMonthLastDay - firstWeekday + 1 + i, true);
+    }
+
+    // Current month days
+    for (var d = 1; d <= daysInMonth; d++) {
+      addDay(myYear, myMonth, d, false);
     }
 
     // Next month leading days to fill the grid
     var totalCells = firstWeekday + daysInMonth;
     var remaining = (7 - (totalCells % 7)) % 7;
     for (var i = 1; i <= remaining; i++) {
-      var cell = document.createElement('div');
-      cell.className = 'cal-cell other-month';
-      cell.textContent = i;
-      grid.appendChild(cell);
+      addDay(ny, nm, i, true);
     }
-
-    // Other-month day click handlers
-    grid.querySelectorAll('.cal-cell.other-month').forEach(function(cell) {
-      cell.style.cursor = 'pointer';
-      var dayNum = parseInt(cell.textContent, 10);
-      var isPrev = dayNum > 15;
-      if ((isPrev && !hasPrevMonth) || (!isPrev && !calData.hasNextMonth)) {
-        cell.style.cursor = 'default';
-        return;
-      }
-      cell.addEventListener('click', function() {
-        if (isPrev) {
-          var pm = myMonth - 1, py = myYear;
-          if (pm < 1) { pm = 12; py--; }
-          navigateMonth(py, pm);
-        } else {
-          var nm = myMonth + 1, ny = myYear;
-          if (nm > 12) { nm = 1; ny++; }
-          navigateMonth(ny, nm);
-        }
-      });
-    });
 
     // Auto-select first available date
     var firstAvail = null;
     // availableDates can hold days outside this month (the week grid's
     // spill-over, or months merged by the week view): only pick one shown here.
     for (var key in availableDates) {
-      if (key.indexOf(monthYear + '-') !== 0) continue;
+      if (key.indexOf(monthYear + '-') !== 0 || !dayHasSlots(key)) continue;
       if (!firstAvail || key < firstAvail) firstAvail = key;
     }
     if (firstAvail) selectDay(firstAvail);
     else clearSlotPanel();
+
+    if (refocusGrid) {
+      refocusGrid = false;
+      var focusCell = grid.querySelector('.cal-cell.selected') || grid.querySelector('.cal-cell[tabindex]');
+      if (focusCell) focusCell.focus();
+    }
   }
 
   function clearSlotPanel() {

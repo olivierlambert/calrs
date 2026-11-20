@@ -204,6 +204,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [2.0.0-rc.4] - 2026-11-20
+
+Fourth release candidate of 2.0, with fixes from RC feedback. **Upgrade from rc.3** if you sync a Google calendar (an event deleted in Google kept blocking availability until the daily full resync), or if hosts read their booking emails in Gmail (the calendar card showed "Unable to load event"). **No migrations since rc.3.**
+
+Docker: this version is published as `:2.0.0-rc.4` and `:next`. `:latest` stays on the 1.23 line (1.23.4) until 2.0 is final.
+
+### Changed
+
+- **Month view: larger arrows, and next month's days can be booked in one click** (#463) - The previous and next arrows of the slot picker are larger, drawn as chevrons, with a visible keyboard focus. The days of the neighbouring months that fill the first and last week now show their availability: a bookable one opens its times directly instead of only jumping to its month, and is drawn quieter than this month's days, with the month's short name above its first day, so the grid still shows where the month ends. Days that do something can be reached and activated from the keyboard and are announced with their full date, and a day whose times a booking frequency limit removed no longer reads as bookable. Thanks @Frankkkkk.
+
+### Fixed
+
+- **Google Calendar deletions now reach calrs between full resyncs (#460).** Google writes the `@` of its event names as `%40` in the paths it reports for deleted events, and calrs compared that path with the stored UID unchanged, so no Google deletion matched: the deleted event kept blocking availability until the daily full resync. The name is now percent-decoded, and the name as written is still matched for a server that puts a literal `%` in a path (when both match a cached event, neither is deleted and the next full resync sorts them out). Reported and fixed by @Edo78 (#461). Events left behind before the upgrade are removed by the next full resync, or by `calrs sync --full`, as long as the calendar still has an event in the window it fetches; for a calendar with none left, turn its sync off and back on (on its source's calendars page) to clear them.
+- **The host's booking email no longer shows "Unable to load event" in Gmail (#462).** The "New booking" email attached the guest's invitation (`METHOD:REQUEST`), which asks its recipient to answer as an attendee; the host organizes the event, so Gmail could not show it. The host now gets an informational copy (`METHOD:PUBLISH`, `booking.ics`) under the same UID, which still imports into a calendar, and the host's cancellation email attaches the cancelled event the same way instead of a `CANCEL` addressed to its organizer. Neither copy lists attendees, as a `PUBLISH` must not. Guest invitations and cancellations are unchanged. Reported by @ManUtopiK.
+
 ## [2.0.0-rc.3] - 2026-11-15
 
 Third release candidate of 2.0, with fixes from RC feedback. **Upgrade from rc.2** if you use private team invite links (the team page showed an error since beta.4), or if calendar events written by Thunderbird or Outlook can end in another timezone than they start (they could block nothing). **No migrations since rc.2.**

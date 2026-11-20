@@ -15,13 +15,15 @@ fn push_host_notes(rows: &mut Vec<EmailRow>, lang: &str, host_notes: Option<&str
 /// Send booking notification to the host
 pub async fn send_host_notification(config: &SmtpConfig, details: &BookingDetails) -> Result<()> {
     let to = named_mailbox(&details.host_name, &details.host_email)?;
-    let ics = generate_ics(details, "REQUEST");
+    // The host organizes the event: an informational copy, never an
+    // invitation to answer (#462).
+    let ics = generate_host_ics(details);
     send_composed(
         config,
         Sender::Instance,
         to,
         compose_host_notification(details),
-        Some(("invite.ics", ics, "REQUEST")),
+        Some(("booking.ics", ics, "PUBLISH")),
     )
     .await
 }
@@ -482,13 +484,15 @@ pub async fn send_host_cancellation(
     host_notes: Option<&str>,
 ) -> Result<()> {
     let to = named_mailbox(&details.host_name, &details.host_email)?;
-    let ics = generate_cancel_ics(details);
+    // To the organizer, not an attendee: PUBLISH, as for the new booking
+    // (#462).
+    let ics = generate_host_cancel_ics(details);
     send_composed(
         config,
         Sender::Instance,
         to,
         compose_host_cancellation(details, host_notes),
-        Some(("cancel.ics", ics, "CANCEL")),
+        Some(("cancel.ics", ics, "PUBLISH")),
     )
     .await
 }
