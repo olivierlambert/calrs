@@ -204,6 +204,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-11-20
+
+**calrs 2.0 is final.** It is rc.4 plus one fix, after four betas and four release candidates tested on real instances.
+
+What 2.0 brings over 1.23, each described in the prerelease sections below:
+
+- **A new look**: a redesigned dashboard and admin panel in cards, an overview that starts with your next meeting, and host and team landing pages set like a business card (beta.1, beta.4).
+- **More calendars**: Microsoft 365 and Outlook.com through Microsoft Graph, organization-wide Exchange with one service account, Google out of office, and a write calendar per event type (beta.3).
+- **Integrations**: a REST API with an OpenAPI document and a built-in reference, signed booking webhooks, and MCP over HTTP with OAuth for AI assistants (beta.3, beta.4).
+- **Booking**: custom booking questions with consent checkboxes, host-only notes, time off across every event type, and a month view that books a neighbouring month's day in one click (beta.3, rc.4).
+- **Scale and correctness**: every long list paged and searched on the server, a real XML parser for CalDAV and Exchange replies, recurrence rules that fail closed, timezone data at IANA 2026f, and the booking checks reviewed twice (beta.3 to rc.2).
+- **Russian**, the tenth language, on the guest and host sides (rc.1).
+
+**Upgrading from 1.x**: read [Upgrading to v2](https://cal.rs/docs/upgrading.html) first. 2.0 applies 33 migrations at its first start and there is no downgrade path, so **back up the whole data directory before upgrading**. **Upgrading from rc.4**: no migrations, nothing to do.
+
+Docker: this version is published as `:2.0.0`, `:2.0` and **`:latest`**, which leaves the 1.23 line. An installation that follows `:latest` moves to 2.0 at its next pull; pin `:1.23` to stay on 1.x for now. `:next` follows prereleases only and stays on rc.4: an instance that followed it during the candidates should move to `:latest` or an exact tag.
+
+Thank you to everyone who wrote code, translated, reported and tested during the 2.0 cycle: @optimistic5, @ilia-ae, @chetan, @adeg, @threema-danilo, @huntervcx, @kpalang, @gounthar, @baptistebca, @alexture, @WEBDIENSTE, @Martin-Hausleitner, @Frankkkkk, @ManUtopiK, @Edo78, @Codrax, @AymericFerreira and @davidwuest.
+
+### Fixed
+
+- **A calendar without delta sync is no longer asked for one on every sync** (#468, reported by @davidwuest). Nextcloud lists each Deck board as a calendar, and those answer `415 Unsupported Media Type` to the `sync-collection` request calrs tries before a full fetch. The sync then read the calendar in full, as it should, but tried the delta again on the next sync, about once a minute per board: a refused request and a line in the Nextcloud log each time. A calendar that answers 415 or 501 is now remembered for a day and goes straight to the full fetch, with one log line when it is first found. Nothing changes for calendars that support delta sync.
+
 ## [2.0.0-rc.4] - 2026-11-20
 
 Fourth release candidate of 2.0, with fixes from RC feedback. **Upgrade from rc.3** if you sync a Google calendar (an event deleted in Google kept blocking availability until the daily full resync), or if hosts read their booking emails in Gmail (the calendar card showed "Unable to load event"). **No migrations since rc.3.**

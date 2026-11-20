@@ -42,6 +42,81 @@ static TEST_GOOGLE_ORIGINS: std::sync::LazyLock<
     std::sync::Mutex<std::collections::HashMap<String, String>>,
 > = std::sync::LazyLock::new(Default::default);
 
+/// A calendar answered the sync-collection REPORT (RFC 6578) with "this
+/// report is not supported here" (#468). Carried by the error of
+/// [`CaldavClient::sync_collection`], so the sync can tell it from a failed
+/// delta.
+#[derive(Debug)]
+pub struct DeltaUnsupported {
+    pub status: u16,
+}
+
+impl std::fmt::Display for DeltaUnsupported {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "this calendar does not support sync-collection (HTTP {})",
+            self.status
+        )
+    }
+}
+
+impl std::error::Error for DeltaUnsupported {}
+
+/// How long a calendar that refused sync-collection is not asked again. Long
+/// enough to spare the server a refused request on every sync, short enough
+/// that a refusal that was a passing fault, or a server that gains the
+/// report, is found out within a day.
+const DELTA_UNSUPPORTED_TTL: Duration = Duration::from_secs(24 * 60 * 60);
+
+/// The most calendars remembered. Past it a refusal is simply not
+/// remembered, and the calendar is asked again as before.
+const DELTA_UNSUPPORTED_MAX: usize = 10_000;
+
+/// Calendars (by URL) that refused sync-collection, and when. In memory
+/// only: a restart asks each of them once more.
+static DELTA_UNSUPPORTED: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::HashMap<String, (u16, std::time::Instant)>>,
+> = std::sync::LazyLock::new(Default::default);
+
+/// The status this calendar refused sync-collection with, while remembered.
+fn delta_unsupported(url: &str) -> Option<u16> {
+    let mut refused = DELTA_UNSUPPORTED.lock().unwrap();
+    match refused.get(url) {
+        Some((status, at)) if at.elapsed() < DELTA_UNSUPPORTED_TTL => Some(*status),
+        Some(_) => {
+            refused.remove(url);
+            None
+        }
+        None => None,
+    }
+}
+
+/// Forget the refusals of the server at `base`. The memory is process-wide
+/// and keyed by URL, and a later test's mock server can be handed the port
+/// of an earlier one.
+#[cfg(test)]
+pub(crate) fn forget_delta_unsupported(base: &str) {
+    let origin = reqwest::Url::parse(base)
+        .unwrap()
+        .origin()
+        .ascii_serialization();
+    DELTA_UNSUPPORTED
+        .lock()
+        .unwrap()
+        .retain(|url, _| !url.starts_with(&origin));
+}
+
+fn remember_delta_unsupported(url: &str, status: u16) {
+    let mut refused = DELTA_UNSUPPORTED.lock().unwrap();
+    if refused.len() >= DELTA_UNSUPPORTED_MAX {
+        refused.retain(|_, (_, at)| at.elapsed() < DELTA_UNSUPPORTED_TTL);
+    }
+    if refused.len() < DELTA_UNSUPPORTED_MAX {
+        refused.insert(url.to_string(), (status, std::time::Instant::now()));
+    }
+}
+
 /// Check if an IP address is in a private/reserved range (SSRF protection).
 /// Also used by outgoing booking webhooks (`web::webhooks`).
 ///
@@ -750,12 +825,21 @@ impl CaldavClient {
     /// Perform a sync-collection REPORT (RFC 6578) to get changes since a sync-token.
     /// If `sync_token` is None, requests an initial sync-token from the server.
     /// Returns changed/added events, deleted hrefs, and the new sync-token.
+    ///
+    /// A calendar that answers 415 or 501 does not have the report at all
+    /// (sabre/dav, so Nextcloud, sends 415 for its generated calendars such
+    /// as Deck boards, #468). The error is then a [`DeltaUnsupported`], and
+    /// the calendar is not asked again for [`DELTA_UNSUPPORTED_TTL`]: the
+    /// same error comes back without a request.
     pub async fn sync_collection(
         &self,
         calendar_href: &str,
         sync_token: Option<&str>,
     ) -> Result<SyncResult> {
         let url = self.resolve_url(calendar_href);
+        if let Some(status) = delta_unsupported(&url) {
+            return Err(DeltaUnsupported { status }.into());
+        }
 
         // Tokens are stored decoded (the parser decodes entities), so escape
         // them again.
@@ -785,6 +869,18 @@ impl CaldavClient {
         // 403/412 = token expired or invalid; 405 = not supported
         if status.as_u16() == 403 || status.as_u16() == 412 || status.as_u16() == 405 {
             bail!("sync-token invalid or not supported (HTTP {})", status);
+        }
+        if matches!(status.as_u16(), 415 | 501) {
+            tracing::info!(
+                url = %url,
+                status = status.as_u16(),
+                "calendar does not support sync-collection, using full fetches for the next day"
+            );
+            remember_delta_unsupported(&url, status.as_u16());
+            return Err(DeltaUnsupported {
+                status: status.as_u16(),
+            }
+            .into());
         }
         let text = multistatus_body(resp, "sync-collection REPORT", &url).await?;
         parse_blocking(text, parse_sync_response)
@@ -1169,6 +1265,92 @@ mod tests {
             let err = format!("{:#}", result.unwrap_err());
             assert!(err.contains("503 Service Unavailable"), "{err}");
             assert!(!err.contains("Alice"), "{err}");
+        }
+    }
+
+    /// #468: Nextcloud answers 415 to sync-collection on its generated
+    /// calendars (Deck boards). The calendar is asked once, then left alone.
+    #[tokio::test]
+    async fn a_calendar_without_sync_collection_is_asked_once() {
+        for status in [415u16, 501] {
+            let deltas = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let seen = deltas.clone();
+            let base = serve(move |_, body| {
+                if body.contains("sync-collection") {
+                    seen.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    (status, "text/plain", Vec::new())
+                } else {
+                    (207, "application/xml", MULTISTATUS.as_bytes().to_vec())
+                }
+            })
+            .await;
+            let client = CaldavClient::new(&base, "u", "p");
+            // With a token and without (the probe for a first token), and
+            // from another client of the same calendar.
+            for token in [Some("t1"), None, Some("t1")] {
+                let err = client
+                    .sync_collection("/dav/cal/", token)
+                    .await
+                    .unwrap_err();
+                let refusal = err.downcast_ref::<DeltaUnsupported>().expect("typed");
+                assert_eq!(refusal.status, status);
+            }
+            let other = CaldavClient::new(&base, "u2", "p2");
+            assert!(other.sync_collection("/dav/cal/", None).await.is_err());
+            assert_eq!(deltas.load(std::sync::atomic::Ordering::SeqCst), 1);
+
+            // Another calendar of the same server is still asked, and the
+            // full fetch of the refused one is untouched.
+            assert!(client.sync_collection("/dav/other/", None).await.is_err());
+            assert_eq!(deltas.load(std::sync::atomic::Ordering::SeqCst), 2);
+            assert_eq!(client.fetch_events("/dav/cal/").await.unwrap().len(), 1);
+            forget_delta_unsupported(&base);
+            assert_eq!(delta_unsupported(&format!("{base}cal/")), None);
+        }
+    }
+
+    /// A refusal is forgotten after a day, so a passing fault or a server
+    /// that gains the report is found out.
+    #[tokio::test]
+    async fn a_refused_sync_collection_is_asked_again_after_a_day() {
+        let url = "http://delta-ttl.invalid/dav/cal/";
+        remember_delta_unsupported(url, 415);
+        assert_eq!(delta_unsupported(url), Some(415));
+        let Some(long_ago) =
+            std::time::Instant::now().checked_sub(DELTA_UNSUPPORTED_TTL + Duration::from_secs(1))
+        else {
+            // A machine up for less than a day cannot represent it.
+            return;
+        };
+        DELTA_UNSUPPORTED
+            .lock()
+            .unwrap()
+            .insert(url.to_string(), (415, long_ago));
+        assert_eq!(delta_unsupported(url), None);
+        assert!(!DELTA_UNSUPPORTED.lock().unwrap().contains_key(url));
+    }
+
+    /// The statuses that mean "token invalid" are not remembered: the next
+    /// sync asks again.
+    #[tokio::test]
+    async fn an_invalid_token_is_not_remembered_as_unsupported() {
+        for status in [403u16, 405, 412, 500] {
+            let deltas = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let seen = deltas.clone();
+            let base = serve(move |_, _| {
+                seen.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                (status, "text/plain", Vec::new())
+            })
+            .await;
+            let client = CaldavClient::new(&base, "u", "p");
+            for _ in 0..2 {
+                let err = client
+                    .sync_collection("/dav/cal/", Some("t"))
+                    .await
+                    .unwrap_err();
+                assert!(!err.is::<DeltaUnsupported>(), "{status}: {err}");
+            }
+            assert_eq!(deltas.load(std::sync::atomic::Ordering::SeqCst), 2);
         }
     }
 

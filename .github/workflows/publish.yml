@@ -35,8 +35,10 @@ jobs:
           # to main nor a pre-release tag, so 2.0 betas on main do not reach
           # people running calrs:latest. Pre-release tags (v2.0.0-beta.1)
           # also move `next`. {{major}}.{{minor}} is skipped for pre-releases
-          # by metadata-action itself. Note: a 1.23.x patch tagged after
-          # 2.0.0 ships would move `latest` back; skip `latest` by hand then.
+          # by metadata-action itself. A tag runs the workflow of its own
+          # commit, so a 1.23.x patch is published by the 1.23.x branch's
+          # copy of this file: that copy must never set `latest`, which
+          # would hand a 1.x image to a database 2.0 has migrated.
           flavor: |
             latest=false
           tags: |

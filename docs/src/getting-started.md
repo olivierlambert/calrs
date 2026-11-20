@@ -2,17 +2,17 @@
 
 ## Install and start
 
-See [Deployment](./deployment.md) for containers, systemd and source builds. To try the v2 prerelease channel with an isolated data volume:
+See [Deployment](./deployment.md) for containers, systemd and source builds. To try it locally:
 
 ```bash
-docker run -d --name calrs-v2 \
+docker run -d --name calrs \
   -p 127.0.0.1:3000:3000 \
-  -v calrs-v2-data:/var/lib/calrs \
+  -v calrs-data:/var/lib/calrs \
   -e CALRS_BASE_URL=http://localhost:3000 \
-  ghcr.io/olivierlambert/calrs:next
+  ghcr.io/olivierlambert/calrs:latest
 ```
 
-`next` follows prereleases; `latest` follows stable releases. Pin an exact available version for a repeatable installation. Use HTTPS and the real public base URL when deploying for guests or configuring calendar OAuth and SSO. See [Upgrading to v2](./upgrading.md) before reusing an existing data volume.
+`latest` follows stable releases; `next` follows prereleases. Pin an exact version for a repeatable installation. Use HTTPS and the real public base URL when deploying for guests or configuring calendar OAuth and SSO. See [Upgrading to v2](./upgrading.md) before reusing an existing data volume.
 
 For a local source checkout:
 

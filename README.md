@@ -18,7 +18,7 @@ Connect CalDAV, Google Calendar, Microsoft 365 / Outlook or on-premises Exchange
   <a href="docs/src/features.md">v2 feature guide</a>
 </p>
 
-> This branch documents **v2, currently in prerelease**. `latest` follows stable container releases; `next` follows betas and release candidates. Check [Releases](https://github.com/olivierlambert/calrs/releases) for available versions and read the [upgrade guide](docs/src/upgrading.md) before reusing an existing installation.
+> **calrs 2.0 is the current stable release.** The container's `latest` tag follows stable releases; `next` follows betas and release candidates. Coming from 1.x? Read the [upgrade guide](docs/src/upgrading.md) before reusing an existing installation.
 
 <p align="center">
   <img src="assets/screenshot.png" alt="calrs v2 dashboard split diagonally between light and dark mode" width="900">
@@ -98,14 +98,14 @@ The [v2 feature guide](docs/src/features.md) links the complete capabilities and
 
 ## Install
 
-For a local v2 preview using its own data volume:
+To try it locally:
 
 ```bash
-docker run -d --name calrs-v2 \
+docker run -d --name calrs \
   -p 127.0.0.1:3000:3000 \
-  -v calrs-v2-data:/var/lib/calrs \
+  -v calrs-data:/var/lib/calrs \
   -e CALRS_BASE_URL=http://localhost:3000 \
-  ghcr.io/olivierlambert/calrs:next
+  ghcr.io/olivierlambert/calrs:latest
 ```
 
 Open `http://localhost:3000` and register; the first user becomes admin. Configure your timezone and hours, connect a calendar, then create an event type. Podman accepts the same command with `podman` in place of `docker`. Images are built for `amd64` and `arm64`.

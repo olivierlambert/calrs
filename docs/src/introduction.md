@@ -4,7 +4,7 @@
 
 Connect your calendars, define when people can book you, and share a link. calrs runs on your infrastructure with SQLite, a Rust executable and its HTML templates. It needs neither Node.js nor a separate database server.
 
-This book describes the **v2 feature set**, including the current prereleases. It does not announce a stable v2 release. Check [Releases](https://github.com/olivierlambert/calrs/releases) for available versions; the container's `latest` tag follows stable releases and `next` follows prereleases. Existing installations should read [Upgrading to v2](./upgrading.md).
+This book describes **calrs 2**, the current stable line. Check [Releases](https://github.com/olivierlambert/calrs/releases) for available versions; the container's `latest` tag follows stable releases and `next` follows prereleases. Installations coming from 1.x should read [Upgrading to v2](./upgrading.md).
 
 ## Start here
 
