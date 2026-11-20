@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-3d7bf46b.js";
+            window.path_to_searchindex_js = "searchindex-c4497d9f.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-47cd7d74.js"></script>
@@ -181,7 +181,7 @@
                 <div id="mdbook-content" class="content">
                     <main>
                         <h1 id="upgrading-to-v2"><a class="header" href="#upgrading-to-v2">Upgrading to v2</a></h1>
-<p>This book covers the v2 prerelease line. Use the <a href="https://github.com/olivierlambert/calrs/releases">release list</a> to select an available build and read its release notes. A beta or release candidate is not a stable release.</p>
+<p>This page is for installations coming from 1.x, or from a 2.0 beta or release candidate. Use the <a href="https://github.com/olivierlambert/calrs/releases">release list</a> to select a build and read its release notes.</p>
 <h2 id="choose-a-container-channel"><a class="header" href="#choose-a-container-channel">Choose a container channel</a></h2>
 <div class="table-wrapper">
 <table>
@@ -189,14 +189,15 @@
 <tr><th>Tag</th><th>Tracks</th></tr>
 </thead>
 <tbody>
-<tr><td><code>latest</code></td><td>Stable release tags only; a v2 prerelease does not move it</td></tr>
-<tr><td><code>next</code></td><td>Prerelease tags, including betas and release candidates</td></tr>
-<tr><td>Exact version, such as <code>2.0.0-rc.4</code></td><td>That release; recommended when you need a repeatable deployment</td></tr>
+<tr><td><code>latest</code></td><td>Stable release tags only. Since 2.0.0 it is on the v2 line, so a 1.x installation that follows <code>latest</code> upgrades to v2 at its next pull</td></tr>
+<tr><td><code>2.0</code></td><td>The patch releases of 2.0</td></tr>
+<tr><td>Exact version, such as <code>2.0.0</code></td><td>That release; recommended when you need a repeatable deployment</td></tr>
+<tr><td><code>next</code></td><td>Prerelease tags only (betas and release candidates). It stays on the last release candidate until the next prerelease, so an instance that followed <code>next</code> during the 2.0 candidates should move to <code>latest</code> or an exact tag</td></tr>
 <tr><td><code>main</code></td><td>Builds from the main branch, which can contain unreleased changes</td></tr>
 </tbody>
 </table>
 </div>
-<p>Use an exact tag from the release you selected to pin an installation. <code>next</code> is convenient for a test instance but can advance without a configuration change. When stable v2 is released, select its actual release tag rather than assuming that <code>latest</code> already contains it.</p>
+<p>Use an exact tag from the release you selected to pin an installation. <code>latest</code> and <code>next</code> can advance without a configuration change. To stay on 1.x for now, pin <code>1.23</code> or an exact 1.23 tag before pulling.</p>
 <h2 id="back-up-and-test-the-upgrade"><a class="header" href="#back-up-and-test-the-upgrade">Back up and test the upgrade</a></h2>
 <ol>
 <li>Record the current version, container tag, environment settings and any service overrides.</li>

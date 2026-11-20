@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-3d7bf46b.js";
+            window.path_to_searchindex_js = "searchindex-c4497d9f.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-47cd7d74.js"></script>
@@ -181,7 +181,7 @@
                         <h1 id="calrs-v2"><a class="header" href="#calrs-v2">calrs v2</a></h1>
 <p><strong>Self-hosted scheduling, built in Rust.</strong></p>
 <p>Connect your calendars, define when people can book you, and share a link. calrs runs on your infrastructure with SQLite, a Rust executable and its HTML templates. It needs neither Node.js nor a separate database server.</p>
-<p>This book describes the <strong>v2 feature set</strong>, including the current prereleases. It does not announce a stable v2 release. Check <a href="https://github.com/olivierlambert/calrs/releases">Releases</a> for available versions; the container’s <code>latest</code> tag follows stable releases and <code>next</code> follows prereleases. Existing installations should read <a href="#upgrading-to-v2">Upgrading to v2</a>.</p>
+<p>This book describes <strong>calrs 2</strong>, the current stable line. Check <a href="https://github.com/olivierlambert/calrs/releases">Releases</a> for available versions; the container’s <code>latest</code> tag follows stable releases and <code>next</code> follows prereleases. Installations coming from 1.x should read <a href="#upgrading-to-v2">Upgrading to v2</a>.</p>
 <h2 id="start-here"><a class="header" href="#start-here">Start here</a></h2>
 <ul>
 <li><a href="#getting-started">Getting started</a>: install, connect a calendar and make a first booking.</li>
@@ -299,14 +299,14 @@
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="getting-started"><a class="header" href="#getting-started">Getting Started</a></h1>
 <h2 id="install-and-start"><a class="header" href="#install-and-start">Install and start</a></h2>
-<p>See <a href="#deployment">Deployment</a> for containers, systemd and source builds. To try the v2 prerelease channel with an isolated data volume:</p>
-<pre><code class="language-bash">docker run -d --name calrs-v2 \
+<p>See <a href="#deployment">Deployment</a> for containers, systemd and source builds. To try it locally:</p>
+<pre><code class="language-bash">docker run -d --name calrs \
   -p 127.0.0.1:3000:3000 \
-  -v calrs-v2-data:/var/lib/calrs \
+  -v calrs-data:/var/lib/calrs \
   -e CALRS_BASE_URL=http://localhost:3000 \
-  ghcr.io/olivierlambert/calrs:next
+  ghcr.io/olivierlambert/calrs:latest
 </code></pre>
-<p><code>next</code> follows prereleases; <code>latest</code> follows stable releases. Pin an exact available version for a repeatable installation. Use HTTPS and the real public base URL when deploying for guests or configuring calendar OAuth and SSO. See <a href="#upgrading-to-v2">Upgrading to v2</a> before reusing an existing data volume.</p>
+<p><code>latest</code> follows stable releases; <code>next</code> follows prereleases. Pin an exact version for a repeatable installation. Use HTTPS and the real public base URL when deploying for guests or configuring calendar OAuth and SSO. See <a href="#upgrading-to-v2">Upgrading to v2</a> before reusing an existing data volume.</p>
 <p>For a local source checkout:</p>
 <pre><code class="language-bash">cargo build --release --locked
 ./target/release/calrs serve --port 3000
@@ -3721,19 +3721,19 @@ hostnames), e.g. <code>CALRS_ALLOW_PRIVATE_HOSTS=mail.example.com</code>.</li>
 and the <a href="#admin-dashboard">Admin Dashboard</a> reference.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="deployment"><a class="header" href="#deployment">Deployment</a></h1>
-<p>This guide covers v2, currently a prerelease. Read <a href="#upgrading-to-v2">Upgrading to v2</a> before using an existing data directory. The examples use <code>next</code>; choose an exact tag from <a href="https://github.com/olivierlambert/calrs/releases">Releases</a> for a repeatable deployment.</p>
+<p>This guide covers v2. Coming from 1.x, read <a href="#upgrading-to-v2">Upgrading to v2</a> before using an existing data directory. The examples use <code>latest</code>; choose an exact tag from <a href="https://github.com/olivierlambert/calrs/releases">Releases</a> for a repeatable deployment.</p>
 <h2 id="docker--podman-recommended"><a class="header" href="#docker--podman-recommended">Docker / Podman (recommended)</a></h2>
 <p>Pre-built images are available on <a href="https://github.com/olivierlambert/calrs/pkgs/container/calrs">GitHub Container Registry</a> for <code>amd64</code> and <code>arm64</code>:</p>
 <pre><code class="language-bash">docker run -d --name calrs \
   -p 127.0.0.1:3000:3000 \
   -v calrs-data:/var/lib/calrs \
   -e CALRS_BASE_URL=https://cal.example.com \
-  ghcr.io/olivierlambert/calrs:next
+  ghcr.io/olivierlambert/calrs:latest
 </code></pre>
 <blockquote>
 <p><strong>Podman</strong> works as a drop-in replacement — just use <code>podman</code> instead of <code>docker</code> in all commands. The Containerfile (Dockerfile) is compatible with both runtimes.</p>
 </blockquote>
-<p><code>latest</code> follows stable releases; <code>next</code> follows prereleases. An exact prerelease tag looks like <code>ghcr.io/olivierlambert/calrs:2.0.0-rc.4</code>. The loopback port binding above assumes a reverse proxy on the host; adapt it if your proxy runs in a separate container.</p>
+<p><code>latest</code> follows stable releases; <code>next</code> follows prereleases. An exact tag looks like <code>ghcr.io/olivierlambert/calrs:2.0.0</code>, and <code>2.0</code> follows the patch releases of 2.0. The loopback port binding above assumes a reverse proxy on the host; adapt it if your proxy runs in a separate container.</p>
 <p>The image uses a multi-stage build:</p>
 <ul>
 <li><strong>Builder:</strong> <code>rust:slim-trixie</code> — compiles the release binary</li>
@@ -3746,7 +3746,7 @@ and the <a href="#admin-dashboard">Admin Dashboard</a> reference.</p>
 <h2 id="docker-compose--podman-compose"><a class="header" href="#docker-compose--podman-compose">Docker Compose / Podman Compose</a></h2>
 <pre><code class="language-yaml">services:
   calrs:
-    image: ghcr.io/olivierlambert/calrs:next
+    image: ghcr.io/olivierlambert/calrs:latest
     ports:
       - "127.0.0.1:3000:3000"
     volumes:
@@ -3979,7 +3979,7 @@ docker logs -f calrs
 <p>Also copy the key and uploaded assets, and retain service/environment configuration and the deployed version. For a filesystem backup of the whole data directory, stop calrs first and copy the directory, preserving ownership and any WAL files. Do not copy only a live SQLite main file while writes continue. Restore into a stopped instance with the matching key, then check access and calendar sync. See <a href="#upgrading-to-v2">Upgrading to v2</a> for rollback.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="upgrading-to-v2"><a class="header" href="#upgrading-to-v2">Upgrading to v2</a></h1>
-<p>This book covers the v2 prerelease line. Use the <a href="https://github.com/olivierlambert/calrs/releases">release list</a> to select an available build and read its release notes. A beta or release candidate is not a stable release.</p>
+<p>This page is for installations coming from 1.x, or from a 2.0 beta or release candidate. Use the <a href="https://github.com/olivierlambert/calrs/releases">release list</a> to select a build and read its release notes.</p>
 <h2 id="choose-a-container-channel"><a class="header" href="#choose-a-container-channel">Choose a container channel</a></h2>
 <div class="table-wrapper">
 <table>
@@ -3987,14 +3987,15 @@ docker logs -f calrs
 <tr><th>Tag</th><th>Tracks</th></tr>
 </thead>
 <tbody>
-<tr><td><code>latest</code></td><td>Stable release tags only; a v2 prerelease does not move it</td></tr>
-<tr><td><code>next</code></td><td>Prerelease tags, including betas and release candidates</td></tr>
-<tr><td>Exact version, such as <code>2.0.0-rc.4</code></td><td>That release; recommended when you need a repeatable deployment</td></tr>
+<tr><td><code>latest</code></td><td>Stable release tags only. Since 2.0.0 it is on the v2 line, so a 1.x installation that follows <code>latest</code> upgrades to v2 at its next pull</td></tr>
+<tr><td><code>2.0</code></td><td>The patch releases of 2.0</td></tr>
+<tr><td>Exact version, such as <code>2.0.0</code></td><td>That release; recommended when you need a repeatable deployment</td></tr>
+<tr><td><code>next</code></td><td>Prerelease tags only (betas and release candidates). It stays on the last release candidate until the next prerelease, so an instance that followed <code>next</code> during the 2.0 candidates should move to <code>latest</code> or an exact tag</td></tr>
 <tr><td><code>main</code></td><td>Builds from the main branch, which can contain unreleased changes</td></tr>
 </tbody>
 </table>
 </div>
-<p>Use an exact tag from the release you selected to pin an installation. <code>next</code> is convenient for a test instance but can advance without a configuration change. When stable v2 is released, select its actual release tag rather than assuming that <code>latest</code> already contains it.</p>
+<p>Use an exact tag from the release you selected to pin an installation. <code>latest</code> and <code>next</code> can advance without a configuration change. To stay on 1.x for now, pin <code>1.23</code> or an exact 1.23 tag before pulling.</p>
 <h2 id="back-up-and-test-the-upgrade"><a class="header" href="#back-up-and-test-the-upgrade">Back up and test the upgrade</a></h2>
 <ol>
 <li>Record the current version, container tag, environment settings and any service overrides.</li>

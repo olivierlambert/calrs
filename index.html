@@ -6,7 +6,7 @@
   <title>Cal.rs — Fast, self-hostable scheduling</title>
   <meta name="description" content="Self-hosted scheduling in Rust. Explore v2: CalDAV, Google, Microsoft 365 and Exchange calendars, team scheduling, booking questions, REST API and MCP.">
   <meta property="og:title" content="Cal.rs — Self-hostable scheduling in Rust">
-  <meta property="og:description" content="Connect your calendars, schedule with your team, and share a booking link. Explore the calrs v2 prerelease.">
+  <meta property="og:description" content="Connect your calendars, schedule with your team, and share a booking link. calrs 2.0 is out.">
   <meta property="og:image" content="https://cal.rs/assets/screenshot.png">
   <meta property="og:url" content="https://cal.rs">
   <meta name="twitter:card" content="summary_large_image">
@@ -480,7 +480,7 @@
       <img src="assets/calrs.png" alt="Cal.rs" class="hero-logo">
       <div class="brand-name"><span class="brand-cal">Cal</span><span class="brand-dot">.</span><span class="brand-rs">rs</span></div>
     </div>
-    <div class="hero-badge"><span class="dot"></span>v2.0.0-rc.4 preview &middot; Rust + SQLite &middot; Self-hosted &middot; Open source</div>
+    <div class="hero-badge"><span class="dot"></span>v2.0.0 &middot; Rust + SQLite &middot; Self-hosted &middot; Open source</div>
     <h1>
       Scheduling that<br><span class="gradient">respects your stack</span>
     </h1>
@@ -490,14 +490,14 @@
       Personal meetings, teams and shared resources, on your infrastructure.
     </p>
     <div class="hero-actions">
-      <a href="#install" class="btn btn-primary btn-lg">Try the v2 preview</a>
+      <a href="#install" class="btn btn-primary btn-lg">Get started</a>
       <a href="https://github.com/olivierlambert/calrs" target="_blank" class="btn btn-ghost btn-lg">
         <svg class="icon-svg" viewBox="0 0 16 16"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
         View on GitHub
       </a>
     </div>
 
-    <p style="margin: 1.5rem auto 0; max-width: 680px; color: var(--text-secondary); line-height: 1.7;">v2 is in prerelease; the latest is <a href="https://github.com/olivierlambert/calrs/releases/tag/v2.0.0-rc.4">2.0.0-rc.4</a>. <a href="https://github.com/olivierlambert/calrs/releases">Choose a release</a> or read the <a href="docs/upgrading.html">upgrade guide</a>. The <code>latest</code> image stays on stable releases; <code>next</code> follows previews.</p>
+    <p style="margin: 1.5rem auto 0; max-width: 680px; color: var(--text-secondary); line-height: 1.7;"><a href="https://github.com/olivierlambert/calrs/releases/tag/v2.0.0">calrs 2.0</a> is the current stable release. Coming from 1.x? Read the <a href="docs/upgrading.html">upgrade guide</a> first. The <code>latest</code> image follows stable releases; <code>next</code> follows previews.</p>
 
     <figure class="hero-screenshot">
       <div class="theme-preview" role="img" aria-label="The calrs dashboard in the Default palette, with light mode on the left and dark mode on the right">
@@ -664,7 +664,7 @@
   <div class="container">
     <span class="section-label">Get started</span>
     <h2 class="section-title">Up and running in minutes</h2>
-    <p class="section-desc">Try v2 with a separate data volume. The first user to register becomes admin. Use an exact release tag for repeatable deployments; read the <a href="docs/upgrading.html">upgrade guide</a> before migrating existing data.</p>
+    <p class="section-desc">The first user to register becomes admin. Use an exact release tag for repeatable deployments; read the <a href="docs/upgrading.html">upgrade guide</a> before migrating existing data.</p>
 
     <div class="install-block">
       <div class="install-tabs">
@@ -674,29 +674,29 @@
         <button class="install-tab" onclick="showTab('binary')">Binary</button>
         <button class="install-tab" onclick="showTab('source')">Source</button>
       </div>
-      <pre class="install-code active" id="tab-docker"><span class="comment"># v2 prerelease image (amd64 + arm64)</span>
-<span class="cmd">docker run -d --name calrs-v2 \</span>
+      <pre class="install-code active" id="tab-docker"><span class="comment"># amd64 + arm64</span>
+<span class="cmd">docker run -d --name calrs \</span>
 <span class="cmd">  -p 127.0.0.1:3000:3000 \</span>
-<span class="cmd">  -v calrs-v2-data:/var/lib/calrs \</span>
+<span class="cmd">  -v calrs-data:/var/lib/calrs \</span>
 <span class="cmd">  -e CALRS_BASE_URL=http://localhost:3000 \</span>
-<span class="cmd">  ghcr.io/olivierlambert/calrs:next</span>
+<span class="cmd">  ghcr.io/olivierlambert/calrs:latest</span>
 
 <span class="comment"># Open http://localhost:3000 and register</span></pre>
       <pre class="install-code" id="tab-compose"><span class="comment"># docker-compose.yml</span>
 <span class="cmd">services:</span>
 <span class="cmd">  calrs:</span>
-<span class="cmd">    image: ghcr.io/olivierlambert/calrs:next</span>
+<span class="cmd">    image: ghcr.io/olivierlambert/calrs:latest</span>
 <span class="cmd">    ports:</span>
 <span class="cmd">      - "127.0.0.1:3000:3000"</span>
 <span class="cmd">    volumes:</span>
-<span class="cmd">      - calrs-v2-data:/var/lib/calrs</span>
+<span class="cmd">      - calrs-data:/var/lib/calrs</span>
 <span class="cmd">    environment:</span>
 <span class="cmd">      - CALRS_BASE_URL=http://localhost:3000</span>
 <span class="cmd">    restart: unless-stopped</span>
 <span class="cmd"></span>
 <span class="cmd">volumes:</span>
-<span class="cmd">  calrs-v2-data:</span></pre>
-      <pre class="install-code" id="tab-rpm"><span class="comment"># Community package; check its version for v2 availability</span>
+<span class="cmd">  calrs-data:</span></pre>
+      <pre class="install-code" id="tab-rpm"><span class="comment"># Community package; check which version it carries</span>
 <span class="cmd">sudo dnf copr enable missd/calrs</span>
 <span class="cmd">sudo dnf install calrs</span>
 
