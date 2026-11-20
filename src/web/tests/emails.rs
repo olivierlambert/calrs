@@ -2034,6 +2034,7 @@ async fn host_new_booking_email_attaches_a_published_copy() {
     assert!(host.contains("method=PUBLISH"), "{host}");
     assert!(!host.contains("METHOD:REQUEST"), "{host}");
     assert!(!host.contains("method=REQUEST"), "{host}");
+    assert!(!host.contains("ATTENDEE"), "{host}");
     let guest = mail_to(&mails, "host-copy@test.com").await;
     assert!(guest.contains("METHOD:REQUEST"), "{guest}");
 }
@@ -2079,6 +2080,7 @@ async fn host_cancellation_email_attaches_a_published_cancelled_copy() {
     assert!(host.contains("STATUS:CANCELLED"), "{host}");
     assert!(!host.contains("METHOD:CANCEL"), "{host}");
     assert!(!host.contains("method=CANCEL"), "{host}");
+    assert!(!host.contains("ATTENDEE"), "{host}");
     let guest = mail_to(&mails, "cancel-462@test.com").await;
     assert!(guest.contains("METHOD:CANCEL"), "{guest}");
 }

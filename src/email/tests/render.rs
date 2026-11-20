@@ -2219,16 +2219,33 @@ fn host_copies_are_published_not_requested() {
         host_email: "alice@cal.rs".to_string(),
         uid: "host-copy-uid".to_string(),
         sequence: 2,
+        additional_attendees: vec!["bob@example.com".to_string()],
         ..Default::default()
     };
     let ics = generate_host_ics(&booking);
     assert!(ics.contains("METHOD:PUBLISH\r\n"), "{ics}");
+    // RFC 5546 3.2.1: no ATTENDEE in a PUBLISH; the organizer stays.
+    assert!(!ics.contains("ATTENDEE"), "{ics}");
+    assert!(
+        ics.contains("ORGANIZER;CN=Alice:mailto:alice@cal.rs\r\n"),
+        "{ics}"
+    );
     assert!(!ics.contains("METHOD:REQUEST"), "{ics}");
     assert!(ics.contains("UID:host-copy-uid\r\n"), "{ics}");
     assert!(ics.contains("SEQUENCE:2\r\n"), "{ics}");
     assert!(ics.contains("STATUS:CONFIRMED\r\n"), "{ics}");
     let guest = generate_ics(&booking, "REQUEST");
     assert!(guest.contains("METHOD:REQUEST\r\n"), "{guest}");
+    assert!(guest.contains("mailto:jane@example.com"), "{guest}");
+    assert!(guest.contains("mailto:bob@example.com"), "{guest}");
+    let caldav = generate_ics_caldav(&booking);
+    assert!(
+        caldav.contains("ATTENDEE;SCHEDULE-AGENT=CLIENT;CN=Jane Doe"),
+        "{caldav}"
+    );
+    // The guest's calendar download is a PUBLISH too and is left as it was.
+    let download = generate_ics(&booking, "PUBLISH");
+    assert!(download.contains("ATTENDEE;CN=Jane Doe"), "{download}");
 
     let cancel = CancellationDetails {
         event_title: "Intro Call".to_string(),
@@ -2242,12 +2259,17 @@ fn host_copies_are_published_not_requested() {
         host_email: "alice@cal.rs".to_string(),
         uid: "host-copy-uid".to_string(),
         sequence: 3,
+        additional_attendees: vec!["bob@example.com".to_string()],
         ..Default::default()
     };
     let ics = generate_host_cancel_ics(&cancel);
     assert!(ics.contains("METHOD:PUBLISH\r\n"), "{ics}");
+    assert!(!ics.contains("ATTENDEE"), "{ics}");
     assert!(!ics.contains("METHOD:CANCEL"), "{ics}");
     assert!(ics.contains("STATUS:CANCELLED\r\n"), "{ics}");
     assert!(ics.contains("SEQUENCE:3\r\n"), "{ics}");
-    assert!(generate_cancel_ics(&cancel).contains("METHOD:CANCEL\r\n"));
+    let guest = generate_cancel_ics(&cancel);
+    assert!(guest.contains("METHOD:CANCEL\r\n"), "{guest}");
+    assert!(guest.contains("mailto:jane@example.com"), "{guest}");
+    assert!(guest.contains("mailto:bob@example.com"), "{guest}");
 }

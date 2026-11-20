@@ -442,7 +442,7 @@ pub(super) fn first_name(full_name: &str) -> &str {
 }
 
 pub fn generate_ics(details: &BookingDetails, method: &str) -> String {
-    generate_ics_impl(details, method, false)
+    generate_ics_impl(details, method, false, true)
 }
 
 /// The host's copy of a new booking (#462). The host is the ORGANIZER, so a
@@ -451,7 +451,7 @@ pub fn generate_ics(details: &BookingDetails, method: &str) -> String {
 /// informational copy the host can import, under the same UID and SEQUENCE as
 /// the invitation and the calendar write-back.
 pub(super) fn generate_host_ics(details: &BookingDetails) -> String {
-    generate_ics_impl(details, "PUBLISH", false)
+    generate_ics_impl(details, "PUBLISH", false, false)
 }
 
 /// ICS for CalDAV write-back (RFC 4791: no METHOD). ATTENDEE lines carry
@@ -461,13 +461,14 @@ pub(super) fn generate_host_ics(details: &BookingDetails) -> String {
 /// (in UTC) for every written booking. Email .ics attachments keep plain
 /// ATTENDEE;RSVP=TRUE so mail clients still offer "Add to calendar".
 pub fn generate_ics_caldav(details: &BookingDetails) -> String {
-    generate_ics_impl(details, "", true)
+    generate_ics_impl(details, "", true, true)
 }
 
 fn generate_ics_impl(
     details: &BookingDetails,
     method: &str,
     schedule_agent_client: bool,
+    list_attendees: bool,
 ) -> String {
     let guest_first = first_name(&details.guest_name);
     let host_first = first_name(&details.host_name);
@@ -540,6 +541,16 @@ fn generate_ics_impl(
         .iter()
         .map(|email| format!("ATTENDEE{sa};RSVP=TRUE:mailto:{}\r\n", sanitize_ics(email)))
         .collect();
+    // RFC 5546 3.2.1: a PUBLISH carries no ATTENDEE. Only the host's copy
+    // follows it (#462): the guest's calendar download, also a PUBLISH, keeps
+    // the lines it has always had.
+    let attendee_lines = if !list_attendees {
+        String::new()
+    } else {
+        format!(
+            "ATTENDEE{sa};CN={guest_name};RSVP=TRUE:mailto:{guest_email}\r\n{additional_attendee_lines}"
+        )
+    };
     let dtstamp = chrono::Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
     // Convert guest-timezone times to UTC for the ICS
     let (dtstart, dtend) = details.utc_times.clone().unwrap_or_else(|| {
@@ -565,8 +576,7 @@ fn generate_ics_impl(
          {description_line}\
          {location_line}\
          ORGANIZER;CN={host_name}:mailto:{host_email}\r\n\
-         ATTENDEE{sa};CN={guest_name};RSVP=TRUE:mailto:{guest_email}\r\n\
-         {additional_attendee_lines}\
+         {attendee_lines}\
          STATUS:CONFIRMED\r\n\
          {valarm}\
          END:VEVENT\r\n\
@@ -586,9 +596,7 @@ fn generate_ics_impl(
         location_line = location_line,
         host_name = host_name,
         host_email = host_email,
-        guest_name = guest_name,
-        guest_email = guest_email,
-        additional_attendee_lines = additional_attendee_lines,
+        attendee_lines = attendee_lines,
     ))
 }
 
@@ -624,6 +632,13 @@ fn generate_cancel_ics_impl(details: &CancellationDetails, method: &str) -> Stri
         .iter()
         .map(|email| format!("ATTENDEE:mailto:{}\r\n", sanitize_ics(email)))
         .collect();
+    // RFC 5546 3.2.1: a PUBLISH, here always the host's copy (#462), carries
+    // no ATTENDEE.
+    let attendee_lines = if method == "PUBLISH" {
+        String::new()
+    } else {
+        format!("ATTENDEE;CN={guest_name}:mailto:{guest_email}\r\n{additional_attendee_lines}")
+    };
     let dtstamp = chrono::Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
     let (dtstart, dtend) = details.utc_times.clone().unwrap_or_else(|| {
         convert_to_utc(
@@ -646,8 +661,7 @@ fn generate_cancel_ics_impl(details: &CancellationDetails, method: &str) -> Stri
          DTEND:{dtend}\r\n\
          SUMMARY:{summary}\r\n\
          ORGANIZER;CN={host_name}:mailto:{host_email}\r\n\
-         ATTENDEE;CN={guest_name}:mailto:{guest_email}\r\n\
-         {additional_attendee_lines}\
+         {attendee_lines}\
          STATUS:CANCELLED\r\n\
          END:VEVENT\r\n\
          END:VCALENDAR\r\n",
@@ -659,9 +673,7 @@ fn generate_cancel_ics_impl(details: &CancellationDetails, method: &str) -> Stri
         summary = summary,
         host_name = host_name,
         host_email = host_email,
-        guest_name = guest_name,
-        guest_email = guest_email,
-        additional_attendee_lines = additional_attendee_lines,
+        attendee_lines = attendee_lines,
     ))
 }
 
