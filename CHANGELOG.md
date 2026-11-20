@@ -204,6 +204,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Changed
+
+- **Month view: larger arrows, and next month's days can be booked in one click** (#463) - The previous and next arrows of the slot picker are larger, drawn as chevrons, with a visible keyboard focus. The days of the neighbouring months that fill the first and last week now show their availability: a bookable one opens its times directly instead of only jumping to its month, and is drawn quieter than this month's days, with the month's short name above its first day, so the grid still shows where the month ends. Thanks @Frankkkkk.
+
 ### Fixed
 
 - **Google Calendar deletions now reach calrs between full resyncs (#460).** Google writes the `@` of its event names as `%40` in the paths it reports for deleted events, and calrs compared that path with the stored UID unchanged, so no Google deletion matched: the deleted event kept blocking availability until the daily full resync. The name is now percent-decoded, and the name as written is still matched for a server that puts a literal `%` in a path (when both match a cached event, neither is deleted and the next full resync sorts them out). Reported and fixed by @Edo78 (#461). Events left behind before the upgrade are removed by the next full resync, or by `calrs sync --full`, as long as the calendar still has an event in the window it fetches; for a calendar with none left, turn its sync off and back on (on its source's calendars page) to clear them.
