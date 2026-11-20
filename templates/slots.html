@@ -297,10 +297,25 @@
   .cal-cell.past {
     opacity: 0.3;
   }
+  /* Days of the neighbouring months are quieter than this month's, so the
+     grid still shows where the month ends: a bookable one is a paler copy of
+     a bookable day, the others are fainter still. */
+  .cal-cell.other-month.has-slots:not(.selected) {
+    opacity: 0.6;
+    font-weight: 500;
+  }
+  .cal-cell.other-month.has-slots:hover {
+    opacity: 1;
+  }
   .cal-cell.other-month:not(.has-slots):not(.past) {
+    opacity: 0.5;
+  }
+  /* Only a day that leads to its month is a link. */
+  .cal-cell.other-month.to-month {
     cursor: pointer;
   }
-  .cal-cell.other-month:not(.has-slots):not(.past):hover {
+  .cal-cell.other-month.to-month:hover {
+    opacity: 0.8;
     background: var(--surface-hover);
   }
   /* Available day dot removed — the bold text + background is enough */
@@ -1269,6 +1284,7 @@
         cell.addEventListener('click', function() { selectDay(dateStr); });
       } else if (otherMonth && dateStr >= todayDate &&
                  (month === nm ? calData.hasNextMonth : hasPrevMonth)) {
+        cell.classList.add('to-month');
         cell.addEventListener('click', function() { navigateMonth(year, month); });
       }
 
