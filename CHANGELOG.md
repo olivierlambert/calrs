@@ -208,7 +208,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 **calrs 2.0 is final.** It is rc.4 plus one fix, after four betas and four release candidates tested on real instances.
 
-What 2.0 brings over 1.23, each described in the pre-release sections below:
+What 2.0 brings over 1.23, each described in the prerelease sections below:
 
 - **A new look**: a redesigned dashboard and admin panel in cards, an overview that starts with your next meeting, and host and team landing pages set like a business card (beta.1, beta.4).
 - **More calendars**: Microsoft 365 and Outlook.com through Microsoft Graph, organization-wide Exchange with one service account, Google out of office, and a write calendar per event type (beta.3).
