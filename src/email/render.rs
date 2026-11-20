@@ -445,6 +445,15 @@ pub fn generate_ics(details: &BookingDetails, method: &str) -> String {
     generate_ics_impl(details, method, false)
 }
 
+/// The host's copy of a new booking (#462). The host is the ORGANIZER, so a
+/// `METHOD:REQUEST` (which asks its recipient to answer as an attendee) has
+/// nothing to show them: Gmail renders "Unable to load event". `PUBLISH` is an
+/// informational copy the host can import, under the same UID and SEQUENCE as
+/// the invitation and the calendar write-back.
+pub(super) fn generate_host_ics(details: &BookingDetails) -> String {
+    generate_ics_impl(details, "PUBLISH", false)
+}
+
 /// ICS for CalDAV write-back (RFC 4791: no METHOD). ATTENDEE lines carry
 /// SCHEDULE-AGENT=CLIENT (RFC 6638 §7.1) so the CalDAV server does not
 /// run its own scheduling: calrs already sends the invitations over SMTP,
@@ -585,6 +594,18 @@ fn generate_ics_impl(
 
 /// Generate an .ics VCALENDAR for cancellation (METHOD:CANCEL)
 pub(super) fn generate_cancel_ics(details: &CancellationDetails) -> String {
+    generate_cancel_ics_impl(details, "CANCEL")
+}
+
+/// The cancellation as the host's informational copy (#462): `METHOD:PUBLISH`
+/// with `STATUS:CANCELLED` and the cancellation's SEQUENCE, so a copy the host
+/// imported from the new-booking email is updated, while a mail client never
+/// treats the organizer as an attendee being uninvited.
+pub(super) fn generate_host_cancel_ics(details: &CancellationDetails) -> String {
+    generate_cancel_ics_impl(details, "PUBLISH")
+}
+
+fn generate_cancel_ics_impl(details: &CancellationDetails, method: &str) -> String {
     let guest_first = first_name(&details.guest_name);
     let host_first = first_name(&details.host_name);
     let summary = sanitize_ics(&format!(
@@ -616,7 +637,7 @@ pub(super) fn generate_cancel_ics(details: &CancellationDetails) -> String {
         "BEGIN:VCALENDAR\r\n\
          VERSION:2.0\r\n\
          PRODID:-//calrs//calrs//EN\r\n\
-         METHOD:CANCEL\r\n\
+         METHOD:{method}\r\n\
          BEGIN:VEVENT\r\n\
          UID:{uid}\r\n\
          DTSTAMP:{dtstamp}\r\n\

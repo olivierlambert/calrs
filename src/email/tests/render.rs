@@ -2201,3 +2201,53 @@ fn a_long_question_is_stacked_above_its_answer() {
     let row = &mail.html[mail.html[..at].rfind("<tr>").unwrap()..at];
     assert!(row.contains("white-space:nowrap"), "{row}");
 }
+
+/// #462: the host organizes the event, so their copy is informational
+/// (PUBLISH), never an invitation to answer (REQUEST) or an uninvitation
+/// (CANCEL), with the same UID and SEQUENCE as the guest's.
+#[test]
+fn host_copies_are_published_not_requested() {
+    let booking = BookingDetails {
+        event_title: "Intro Call".to_string(),
+        date: "2026-03-10".to_string(),
+        start_time: "14:00".to_string(),
+        end_time: "14:30".to_string(),
+        guest_name: "Jane Doe".to_string(),
+        guest_email: "jane@example.com".to_string(),
+        guest_timezone: "UTC".to_string(),
+        host_name: "Alice".to_string(),
+        host_email: "alice@cal.rs".to_string(),
+        uid: "host-copy-uid".to_string(),
+        sequence: 2,
+        ..Default::default()
+    };
+    let ics = generate_host_ics(&booking);
+    assert!(ics.contains("METHOD:PUBLISH\r\n"), "{ics}");
+    assert!(!ics.contains("METHOD:REQUEST"), "{ics}");
+    assert!(ics.contains("UID:host-copy-uid\r\n"), "{ics}");
+    assert!(ics.contains("SEQUENCE:2\r\n"), "{ics}");
+    assert!(ics.contains("STATUS:CONFIRMED\r\n"), "{ics}");
+    let guest = generate_ics(&booking, "REQUEST");
+    assert!(guest.contains("METHOD:REQUEST\r\n"), "{guest}");
+
+    let cancel = CancellationDetails {
+        event_title: "Intro Call".to_string(),
+        date: "2026-03-10".to_string(),
+        start_time: "14:00".to_string(),
+        end_time: "14:30".to_string(),
+        guest_name: "Jane Doe".to_string(),
+        guest_email: "jane@example.com".to_string(),
+        guest_timezone: "UTC".to_string(),
+        host_name: "Alice".to_string(),
+        host_email: "alice@cal.rs".to_string(),
+        uid: "host-copy-uid".to_string(),
+        sequence: 3,
+        ..Default::default()
+    };
+    let ics = generate_host_cancel_ics(&cancel);
+    assert!(ics.contains("METHOD:PUBLISH\r\n"), "{ics}");
+    assert!(!ics.contains("METHOD:CANCEL"), "{ics}");
+    assert!(ics.contains("STATUS:CANCELLED\r\n"), "{ics}");
+    assert!(ics.contains("SEQUENCE:3\r\n"), "{ics}");
+    assert!(generate_cancel_ics(&cancel).contains("METHOD:CANCEL\r\n"));
+}

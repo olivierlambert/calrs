@@ -207,6 +207,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 ### Fixed
 
 - **Google Calendar deletions now reach calrs between full resyncs (#460).** Google writes the `@` of its event names as `%40` in the paths it reports for deleted events, and calrs compared that path with the stored UID unchanged, so no Google deletion matched: the deleted event kept blocking availability until the daily full resync. The name is now percent-decoded, and the name as written is still matched for a server that puts a literal `%` in a path (when both match a cached event, neither is deleted and the next full resync sorts them out). Reported and fixed by @Edo78 (#461). Events left behind before the upgrade are removed by the next full resync, or by `calrs sync --full`, as long as the calendar still has an event in the window it fetches; for a calendar with none left, turn its sync off and back on (on its source's calendars page) to clear them.
+- **The host's booking email no longer shows "Unable to load event" in Gmail (#462).** The "New booking" email attached the guest's invitation (`METHOD:REQUEST`), which asks its recipient to answer as an attendee; the host organizes the event, so Gmail could not show it. The host now gets an informational copy (`METHOD:PUBLISH`, `booking.ics`) under the same UID, which still imports into a calendar, and the host's cancellation email attaches the cancelled event the same way instead of a `CANCEL` addressed to its organizer. Guest invitations and cancellations are unchanged.
 
 ## [2.0.0-rc.3] - 2026-11-15
 
