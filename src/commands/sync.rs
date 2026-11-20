@@ -382,6 +382,15 @@ async fn sync_caldav_calendars(
                         true
                     }
                 }
+                // Not a failure: the calendar has no delta report (#468),
+                // which the client already logged once.
+                Err(e) if e.is::<crate::caldav::DeltaUnsupported>() => {
+                    tracing::debug!(
+                        calendar = %cal_label,
+                        "calendar has no sync-collection, full sync"
+                    );
+                    false
+                }
                 Err(e) => {
                     tracing::info!(
                         calendar = %cal_label,
@@ -5905,6 +5914,104 @@ END:VCALENDAR
             .unwrap();
             assert_eq!(ctag.as_deref(), Some("m1"), "{failure:?}");
         }
+    }
+
+    /// A CalDAV server shaped like Nextcloud with Deck boards (#468): two
+    /// calendars with no ctag and no events, `/cals/a/` and `/cals/b/` (the
+    /// latter advertising a sync token), which both answer 415 to
+    /// sync-collection. Returns the count of sync-collection and of
+    /// calendar-query REPORTs received.
+    async fn spawn_deck_like_dav() -> (
+        String,
+        Arc<std::sync::atomic::AtomicUsize>,
+        Arc<std::sync::atomic::AtomicUsize>,
+    ) {
+        use axum::http::{Method, StatusCode, Uri};
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let deltas = Arc::new(AtomicUsize::new(0));
+        let queries = Arc::new(AtomicUsize::new(0));
+        let (seen_deltas, seen_queries) = (deltas.clone(), queries.clone());
+        let app = axum::Router::new().fallback(move |method: Method, uri: Uri, body: String| {
+            let (seen_deltas, seen_queries) = (seen_deltas.clone(), seen_queries.clone());
+            async move {
+                let ms = |inner: &str| {
+                    format!(
+                        "<?xml version=\"1.0\"?><d:multistatus xmlns:d=\"DAV:\" \
+                         xmlns:cal=\"urn:ietf:params:xml:ns:caldav\">{inner}</d:multistatus>"
+                    )
+                };
+                let reply = match (method.as_str(), uri.path().trim_end_matches('/')) {
+                    ("PROPFIND", "/dav") => {
+                        ms("<d:response><d:href>/dav/</d:href><d:propstat><d:prop>\
+                         <d:current-user-principal><d:href>/p/</d:href></d:current-user-principal>\
+                         </d:prop></d:propstat></d:response>")
+                    }
+                    ("PROPFIND", "/p") => {
+                        ms("<d:response><d:href>/p/</d:href><d:propstat><d:prop>\
+                         <cal:calendar-home-set><d:href>/cals/</d:href></cal:calendar-home-set>\
+                         </d:prop></d:propstat></d:response>")
+                    }
+                    ("PROPFIND", "/cals") => {
+                        ms("<d:response><d:href>/cals/a/</d:href><d:propstat><d:prop>\
+                         <d:displayname>Board A</d:displayname>\
+                         <d:resourcetype><d:collection/><cal:calendar/></d:resourcetype>\
+                         </d:prop></d:propstat></d:response>\
+                         <d:response><d:href>/cals/b/</d:href><d:propstat><d:prop>\
+                         <d:displayname>Board B</d:displayname>\
+                         <d:resourcetype><d:collection/><cal:calendar/></d:resourcetype>\
+                         <d:sync-token>advertised</d:sync-token>\
+                         </d:prop></d:propstat></d:response>")
+                    }
+                    ("REPORT", "/cals/a" | "/cals/b") if body.contains("sync-collection") => {
+                        seen_deltas.fetch_add(1, Ordering::SeqCst);
+                        return (StatusCode::UNSUPPORTED_MEDIA_TYPE, String::new());
+                    }
+                    ("REPORT", "/cals/a" | "/cals/b") => {
+                        seen_queries.fetch_add(1, Ordering::SeqCst);
+                        ms("")
+                    }
+                    _ => return (StatusCode::NOT_FOUND, String::new()),
+                };
+                (StatusCode::MULTI_STATUS, reply)
+            }
+        });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+        (format!("http://127.0.0.1:{port}/dav/"), deltas, queries)
+    }
+
+    /// #468: a calendar that answers 415 to sync-collection (a Nextcloud
+    /// Deck board) is asked once, not on every sync, whether calrs probes
+    /// for a first token or holds one the listing advertised. Its syncs
+    /// succeed all along, through the full fetch.
+    #[tokio::test]
+    async fn caldav_sync_asks_a_calendar_without_delta_only_once() {
+        let pool = setup_test_db().await;
+        let (source_id, _) = seed_fixtures(&pool).await;
+        let key = [0u8; 32];
+        let (base, deltas, queries) = spawn_deck_like_dav().await;
+        let client = CaldavClient::new(&base, "user", "pw");
+
+        use std::sync::atomic::Ordering;
+        for _ in 0..4 {
+            sync_source(&pool, &key, &client, &source_id).await.unwrap();
+        }
+        // One refusal per calendar: A's probe on the first sync, B's delta
+        // attempt on the second.
+        assert_eq!(deltas.load(Ordering::SeqCst), 2);
+        // Every sync still reads both calendars in full.
+        assert_eq!(queries.load(Ordering::SeqCst), 8);
+        let error: Option<String> =
+            sqlx::query_scalar("SELECT last_sync_error FROM caldav_sources WHERE id = ?")
+                .bind(&source_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(error, None);
+        crate::caldav::forget_delta_unsupported(&base);
     }
 
     /// A CalDAV server whose one calendar advertises `ctag`, and whose
