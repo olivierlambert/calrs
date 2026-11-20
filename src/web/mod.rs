@@ -3,6 +3,7 @@ mod admin_stats;
 mod api;
 mod api_doc;
 mod api_tokens;
+mod attribution;
 mod availability;
 mod booking;
 mod booking_actions;
@@ -66,6 +67,7 @@ use tower_http::trace::TraceLayer;
 use week_start::{WeekStart, WeekStartSetting};
 
 use admin::*;
+use attribution::Attribution;
 pub(crate) use availability::expand_recurring_into_busy;
 use availability::*;
 use booking::*;

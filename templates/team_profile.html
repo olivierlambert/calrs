@@ -3,6 +3,9 @@
 {% block head %}{% include "partials/landing_head.html" %}{% endblock %}
 {% block content %}
 {% set invite_q = ("?invite=" ~ (invite_token | urlencode)) if (invite_token is defined and invite_token) else "" %}
+{#- The visitor's utm_* parameters ride along to the meeting pages. #}
+{% set utm_q = utm | urlencode %}
+{% if utm_q %}{% set invite_q = invite_q ~ ("&" if invite_q else "?") ~ utm_q %}{% endif %}
 <section class="lp-top">
   {% include "partials/public_logo.html" %}
   {%- set has_practical = hours or based_in or speaks %}

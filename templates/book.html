@@ -3,6 +3,8 @@
 {% block title %}{{ t("book-page-title", title=event_type.title) }}{% endblock %}
 
 {% block content %}
+{#- The visitor's utm_* parameters, carried to every link and posted with the booking. #}
+{% set utm_q = utm | urlencode %}
 {# Compute base path: /t/token, /team/team_slug/slug, /u/username/slug, or /slug #}
 {% if team_token is defined and team_token %}
   {% set base = "/t/" ~ team_token %}
@@ -16,7 +18,7 @@
 
 {% include "partials/public_logo.html" %}
 
-<a href="{{ base }}{{ embed_qs_q | default('') }}{% if invite_token is defined and invite_token %}{{ "&" if embed_qs_q else "?" }}invite={{ invite_token }}{% endif %}" class="back-link">&larr; {{ t("book-back-to-times") }}</a>
+<a href="{{ base }}{{ embed_qs_q | default('') }}{% if invite_token is defined and invite_token %}{{ "&" if embed_qs_q else "?" }}invite={{ invite_token }}{% endif %}{% if utm_q %}{{ "&" if (embed_qs_q or invite_token) else "?" }}{{ utm_q }}{% endif %}" class="back-link">&larr; {{ t("book-back-to-times") }}</a>
 
 <div class="card">
   <h1>{{ event_type.title }}</h1>
@@ -45,6 +47,7 @@
     <input type="hidden" name="time" value="{{ time_start }}">
     {% if guest_tz is defined and guest_tz %}<input type="hidden" name="tz" value="{{ guest_tz }}">{% endif %}
     {% if invite_token is defined and invite_token %}<input type="hidden" name="invite_token" value="{{ invite_token }}">{% endif %}
+    {% for name, value in utm | default({}) | items if value %}<input type="hidden" name="{{ name }}" value="{{ value }}">{% endfor %}
 
     <div class="form-group">
       <label for="name">{{ t("book-name-label") }}</label>

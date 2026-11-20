@@ -11,6 +11,7 @@
   {% if b.when and b.when.guest_range %}<div class="ui-row-sub">{{ t("bookings-guest-booked") }} {{ b.when.guest_range }}</div>
   {% elif not b.when and b.start_at_guest %}<div class="ui-row-sub">{{ t("bookings-guest-booked") }} {{ b.start_at_guest }}</div>{% endif %}
   {% if b.resource_name %}<div class="ui-row-sub">{{ t("bookings-resource") }} {{ b.resource_name }}</div>{% endif %}
+  {% if b.source %}<div class="ui-row-sub">{{ t("bookings-source") }} {{ b.source }}</div>{% endif %}
   {% if b.notes %}<div class="booking-notes" tabindex="0"><strong>{{ t("confirmed-detail-notes") }}</strong> {{ b.notes }}</div>{% endif %}
   {% if b.answers %}<details class="booking-answers"><summary>{{ t("bookings-answers") }}<span class="num">{{ b.answers | length }}</span></summary><dl>{% for a in b.answers %}<dt>{{ a.label }}</dt><dd>{{ a.value }}</dd>{% endfor %}</dl></details>{% endif %}
   {% if b.host_notes %}<div class="booking-notes host-notes" tabindex="0"><strong>{{ t("bookings-host-notes") }}</strong> {{ b.host_notes }}</div>{% endif %}

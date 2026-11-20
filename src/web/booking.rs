@@ -310,6 +310,8 @@ pub(super) struct GuestRequest<'a> {
     /// The answers to the booking questions (#210): the form's fields, or
     /// what the API's `answers` carried.
     pub(super) posted: questions::Posted<'a>,
+    /// The `utm_*` parameters the guest arrived with; none through the API.
+    pub(super) attribution: Attribution,
 }
 
 impl<'a> GuestRequest<'a> {
@@ -323,7 +325,21 @@ impl<'a> GuestRequest<'a> {
             date: &form.date,
             time: &form.time,
             posted: questions::Posted::Form(&form.fields),
+            attribution: Attribution::from_params(&form.fields),
         }
+    }
+}
+
+/// Stores the guest's `utm_*` parameters with a new booking, in its
+/// transaction. Marketing data never costs a guest their booking: a failed
+/// write is logged and the booking goes on without it.
+async fn store_attribution(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    booking_id: &str,
+    attribution: &Attribution,
+) {
+    if let Err(e) = attribution.insert(tx, booking_id).await {
+        tracing::warn!(booking_id = %booking_id, error = %e, "booking attribution not stored");
     }
 }
 
@@ -1000,6 +1016,7 @@ pub(super) async fn book_team(
         let _ = tx.rollback().await;
         return Err(BookingRefusal::Internal("booking answers", e.to_string()));
     }
+    store_attribution(&mut tx, &id, &guest.attribution).await;
 
     if let Err(e) = tx.commit().await {
         if e.to_string().contains("UNIQUE constraint failed") {
@@ -1655,6 +1672,7 @@ async fn handle_dynamic_group_booking(
         let _ = tx.rollback().await;
         return internal_error_response("booking answers", &e);
     }
+    store_attribution(&mut tx, &id, &Attribution::from_params(&form.fields)).await;
 
     if let Err(e) = tx.commit().await {
         if e.to_string().contains("UNIQUE constraint failed") {
@@ -2298,6 +2316,7 @@ pub(super) async fn book_personal(
         let _ = tx.rollback().await;
         return Err(BookingRefusal::Internal("booking answers", e.to_string()));
     }
+    store_attribution(&mut tx, &id, &guest.attribution).await;
 
     if let Err(e) = tx.commit().await {
         if e.to_string().contains("UNIQUE constraint failed") {
@@ -3153,6 +3172,7 @@ pub(super) async fn handle_booking(
         let _ = tx.rollback().await;
         return internal_error_response("booking answers", &e);
     }
+    store_attribution(&mut tx, &id, &Attribution::from_params(&form.fields)).await;
 
     if let Err(e) = tx.commit().await {
         if e.to_string().contains("UNIQUE constraint failed") {

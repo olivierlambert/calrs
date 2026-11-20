@@ -14,6 +14,12 @@ A host's page (`/u/{username}`) and a team's page (`/team/{slug}`) list their pu
 8. **Confirmation page** — shows the confirmed or pending state, booking summary and, for a confirmed booking, an **Add to calendar** download
 9. **Email** — with SMTP configured, the guest receives the relevant confirmation or pending message; additional attendees receive their invitation when the booking is first confirmed
 
+### Campaign tracking (UTM)
+
+Add the standard `utm_source`, `utm_medium`, `utm_campaign`, `utm_term` and `utm_content` parameters to any booking link, such as `https://cal.example.com/u/alice/intro?utm_source=website&utm_campaign=pricing`, or to a host or team page link. calrs carries them from page to page in the URL (no cookie, nothing stored in the visitor's browser) and stores them with the booking. Values are trimmed and cut at 100 characters; other parameters are ignored. A visitor who leaves and comes back through a link without them books without attribution.
+
+Only hosts see them: one line on the bookings page, a **Source** block on the booking's notes page, and the `attribution` object of [webhooks](./webhooks.md) and the [REST API](./api.md). Guests, additional attendees, emails, calendar events and SMS never carry them. On an [embedded](./embedding.md) page, the parameters of the website page hosting the embed are passed on automatically.
+
 ![Available time slots](images/slots.png)
 
 ![Booking form](images/booking-form.png)

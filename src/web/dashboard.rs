@@ -770,6 +770,9 @@ pub(super) async fn dashboard_bookings(
         .chain(cancelled_bookings.iter().map(|b| b.0.as_str()))
         .collect();
     let answers = questions::answers_by_booking(&state.pool, &answer_ids).await;
+    // Where the guest came from (their `utm_*` parameters), for the same rows.
+    let sources = attribution::by_booking(&state.pool, &answer_ids).await;
+    let source = |id: &str| sources.get(id).map(Attribution::summary);
     let answer_rows = |id: &str| {
         questions::display_rows(
             answers.get(id).map(Vec::as_slice).unwrap_or(&[]),
@@ -837,6 +840,7 @@ pub(super) async fn dashboard_bookings(
                     resource_name => resource_name,
                     notes => notes.trim(),
                     answers => answer_rows(id.as_str()),
+                    source => source(id.as_str()),
                     // The owner always reads them: this page lists the
                     // bookings of their own event types (#173).
                     host_notes => host_notes.as_deref().unwrap_or(""),
@@ -884,15 +888,27 @@ pub(super) async fn dashboard_bookings(
                     resource_name => resource_name,
                     notes => notes.trim(),
                     answers => answer_rows(id.as_str()),
+                    source => source(id.as_str()),
                     host_notes => host_notes.as_deref().unwrap_or(""),
                 }
             },
         )
         .collect();
 
-    let recent_ctx = hosted_bookings_ctx(recent_bookings, host_tz, auth_user.lang, &answer_rows);
-    let cancelled_ctx =
-        hosted_bookings_ctx(cancelled_bookings, host_tz, auth_user.lang, &answer_rows);
+    let recent_ctx = hosted_bookings_ctx(
+        recent_bookings,
+        host_tz,
+        auth_user.lang,
+        &answer_rows,
+        &source,
+    );
+    let cancelled_ctx = hosted_bookings_ctx(
+        cancelled_bookings,
+        host_tz,
+        auth_user.lang,
+        &answer_rows,
+        &source,
+    );
 
     let (impersonating, impersonating_name, _) = impersonation_ctx(&auth_user);
 
@@ -1279,6 +1295,7 @@ fn hosted_bookings_ctx(
     host_tz: &str,
     lang: &str,
     answer_rows: &dyn Fn(&str) -> Vec<minijinja::Value>,
+    source: &dyn Fn(&str) -> Option<String>,
 ) -> Vec<minijinja::Value> {
     rows.iter()
         .map(
@@ -1304,6 +1321,7 @@ fn hosted_bookings_ctx(
                     event_title => title,
                     notes => notes.trim(),
                     answers => answer_rows(id.as_str()),
+                    source => source(id.as_str()),
                     host_notes => host_notes.as_deref().unwrap_or(""),
                     status_mark => if ended { "x" } else { "c" },
                     status_label => match status.as_str() {

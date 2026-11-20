@@ -367,6 +367,8 @@ struct BookingPayload {
     previous: Option<Times>,
     cancelled_by: Option<&'static str>,
     reason: Option<String>,
+    /// The `utm_*` parameters of the link the guest booked through.
+    attribution: Option<super::Attribution>,
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -426,6 +428,8 @@ struct SnapshotRow {
     team_name: Option<String>,
     owner_id: Option<String>,
     claimed_by_user_id: Option<String>,
+    #[sqlx(flatten)]
+    attribution: super::Attribution,
 }
 
 /// A stored booking time as a UTC instant (`2026-11-10T09:00:00Z`). Rows
@@ -453,11 +457,13 @@ async fn snapshot(pool: &SqlitePool, booking_key: &str) -> Result<Option<Snapsho
                 NULLIF(et.location_type, '') AS location_type,
                 COALESCE(NULLIF(b.meeting_url, ''), NULLIF(et.location_value, '')) AS location_value,
                 t.id AS team_id, t.slug AS team_slug, t.name AS team_name, a.user_id AS owner_id,
-                b.claimed_by_user_id
+                b.claimed_by_user_id,
+                bt.utm_source, bt.utm_medium, bt.utm_campaign, bt.utm_term, bt.utm_content
          FROM bookings b
          JOIN event_types et ON et.id = b.event_type_id
          JOIN accounts a ON a.id = et.account_id
          LEFT JOIN teams t ON t.id = et.team_id
+         LEFT JOIN booking_attribution bt ON bt.booking_id = b.id
          WHERE b.id = ?1 OR b.uid = ?1",
     )
     .bind(booking_key)
@@ -519,6 +525,7 @@ async fn snapshot(pool: &SqlitePool, booking_key: &str) -> Result<Option<Snapsho
             previous: None,
             cancelled_by: None,
             reason: None,
+            attribution: row.attribution.non_empty(),
         },
         event_type: EventTypePayload {
             id: row.et_id,
@@ -612,6 +619,12 @@ fn ping_snapshot(event_type: Option<(String, String, String, Tz)>) -> Snapshot {
             previous: None,
             cancelled_by: None,
             reason: None,
+            attribution: Some(super::Attribution {
+                utm_source: Some("newsletter".to_string()),
+                utm_medium: Some("email".to_string()),
+                utm_campaign: Some("launch".to_string()),
+                ..Default::default()
+            }),
         },
         event_type: EventTypePayload {
             id,

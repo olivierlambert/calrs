@@ -343,6 +343,7 @@ pub(super) async fn team_profile_page(
             invite_token => invite_token_for_template,
             company_link => state.company_link.read().await.clone(),
             lang => lang,
+            utm => Attribution::from_params(&query),
         })
         .unwrap_or_else(|e| internal_error_body("template render", &e)),
     )
@@ -678,6 +679,7 @@ pub(super) async fn show_group_slots(
             embed_tz_label => embed.fixes_timezone().then(|| timezone_label(guest_tz.name())),
             embed_qs_amp => embed.query_suffix(true),
             embed_qs_q => embed.query_suffix(false),
+            utm => &query.utm,
         })
         .unwrap_or_else(|e| internal_error_body("template render", &e));
 
@@ -885,6 +887,7 @@ pub(super) async fn show_group_book_form(
             embed_time_format => embed.fixed_time_format().unwrap_or(""),
             embed_qs_amp => embed.query_suffix(true),
             embed_qs_q => embed.query_suffix(false),
+            utm => &query.utm,
         })
         .unwrap_or_else(|e| internal_error_body("template render", &e));
 
@@ -910,6 +913,7 @@ pub(super) async fn user_profile(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Path(username): Path<String>,
+    Query(utm): Query<Attribution>,
 ) -> impl IntoResponse {
     let visitor = crate::i18n::detect_from_headers(&headers);
     #[allow(clippy::type_complexity)]
@@ -1011,6 +1015,7 @@ pub(super) async fn user_profile(
             speaks => spoken_phrase(lang, spoken.as_deref()),
             company_link => state.company_link.read().await.clone(),
             lang,
+            utm,
         })
         .unwrap_or_else(|e| internal_error_body("template render", &e)),
     )
@@ -1265,6 +1270,7 @@ async fn show_dynamic_group_slots(
             deferred_load => !is_deferred_callback,
             company_link => state.company_link.read().await.clone(),
             lang => lang,
+            utm => &query.utm,
         })
         .unwrap_or_else(|e| internal_error_body("template render", &e)),
     )
@@ -1433,6 +1439,7 @@ async fn show_dynamic_group_book_form(
             captcha_widget_url => captcha.widget_url,
             captcha_wasm_url => captcha.wasm_url,
             lang => lang,
+            utm => &query.utm,
         })
         .unwrap_or_else(|e| internal_error_body("template render", &e)),
     )
@@ -1785,6 +1792,7 @@ pub(super) async fn show_slots_for_user(
             embed_tz_label => embed.fixes_timezone().then(|| timezone_label(guest_tz.name())),
             embed_qs_amp => embed.query_suffix(true),
             embed_qs_q => embed.query_suffix(false),
+            utm => &query.utm,
         })
         .unwrap_or_else(|e| internal_error_body("template render", &e));
 
@@ -2002,6 +2010,7 @@ pub(super) async fn show_book_form_for_user(
             embed_time_format => embed.fixed_time_format().unwrap_or(""),
             embed_qs_amp => embed.query_suffix(true),
             embed_qs_q => embed.query_suffix(false),
+            utm => &query.utm,
         })
         .unwrap_or_else(|e| internal_error_body("template render", &e));
 
@@ -2033,6 +2042,9 @@ pub(super) struct SlotsQuery {
     time_format: Option<String>,
     #[serde(default)]
     fixed_tz: Option<String>,
+    /// The visitor's `utm_*` parameters, carried to the booking form.
+    #[serde(flatten)]
+    utm: Attribution,
 }
 
 impl SlotsQuery {
@@ -2383,6 +2395,7 @@ pub(super) async fn show_slots(
             default_calendar_view => default_calendar_view,
             company_link => state.company_link.read().await.clone(),
             lang => lang,
+            utm => &query.utm,
         })
         .unwrap_or_else(|e| internal_error_body("template render", &e));
 
@@ -2409,6 +2422,9 @@ pub(super) struct BookQuery {
     time_format: Option<String>,
     #[serde(default)]
     fixed_tz: Option<String>,
+    /// The visitor's `utm_*` parameters, posted back with the booking.
+    #[serde(flatten)]
+    utm: Attribution,
 }
 
 impl BookQuery {
@@ -2560,6 +2576,7 @@ pub(super) async fn show_book_form(
             captcha_widget_url => captcha.widget_url,
             captcha_wasm_url => captcha.wasm_url,
             lang => lang,
+            utm => &query.utm,
         })
         .unwrap_or_else(|e| internal_error_body("template render", &e));
 
