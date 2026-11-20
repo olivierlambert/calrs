@@ -204,6 +204,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Fixed
+
+- **A calendar without delta sync is no longer asked for one on every sync** (#468, reported by @davidwuest). Nextcloud lists each Deck board as a calendar, and those answer `415 Unsupported Media Type` to the `sync-collection` request calrs tries before a full fetch. The sync then read the calendar in full, as it should, but tried the delta again on the next sync, about once a minute per board: a refused request and a line in the Nextcloud log each time. A calendar that answers 415 or 501 is now remembered for a day and goes straight to the full fetch, with one log line when it is first found. Nothing changes for calendars that support delta sync.
+
 ## [2.0.0-rc.4] - 2026-11-20
 
 Fourth release candidate of 2.0, with fixes from RC feedback. **Upgrade from rc.3** if you sync a Google calendar (an event deleted in Google kept blocking availability until the daily full resync), or if hosts read their booking emails in Gmail (the calendar card showed "Unable to load event"). **No migrations since rc.3.**
