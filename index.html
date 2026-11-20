@@ -168,6 +168,19 @@
     .theme-choice:focus-visible { outline: 2px solid var(--accent-bright); outline-offset: 3px; }
     .theme-caption { color: var(--text-secondary); font-size: 0.85rem; line-height: 1.7; }
 
+    /* --- PROMO VIDEO --- */
+    .promo-video {
+      display: block;
+      width: 100%;
+      max-width: 900px;
+      margin: 0 auto;
+      aspect-ratio: 16 / 9;
+      background: var(--bg-card);
+      border-radius: var(--radius-lg);
+      border: 1px solid var(--border);
+      box-shadow: 0 40px 80px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.03);
+    }
+
     /* --- FEATURES --- */
     .section { padding: 3.5rem 0; }
     .section-label {
@@ -517,6 +530,19 @@
       </div>
       <figcaption class="theme-caption">Your calendar, your colors. Seven palettes, light and dark modes, or your own custom theme.<br><span id="theme-status" role="status">Previewing Default.</span> <a href="docs/admin.html#branding">Explore branding</a>.</figcaption>
     </figure>
+  </div>
+</section>
+
+<!-- Promo video -->
+<section class="section" style="padding-top: 0;" id="promo">
+  <div class="container">
+    <span class="section-label">Watch</span>
+    <h2 class="section-title">Booking links you host yourself</h2>
+    <p class="section-desc">Guests pick a time, you approve in one click, and it lands on your own calendar. A 22-second tour.</p>
+    <video class="promo-video" controls playsinline preload="none" poster="assets/video/brag-poster.jpg" aria-label="calrs promo video: guests book a meeting, the host approves it in one click">
+      <source src="assets/video/brag.mp4" type="video/mp4">
+      Your browser does not support embedded video. <a href="assets/video/brag.mp4">Download the promo video</a>.
+    </video>
   </div>
 </section>
 
