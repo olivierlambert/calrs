@@ -310,6 +310,9 @@ pub(super) struct GuestRequest<'a> {
     /// The answers to the booking questions (#210): the form's fields, or
     /// what the API's `answers` carried.
     pub(super) posted: questions::Posted<'a>,
+    /// Lead-capture id from the booking form; closes the matching lead once
+    /// the booking exists. `None` for the REST API, which captures no leads.
+    pub(super) lead_id: Option<&'a str>,
 }
 
 impl<'a> GuestRequest<'a> {
@@ -323,6 +326,7 @@ impl<'a> GuestRequest<'a> {
             date: &form.date,
             time: &form.time,
             posted: questions::Posted::Form(&form.fields),
+            lead_id: form.lead_id.as_deref(),
         }
     }
 }
@@ -1019,6 +1023,10 @@ pub(super) async fn book_team(
 
     tracing::info!(booking_id = %id, event_type = %slug, guest = %guest.email, "booking created");
 
+    if let Some(lead_id) = guest.lead_id {
+        crate::leads::mark_completed(&state.pool, lead_id, &et_id).await;
+    }
+
     // Build BookingDetails once. CalDAV push, watcher notifications, and email
     // sends all need it, and CalDAV push must run independently of SMTP.
     let location_display = resolve_booking_location(
@@ -1675,6 +1683,10 @@ async fn handle_dynamic_group_booking(
 
     tracing::info!(booking_id = %id, event_type = %slug, guest = %form.email, dynamic_group = %combined_username, "dynamic group booking created");
 
+    if let Some(lead_id) = form.lead_id.as_deref() {
+        crate::leads::mark_completed(&state.pool, lead_id, &et_id).await;
+    }
+
     // Build BookingDetails once. CalDAV push and email send both need it,
     // and CalDAV push must run independently of whether SMTP is configured.
     let location_display = resolve_booking_location(
@@ -2317,6 +2329,10 @@ pub(super) async fn book_personal(
 
     tracing::info!(booking_id = %id, event_type = %slug, guest = %guest.email, "booking created");
 
+    if let Some(lead_id) = guest.lead_id {
+        crate::leads::mark_completed(&state.pool, lead_id, &et_id).await;
+    }
+
     // Build BookingDetails once. CalDAV push and email send both need it,
     // and CalDAV push must run independently of whether SMTP is configured.
     let host: Option<(String, String)> = sqlx::query_as(
@@ -2579,6 +2595,11 @@ pub(super) struct BookForm {
     /// `sms_phone_mode` set; ignored otherwise even if posted.
     #[serde(default)]
     phone: Option<String>,
+    /// Lead-capture session id from the browser (sessionStorage). Flips the
+    /// matching `partial_bookings` row to completed once the booking exists;
+    /// empty when capture is off.
+    #[serde(default)]
+    lead_id: Option<String>,
     /// Everything else posted: the booking questions' fields (#210),
     /// `q_<question id>` and, per multiple-choice box,
     /// `q_<question id>__<option id>`. Read by `questions::read_submission`
@@ -3172,6 +3193,10 @@ pub(super) async fn handle_booking(
     drop(booking_guard);
 
     tracing::info!(booking_id = %id, event_type = %slug, guest = %form.email, "booking created");
+
+    if let Some(lead_id) = form.lead_id.as_deref() {
+        crate::leads::mark_completed(&state.pool, lead_id, &et_id).await;
+    }
 
     // Build BookingDetails once. CalDAV push and email send both need it,
     // and CalDAV push must run independently of whether SMTP is configured.

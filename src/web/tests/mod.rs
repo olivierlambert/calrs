@@ -33,6 +33,7 @@ mod guest_footer;
 mod hosts;
 mod invites;
 mod landing;
+mod leads;
 mod mcp;
 mod oauth;
 mod organizer;

@@ -1939,6 +1939,8 @@ async fn create_booking_inner(
         date: &date,
         time: &time,
         posted: super::questions::Posted::Api(&answers),
+        // The API captures no leads.
+        lead_id: None,
     };
     let resolve_tz = move |_: Tz| guest_tz;
     let team: Option<Option<String>> =
