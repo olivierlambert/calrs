@@ -2001,3 +2001,86 @@ async fn guest_emails_on_the_wire_write_the_date_out_in_the_booking_language() {
         assert!(invite.contains("DTSTART:20261027T"), "{lang}: {invite}");
     }
 }
+
+/// #462: the host's "New booking" email attaches an informational copy
+/// (`METHOD:PUBLISH`), not the guest's invitation: a REQUEST asks the host,
+/// who organizes the event, to answer as an attendee, and Gmail showed
+/// "Unable to load event". The guest's invitation stays a REQUEST.
+#[tokio::test]
+async fn host_new_booking_email_attaches_a_published_copy() {
+    let _env = crate::test_support::ENV_LOCK.lock().await;
+    let (app, pool, _, _) = setup_test_app().await;
+    let (port, mails) = spawn_capturing_mta().await;
+    use_capturing_mta(&pool, port).await;
+
+    let csrf = "csrf-462-new";
+    let form = format!(
+        "_csrf={}&date={}&time=10%3A00&name=Host+Copy&email=host-copy%40test.com&notes=",
+        csrf,
+        far_future_monday()
+    );
+    let response = app
+        .oneshot(post_form_unauthed(
+            "/u/testuser/test-meeting/book",
+            csrf,
+            &form,
+        ))
+        .await
+        .unwrap();
+    assert!(response.status() == 200 || response.status().is_redirection());
+
+    let host = mail_to(&mails, "test@example.com").await;
+    assert!(host.contains("METHOD:PUBLISH"), "{host}");
+    assert!(host.contains("method=PUBLISH"), "{host}");
+    assert!(!host.contains("METHOD:REQUEST"), "{host}");
+    assert!(!host.contains("method=REQUEST"), "{host}");
+    assert!(!host.contains("ATTENDEE"), "{host}");
+    let guest = mail_to(&mails, "host-copy@test.com").await;
+    assert!(guest.contains("METHOD:REQUEST"), "{guest}");
+}
+
+/// #462: the host's cancellation email attaches the cancelled event as a
+/// PUBLISH with `STATUS:CANCELLED`, not a CANCEL addressed to its organizer.
+/// The guest's CANCEL is unchanged.
+#[tokio::test]
+async fn host_cancellation_email_attaches_a_published_cancelled_copy() {
+    let _env = crate::test_support::ENV_LOCK.lock().await;
+    let (app, pool, _, et_id) = setup_test_app().await;
+    let (port, mails) = spawn_capturing_mta().await;
+    use_capturing_mta(&pool, port).await;
+    let id = insert_v1_booking(
+        &pool,
+        &et_id,
+        "cancel-462@test.com",
+        Utc::now() + Duration::days(7),
+        30,
+        "confirmed",
+        &[],
+    )
+    .await;
+    let token: String = sqlx::query_scalar("SELECT cancel_token FROM bookings WHERE id = ?")
+        .bind(&id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    let csrf = "csrf-462-cancel";
+    let response = app
+        .oneshot(post_form_unauthed(
+            &format!("/booking/cancel/{}", token),
+            csrf,
+            &format!("_csrf={}", csrf),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    let host = mail_to(&mails, "test@example.com").await;
+    assert!(host.contains("METHOD:PUBLISH"), "{host}");
+    assert!(host.contains("STATUS:CANCELLED"), "{host}");
+    assert!(!host.contains("METHOD:CANCEL"), "{host}");
+    assert!(!host.contains("method=CANCEL"), "{host}");
+    assert!(!host.contains("ATTENDEE"), "{host}");
+    let guest = mail_to(&mails, "cancel-462@test.com").await;
+    assert!(guest.contains("METHOD:CANCEL"), "{guest}");
+}
