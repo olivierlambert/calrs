@@ -146,6 +146,19 @@
   </div>
 </section>
 
+{% if editing %}
+<section class="card" id="calendars" aria-labelledby="cal-title">
+  <div class="card-head"><h2 id="cal-title">{{ t("source-calendars-heading") }}</h2></div>
+  <div class="card-body">
+  <p>{{ t("source-calendars-help", name='<strong>' ~ (form_name | escape) ~ '</strong>') | safe }}</p>
+  {% if calendars_saved %}
+  <div class="notice notice--success" role="status">{{ t("source-calendars-saved") }}</div>
+  {% endif %}
+  {% include "partials/source_calendar_picker.html" %}
+  </div>
+</section>
+{% endif %}
+
 <script>
 (function() {
   var select = document.getElementById('provider');

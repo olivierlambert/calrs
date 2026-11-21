@@ -605,6 +605,7 @@ const IDENTITY_TEMPLATES: &[&str] = &[
     "dashboard_overview.html",
     "admin.html",
     "source_calendars.html",
+    "partials/source_calendar_picker.html",
     "dashboard_bookings.html",
     "dashboard_event_types.html",
     "dashboard_sources.html",
