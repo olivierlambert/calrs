@@ -635,6 +635,7 @@ pub(super) async fn show_group_slots(
     };
     let rendered = tmpl
         .render(context! {
+            lead => lead_page_ctx(&state.pool, &et_id).await,
             meeting_jitsi_label => meeting_jitsi_label,
             meeting_webhook_label => meeting_webhook_label,
             event_type => context! {
@@ -845,6 +846,7 @@ pub(super) async fn show_group_book_form(
     let captcha = captcha::CaptchaVars::from_config(&*state.captcha_config.read().await);
     let rendered = tmpl
         .render(context! {
+            lead => lead_page_ctx(&state.pool, &et_id).await,
             meeting_jitsi_label => meeting_jitsi_label,
             meeting_webhook_label => meeting_webhook_label,
             event_type => context! {
@@ -1225,6 +1227,7 @@ async fn show_dynamic_group_slots(
     };
     Html(
         tmpl.render(context! {
+            lead => lead_page_ctx(&state.pool, &et_id).await,
             meeting_jitsi_label => meeting_jitsi_label,
             meeting_webhook_label => meeting_webhook_label,
             event_type => context! {
@@ -1399,6 +1402,7 @@ async fn show_dynamic_group_book_form(
     let captcha = captcha::CaptchaVars::from_config(&*state.captcha_config.read().await);
     Html(
         tmpl.render(context! {
+            lead => lead_page_ctx(&state.pool, &et_id).await,
             meeting_jitsi_label => meeting_jitsi_label,
             meeting_webhook_label => meeting_webhook_label,
             event_type => context! {
@@ -1742,6 +1746,7 @@ pub(super) async fn show_slots_for_user(
     };
     let rendered = tmpl
         .render(context! {
+            lead => lead_page_ctx(&state.pool, &et_id).await,
             meeting_jitsi_label => meeting_jitsi_label,
             meeting_webhook_label => meeting_webhook_label,
             event_type => context! {
@@ -1962,6 +1967,7 @@ pub(super) async fn show_book_form_for_user(
     let captcha = captcha::CaptchaVars::from_config(&*state.captcha_config.read().await);
     let rendered = tmpl
         .render(context! {
+            lead => lead_page_ctx(&state.pool, &et_id).await,
             meeting_jitsi_label => meeting_jitsi_label,
             meeting_webhook_label => meeting_webhook_label,
             event_type => context! {
@@ -2354,6 +2360,7 @@ pub(super) async fn show_slots(
     };
     let rendered = tmpl
         .render(context! {
+            lead => lead_page_ctx(&state.pool, &et_id).await,
             meeting_jitsi_label => meeting_jitsi_label,
             meeting_webhook_label => meeting_webhook_label,
             event_type => context! {
@@ -2530,6 +2537,7 @@ pub(super) async fn show_book_form(
     let captcha = captcha::CaptchaVars::from_config(&*state.captcha_config.read().await);
     let rendered = tmpl
         .render(context! {
+            lead => lead_page_ctx(&state.pool, &et_id).await,
             meeting_jitsi_label => meeting_jitsi_label,
             meeting_webhook_label => meeting_webhook_label,
             event_type => context! {

@@ -19,6 +19,7 @@ mod format;
 mod hosts;
 mod invites;
 mod landing;
+mod leads;
 mod listing;
 mod mcp;
 pub mod meeting;
@@ -88,6 +89,13 @@ pub(crate) use hosts::booking_host_identity;
 use hosts::*;
 use invites::*;
 use landing::*;
+pub use leads::run_lead_purge_loop;
+use leads::{
+    admin_ctx as lead_admin_ctx, admin_update_lead_capture, admin_update_legal_mentions,
+    apply_toggle as apply_lead_capture_toggle, dashboard_leads, form_ctx as lead_form_ctx,
+    lead_archive, lead_badge, lead_capture_record, lead_delete, lead_delete_all, lead_export,
+    lead_set_contacted, lead_unarchive, page_ctx as lead_page_ctx,
+};
 use microsoft::*;
 pub use notify::drain_emails;
 pub use notify::run_reminder_loop;
@@ -341,6 +349,9 @@ pub struct AppState {
     /// (user id, secret, created).
     pub(crate) api_token_flash:
         std::sync::Mutex<HashMap<String, (String, String, std::time::Instant)>>,
+    /// Per-IP limit on the public lead-capture endpoint. Looser than the
+    /// booking limiter: a guest types many keystrokes in one session.
+    pub lead_capture_limiter: RateLimiter,
     pub data_dir: PathBuf,
     /// Wiped from memory when the state is dropped (#85, FINDING-14).
     pub secret_key: crate::crypto::SecretKey,
@@ -956,6 +967,7 @@ pub async fn create_router(
         api_limiter: RateLimiter::new(300, 60),
         api_heavy_limiter: RateLimiter::new(60, 300),
         api_token_flash: std::sync::Mutex::new(HashMap::new()),
+        lead_capture_limiter: RateLimiter::new(crate::leads::limits::MAX_REQUESTS_PER_MINUTE, 60),
         secret_key,
         data_dir,
         theme_css: tokio::sync::RwLock::new(initial_theme_css),
@@ -1248,6 +1260,14 @@ pub async fn create_router(
             post(admin_update_company_link),
         )
         .route(
+            "/dashboard/admin/legal-mentions",
+            post(admin_update_legal_mentions),
+        )
+        .route(
+            "/dashboard/admin/lead-capture",
+            post(admin_update_lead_capture),
+        )
+        .route(
             "/dashboard/admin/groups/{group_id}/members/{user_id}/weight",
             post(admin_update_member_weight),
         )
@@ -1373,6 +1393,17 @@ pub async fn create_router(
             "/u/{username}/{slug}/book",
             get(show_book_form_for_user).post(handle_booking_for_user),
         )
+        // Lead capture: what guests type before they submit, for hosts to
+        // follow up on. Off unless the admin and the event type both opt in.
+        .route("/api/lead-capture", post(lead_capture_record))
+        .route("/dashboard/leads", get(dashboard_leads))
+        .route("/dashboard/leads/export.csv", get(lead_export))
+        .route("/dashboard/leads/badge", get(lead_badge))
+        .route("/dashboard/leads/{id}/contacted", post(lead_set_contacted))
+        .route("/dashboard/leads/{id}/archive", post(lead_archive))
+        .route("/dashboard/leads/{id}/unarchive", post(lead_unarchive))
+        .route("/dashboard/leads/{id}/delete", post(lead_delete))
+        .route("/dashboard/leads/delete-all", post(lead_delete_all))
         // Legacy single-user routes (kept for backward compatibility)
         .route("/{slug}", get(show_slots))
         .route("/{slug}/book", get(show_book_form).post(handle_booking))
